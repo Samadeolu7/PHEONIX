@@ -3,7 +3,7 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
-import permissionService from '../../services/permissionService';
+import { permissionService } from '../../services/permissionService';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;

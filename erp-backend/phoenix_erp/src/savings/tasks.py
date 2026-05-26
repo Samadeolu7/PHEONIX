@@ -217,3 +217,177 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
             )
 
     return {'processed': processed, 'skipped': skipped, 'total': len(candidate_ids)}
+
+
+# ─── Regular Savings Monthly Interest ────────────────────────────────────────
+
+import logging as _logging
+_log = _logging.getLogger(__name__)
+
+
+@shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True)
+def post_monthly_savings_interest(self):  # noqa: ARG002
+    """
+    1st of each month @ 02:00 WAT — credit monthly interest to all active
+    regular SavingsAccount records that carry a positive interest_rate.
+
+    Idempotency: an InterestAccrual row is created with status='posted'.
+    Before posting we check whether a 'posted' row already exists for the
+    same account + year + month, so replays are safe.
+
+    GL entry (SSI-MONTHLY series):
+        Dr. Interest Expense on Savings  (EXPENSE)
+        Cr. Member Savings GL account    (SAVINGS / LIABILITY)
+
+    The interest is calculated as:
+        monthly_rate = annual_rate / 12
+        interest     = average_daily_balance (approximated by current_balance) × monthly_rate
+
+    Returns:
+        {'processed': int, 'skipped': int, 'total': int}
+    """
+    from transactions.models import (
+        Transaction as JournalEntry,
+        TransactionEntry as JournalEntryLine,
+        TransactionSeries,
+    )
+    from accounts.models import Account
+    from .models import SavingsAccount, InterestAccrual
+
+    today = timezone.localdate()
+    # We always post for the previous completed month
+    period_end   = today.replace(day=1) - relativedelta(days=1)
+    period_start = period_end.replace(day=1)
+    period_year  = period_start.year
+    period_month = period_start.month
+
+    candidate_ids = list(
+        SavingsAccount.objects
+        .filter(status='active', interest_rate__gt=0)
+        .values_list('id', flat=True)
+    )
+
+    processed = 0
+    skipped   = 0
+
+    for acct_id in candidate_ids:
+        try:
+            with transaction.atomic():
+                savings = (
+                    SavingsAccount.objects
+                    .select_for_update()
+                    .select_related('account', 'client')
+                    .get(pk=acct_id)
+                )
+
+                # Idempotency check: already posted for this period?
+                already_posted = InterestAccrual.objects.filter(
+                    account=savings,
+                    calculation_date__year=period_year,
+                    calculation_date__month=period_month,
+                    status='posted',
+                ).exists()
+
+                if already_posted:
+                    skipped += 1
+                    continue
+
+                balance = savings.current_balance or Decimal('0.00')
+                if balance <= 0:
+                    skipped += 1
+                    continue
+
+                # Annual rate stored as percentage (e.g. 5.00 = 5%)
+                monthly_rate = Decimal(str(savings.interest_rate)) / Decimal('100') / Decimal('12')
+                interest = (balance * monthly_rate).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP
+                )
+
+                if interest <= 0:
+                    skipped += 1
+                    continue
+
+                # ── Resolve GL accounts ────────────────────────────────
+                expense_account = (
+                    Account.objects
+                    .filter(
+                        owner=savings.owner,
+                        branch=savings.branch,
+                        account_type=Account.EXPENSE,
+                        name__icontains='Interest Expense on Savings',
+                    )
+                    .first()
+                )
+                if expense_account is None:
+                    # Fall back: first EXPENSE account on the branch
+                    expense_account = (
+                        Account.objects
+                        .filter(
+                            owner=savings.owner,
+                            branch=savings.branch,
+                            account_type=Account.EXPENSE,
+                        )
+                        .first()
+                    )
+                if expense_account is None:
+                    _log.error(
+                        'post_monthly_savings_interest: no EXPENSE account for '
+                        'SavingsAccount pk=%s — skipping', acct_id,
+                    )
+                    skipped += 1
+                    continue
+
+                series, _ = TransactionSeries.objects.get_or_create(
+                    code='SSI-MONTHLY',
+                    defaults={'description': 'Monthly Savings Interest'},
+                )
+
+                journal = JournalEntry.objects.create(
+                    series=series,
+                    date=period_end,
+                    description=(
+                        f'Monthly interest {period_start:%b %Y} — '
+                        f'{savings.account_number}'
+                    ),
+                    owner=savings.owner,
+                    branch=savings.branch,
+                )
+
+                JournalEntryLine.objects.create(
+                    transaction=journal,
+                    account=expense_account,
+                    side=JournalEntryLine.DEBIT,
+                    amount=interest,
+                    description=f'Interest expense — {savings.account_number} {period_start:%b %Y}',
+                )
+
+                JournalEntryLine.objects.create(
+                    transaction=journal,
+                    account=savings.account,
+                    side=JournalEntryLine.CREDIT,
+                    amount=interest,
+                    description=f'Monthly interest credited — {savings.account_number}',
+                )
+
+                journal.post()
+
+                # ── Audit record ─────────────────────────────────────────
+                InterestAccrual.objects.create(
+                    account=savings,
+                    calculation_date=period_end,
+                    daily_balance=balance,
+                    interest_rate=savings.interest_rate,
+                    accrued_amount=interest,
+                    status='posted',
+                    posting_date=today,
+                )
+
+                processed += 1
+
+        except Exception as exc:  # noqa: BLE001
+            _log.exception(
+                'post_monthly_savings_interest: failed for SavingsAccount pk=%s: %s',
+                acct_id, exc,
+            )
+
+    return {'processed': processed, 'skipped': skipped, 'total': len(candidate_ids)}

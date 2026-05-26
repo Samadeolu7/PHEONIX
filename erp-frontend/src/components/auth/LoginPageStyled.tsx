@@ -397,7 +397,7 @@ const LoginPageStyled: React.FC = () => {
                 src={BRAND.logoUrl}
                 alt="Krystar Trust Logo"
                 style={S.logoImg}
-                fetchPriority="high"
+                fetchpriority="high"
                 onError={e => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}
@@ -419,7 +419,7 @@ const LoginPageStyled: React.FC = () => {
                 src={BRAND.leadershipBannerUrl}
                 alt="Leadership"
                 style={S.bannerImg}
-                fetchPriority="high"
+                fetchpriority="high"
                 onError={e => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}

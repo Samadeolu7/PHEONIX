@@ -517,6 +517,26 @@ CELERY_BEAT_SCHEDULE = {
             'expires': 3600,
         }
     },
+
+    # ── Savings: post monthly interest on regular SavingsAccounts ──────────
+    # 1st of each month @ 02:00 WAT (UTC+1; run at 01:00 UTC to account for WAT)
+    'post-monthly-savings-interest': {
+        'task': 'savings.tasks.post_monthly_savings_interest',
+        'schedule': crontab(minute=0, hour=1, day_of_month=1),
+        'options': {
+            'expires': 7200,  # Give 2 hours to complete before expiry
+        }
+    },
+
+    # ── Assets: post monthly depreciation for all active FixedAssets ───────
+    # 1st of each month @ 03:00 WAT (02:00 UTC)
+    'post-monthly-asset-depreciation': {
+        'task': 'assets.tasks.post_monthly_depreciation',
+        'schedule': crontab(minute=0, hour=2, day_of_month=1),
+        'options': {
+            'expires': 7200,
+        }
+    },
 }
 
 # ==================================================

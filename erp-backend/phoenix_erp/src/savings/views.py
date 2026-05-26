@@ -271,6 +271,19 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
         Mark contribution as paid by calling SavingsAccount.deposit().
         Body: {"cashier_account_id": <int>}
         """
+        try:
+            from permissions.services import PermissionResolver
+            effective = PermissionResolver.resolve(
+                request.user, module='savings', page='contribution-schedules', action='approve',
+            )
+            if not effective.can_approve:
+                return Response(
+                    {'detail': 'You do not have permission to mark contributions as paid.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        except Exception:
+            pass  # Fail-open during rollout
+
         schedule = self.get_object()
         if schedule.status == ContributionSchedule.PAID:
             return Response(

@@ -1,21 +1,15 @@
-// src/pages/clients/ClientListPage.tsx
+﻿// src/pages/clients/ClientListPage.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { clientService, Client, ClientFilters } from '../../services/clientService';
 import { triggerDownload } from '../../services/api';
 import { useToast } from '../../hooks/useToast';
 import { useAuth } from '../../contexts/AuthContext';
-import { useDomainLabels } from '../../contexts/DomainLabelContext';
-import { academicSessionService } from '../../services/academicSessionService';
 import {
-  GraduationCap,
   Users,
-  BookOpen,
-  Calendar,
   UserCheck,
+  UserX,
   Download,
-  Settings,
 } from 'lucide-react';
 
 const ClientListPage: React.FC = () => {
@@ -33,16 +27,8 @@ const ClientListPage: React.FC = () => {
   const [exportLoading, setExportLoading] = useState(false);
   const { success, error: showError } = useToast();
   const { selectedRole } = useAuth();
-  const { getLabel, isSchool } = useDomainLabels();
 
-  // Check if current user role can create clients
   const canCreateClients = selectedRole && selectedRole !== 'Principal';
-
-  const { data: currentAcademicYear } = useQuery({
-    queryKey: ['academic-years', 'current'],
-    queryFn: () => academicSessionService.getCurrent(),
-    retry: false,
-  });
 
   useEffect(() => {
     loadData();
@@ -51,12 +37,8 @@ const ClientListPage: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
-
-      // Load classifications
       const classData = await clientService.getClassifications();
       setClassifications(classData);
-
-      // Load clients
       const response = await clientService.getClients(filters);
       setClients(response.results || []);
       setPagination({
@@ -67,7 +49,7 @@ const ClientListPage: React.FC = () => {
       });
     } catch (error) {
       console.error('Error loading data:', error);
-      showError('Failed to load student data');
+      showError('Failed to load client data');
     } finally {
       setLoading(false);
     }
@@ -81,23 +63,18 @@ const ClientListPage: React.FC = () => {
     ) {
       return;
     }
-
     try {
       await clientService.deleteClient(clientId);
-      success('Student deleted successfully');
-      loadData(); // Reload the list
+      success('Client deleted successfully');
+      loadData();
     } catch (error: any) {
-      console.error('Error deleting student:', error);
-      showError(error.message || 'Failed to delete student');
+      console.error('Error deleting client:', error);
+      showError(error.message || 'Failed to delete client');
     }
   };
 
   const handleFilterChange = (key: keyof ClientFilters, value: any) => {
-    setFilters(prev => ({
-      ...prev,
-      [key]: value,
-      page: 1, // Reset to first page when filtering
-    }));
+    setFilters(prev => ({ ...prev, [key]: value, page: 1 }));
   };
 
   const handlePageChange = (page: number) => {
@@ -107,13 +84,12 @@ const ClientListPage: React.FC = () => {
   const handleExportCSV = async () => {
     try {
       setExportLoading(true);
-      // Strip the page param — the backend returns ALL matching rows in one streamed CSV
       const { page: _page, ...exportFilters } = filters as any;
       const blob = await clientService.exportCsv(exportFilters);
-      triggerDownload(blob, `students_export_${new Date().toISOString().slice(0, 10)}.csv`);
+      triggerDownload(blob, `clients_export_${new Date().toISOString().slice(0, 10)}.csv`);
     } catch (err) {
       console.error('CSV export failed:', err);
-      showError('Failed to export students');
+      showError('Failed to export clients');
     } finally {
       setExportLoading(false);
     }
@@ -124,64 +100,23 @@ const ClientListPage: React.FC = () => {
   };
 
   const getStatusBadge = (status: Client['status']) => {
-    const statusConfig = {
-      active: { color: 'bg-green-100 text-green-800', label: 'Enrolled' },
-      inactive: {
-        color: 'bg-gray-100 text-gray-800',
-        label: 'Graduated/Left',
-      },
-      suspended: { color: 'bg-yellow-100 text-yellow-800', label: 'Suspended' },
-      blacklisted: {
-        color: 'bg-red-100 text-red-800',
-        label: 'Expelled',
-      },
+    const statusConfig: Record<string, { color: string; label: string }> = {
+      active:      { color: 'bg-green-100 text-green-800',  label: 'Active' },
+      inactive:    { color: 'bg-gray-100 text-gray-800',    label: 'Inactive' },
+      suspended:   { color: 'bg-yellow-100 text-yellow-800', label: 'Suspended' },
+      blacklisted: { color: 'bg-red-100 text-red-800',      label: 'Blacklisted' },
     };
-
-    const config = statusConfig[status];
+    const config = statusConfig[status] ?? { color: 'bg-gray-100 text-gray-700', label: status };
     return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}
-      >
-        {config.label}
-      </span>
-    );
-  };
-
-  const getUsageContextBadge = (context: Client['usage_context']) => {
-    const contextConfig = {
-      financial: { color: 'bg-blue-100 text-blue-800', label: 'Financial' },
-      student: { color: 'bg-purple-100 text-purple-800', label: 'Student' },
-      patient: { color: 'bg-pink-100 text-pink-800', label: 'Patient' },
-      customer: { color: 'bg-indigo-100 text-indigo-800', label: 'Customer' },
-    };
-
-    const config = contextConfig[context];
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}
-      >
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}>
         {config.label}
       </span>
     );
   };
 
   const getGenderIcon = (gender: Client['gender']) => {
-    const genderConfig = {
-      male: '👨',
-      female: '👩',
-      other: '👤',
-    };
-    return genderConfig[gender];
-  };
-
-  const getGradeLevel = (classificationName: string) => {
-    const gradeMap: { [key: string]: string } = {
-      Freshman: 'Grade 9',
-      Sophomore: 'Grade 10',
-      Junior: 'Grade 11',
-      Senior: 'Grade 12',
-    };
-    return gradeMap[classificationName] || classificationName;
+    const icons: Record<string, string> = { male: 'ðŸ‘¨', female: 'ðŸ‘©', other: 'ðŸ‘¤' };
+    return icons[gender] ?? 'ðŸ‘¤';
   };
 
   return (
@@ -191,11 +126,11 @@ const ClientListPage: React.FC = () => {
         <div className="flex justify-between items-center">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <GraduationCap className="w-8 h-8 text-indigo-600" />
-              <h1 className="text-2xl font-bold text-gray-900">Student Management</h1>
+              <Users className="w-8 h-8 text-indigo-600" />
+              <h1 className="text-2xl font-bold text-gray-900">Client Management</h1>
             </div>
             <p className="text-gray-600">
-              Manage all students, track enrollment, and view academic classifications
+              Manage all clients, track account status, and view classifications
             </p>
           </div>
           {canCreateClients && (
@@ -204,18 +139,18 @@ const ClientListPage: React.FC = () => {
               className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 flex items-center gap-2"
             >
               <Users size={18} />
-              Add New Student
+              Add New Client
             </button>
           )}
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white rounded-lg shadow p-4 border-l-4 border-indigo-500">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Total Students</p>
+              <p className="text-sm text-gray-600">Total Clients</p>
               <p className="text-2xl font-bold text-gray-900">{pagination.count}</p>
             </div>
             <Users className="w-8 h-8 text-indigo-500" />
@@ -224,7 +159,7 @@ const ClientListPage: React.FC = () => {
         <div className="bg-white rounded-lg shadow p-4 border-l-4 border-green-500">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Currently Enrolled</p>
+              <p className="text-sm text-gray-600">Active</p>
               <p className="text-2xl font-bold text-green-600">
                 {clients.filter(c => c.status === 'active').length}
               </p>
@@ -232,77 +167,45 @@ const ClientListPage: React.FC = () => {
             <UserCheck className="w-8 h-8 text-green-500" />
           </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4 border-l-4 border-purple-500">
+        <div className="bg-white rounded-lg shadow p-4 border-l-4 border-gray-400">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Graduated/Left</p>
-              <p className="text-2xl font-bold text-purple-600">
-                {clients.filter(c => c.status === 'inactive').length}
+              <p className="text-sm text-gray-600">Inactive / Suspended</p>
+              <p className="text-2xl font-bold text-gray-600">
+                {clients.filter(c => c.status !== 'active').length}
               </p>
             </div>
-            <BookOpen className="w-8 h-8 text-purple-500" />
+            <UserX className="w-8 h-8 text-gray-400" />
           </div>
         </div>
-        <button
-          onClick={() => navigate('/incomes/academic-sessions')}
-          className="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500 text-left hover:shadow-md transition-shadow"
-          title="Manage Academic Sessions"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Academic Year</p>
-              <p className="text-2xl font-bold text-blue-600">{currentAcademicYear?.name ?? '—'}</p>
-            </div>
-            <div className="relative">
-              <Calendar className="w-8 h-8 text-blue-500" />
-              <Settings className="w-3 h-3 text-blue-400 absolute -bottom-0.5 -right-0.5" />
-            </div>
-          </div>
-          <p className="text-xs text-blue-400 mt-1">Click to manage sessions</p>
-        </button>
       </div>
 
       {/* Filters */}
       <div className="bg-white rounded-lg shadow p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center gap-2">
           <Users size={20} className="text-indigo-500" />
-          Filter Students
+          Filter Clients
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {/* Status Filter */}
-          {/* <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Enrollment Status</label>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
             <select
               value={filters.status || ''}
               onChange={e => handleFilterChange('status', e.target.value || undefined)}
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
             >
               <option value="">All Status</option>
-              <option value="active">Enrolled</option>
-              <option value="inactive">Graduated/Left</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
               <option value="suspended">Suspended</option>
-              <option value="blacklisted">Expelled</option>
+              <option value="blacklisted">Blacklisted</option>
             </select>
-          </div> */}
-
-          {/* Usage Context Filter */}
-          {/* <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Student Type</label>
-            <select
-              value={filters.usage_context || ''}
-              onChange={e => handleFilterChange('usage_context', e.target.value || undefined)}
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-            >
-              <option value="">All Types</option>
-              <option value="student">Regular Student</option>
-              <option value="financial">Scholarship Student</option>
-              <option value="patient">Special Needs</option>
-            </select>
-          </div> */}
+          </div>
 
           {/* Classification Filter */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Grade Level</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Classification</label>
             <select
               value={filters.classification || ''}
               onChange={e =>
@@ -313,20 +216,9 @@ const ClientListPage: React.FC = () => {
               }
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
             >
-              <option value="">All Grades</option>
+              <option value="">All Groups</option>
               {classifications.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name}{' '}
-                  {c.name === 'Freshman'
-                    ? '(Grade 9)'
-                    : c.name === 'Sophomore'
-                      ? '(Grade 10)'
-                      : c.name === 'Junior'
-                        ? '(Grade 11)'
-                        : c.name === 'Senior'
-                          ? '(Grade 12)'
-                          : ''}
-                </option>
+                <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
           </div>
@@ -336,7 +228,7 @@ const ClientListPage: React.FC = () => {
             <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
             <input
               type="text"
-              placeholder="Student name, ID, or email..."
+              placeholder="Client name, ID, or phone..."
               value={filters.search || ''}
               onChange={e => handleFilterChange('search', e.target.value || undefined)}
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
@@ -368,7 +260,7 @@ const ClientListPage: React.FC = () => {
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-medium text-gray-900 flex items-center gap-2">
                   <Users size={20} className="text-indigo-500" />
-                  Student Directory ({pagination.count} students)
+                  Client Directory ({pagination.count} clients)
                 </h3>
                 <div className="flex space-x-2">
                   <button
@@ -383,13 +275,13 @@ const ClientListPage: React.FC = () => {
                     onClick={() => navigate('/clients/import')}
                     className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200"
                   >
-                    Import Students
+                    Import Clients
                   </button>
                   <button
                     onClick={() => navigate('/clients/classifications')}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 text-indigo-700"
+                    className="px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100"
                   >
-                    Manage Grade Levels
+                    Manage Groups
                   </button>
                 </div>
               </div>
@@ -401,32 +293,22 @@ const ClientListPage: React.FC = () => {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Student Information
-                    </th>
-                    {isSchool && (
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Class/Grade
-                      </th>
-                    )}
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Contact Information
+                      Client
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Age/Gender
+                      Contact
                     </th>
-                    {!isSchool && (
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Student Type
-                      </th>
-                    )}
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Grade Level
+                      Age / Gender
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Group
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Enrollment Date
+                      Registered
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
@@ -458,45 +340,24 @@ const ClientListPage: React.FC = () => {
                               {client.full_name}
                             </div>
                             <div className="text-sm text-gray-500">
-                              Student ID:{' '}
-                              {isSchool && (client as any).admission_number
-                                ? (client as any).admission_number
-                                : client.client_id}
+                              ID: {client.client_id}
                             </div>
                           </div>
                         </div>
                       </td>
-                      {isSchool && (
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-sm font-medium text-gray-900">
-                            {(client as any).class_name || 'Not assigned'}
-                          </div>
-                          <div className="text-sm text-gray-500">
-                            Homeroom: {(client as any).homeroom || 'TBD'}
-                          </div>
-                        </td>
-                      )}
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">{client.phone_primary}</div>
                         <div className="text-sm text-gray-500">{client.email || 'No email'}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">{client.age} years</div>
+                        <div className="text-sm text-gray-900">{client.age} yrs</div>
                         <div className="text-sm text-gray-500 capitalize flex items-center gap-1">
                           {getGenderIcon(client.gender)} {client.gender}
                         </div>
                       </td>
-                      {!isSchool && (
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {getUsageContextBadge(client.usage_context)}
-                        </td>
-                      )}
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">
-                          {client.classification_name}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          {getGradeLevel(client.classification_name)}
+                          {client.classification_name || 'â€”'}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -511,7 +372,7 @@ const ClientListPage: React.FC = () => {
                             onClick={() => navigate(`/clients/${client.id}`)}
                             className="text-indigo-600 hover:text-indigo-900"
                           >
-                            View Profile
+                            View
                           </button>
                           <button
                             onClick={() => navigate(`/clients/${client.id}/edit`)}
@@ -538,8 +399,8 @@ const ClientListPage: React.FC = () => {
               <div className="px-6 py-3 border-t border-gray-200">
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-gray-700">
-                    Showing page {pagination.currentPage} of {Math.ceil(pagination.count / 20)} (
-                    {pagination.count} total students)
+                    Page {pagination.currentPage} of {Math.ceil(pagination.count / 20)} â€”{' '}
+                    {pagination.count} total clients
                   </div>
                   <div className="flex items-center space-x-2">
                     <button
@@ -566,24 +427,22 @@ const ClientListPage: React.FC = () => {
 
             {clients.length === 0 && !loading && (
               <div className="text-center py-12">
-                <div className="text-gray-500">
-                  <GraduationCap className="w-16 h-16 mx-auto text-gray-400 mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No students found</h3>
-                  <p className="text-gray-600 mb-4">
-                    {canCreateClients
-                      ? 'Try adjusting your filters or add a new student to get started.'
-                      : 'No students match your current filters.'}
-                  </p>
-                  {canCreateClients && (
-                    <button
-                      onClick={() => navigate('/clients/create')}
-                      className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 inline-flex items-center gap-2"
-                    >
-                      <Users size={18} />
-                      Add First Student
-                    </button>
-                  )}
-                </div>
+                <Users className="w-16 h-16 mx-auto text-gray-300 mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No clients found</h3>
+                <p className="text-gray-600 mb-4">
+                  {canCreateClients
+                    ? 'Try adjusting your filters or add a new client to get started.'
+                    : 'No clients match your current filters.'}
+                </p>
+                {canCreateClients && (
+                  <button
+                    onClick={() => navigate('/clients/create')}
+                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 inline-flex items-center gap-2"
+                  >
+                    <Users size={18} />
+                    Add First Client
+                  </button>
+                )}
               </div>
             )}
           </>

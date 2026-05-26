@@ -1273,3 +1273,239 @@ class LoanDisbursement(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.disbursed_by = disbursed_by_user
         self.disbursement_date = disbursement_date or tz.now().date()
         self.save(update_fields=['status', 'disbursed_by', 'disbursement_date'])
+
+
+# ── Loan Write-Off ────────────────────────────────────────────────────────────
+
+class LoanWriteOff(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Approval-gated request to write off an irrecoverable loan balance.
+
+    Approval workflow:
+        PENDING   → credit officer submits request
+        APPROVED  → supervisor approves; execute() is called
+        REJECTED  → supervisor rejects; loan is unchanged
+
+    GL entry posted on execute():
+        Dr. Provision for Loan Losses (reduces the provision balance)
+        Cr. Loan Receivable (removes the loan asset from books)
+
+    After execution:
+        - LoanAccount.status is set to 'written_off'
+        - The outstanding_principal / interest / fees are zeroed
+
+    A written-off loan may still be pursued for recovery off-balance-sheet.
+    If partial or full recovery occurs later, a reversal transaction is posted
+    manually against this write-off.
+    """
+    PENDING  = 'PENDING'
+    APPROVED = 'APPROVED'
+    REJECTED = 'REJECTED'
+    STATUS_CHOICES = [
+        (PENDING,  'Pending Approval'),
+        (APPROVED, 'Approved'),
+        (REJECTED, 'Rejected'),
+    ]
+
+    reference_number = models.CharField(
+        max_length=50, unique=True, db_index=True,
+        help_text='Auto-generated reference (e.g. WO-2026-0001)',
+    )
+    loan = models.ForeignKey(
+        LoanAccount,
+        on_delete=models.PROTECT,
+        related_name='write_offs',
+        help_text='Loan account to be written off',
+    )
+
+    # Amounts captured at the time of submission (snapshot of outstanding balances)
+    principal_amount = models.DecimalField(
+        max_digits=18, decimal_places=2,
+        help_text='Outstanding principal at the time of write-off request',
+    )
+    interest_amount = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal('0.00'),
+        help_text='Outstanding interest at the time of write-off request',
+    )
+    fees_amount = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal('0.00'),
+        help_text='Outstanding fees/penalties at the time of write-off request',
+    )
+    total_write_off_amount = models.DecimalField(
+        max_digits=18, decimal_places=2,
+        help_text='Total amount written off (principal + interest + fees)',
+    )
+
+    reason = models.TextField(help_text='Justification for the write-off')
+    write_off_date = models.DateField(
+        null=True, blank=True,
+        help_text='Date the write-off was executed (set on approval + execution)',
+    )
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+
+    # Requester
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='loan_write_offs_requested',
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+
+    # Approver
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_write_offs_approved',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+
+    # GL journal entry created on execute()
+    journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_write_off_entries',
+        help_text='Journal entry: Dr Provision for Loan Losses / Cr Loan Receivable',
+    )
+
+    notes = models.TextField(blank=True)
+
+    objects    = OwnerBranchManager()
+    all_objects= OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-requested_at']
+        indexes = [
+            models.Index(fields=['loan', 'status']),
+            models.Index(fields=['status', 'requested_at']),
+        ]
+        verbose_name = 'Loan Write-Off'
+        verbose_name_plural = 'Loan Write-Offs'
+
+    def __str__(self):
+        return f"{self.reference_number} — {self.loan.loan_number} ₦{self.total_write_off_amount} [{self.status}]"
+
+    def save(self, *args, **kwargs):
+        if not self.reference_number:
+            import uuid
+            self.reference_number = f"WO-{uuid.uuid4().hex[:8].upper()}"
+        if not self.pk:
+            # Snapshot totals at request time
+            self.total_write_off_amount = (
+                self.principal_amount + self.interest_amount + self.fees_amount
+            )
+        super().save(*args, **kwargs)
+
+    @transaction.atomic
+    def execute(self, approving_user):
+        """
+        Approve and execute the write-off.
+
+        1. Validates maker-checker: approver != requester.
+        2. Posts GL entry: Dr Provision for Loan Losses / Cr Loan Receivable.
+        3. Zeros the loan's outstanding balances and marks it 'written_off'.
+        4. Updates this record's status, approved_by, approved_at, write_off_date.
+
+        Raises ValidationError on any violation.
+        """
+        from transactions.models import (
+            Transaction as JournalEntry,
+            TransactionEntry as JournalEntryLine,
+            TransactionSeries,
+        )
+
+        if self.status != self.PENDING:
+            raise ValidationError("Only PENDING write-offs can be executed.")
+
+        if approving_user.pk == self.requested_by_id:
+            raise ValidationError(
+                "The officer who requested the write-off cannot approve it "
+                "(maker-checker violation)."
+            )
+
+        loan = LoanAccount.objects.select_for_update().get(pk=self.loan_id)
+
+        if loan.status in ('written_off', 'closed'):
+            raise ValidationError(
+                f"Loan {loan.loan_number} is already {loan.status}."
+            )
+
+        write_off_date = timezone.localdate()
+
+        # ── GL Entry ─────────────────────────────────────────────────────────
+        wo_series, _ = TransactionSeries.objects.get_or_create(
+            code='LN-WO',
+            defaults={'description': 'Loan Write-Offs'},
+        )
+
+        journal = JournalEntry.objects.create(
+            series=wo_series,
+            date=write_off_date,
+            description=f"Write-off — {loan.loan_number} ({self.reference_number})",
+            workflow_reference=self.reference_number,
+            owner=loan.owner,
+            branch=loan.branch,
+            created_by=approving_user,
+        )
+
+        # Dr. Provision for Loan Losses (reduces provision asset on books)
+        # The provision account is set on the LoanProduct; fall back to the
+        # loan's own GL account if not configured.
+        provision_account = getattr(loan.product, 'provision_account', None) or loan.account
+        JournalEntryLine.objects.create(
+            transaction=journal,
+            account=provision_account,
+            side=JournalEntryLine.DEBIT,
+            amount=self.total_write_off_amount,
+            description=f"Write-off provision reduction — {loan.loan_number}",
+        )
+
+        # Cr. Loan Receivable (removes the asset from the balance sheet)
+        JournalEntryLine.objects.create(
+            transaction=journal,
+            account=loan.account,
+            side=JournalEntryLine.CREDIT,
+            amount=self.total_write_off_amount,
+            description=f"Loan receivable written off — {loan.loan_number}",
+        )
+
+        journal.post()
+
+        # ── Zero outstanding balances & mark loan written off ──────────────
+        loan.outstanding_principal = Decimal('0.00')
+        loan.outstanding_interest  = Decimal('0.00')
+        loan.outstanding_fees      = Decimal('0.00')
+        if hasattr(loan, 'outstanding_penalties'):
+            loan.outstanding_penalties = Decimal('0.00')
+        loan.status = 'written_off'
+        loan.save(update_fields=[
+            'outstanding_principal', 'outstanding_interest',
+            'outstanding_fees', 'status', 'updated_at',
+        ])
+
+        # ── Update this write-off record ────────────────────────────────────
+        self.status       = self.APPROVED
+        self.approved_by  = approving_user
+        self.approved_at  = timezone.now()
+        self.write_off_date = write_off_date
+        self.journal_entry  = journal
+        self.save(update_fields=[
+            'status', 'approved_by', 'approved_at',
+            'write_off_date', 'journal_entry', 'updated_at',
+        ])
+
+    def reject(self, rejecting_user, reason=''):
+        """Mark this write-off request as rejected."""
+        if self.status != self.PENDING:
+            raise ValidationError("Only PENDING write-offs can be rejected.")
+        self.status           = self.REJECTED
+        self.approved_by      = rejecting_user
+        self.approved_at      = timezone.now()
+        self.rejection_reason = reason
+        self.save(update_fields=[
+            'status', 'approved_by', 'approved_at',
+            'rejection_reason', 'updated_at',
+        ])

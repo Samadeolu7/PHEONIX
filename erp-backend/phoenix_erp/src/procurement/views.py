@@ -333,7 +333,24 @@ class PurchaseRequisitionViewSet(ScopedModelViewSet):
             pass  # Fail-open during rollout
 
         requisition = self.get_object()
-        
+
+        # Approval limit check against requisition total
+        try:
+            from permissions.services import PermissionResolver
+            from decimal import Decimal as _Decimal
+            effective = PermissionResolver.resolve(
+                request.user, module='procurement', page='purchase-requisitions', action='approve',
+            )
+            if effective.approval_limit is not None:
+                total = getattr(requisition, 'total_amount', None) or getattr(requisition, 'estimated_total', None) or 0
+                if _Decimal(str(total)) > _Decimal(str(effective.approval_limit)):
+                    return Response(
+                        {'detail': f'Requisition total {total} exceeds your approval limit of {effective.approval_limit}. Please escalate to a supervisor.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+        except Exception:
+            pass
+
         if requisition.status != 'submitted':
             return Response(
                 {'error': 'Only submitted requisitions can be approved'},

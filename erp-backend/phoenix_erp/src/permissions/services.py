@@ -113,8 +113,9 @@ class PermissionResolver:
 
         Sources (in priority order):
           1. RolePermissionPolicy action codes (new system — primary source)
-          2. UserPermissionOverride action codes
-          3. role.permission_codes JSONField (legacy fallback)
+          2. role.permission_codes JSONField (legacy fallback — only for roles
+             that have no RolePermissionPolicy records yet; prevents divergence)
+          3. UserPermissionOverride action codes
         """
         if cls._is_wildcard(user):
             return ['*']
@@ -141,9 +142,23 @@ class PermissionResolver:
         except Exception:
             pass  # Permissions app may not be available during early migrations
 
-        # --- 2. From role permission_codes (legacy JSONField — kept for backward compat) ---
+        # --- 2. Legacy fallback: only for roles with no RolePermissionPolicy records ---
+        # Prevents divergence when both systems are populated for the same role.
+        # Once all roles have at least one RolePermissionPolicy record, this path
+        # is never taken and can be fully removed.
+        try:
+            from permissions.models import RolePermissionPolicy as _RolePermissionPolicy
+            policy_role_ids = set(
+                _RolePermissionPolicy.objects
+                .filter(role_id__in=role_ids)
+                .values_list('role_id', flat=True)
+                .distinct()
+            )
+        except Exception:
+            policy_role_ids = set()
+
         for role in user.roles.filter(is_active=True):
-            if isinstance(role.permission_codes, list):
+            if role.pk not in policy_role_ids and isinstance(role.permission_codes, list):
                 codes.update(role.permission_codes)
 
         # --- 3. Active user overrides that explicitly enable a flag ---

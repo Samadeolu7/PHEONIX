@@ -225,3 +225,93 @@ def test_payroll_generation(branch_id=None):
             })
     
     return {'status': 'completed', 'results': results}
+
+
+# ===========================================================================
+# App 2 – notify compliance service after payroll approval
+# ===========================================================================
+
+@shared_task(
+    bind=True,
+    name='hr.tasks.notify_compliance_service',
+    max_retries=5,
+    default_retry_delay=60,  # seconds; Celery doubles for each retry up to 5×
+)
+def notify_compliance_service(self, payroll_pk: int):
+    """
+    Fired by PayrollService.approve_payroll() via .delay() immediately
+    after the payroll status is set to 'approved'.
+
+    Builds the internal-API URL for App 2 to consume:
+        GET /api/internal/hr/payrolls/<pk>/statutory-summary/
+
+    Java App 2 (phoenix-compliance-svc) is triggered by creating a
+    ``PayrollStatutoryFiling`` stub for each filing type so that App 2
+    can pick them up via its Spring Integration inbound gateway.  The
+    Java app polls / subscribes to the filing-list endpoint.
+
+    If the HR module is not yet fully operational (e.g. test env) this
+    task degrades gracefully: it logs a warning and does not raise.
+    """
+    from hr.models import Payroll, PayrollStatutoryFiling
+    from django.db import IntegrityError
+
+    logger.info('notify_compliance_service: payroll_pk=%s', payroll_pk)
+
+    try:
+        payroll = Payroll.objects.get(pk=payroll_pk, is_deleted=False)
+    except Payroll.DoesNotExist:
+        # Payroll deleted between approval and task execution — nothing to do.
+        logger.warning(
+            'notify_compliance_service: Payroll pk=%s not found; skipping.', payroll_pk
+        )
+        return {'status': 'skipped', 'reason': 'Payroll not found'}
+
+    if payroll.status != 'approved':
+        logger.warning(
+            'notify_compliance_service: Payroll pk=%s is in status=%s (expected approved); skipping.',
+            payroll_pk, payroll.status,
+        )
+        return {'status': 'skipped', 'reason': f'Status is {payroll.status}'}
+
+    # -----------------------------------------------------------------
+    # Create PayrollStatutoryFiling stubs (idempotent) for each filing
+    # type that App 2 needs to process.  App 2 polls
+    # GET /api/internal/hr/statutory-filings/?status=pending and picks
+    # up any new rows.
+    # -----------------------------------------------------------------
+    FILING_TYPES = ['paye', 'pension', 'nhf', 'nsitf']
+    created_filings = []
+    for filing_type in FILING_TYPES:
+        try:
+            filing, created = PayrollStatutoryFiling.objects.get_or_create(
+                owner=payroll.owner,
+                branch=payroll.branch,
+                filing_type=filing_type,
+                status='pending',
+                reference_number__startswith=f'{payroll.reference_number}-{filing_type.upper()}',
+                defaults={
+                    'reference_number': f'{payroll.reference_number}-{filing_type.upper()}',
+                    'period_start': payroll.period_start,
+                    'period_end': payroll.period_end,
+                    'total_amount': (
+                        payroll.total_nhf if filing_type == 'nhf' else
+                        payroll.total_nsitf if filing_type == 'nsitf' else
+                        payroll.total_employee_pension if filing_type == 'pension' else
+                        Decimal('0.00')   # PAYE total not yet on Payroll model
+                    ),
+                    'tenant': getattr(payroll, 'tenant', None),
+                },
+            )
+            if created:
+                filing.payrolls.add(payroll)
+                created_filings.append(filing_type)
+        except IntegrityError:
+            # Already exists; no problem.
+            pass
+
+    logger.info(
+        'notify_compliance_service: payroll_pk=%s — created filing stubs: %s',
+        payroll_pk, created_filings or 'none (all already existed)',
+    )
+    return {'status': 'ok', 'payroll_pk': payroll_pk, 'created': created_filings}

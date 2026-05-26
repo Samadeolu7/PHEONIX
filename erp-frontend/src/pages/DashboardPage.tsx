@@ -82,17 +82,30 @@ const DashboardPage: React.FC = () => {
 
   const layouts = useMemo(
     () => ({
-      lg: contentWidgets.map((w: any) => ({
-        i: w.instanceKey,
-        x: Math.max(0, (w.layout.x ?? 0) - sidebarW),
-        y: w.layout.y ?? 0,
-        w: w.layout.w ?? 4,
-        h: w.layout.h ?? 4,
-        minW: w.layout.minW || 2,
-        minH: w.layout.minH || 2,
-        maxW: w.layout.maxW,
-        maxH: w.layout.maxH,
-      })),
+      lg: contentWidgets.map((w: any) => {
+        const minW = w.layout.minW || 2;
+        const minH = w.layout.minH || 2;
+        // Clamp w/h so they are never less than their minimums
+        const itemW = Math.max(minW, w.layout.w ?? 4);
+        const itemH = Math.max(minH, w.layout.h ?? 4);
+        const entry: Record<string, any> = {
+          i: w.instanceKey,
+          x: Math.max(0, (w.layout.x ?? 0) - sidebarW),
+          y: w.layout.y ?? 0,
+          w: itemW,
+          h: itemH,
+          minW,
+          minH,
+        };
+        // Only pass maxW/maxH when they are actual finite numbers
+        if (typeof w.layout.maxW === 'number' && isFinite(w.layout.maxW)) {
+          entry.maxW = w.layout.maxW;
+        }
+        if (typeof w.layout.maxH === 'number' && isFinite(w.layout.maxH)) {
+          entry.maxH = w.layout.maxH;
+        }
+        return entry;
+      }),
     }),
     [contentWidgets, sidebarW]
   );

@@ -264,6 +264,25 @@ class BankAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         blank=True,
         help_text="Additional notes"
     )
+
+    # ── Bank Feed (Java App 3 — phoenix-bankfeed-svc) ──────────────────────────
+    feed_connected = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text=(
+            'True when a live bank-feed consent is active for this account. '
+            'Set by the bank-feed Java service after successful consent link. '
+            'Displayed in the UI as "Live feed active" vs "Manual only".'
+        )
+    )
+    last_feed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Timestamp of the last successful bank-feed sync from the Java '
+            'reconciliation service. Used to detect stale feeds.'
+        )
+    )
     
     objects = OwnerBranchManager()
     
@@ -1875,4 +1894,118 @@ class ReconciliationException(TimeStampedModel):
         return (
             f"{self.reconciliation} — {self.exception_type} "
             f"(bank={self.bank_amount}, erp={self.erp_amount})"
+        )
+
+
+# ── Bank Feed Transactions (Java App 3 write-back) ─────────────────────────
+
+class BankFeedTransaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    A single bank transaction pulled from the client's bank via Java App 3
+    (BankFeedReconciliationService) and written back to Django.
+
+    Java App 3 calls POST /api/internal/banks/feed-transactions/bulk/ with
+    a batch of transactions after each nightly reconciliation cycle.  Django
+    stores them here and pre-populates the reconciliation screen.
+
+    Match lifecycle:
+        unmatched  → Java auto-matching tries to pair with an ERP transaction
+        matched    → Paired successfully; matched_transaction is set
+        exception  → Auto-matching failed; branch manager reviews manually
+        ignored    → Deliberately excluded from reconciliation
+    """
+    MATCH_STATUS_CHOICES = [
+        ('unmatched',  'Unmatched — awaiting auto-match'),
+        ('matched',    'Matched — paired with ERP transaction'),
+        ('exception',  'Exception — could not auto-match'),
+        ('ignored',    'Ignored — excluded from reconciliation'),
+    ]
+
+    # The BankFeedConsent this transaction came through
+    consent = models.ForeignKey(
+        BankFeedConsent,
+        on_delete=models.PROTECT,
+        related_name='feed_transactions',
+        help_text='BankFeedConsent record used to pull this transaction',
+    )
+
+    # The internal Phoenix bank account this reconciles against
+    bank_account = models.ForeignKey(
+        BankAccount,
+        on_delete=models.PROTECT,
+        related_name='feed_transactions',
+        help_text='Internal Phoenix BankAccount this transaction belongs to',
+    )
+
+    # Transaction details as received from the bank
+    transaction_date = models.DateField(db_index=True)
+    value_date       = models.DateField(null=True, blank=True)
+    amount           = models.DecimalField(max_digits=18, decimal_places=2)
+    transaction_type = models.CharField(
+        max_length=10,
+        choices=[('credit', 'Credit'), ('debit', 'Debit')],
+        db_index=True,
+    )
+    description      = models.TextField(blank=True)
+    bank_reference   = models.CharField(
+        max_length=100, blank=True, db_index=True,
+        help_text='Reference/ID assigned by the bank',
+    )
+    # UUID assigned by Java App 3 — stable across retries
+    java_transaction_id = models.UUIDField(
+        unique=True,
+        help_text='Stable UUID assigned by Java App 3 for idempotency',
+    )
+
+    # Match status
+    match_status = models.CharField(
+        max_length=15,
+        choices=MATCH_STATUS_CHOICES,
+        default='unmatched',
+        db_index=True,
+    )
+
+    # If matched, the ERP transaction this pairs with
+    matched_transaction = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='bank_feed_matches',
+        help_text='ERP Transaction (GL journal entry) this feed transaction was matched to',
+    )
+
+    # How confident Java was about the match (0.0–1.0)
+    confidence_score = models.DecimalField(
+        max_digits=4, decimal_places=3,
+        null=True, blank=True,
+        help_text='Auto-match confidence score from Java (0.000–1.000)',
+    )
+
+    # Manual review
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='reviewed_feed_transactions',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_notes = models.TextField(blank=True)
+
+    objects     = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-transaction_date', '-created_at']
+        indexes = [
+            models.Index(fields=['bank_account', 'match_status']),
+            models.Index(fields=['transaction_date', 'match_status']),
+            models.Index(fields=['java_transaction_id']),
+        ]
+        verbose_name        = 'Bank Feed Transaction'
+        verbose_name_plural = 'Bank Feed Transactions'
+
+    def __str__(self):
+        return (
+            f"{self.transaction_date} {self.transaction_type} ₦{self.amount} "
+            f"[{self.match_status}] ref={self.bank_reference}"
         )

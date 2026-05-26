@@ -129,6 +129,8 @@ class PayrollService:
         total_net = Decimal('0.00')
         total_employee_pension = Decimal('0.00')
         total_employer_pension = Decimal('0.00')
+        total_nhf   = Decimal('0.00')
+        total_nsitf = Decimal('0.00')
 
         for staff in staff_queryset:
             # Use a savepoint per staff member so that a failure for one employee
@@ -170,6 +172,8 @@ class PayrollService:
                 total_net            += payslip.net_pay
                 total_employee_pension += payslip.employee_pension
                 total_employer_pension += payslip.employer_pension
+                total_nhf            += payslip.nhf
+                total_nsitf          += payslip.nsitf
 
                 db_transaction.savepoint_commit(sid)
 
@@ -188,6 +192,8 @@ class PayrollService:
         self.payroll.total_net_pay         = total_net
         self.payroll.total_employee_pension = total_employee_pension
         self.payroll.total_employer_pension = total_employer_pension
+        self.payroll.total_nhf             = total_nhf
+        self.payroll.total_nsitf           = total_nsitf
         self.payroll.status = 'calculated'
         self.payroll.calculated_at = timezone.now()
         self.payroll.save()
@@ -330,6 +336,24 @@ class PayrollService:
             taxable_income, employee_pension=employee_pension
         )
 
+        # ── NHF — National Housing Fund (2.5% of basic salary, employee deduction) ──
+        # Statutory rate: 2.5% of basic salary, deducted from employee.
+        # NHF-exempt staff can be flagged with `is_nhf_exempt=True` on the Staff model;
+        # if that attribute doesn't exist we treat all staff as liable.
+        if getattr(staff, 'is_nhf_exempt', False):
+            nhf = Decimal('0.00')
+        else:
+            nhf = (basic_salary * Decimal('0.025')).quantize(
+                Decimal('0.01'), rounding=__import__('decimal').ROUND_HALF_UP
+            )
+
+        # ── NSITF — Nigeria Social Insurance Trust Fund (1% of total emolument, employer-paid) ──
+        # Statutory rate: 1% of total emolument (gross_pay), borne by employer.
+        # Stored on payslip for reporting but does NOT reduce employee net_pay.
+        nsitf = (gross_pay * Decimal('0.01')).quantize(
+            Decimal('0.01'), rounding=__import__('decimal').ROUND_HALF_UP
+        )
+
         # ── Development Levy (flat per-employee per Nigerian Tax Act 2024) ────
         dev_levy = config.calculate_development_levy()
         if dev_levy > Decimal('0.00'):
@@ -358,8 +382,10 @@ class PayrollService:
             deductions_dict['Staff IOU'] = float(existing + iou_total)
 
         # ── Total deductions ──────────────────────────────────────────────────
+        # NHF is a statutory employee deduction (reduces net pay).
+        # NSITF is an employer-only cost — NOT deducted from net pay.
         total_other_deductions = sum(Decimal(str(v)) for v in deductions_dict.values())
-        total_deductions = monthly_paye + employee_pension + total_other_deductions
+        total_deductions = monthly_paye + employee_pension + nhf + total_other_deductions
 
         # ── Net pay ───────────────────────────────────────────────────────────
         net_pay = gross_pay - total_deductions
@@ -382,6 +408,9 @@ class PayrollService:
             'deductions':             deductions_dict,
             'total_deductions':       total_deductions,
             'net_pay':                net_pay,
+            # Statutory (NHF = employee deduction; NSITF = employer cost, on-payslip only)
+            'nhf':                    nhf,
+            'nsitf':                  nsitf,
             # Attendance
             'days_worked':            attendance_summary['days_worked'],
             'days_absent':            attendance_summary['days_absent'],
@@ -511,6 +540,21 @@ class PayrollService:
         self.payroll.approved_at = timezone.now()
         self.payroll.approved_by = approved_by
         self.payroll.save()
+
+        # Notify App 2 (phoenix-compliance-svc) asynchronously.
+        # The task creates PayrollStatutoryFiling stubs that App 2 picks up
+        # via GET /api/internal/hr/statutory-filings/?status=pending.
+        # Import is deferred to avoid circular imports at module load time.
+        try:
+            from hr.tasks import notify_compliance_service
+            notify_compliance_service.delay(self.payroll.pk)
+        except Exception:
+            # If Celery broker is down, log and continue — don't block the
+            # human user's approval action.
+            logger.warning(
+                'approve_payroll: failed to enqueue notify_compliance_service '
+                'for payroll_pk=%s', self.payroll.pk, exc_info=True,
+            )
 
         return self.payroll
     

@@ -15,6 +15,14 @@ def validate_nin(value):
             'NIN must be exactly 11 digits (e.g. 12345678901).'
         )
 
+
+def validate_bvn(value):
+    """Bank Verification Number: exactly 11 digits (CBN standard)."""
+    if value and not re.fullmatch(r'\d{11}', str(value)):
+        raise ValidationError(
+            'BVN must be exactly 11 digits (e.g. 22345678901).'
+        )
+
 class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """
     Enhanced client model with comprehensive KYC and relationship tracking
@@ -134,6 +142,27 @@ class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     bank_account_name = models.CharField(max_length=200, blank=True, null=True)
     bank_account_number = models.CharField(max_length=50, blank=True, null=True)
     bank_verification_number = models.CharField(max_length=100, blank=True, null=True)
+
+    # BVN — strict 11-digit validated field (CBN Bank Verification Number)
+    bvn = models.CharField(
+        max_length=11,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        validators=[validate_bvn],
+        help_text='CBN Bank Verification Number (11 digits). Globally unique across all clients.',
+    )
+
+    # KYC verification tracking
+    kyc_verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='kyc_verifications_performed',
+        help_text="Staff member who verified this client's KYC documents.",
+    )
     
     # Marketing and Communication
     preferred_language = models.CharField(max_length=50, default='English')

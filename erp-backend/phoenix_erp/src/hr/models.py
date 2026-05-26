@@ -883,6 +883,26 @@ class Payroll(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     def __str__(self):
         return f"{self.reference_number} ({self.period_start} to {self.period_end})"
 
+    @property
+    def paye_filing_deadline(self):
+        """
+        PAYE remittance deadline: 10th of the month following ``period_end``.
+        Compliant with Nigeria Tax Act 2025 (NTA 2025, effective 1 Jan 2026).
+        Returns a ``datetime.date`` object.
+        """
+        from dateutil.relativedelta import relativedelta
+        return (self.period_end.replace(day=1) + relativedelta(months=1)).replace(day=10)
+
+    @property
+    def pension_filing_deadline(self):
+        """
+        Pension remittance deadline: 7th calendar day of the month following ``period_end``.
+        Compliant with Pension Reform Act 2014, s.11(5).
+        Returns a ``datetime.date`` object.
+        """
+        from dateutil.relativedelta import relativedelta
+        return (self.period_end.replace(day=1) + relativedelta(months=1)).replace(day=7)
+
 
 class Payslip(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """Individual payslip for a staff member"""
