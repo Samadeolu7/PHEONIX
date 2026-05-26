@@ -1,0 +1,27 @@
+{
+  "count": 4,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 1,
+      "name": "Information Technology",
+      "code": "IT"
+    },
+    {
+      "id": 2,
+      "name": "Human Resources",
+      "code": "HR"
+    },
+    {
+      "id": 3,
+      "name": "Finance",
+      "code": "FIN"
+    },
+    {
+      "id": 4,
+      "name": "Operations",
+      "code": "OPS"
+    }
+  ]
+}

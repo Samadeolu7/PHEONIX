@@ -1,0 +1,164 @@
+{% extends "pdf/base.html" %}
+
+{% block content %}
+<div class="goods-received-note">
+    <!-- GRN Header -->
+    <div class="grn-header-section">
+        <div class="grn-info-grid">
+            <div class="grn-info-left">
+                <div class="info-group">
+                    <label>GRN Number:</label>
+                    <strong>{{ grn_number }}</strong>
+                </div>
+                <div class="info-group">
+                    <label>Receipt Date:</label>
+                    <span>{{ receipt_date|date:"M d, Y" }}</span>
+                </div>
+                <div class="info-group">
+                    <label>PO Reference:</label>
+                    <span>{{ po_number }}</span>
+                </div>
+            </div>
+            <div class="grn-info-right">
+                <div class="info-group">
+                    <label>Status:</label>
+                    <span class="status-badge">{{ status }}</span>
+                </div>
+                <div class="info-group">
+                    <label>Received By:</label>
+                    <span>{{ received_by }}</span>
+                </div>
+                <div class="info-group">
+                    <label>Location:</label>
+                    <span>{{ received_location }}</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vendor Information -->
+    <div class="vendor-section">
+        <h3>VENDOR INFORMATION</h3>
+        <div class="vendor-details">
+            <p><strong>{{ vendor_name }}</strong></p>
+            {% if vendor_address %}
+            <p>{{ vendor_address|linebreaks }}</p>
+            {% endif %}
+            {% if po_date %}
+            <p>PO Date: {{ po_date|date:"M d, Y" }}</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Items Received -->
+    <div class="items-section">
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th class="col-item-number">ITEM #</th>
+                    <th class="col-description">DESCRIPTION</th>
+                    <th class="col-qty-ordered">QTY ORDERED</th>
+                    <th class="col-qty-received">QTY RECEIVED</th>
+                    <th class="col-qty-accepted">QTY ACCEPTED</th>
+                    <th class="col-qty-rejected">QTY REJECTED</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td class="col-item-number">
+                        {% if item.po_item.item %}
+                            {{ item.po_item.item.sku|default:item.po_item.item.item_code }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="col-description">
+                        {{ item.po_item.description }}
+                        {% if item.notes %}
+                        <br><span class="item-notes">{{ item.notes }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="col-qty-ordered text-right">
+                        {{ item.po_item.quantity|default:"-" }}
+                    </td>
+                    <td class="col-qty-received text-right">
+                        {{ item.quantity_received }}
+                    </td>
+                    <td class="col-qty-accepted text-right">
+                        {{ item.quantity_accepted }}
+                    </td>
+                    <td class="col-qty-rejected text-right">
+                        {{ item.quantity_rejected|default:"0" }}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center">No items received</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot>
+                <tr class="totals-row">
+                    <td colspan="2" class="text-right"><strong>TOTALS:</strong></td>
+                    <td class="text-right"><strong>{{ total_quantity_ordered }}</strong></td>
+                    <td class="text-right"><strong>{{ total_quantity_received }}</strong></td>
+                    <td class="text-right"><strong>{{ total_quantity_accepted }}</strong></td>
+                    <td class="text-right"><strong>{{ total_quantity_rejected }}</strong></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+
+    <!-- Inspection Notes -->
+    {% if inspection_notes or notes %}
+    <div class="notes-section">
+        <h4>Inspection Notes</h4>
+        <div class="notes-content">
+            {{ inspection_notes|default:notes|linebreaks }}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Signatures -->
+    <div class="signatures-section">
+        <div class="signature-grid">
+            <div class="signature-block">
+                <p class="signature-label">Received By:</p>
+                <p class="signature-name">{{ received_by_signature }}</p>
+                <div class="signature-line"></div>
+                <p class="signature-date">Date: {{ receipt_date|date:"M d, Y" }}</p>
+            </div>
+            
+            {% if inspected_by %}
+            <div class="signature-block">
+                <p class="signature-label">Inspected By:</p>
+                <p class="signature-name">{{ inspected_by }}</p>
+                <div class="signature-line"></div>
+                <p class="signature-date">Date: {{ receipt_date|date:"M d, Y" }}</p>
+            </div>
+            {% endif %}
+            
+            {% if approved_by %}
+            <div class="signature-block">
+                <p class="signature-label">Approved By:</p>
+                <p class="signature-name">{{ approved_by }}</p>
+                <div class="signature-line"></div>
+                <p class="signature-date">Date: {{ receipt_date|date:"M d, Y" }}</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block footer %}
+<div class="footer-info">
+    <p>This is a computer-generated goods received note &mdash; {{ company_name }}.</p>
+    {% if company_registration_number %}<p>RC No.: {{ company_registration_number }}{% if company_tax_number %} &nbsp;|&nbsp; TIN: {{ company_tax_number }}{% endif %}</p>{% endif %}
+    <p class="generated-at">Generated on {% now "F d, Y H:i" %}</p>
+</div>
+{% endblock %}
+
+{# GRNs are internal receiving documents; bank payment details are not shown. #}
+{% block bank_details %}{% endblock %}

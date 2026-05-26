@@ -1,0 +1,227 @@
+# loans/serializers.py
+from rest_framework import serializers
+from common.serializers import TenantModelSerializer
+from .models import (
+    LoanProduct, LoanAccount, LoanRepaymentSchedule,
+    LoanCollateral, LoanGuarantor,
+    LoanVerificationRequest, LoanDisbursement,
+)
+
+
+class LoanProductSerializer(TenantModelSerializer):
+    class Meta:
+        model = LoanProduct
+        fields = [
+            'id', 'product',
+            'min_loan_amount', 'max_loan_amount',
+            'min_term_months', 'max_term_months',
+            'default_interest_rate', 'interest_calculation_method',
+            'allowed_repayment_frequencies',
+            'processing_fee_type', 'processing_fee_amount', 'processing_fee_percentage',
+            'insurance_rate', 'insurance_income_account',
+            'late_payment_penalty_type', 'late_payment_penalty', 'grace_period_days',
+            'requires_collateral', 'requires_guarantor',
+            'is_active',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'owner', 'branch', 'created_at', 'updated_at']
+
+
+class LoanRepaymentScheduleSerializer(TenantModelSerializer):
+    class Meta:
+        model = LoanRepaymentSchedule
+        fields = [
+            'id', 'loan', 'installment_number', 'due_date',
+            'principal_due', 'interest_due', 'fees_due', 'total_due',
+            'principal_paid', 'interest_paid', 'fees_paid', 'total_paid',
+            'status', 'paid_date',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'loan', 'created_at', 'updated_at']
+
+
+class LoanCollateralSerializer(TenantModelSerializer):
+    class Meta:
+        model = LoanCollateral
+        fields = [
+            'id', 'loan', 'collateral_type', 'description',
+            'estimated_value', 'verified', 'verified_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'loan', 'verified_at', 'created_at', 'updated_at']
+
+
+class LoanGuarantorSerializer(TenantModelSerializer):
+    class Meta:
+        model = LoanGuarantor
+        fields = [
+            'id', 'loan', 'name', 'relationship', 'phone',
+            'occupation', 'home_address', 'office_address',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'loan', 'created_at', 'updated_at']
+
+
+class LoanAccountListSerializer(TenantModelSerializer):
+    """Lightweight list serializer."""
+    client_name = serializers.CharField(source='client.full_name', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+
+    class Meta:
+        model = LoanAccount
+        fields = [
+            'id', 'loan_number', 'client', 'client_name',
+            'product', 'product_name',
+            'disbursed_amount', 'outstanding_principal',
+            'processing_fee', 'insurance_amount',
+            'repayment_frequency', 'status', 'risk_classification',
+            'days_in_arrears', 'arrears_amount',
+            'application_date', 'disbursement_date', 'maturity_date',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class LoanAccountDetailSerializer(TenantModelSerializer):
+    """Full detail serializer including Java App 1 batch fields."""
+    client_name = serializers.CharField(source='client.full_name', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    total_outstanding = serializers.DecimalField(
+        max_digits=18, decimal_places=2, read_only=True
+    )
+    total_charges = serializers.DecimalField(
+        max_digits=18, decimal_places=2, read_only=True
+    )
+    charges_summary = serializers.SerializerMethodField()
+    repayment_schedule = LoanRepaymentScheduleSerializer(many=True, read_only=True)
+    collaterals = LoanCollateralSerializer(source='collateral', many=True, read_only=True)
+    guarantors = LoanGuarantorSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = LoanAccount
+        fields = [
+            'id', 'loan_number',
+            'client', 'client_name',
+            'product', 'product_name',
+            # Amounts
+            'requested_amount', 'approved_amount', 'disbursed_amount',
+            'interest_rate', 'processing_fee', 'insurance_amount',
+            'total_charges', 'charges_summary',
+            'term_months',
+            'repayment_frequency', 'installment_amount', 'number_of_installments',
+            # Status & dates
+            'status', 'application_date', 'application_notes',
+            'approval_date', 'approved_by',
+            'disbursement_date', 'first_payment_date', 'maturity_date', 'closed_date',
+            # Balances
+            'outstanding_principal', 'outstanding_interest',
+            'outstanding_fees', 'outstanding_penalties', 'total_outstanding',
+            # Payments
+            'total_paid', 'principal_paid', 'interest_paid', 'fees_paid', 'penalties_paid',
+            'installments_paid',
+            # Arrears & risk
+            'days_in_arrears', 'arrears_amount', 'risk_classification',
+            # Java App 1 hooks
+            'last_batch_processed_at', 'batch_accrual_posted',
+            # Related
+            'repayment_schedule', 'collaterals', 'guarantors',
+            'metadata',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'loan_number', 'client_name', 'product_name',
+            'total_outstanding', 'total_charges', 'charges_summary',
+            'repayment_schedule', 'collaterals', 'guarantors',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+
+    def get_charges_summary(self, obj):
+        return {
+            'processing_fee': str(obj.processing_fee),
+            'insurance_amount': str(obj.insurance_amount),
+            'total_charges': str(obj.total_charges),
+        }
+
+
+class LoanAccountCreateSerializer(TenantModelSerializer):
+    """Serializer for creating a new loan application."""
+
+    class Meta:
+        model = LoanAccount
+        fields = [
+            'client', 'product', 'account',
+            'requested_amount', 'term_months', 'repayment_frequency',
+            'application_date', 'application_notes',
+            'metadata',
+        ]
+        extra_kwargs = {
+            'client': {'required': True},
+            'product': {'required': True},
+            'account': {'required': True},
+            'requested_amount': {'required': True},
+            'term_months': {'required': True},
+        }
+
+    def validate(self, attrs):
+        product = attrs.get('product')
+        frequency = attrs.get('repayment_frequency')
+        if product and frequency:
+            allowed = product.allowed_repayment_frequencies or []
+            if allowed and frequency not in allowed:
+                raise serializers.ValidationError({
+                    'repayment_frequency': (
+                        f"'{frequency}' is not allowed for this loan product. "
+                        f"Allowed frequencies: {', '.join(allowed)}."
+                    )
+                })
+        return attrs
+
+
+class LoanVerificationRequestSerializer(TenantModelSerializer):
+    loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
+
+    class Meta:
+        model = LoanVerificationRequest
+        fields = [
+            'id', 'loan', 'loan_number', 'nin_used',
+            'active_loans_elsewhere', 'total_active_exposure',
+            'default_rate_pct', 'flags',
+            'recommended_amount', 'verdict', 'notes',
+            'reviewed_by', 'reviewed_at',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'loan', 'loan_number', 'nin_used',
+            'active_loans_elsewhere', 'total_active_exposure',
+            'default_rate_pct', 'flags',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+
+
+class LoanDisbursementSerializer(TenantModelSerializer):
+    loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
+    requested_by_name = serializers.CharField(
+        source='requested_by.get_full_name', read_only=True
+    )
+    approved_by_name = serializers.CharField(
+        source='approved_by.get_full_name', read_only=True
+    )
+
+    class Meta:
+        model = LoanDisbursement
+        fields = [
+            'id', 'loan', 'loan_number',
+            'requested_by', 'requested_by_name',
+            'status', 'requested_at',
+            'approved_by', 'approved_by_name', 'approved_at',
+            'rejection_reason',
+            'disbursement_account', 'disbursement_date', 'disbursed_by',
+            'notes',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'loan', 'loan_number', 'requested_at',
+            'approved_by', 'approved_by_name', 'approved_at',
+            'disbursed_by',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]

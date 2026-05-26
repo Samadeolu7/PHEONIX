@@ -1,0 +1,291 @@
+{% extends "pdf/base.html" %}
+
+{% block title %}Deposit Slip - {{ receipt_number }}{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .slip-badge {
+        display: inline-block;
+        background: {{ company_primary_color|default:"#0066cc" }};
+        color: #fff;
+        padding: 4px 14px;
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }
+
+    .receipt-header {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+    .receipt-number {
+        font-size: 14px;
+        font-weight: 700;
+        color: #333;
+        margin-top: 8px;
+    }
+
+    .info-grid {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        gap: 20px;
+    }
+
+    .info-box {
+        flex: 1;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 6px;
+        padding: 12px 14px;
+    }
+
+    .info-box-label {
+        font-size: 9px;
+        text-transform: uppercase;
+        color: #888;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+    }
+
+    .info-box-value {
+        font-size: 12px;
+        font-weight: 600;
+        color: #1a1a1a;
+    }
+
+    .amount-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0;
+    }
+
+    .amount-table th,
+    .amount-table td {
+        padding: 8px 12px;
+        text-align: left;
+        border-bottom: 1px solid #e9ecef;
+    }
+
+    .amount-table th {
+        background: #f1f3f5;
+        font-size: 10px;
+        text-transform: uppercase;
+        color: #666;
+        font-weight: 600;
+    }
+
+    .amount-table td {
+        font-size: 11px;
+    }
+
+    .amount-table .amount-value {
+        text-align: right;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .total-row {
+        background: {{ company_primary_color|default:"#0066cc" }}11;
+        border-top: 2px solid {{ company_primary_color|default:"#0066cc" }};
+    }
+
+    .total-row td {
+        font-weight: 700;
+        font-size: 13px;
+        color: {{ company_primary_color|default:"#0066cc" }};
+    }
+
+    .variance-row td {
+        color: #dc3545;
+        font-style: italic;
+    }
+
+    .posted-badge {
+        display: inline-block;
+        background: #28a745;
+        color: #fff;
+        padding: 2px 8px;
+        border-radius: 3px;
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .unposted-badge {
+        display: inline-block;
+        background: #ffc107;
+        color: #333;
+        padding: 2px 8px;
+        border-radius: 3px;
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .notes-section {
+        background: #fff8e1;
+        border: 1px solid #ffe082;
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 16px 0;
+    }
+
+    .notes-label {
+        font-size: 9px;
+        text-transform: uppercase;
+        color: #888;
+        margin-bottom: 4px;
+    }
+
+    .signature-section {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 40px;
+        gap: 40px;
+    }
+
+    .signature-block {
+        flex: 1;
+        text-align: center;
+    }
+
+    .signature-line {
+        border-top: 1px solid #333;
+        margin-top: 40px;
+        padding-top: 6px;
+        font-size: 10px;
+        color: #555;
+    }
+
+    .copy-notice {
+        text-align: center;
+        margin-top: 24px;
+        font-size: 9px;
+        color: #999;
+        font-style: italic;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="receipt-header">
+    <span class="slip-badge">{{ document_type }}</span>
+    <div class="receipt-number">{{ receipt_number }}</div>
+</div>
+
+<!-- Info Grid -->
+<div class="info-grid">
+    <div class="info-box">
+        <div class="info-box-label">Date</div>
+        <div class="info-box-value">{{ collection_date|date:"d M Y" }}</div>
+    </div>
+    <div class="info-box">
+        <div class="info-box-label">Client</div>
+        <div class="info-box-value">{{ client_name }}</div>
+    </div>
+    <div class="info-box">
+        <div class="info-box-label">Payment Mode</div>
+        <div class="info-box-value">{{ collection_mode }}</div>
+    </div>
+</div>
+
+<div class="info-grid">
+    <div class="info-box">
+        <div class="info-box-label">Cashier</div>
+        <div class="info-box-value">{{ cashier_name }}</div>
+    </div>
+    {% if receivable_reference %}
+    <div class="info-box">
+        <div class="info-box-label">Invoice / Reference</div>
+        <div class="info-box-value">{{ receivable_reference }}</div>
+    </div>
+    {% endif %}
+    {% if reference_number %}
+    <div class="info-box">
+        <div class="info-box-label">External Reference</div>
+        <div class="info-box-value">{{ reference_number }}</div>
+    </div>
+    {% endif %}
+</div>
+
+{% if payment_purpose %}
+<div class="info-grid">
+    <div class="info-box" style="flex: 1;">
+        <div class="info-box-label">Payment Purpose</div>
+        <div class="info-box-value">{{ payment_purpose }}</div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Amounts Table -->
+<table class="amount-table">
+    <thead>
+        <tr>
+            <th>Description</th>
+            <th style="text-align: right;">Amount</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>Amount Due</td>
+            <td class="amount-value">{{ amount_due|floatformat:2 }}</td>
+        </tr>
+        <tr class="total-row">
+            <td>Amount Collected</td>
+            <td class="amount-value">{{ amount_collected|floatformat:2 }}</td>
+        </tr>
+        {% if variance and variance != 0 %}
+        <tr class="variance-row">
+            <td>
+                Variance
+                {% if variance_action %}({{ variance_action }}){% endif %}
+            </td>
+            <td class="amount-value">{{ variance|floatformat:2 }}</td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+
+<!-- Posting Status -->
+<div style="margin: 12px 0; font-size: 10px;">
+    {% if is_posted %}
+        <span class="posted-badge">Posted</span>
+        {% if journal_entry_ref %}
+            <span style="color: #666; margin-left: 8px;">Journal: {{ journal_entry_ref }}</span>
+        {% endif %}
+        {% if posted_at %}
+            <span style="color: #888; margin-left: 8px;">
+                on {{ posted_at|date:"d M Y H:i" }}
+                {% if posted_by_name %} by {{ posted_by_name }}{% endif %}
+            </span>
+        {% endif %}
+    {% else %}
+        <span class="unposted-badge">Pending Posting</span>
+    {% endif %}
+</div>
+
+<!-- Notes -->
+{% if notes %}
+<div class="notes-section">
+    <div class="notes-label">Notes</div>
+    <div>{{ notes }}</div>
+</div>
+{% endif %}
+
+<!-- Signatures -->
+<div class="signature-section">
+    <div class="signature-block">
+        <div class="signature-line">Cashier Signature</div>
+    </div>
+    <div class="signature-block">
+        <div class="signature-line">Client Signature</div>
+    </div>
+</div>
+
+<div class="copy-notice">
+    This is a computer-generated deposit slip. Please retain for your records.
+</div>
+{% endblock %}

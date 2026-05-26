@@ -1,0 +1,1029 @@
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from drf_spectacular.utils import extend_schema, extend_schema_view
+from common.views import ScopedModelViewSet
+
+from .models import Account, Period, BalanceSheetSnapshot
+from .serializers import (
+    AccountSerializer, AccountCategorySerializer,
+    PeriodSerializer, BalanceSheetSnapshotSerializer
+)
+from .services import (
+    close_month, year_end_close, create_balance_snapshots,
+    reopen_period_and_invalidate, reclose_periods
+)
+
+
+
+from rest_framework import status
+from rest_framework.decorators import action
+from rest_framework import viewsets
+from rest_framework.response import Response
+from django.db import transaction
+from django.utils import timezone
+from decimal import Decimal
+
+from automations.models import FormSchema, WorkflowTemplate
+from pages.models import Module, ModulePage
+from accounts.models import Account, AccountCategory
+from products.models import Product
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="List accounts",
+        description="Get a list of all accounts accessible to the current user.",
+        responses={200: AccountSerializer(many=True)}
+    ),
+    create=extend_schema(
+        summary="Create account",
+        description="Create a new account with the given data.",
+        responses={201: AccountSerializer}
+    ),
+    retrieve=extend_schema(
+        summary="Get account details",
+        description="Retrieve details of a specific account.",
+        responses={200: AccountSerializer}
+    ),
+    update=extend_schema(
+        summary="Update account",
+        description="Update all fields of an existing account.",
+        responses={200: AccountSerializer}
+    ),
+    partial_update=extend_schema(
+        summary="Partially update account",
+        description="Update specific fields of an existing account.",
+        responses={200: AccountSerializer}
+    ),
+    destroy=extend_schema(
+        summary="Delete account",
+        description="Delete an existing account."
+    )
+)
+class AccountViewSet(ScopedModelViewSet):
+    """
+    ViewSet for managing accounts in the chart of accounts.
+    
+    Note: Pagination is disabled for accounts since users typically need
+    the complete chart of accounts for selection lists and reports.
+    """
+    permission_module = 'accounts'
+    permission_page = 'chart-of-accounts'
+    queryset = Account.objects.select_related('parent').all()
+    serializer_class = AccountSerializer
+    
+    def get_serializer_class(self):
+        """Use a lightweight serializer for read/list endpoints to avoid heavy lookups.
+
+        Writes (create/update/partial_update) keep using the full `AccountSerializer`.
+        """
+        # Use a local import to avoid circular imports at module import time
+        if self.action in ('list', 'retrieve', 'parents', 'parent_accounts', 'children_summary'):
+            from .serializers import AccountReadSerializer
+            return AccountReadSerializer
+        return AccountSerializer
+    filterset_fields = ['account_type', 'account_level']
+    search_fields = ['name', 'code']
+    ordering_fields = ['code', 'name', 'balance', 'created_at']
+    ordering = ['code']  # Default ordering by account code
+    pagination_class = None  # Disable pagination - return all accounts
+    
+    @action(detail=True, methods=['get'], url_path='children-summary')
+    def children_summary(self, request, pk=None):
+        """
+        Get summary of all child accounts for a parent account.
+        
+        GET /api/accounts/{id}/children-summary/
+        Returns: List of children with balances + aggregated totals
+        """
+        account = self.get_object()
+        
+        # Only parent accounts can have children
+        if account.account_level != Account.LEVEL_PARENT:
+            return Response({
+                'error': 'This endpoint is only for parent/category accounts'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get all child accounts — use all_objects.for_owner to avoid tenant-thread-local
+        # filtering differences between model reverse relations and request-scoped queries.
+        from .models import Account as AccountModel
+        # Ensure thread-local tenant matches request user for manager filtering
+        try:
+            from common.managers import set_current_tenant
+            if getattr(request.user, 'tenant', None) is not None:
+                set_current_tenant(request.user.tenant)
+        except Exception:
+            pass
+
+        # In the 4-digit FIRS scheme children are linked via FK (e.g. parent 1100 → children 1101, 1102 …).
+        # Use the parent FK relationship which is always correct.
+        try:
+            children = AccountModel.all_objects.filter(parent_id=account.id).order_by('code')
+        except Exception:
+            children = AccountModel.objects.none()
+        
+        # Calculate total balance
+        total_balance = sum(child.balance for child in children)
+        
+        # Serialize children
+        serializer = self.get_serializer(children, many=True)
+        
+        return Response({
+            'parent_account': {
+                'id': account.id,
+                'code': account.code,
+                'name': account.name,
+                'account_type': account.get_account_type_display(),
+            },
+            'children': serializer.data,
+            'summary': {
+                'total_children': children.count(),
+                'total_balance': total_balance,
+            }
+        }, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['get'], url_path='generated-components')
+    def get_generated_components(self, request, pk=None):
+        """
+        Get all auto-generated components for an account.
+        
+        GET /api/accounts/{id}/generated-components/
+        """
+        account = self.get_object()
+        
+        # Only child accounts have generated components
+        if account.account_level != Account.LEVEL_CHILD:
+            return Response({
+                'message': 'Parent accounts do not have auto-generated components'
+            }, status=status.HTTP_200_OK)
+        
+        try:
+            # Get generated components
+            form_schema = FormSchema.objects.filter(
+                trigger_event_name=f'transaction.{account.code.replace("-", "_").lower()}'
+            ).first()
+            
+            workflow = WorkflowTemplate.objects.filter(
+                name=f'Process {account.name} Transaction'
+            ).first()
+            
+            module_page = ModulePage.objects.filter(
+                code=f'{account.code.replace("-", "_").lower()}_transaction'
+            ).first()
+            
+            from reports.models import Report
+            report = Report.objects.filter(
+                name__icontains=account.name
+            ).first()
+            
+            report_page = ModulePage.objects.filter(
+                code=f'{account.code.replace("-", "_").lower()}_report',
+                page_type='report'
+            ).first()
+            
+            return Response({
+                'form_schema': {
+                    'id': form_schema.id,
+                    'name': form_schema.name,
+                } if form_schema else None,
+                'workflow': {
+                    'id': workflow.id,
+                    'name': workflow.name,
+                } if workflow else None,
+                'module_page': {
+                    'id': module_page.id,
+                    'url_path': module_page.url_path,
+                    'title': module_page.title,
+                } if module_page else None,
+                'report': {
+                    'id': report.id,
+                    'name': report.name,
+                    'code': report.code,
+                } if report else None,
+                'report_page': {
+                    'id': report_page.id,
+                    'url_path': report_page.url_path,
+                    'title': report_page.title,
+                } if report_page else None,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'], url_path='products')
+    def get_products(self, request):
+        """
+        Get available products for account types (SAVINGS, LOAN).
+        
+        GET /api/accounts/products/?product_type=SAVINGS
+        """
+        product_type = request.query_params.get('product_type')
+        
+        if not product_type:
+            return Response(
+                {'error': 'product_type query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            products = Product.objects.filter(
+                owner=request.user,
+                branch=request.user.branch,
+                product_type=product_type,
+                is_active=True
+            )
+            
+            from products.serializers import ProductSerializer
+            return Response({
+                'results': ProductSerializer(products, many=True).data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['get'], url_path='parents')
+    def parent_accounts(self, request):
+        """
+        List parent accounts (not classifications).
+
+        GET /api/accounts/parents/
+        Returns paginated list of accounts where `account_level` == `Account.LEVEL_PARENT`.
+        """
+        parents = self.filter_queryset(self.get_queryset().filter(account_level=Account.LEVEL_PARENT).order_by('code'))
+
+        page = self.paginate_queryset(parents)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(parents, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def _create_operational_account_with_product(self, account, account_type, specific_data, user):
+        """
+        Create operational account (SavingsAccount/LoanAccount) with product link.
+        Adapted from v2.py to ensure product configuration is applied.
+        """
+        
+        if account_type == 'SAVINGS':
+            return self._create_savings_account(account, specific_data, user)
+        
+        elif account_type == 'LOAN':
+            return self._create_loan_account(account, specific_data, user)
+        
+        elif account_type == 'INCOME':
+            # Income doesn't need operational account - just category link
+            return None
+        
+        elif account_type == 'LIABILITY':
+            # Liability accounts don't need operational account at creation
+            return None
+        
+        else:
+            return None
+    
+    def _create_savings_account(self, account, data, user):
+        """Create SavingsAccount with product integration"""
+        from savings.models import SavingsAccount
+        
+        # Get product (either provided or create default)
+        product_id = data.get('product_id')
+        if product_id:
+            product = Product.objects.get(id=product_id)
+        else:
+            product = self._get_or_create_savings_product(account, data, user)
+        
+        savings = SavingsAccount.objects.create(
+            owner=user,
+            branch=user.branch,
+            created_by=user,
+            account=account,
+            product=product,
+            account_number=account.code,
+            nickname=account.name,
+            opened_on=timezone.now().date(),
+            interest_rate=Decimal(data.get('interest_rate', product.interest_rate or 0)),
+            interest_calculation_method=data.get('interest_calculation_method', 'monthly'),
+            minimum_balance=Decimal(data.get('minimum_balance', product.minimum_amount or 0)),
+            allow_overdraft=data.get('allow_overdraft', False),
+            overdraft_limit=Decimal(data.get('overdraft_limit', 0)),
+            status='active'
+        )
+        
+        return savings
+    
+    def _create_loan_account(self, account, data, user):
+        """Create LoanAccount with product integration"""
+        from loans.models import LoanAccount
+        
+        # Get product (either provided or create default)
+        product_id = data.get('product_id')
+        if product_id:
+            from products.models import Product
+            product = Product.objects.get(id=product_id)
+            
+            # Get the LoanProduct detail
+            from loans.models import LoanProduct
+            loan_product = LoanProduct.objects.filter(product=product).first()
+            if not loan_product:
+                raise ValueError(f"Product {product.name} is not configured as a loan product")
+        else:
+            loan_product = self._get_or_create_loan_product(account, data, user)
+        
+        # Create loan account template (not disbursed yet)
+        loan = LoanAccount.objects.create(
+            owner=user,
+            branch=user.branch,
+            created_by=user,
+            account=account,
+            product=loan_product,
+            loan_number=account.code,
+            interest_rate=Decimal(data.get('interest_rate', loan_product.default_interest_rate or 0)),
+            term_months=int(data.get('term_months', loan_product.min_term_months or 12)),
+            repayment_frequency=data.get('repayment_frequency', 'monthly'),
+            status='template'  # Not a real loan yet
+        )
+        
+        return loan
+    
+    def _get_or_create_savings_product(self, account, data, user):
+        """Get or create default savings product"""
+        # Try to find existing product
+        product = Product.objects.filter(
+            branch=user.branch,
+            product_type=Product.SAVINGS,
+            is_active=True
+        ).first()
+        
+        if not product:
+            # Create default product
+            product = Product.objects.create(
+                owner=user,
+                branch=user.branch,
+                created_by=user,
+                name="Standard Savings",
+                code="SAV-STD",
+                product_class='FINANCIAL',
+                product_type=Product.SAVINGS,
+                interest_rate=Decimal(data.get('interest_rate', 5)),
+                minimum_amount=Decimal(data.get('minimum_balance', 0)),
+                is_active=True
+            )
+        
+        return product
+    
+    def _get_or_create_loan_product(self, account, data, user):
+        """Get or create default loan product"""
+        from loans.models import LoanProduct
+        
+        # Try to find existing loan product
+        loan_product = LoanProduct.objects.filter(
+            branch=user.branch,
+            product__is_active=True
+        ).first()
+        
+        if not loan_product:
+            # Create default product first
+            product = Product.objects.create(
+                owner=user,
+                branch=user.branch,
+                created_by=user,
+                name="Standard Loan",
+                code="LOAN-STD",
+                product_class='FINANCIAL',
+                product_type=Product.LOAN,
+                interest_rate=Decimal(data.get('interest_rate', 12)),
+                is_active=True
+            )
+            
+            # Create loan product detail
+            loan_product = LoanProduct.objects.create(
+                owner=user,
+                branch=user.branch,
+                created_by=user,
+                product=product,
+                parent_account=account.parent if account.parent else account,
+                interest_calculation_method=data.get('interest_calculation_method', 'reducing_balance'),
+                default_interest_rate=Decimal(data.get('interest_rate', 12)),
+                min_term_months=int(data.get('term_months', 12)),
+                max_term_months=60,
+                min_loan_amount=Decimal('1000.00'),
+                max_loan_amount=Decimal('1000000.00')
+            )
+        
+        return loan_product
+
+    @action(detail=False, methods=['post'], url_path='generate-components')
+    def generate_components(self, request):
+        """
+        Generate workflow, form schema, and module page for an account.
+        
+        POST /api/accounts/generate-components/
+        Body: {
+            "account_id": 123,
+            "contra_account_id": 456
+        }
+        """
+        account_id = request.data.get('account_id')
+        contra_account_id = request.data.get('contra_account_id')
+        
+        if not account_id:
+            return Response(
+                {'error': 'account_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Fetch account
+            account = Account.objects.get(id=account_id)
+            
+            # Check if this is a BANK account (report-only)
+            if account.account_type == 'BANK':
+                return self._generate_bank_components(account, request.user)
+            
+            # For other account types, require contra_account_id
+            if not contra_account_id:
+                return Response(
+                    {'error': 'contra_account_id is required for non-bank accounts'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            contra_account = Account.objects.get(id=contra_account_id)
+            
+            # Generate components in a transaction
+            with transaction.atomic():
+                # Step 1: Generate Form Schema
+                form_schema = self._generate_form_schema(account, contra_account, request.user)
+                
+                # Step 2: Generate Workflow Template
+                workflow = self._generate_workflow_template(
+                    account, 
+                    contra_account, 
+                    form_schema,
+                    request.user
+                )
+                
+                # Step 3: Generate Module Page
+                module_page = self._generate_module_page(
+                    account,
+                    form_schema,
+                    request.user
+                )
+            
+            # Return keys that match AccountSerializer helper fields
+            return Response({
+                'success': True,
+                'generated_workflow': {
+                    'id': workflow.id,
+                    'name': workflow.name,
+                } if workflow else None,
+                'generated_form_schema': {
+                    'id': form_schema.id,
+                    'name': form_schema.name,
+                } if form_schema else None,
+                'generated_page': {
+                    'id': module_page.id,
+                    'url_path': module_page.url_path,
+                    'title': module_page.title,
+                } if module_page else None,
+            }, status=status.HTTP_201_CREATED)
+            
+        except Account.DoesNotExist:
+            return Response(
+                {'error': 'Account not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _generate_form_schema(self, account: Account, contra_account: Account, user) -> FormSchema:
+        """
+        Generate form schema for account transactions.
+        
+        Creates a form with:
+        - Transaction date
+        - Amount
+        - Description
+        - Contra account (pre-filled)
+        """
+        # Determine if this is a debit or credit to the main account
+        is_debit = account.account_type in ['ASSET', 'EXPENSE']
+        
+        # Build form fields
+        fields = [
+            {
+                'id': 'transaction_date',
+                'name': 'transaction_date',
+                'label': 'Transaction Date',
+                'type': 'date',
+                'required': True,
+                'default': timezone.now().date().isoformat(),
+                'validation': {
+                    'required': True,
+                    'max': 'today',
+                },
+                'help': 'Date of the transaction'
+            },
+            {
+                'id': 'amount',
+                'name': 'amount',
+                'label': 'Amount',
+                'type': 'number',
+                'required': True,
+                'validation': {
+                    'required': True,
+                    'min': 0.01,
+                    'max': 999999999.99,
+                },
+                'help': f'Enter the {account.account_type.lower()} amount'
+            },
+            {
+                'id': 'description',
+                'name': 'description',
+                'label': 'Description',
+                'type': 'textarea',
+                'required': True,
+                'maxLength': 255,
+                'placeholder': f'Enter transaction description',
+                'help': 'Brief description of the transaction'
+            },
+            {
+                'id': 'contra_account_id',
+                'name': 'contra_account_id',
+                'label': 'Payment Account',
+                'type': 'select',
+                'required': True,
+                'default': str(contra_account.id),
+                'options': [
+                    {
+                        'value': str(contra_account.id),
+                        'label': f'{contra_account.code} - {contra_account.name}'
+                    }
+                ],
+                'help': 'Account for the other side of the transaction'
+            }
+        ]
+        
+        # Create form schema
+        form_schema = FormSchema.objects.create(
+            owner=user,
+            branch=account.branch,
+            created_by=user,
+            name=f'{account.name} Transaction',
+            description=f'Record {account.account_type.lower()} transactions for {account.name}',
+            trigger_event_name=f'transaction.{account.code.replace("-", "_").lower()}',
+            schema={
+                'title': f'{account.name} Transaction',
+                'description': f'Record a transaction for {account.name}',
+                'fields': fields,
+                'layout': {
+                    'type': 'sections',
+                    'sections': [
+                        {
+                            'id': 'transaction_details',
+                            'title': 'Transaction Details',
+                            'fields': ['transaction_date', 'amount', 'contra_account_id', 'description']
+                        }
+                    ]
+                }
+            }
+        )
+        
+        return form_schema
+    
+    def _generate_workflow_template(
+        self, 
+        account: Account, 
+        contra_account: Account, 
+        form_schema: FormSchema,
+        user
+    ) -> WorkflowTemplate:
+        """
+        Generate workflow template that processes form submissions.
+        
+        Workflow steps:
+        1. Validate form data
+        2. Create double-entry transaction
+        3. Send notification
+        """
+        # Determine debit/credit sides
+        if account.account_type in ['ASSET', 'EXPENSE']:
+            account_side = 'DR'
+            contra_side = 'CR'
+        else:  # LIABILITY, EQUITY, INCOME
+            account_side = 'CR'
+            contra_side = 'DR'
+        
+        # Build workflow steps
+        steps = [
+            # Step 1: Validation
+            {
+                'id': 'validate_input',
+                'name': 'Validate Transaction Data',
+                'type': 'condition',
+                'config': {
+                    'conditions': [
+                        {
+                            'field': 'form.amount',
+                            'operator': '>',
+                            'value': 0
+                        }
+                    ],
+                    'logic': 'AND'
+                },
+                'on_true': 'create_transaction',
+                'on_false': None  # End workflow with error
+            },
+            
+            # Step 2: Create Transaction
+            {
+                'id': 'create_transaction',
+                'name': 'Create Double-Entry Transaction',
+                'type': 'transaction',
+                'config': {
+                    'transaction_type': 'double_entry',
+                    'series_code': 'TXN',
+                    'date': '${form.transaction_date}',
+                    'description': '${form.description}',
+                    'entries': [
+                        {
+                            'account_id': account.id,
+                            'side': account_side,
+                            'amount': '${form.amount}'
+                        },
+                        {
+                            'account_id': '${form.contra_account_id}',
+                            'side': contra_side,
+                            'amount': '${form.amount}'
+                        }
+                    ]
+                },
+                'next': 'send_notification'
+            },
+            
+            # Step 3: Send Notification
+            {
+                'id': 'send_notification',
+                'name': 'Send Transaction Confirmation',
+                'type': 'notification',
+                'config': {
+                    'template_code': 'transaction_confirmation',
+                    'recipient_source': 'user',
+                    'channels': ['in_app'],
+                    'context_mapping': {
+                        'account_name': account.name,
+                        'amount': '${form.amount}',
+                        'transaction_ref': '${step_create_transaction.reference_number}',
+                        'new_balance': '${step_create_transaction.account_balance}',
+                        'description': '${form.description}'
+                    }
+                },
+                'next': None  # End of workflow
+            }
+        ]
+        
+        # Create workflow template
+        workflow = WorkflowTemplate.objects.create(
+            owner=user,
+            branch=account.branch,
+            created_by=user,
+            name=f'Process {account.name} Transaction',
+            description=f'Automatically process transactions for {account.name}',
+            trigger_type='event',
+            trigger_config={
+                'event_name': form_schema.trigger_event_name,
+                'filters': {}
+            },
+            workflow_definition={
+                'steps': steps,
+                'initial_step': 'validate_input',
+            },
+            workflow_type='template',
+            access_level='internal',
+            is_active=True,
+            requires_approval=False,
+            max_steps=10,
+            max_depth=2
+        )
+        
+        return workflow
+    
+    def _generate_module_page(
+        self,
+        account: Account,
+        form_schema: FormSchema,
+        user
+    ) -> ModulePage:
+        """
+        Generate module page that displays the form.
+        
+        Creates a page in the Accounts module.
+        """
+        # Get or create Accounts module
+        accounts_module, _ = Module.objects.get_or_create(
+            code='accounts',
+            owner=user,
+            branch=account.branch,
+            defaults={
+                'name': 'Accounts',
+                'description': 'Chart of Accounts Management',
+                'icon': 'book',
+                'color': '#2563eb',
+                'order': 1,
+                'is_active': True,
+                'created_by': user,
+            }
+        )
+        
+        # Create page
+        page_code = f'{account.code.replace("-", "_").lower()}_transaction'
+        
+        module_page = ModulePage.objects.create(
+            module=accounts_module,
+            owner=user,
+            branch=account.branch,
+            created_by=user,
+            code=page_code,
+            title=f'{account.name} Transaction',
+            description=f'Record transactions for {account.name}',
+            icon='file-text',
+            page_type='form',
+            page_config={
+                'form_schema_id': form_schema.id,
+                'submitEndpoint': '/api/form-submissions/',
+                'successUrl': f'/accounts/{account.id}',
+                'showBackButton': True,
+                'submitButtonText': 'Record Transaction'
+            },
+            show_in_menu=True,
+            order=100,
+            is_active=True
+        )
+        
+        # URL path is auto-generated in the model's save method
+        
+        return module_page
+
+    @action(detail=True, methods=['get'], url_path='generated-components')
+    def generated_components(self, request, pk=None):
+        """
+        Return any generated components (form schema, workflow, module page)
+        related to this account. This mirrors the AccountSerializer helper
+        fields and is useful for clients that want to check existence.
+        GET /api/accounts/{pk}/generated-components/
+        """
+        account = self.get_object()
+        try:
+            from automations.models import FormSchema, WorkflowTemplate
+            from pages.models import ModulePage
+
+            form = FormSchema.objects.filter(
+                trigger_event_name=f'transaction.{account.code.replace("-", "_").lower()}'
+            ).first()
+
+            workflow = WorkflowTemplate.objects.filter(
+                name__icontains=account.name,
+                workflow_type='template'
+            ).first()
+
+            page_code = f'{account.code.replace("-", "_").lower()}_transaction'
+            page = ModulePage.objects.filter(code=page_code).first()
+
+            return Response({
+                'generated_form_schema': {'id': form.id, 'name': form.name} if form else None,
+                'generated_workflow': {'id': workflow.id, 'name': workflow.name} if workflow else None,
+                'generated_page': {'id': page.id, 'url_path': page.url_path, 'title': page.title} if page else None,
+            })
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="List account classifications",
+        description="Get a list of all account classifications.",
+        responses={200: AccountCategorySerializer(many=True)}
+    ),
+    create=extend_schema(
+        summary="Create classification",
+        description="Create a new account classification.",
+        responses={201: AccountCategorySerializer}
+    ),
+    retrieve=extend_schema(
+        summary="Get classification details",
+        description="Retrieve details of a specific account classification.",
+        responses={200: AccountCategorySerializer}
+    ),
+    update=extend_schema(
+        summary="Update classification",
+        description="Update all fields of an existing account classification.",
+        responses={200: AccountCategorySerializer}
+    ),
+    partial_update=extend_schema(
+        summary="Partially update classification",
+        description="Update specific fields of an existing account classification.",
+        responses={200: AccountCategorySerializer}
+    ),
+    destroy=extend_schema(
+        summary="Delete classification",
+        description="Delete an existing account classification."
+    )
+)
+class AccountCategoryViewSet(ScopedModelViewSet):
+    """
+    ViewSet for managing account classifications.
+    Classifications help organize accounts into categories.
+    """
+    permission_module = 'accounts'
+    permission_page = 'account-categories'
+    queryset = AccountCategory.objects.all()
+    serializer_class = AccountCategorySerializer
+    ordering_fields = ['name']
+    ordering = ['name']
+
+    @action(detail=False, methods=['get'], url_path='deleted')
+    def deleted(self, request):
+        """List soft-deleted account categories for the current user/branch."""
+        qs = AccountCategory.all_objects.filter(owner=request.user, branch=request.user.branch, is_deleted=True).order_by('name')
+
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='restore')
+    def restore(self, request, pk=None):
+        """Restore a soft-deleted account category."""
+        obj = AccountCategory.all_objects.filter(pk=pk, owner=request.user, branch=request.user.branch).first()
+        if obj is None:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not getattr(obj, 'is_deleted', False):
+            return Response({'detail': 'Record is not deleted.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        obj.is_deleted = False
+        obj.save()
+        return Response(self.get_serializer(obj).data, status=status.HTTP_200_OK)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="List accounting periods",
+        description="Get a list of all accounting periods.",
+        responses={200: PeriodSerializer(many=True)}
+    ),
+    create=extend_schema(
+        summary="Create period",
+        description="Create a new accounting period.",
+        responses={201: PeriodSerializer}
+    ),
+    retrieve=extend_schema(
+        summary="Get period details",
+        description="Retrieve details of a specific accounting period.",
+        responses={200: PeriodSerializer}
+    ),
+    update=extend_schema(
+        summary="Update period",
+        description="Update all fields of an existing accounting period.",
+        responses={200: PeriodSerializer}
+    ),
+    partial_update=extend_schema(
+        summary="Partially update period",
+        description="Update specific fields of an existing accounting period.",
+        responses={200: PeriodSerializer}
+    ),
+    destroy=extend_schema(
+        summary="Delete period",
+        description="Delete an existing accounting period."
+    )
+)
+class PeriodViewSet(ScopedModelViewSet):
+    """
+    ViewSet for managing accounting periods.
+    Supports month-end and year-end closing operations.
+    """
+    permission_module = 'accounts'
+    permission_page = 'accounting-periods'
+    queryset = Period.objects.all()
+    serializer_class = PeriodSerializer
+    filterset_fields = ['period_type', 'year', 'month', 'is_closed']
+    ordering = ['-year', '-month']
+
+    @extend_schema(
+        summary="Close period",
+        description="""Close an accounting period (month or year).
+        This will:
+        1. Mark the period as closed
+        2. Create balance snapshots for all accounts
+        3. For year-end, handle retained earnings transfers""",
+        responses={200: {"type": "object", "properties": {"status": {"type": "string"}}}}
+    )
+    @action(detail=True, methods=['post'])
+    def close(self, request, pk=None):
+        period = self.get_object()
+        if period.period_type == Period.MONTH:
+            close_month(
+                owner=request.user,
+                branch=period.branch,
+                year=period.year,
+                month=period.month
+            )
+        else:
+            year_end_close(
+                owner=request.user,
+                branch=period.branch,
+                year=period.year
+            )
+        create_balance_snapshots(
+            owner=request.user,
+            branch=period.branch,
+            period_type=period.period_type,
+            year=period.year,
+            month=period.month if period.period_type == Period.MONTH else None
+        )
+        return Response({'status': 'period closed'})
+
+    @extend_schema(
+        summary="Reopen period",
+        description="""Reopen a closed accounting period.
+        This will:
+        1. Delete snapshots for this and all subsequent periods
+        2. Mark this and all subsequent periods as open
+        3. Return list of affected periods""",
+        responses={200: {"type": "object", "properties": {
+            "status": {"type": "string"},
+            "affected_periods": {"type": "array", "items": {"$ref": "#/components/schemas/Period"}}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def reopen(self, request, pk=None):
+        period = self.get_object()
+        affected = reopen_period_and_invalidate(
+            owner=request.user,
+            branch=period.branch,
+            period_type=period.period_type,
+            year=period.year,
+            month=period.month if period.period_type == Period.MONTH else None
+        )
+        return Response({
+            'status': 'period reopened',
+            'affected_periods': PeriodSerializer(affected, many=True).data
+        })
+
+    @extend_schema(
+        summary="Reclose period",
+        description="""Reclose a previously reopened period.
+        This will:
+        1. Re-close the period
+        2. Create new balance snapshots
+        3. If year-end, re-run the closing process""",
+        responses={200: {"type": "object", "properties": {"status": {"type": "string"}}}}
+    )
+    @action(detail=True, methods=['post'])
+    def reclose(self, request, pk=None):
+        period = self.get_object()
+        affected = Period.objects.filter(id=period.id)
+        reclose_periods(
+            owner=request.user,
+            branch=period.branch,
+            affected_periods=affected
+        )
+        return Response({'status': 'period reclosed'})
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="List snapshots",
+        description="Get a list of all balance sheet snapshots.",
+        responses={200: BalanceSheetSnapshotSerializer(many=True)}
+    ),
+    retrieve=extend_schema(
+        summary="Get snapshot details",
+        description="Retrieve details of a specific balance sheet snapshot.",
+        responses={200: BalanceSheetSnapshotSerializer}
+    )
+)
+class BalanceSheetSnapshotViewSet(ScopedModelViewSet):
+    """
+    ViewSet for viewing balance sheet snapshots.
+    Snapshots are created automatically during period closing.
+    They provide historical account balances for faster reporting.
+    """
+    permission_module = 'accounts'
+    permission_page = 'balance-sheet'
+    queryset = BalanceSheetSnapshot.objects.all()
+    serializer_class = BalanceSheetSnapshotSerializer
+    filterset_fields = ['period', 'account']
+    ordering = ['-period__year', '-period__month']
+    ordering_fields = ['name']
+    ordering = ['name']

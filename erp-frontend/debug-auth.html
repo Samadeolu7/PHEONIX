@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Debug Tool</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .warning { background-color: #fff3cd; border-color: #ffeaa7; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Auth Debug Tool</h1>
+    <p>This tool helps debug authentication and role selection issues.</p>
+
+    <div id="authStatus" class="section">
+        <h2>Authentication Status</h2>
+        <div id="authInfo">Loading...</div>
+    </div>
+
+    <div class="section">
+        <h2>Actions</h2>
+        <button onclick="checkAuth()">🔄 Refresh Auth Status</button>
+        <button onclick="clearStorage()">🗑️ Clear All Storage</button>
+        <button onclick="setMockAuth()">🎭 Set Mock Auth</button>
+        <button onclick="setRole('Director')">👑 Set Director Role</button>
+        <button onclick="setRole('Principal')">🏫 Set Principal Role</button>
+        <button onclick="setRole('Administrator')">⚙️ Set Administrator Role</button>
+        <button onclick="setRole('Registrar')">📝 Set Registrar Role</button>
+        <button onclick="setRole('Officer')">👤 Set Officer Role</button>
+    </div>
+
+    <div class="section">
+        <h2>Storage Contents</h2>
+        <h3>LocalStorage:</h3>
+        <pre id="localStorage"></pre>
+        <h3>SessionStorage:</h3>
+        <pre id="sessionStorage"></pre>
+    </div>
+
+    <div class="section">
+        <h2>Test Links</h2>
+        <p>Try these links after setting up auth:</p>
+        <ul>
+            <li><a href="/admin/roles-matrix" target="_blank">Roles Matrix (Director only)</a></li>
+            <li><a href="/admin/users" target="_blank">User Management</a></li>
+            <li><a href="/dashboard" target="_blank">Dashboard</a></li>
+            <li><a href="/demo/permissions" target="_blank">Permission Test Page</a></li>
+        </ul>
+    </div>
+
+    <script>
+        function checkAuth() {
+            const authInfo = document.getElementById('authInfo');
+            const authStatus = document.getElementById('authStatus');
+            
+            // Check tokens
+            const accessToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+            const refreshToken = localStorage.getItem('refreshToken') || sessionStorage.getItem('refreshToken');
+            const user = localStorage.getItem('user') || sessionStorage.getItem('user');
+            const selectedRole = localStorage.getItem('selectedRole');
+            const mockUser = localStorage.getItem('mock_auth_user_v1');
+            
+            let status = '';
+            let isAuthenticated = false;
+            let hasRole = false;
+            
+            // Check authentication
+            if (accessToken || mockUser) {
+                status += '✅ Authentication: AUTHENTICATED<br>';
+                isAuthenticated = true;
+            } else {
+                status += '❌ Authentication: NOT AUTHENTICATED<br>';
+            }
+            
+            // Check role selection
+            if (selectedRole) {
+                status += `✅ Role Selected: ${selectedRole}<br>`;
+                hasRole = true;
+            } else {
+                status += '❌ Role: NO ROLE SELECTED<br>';
+            }
+            
+            // Check user data
+            if (user || mockUser) {
+                try {
+                    const userData = JSON.parse(user || mockUser);
+                    status += `✅ User Data: ${userData.username || userData.email || 'Unknown'}<br>`;
+                } catch (e) {
+                    status += '⚠️ User Data: INVALID JSON<br>';
+                }
+            } else {
+                status += '❌ User Data: NO USER DATA<br>';
+            }
+            
+            // Overall status
+            if (isAuthenticated && hasRole) {
+                status = '🎉 READY TO ACCESS PROTECTED ROUTES<br><br>' + status;
+                authStatus.className = 'section success';
+            } else if (isAuthenticated && !hasRole) {
+                status = '⚠️ AUTHENTICATED BUT NO ROLE SELECTED<br><br>' + status;
+                authStatus.className = 'section warning';
+            } else {
+                status = '❌ NOT READY - NEED AUTHENTICATION AND ROLE<br><br>' + status;
+                authStatus.className = 'section error';
+            }
+            
+            authInfo.innerHTML = status;
+            updateStorageDisplay();
+        }
+        
+        function clearStorage() {
+            // Clear all auth-related storage
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
+            localStorage.removeItem('user');
+            localStorage.removeItem('selectedRole');
+            localStorage.removeItem('mock_auth_user_v1');
+            localStorage.removeItem('rememberMe');
+            localStorage.removeItem('savedCredentials');
+            
+            sessionStorage.removeItem('accessToken');
+            sessionStorage.removeItem('refreshToken');
+            sessionStorage.removeItem('user');
+            
+            alert('✅ All storage cleared! You can now start fresh.');
+            checkAuth();
+        }
+        
+        function setMockAuth() {
+            // Create a mock authenticated user
+            const mockUser = {
+                id: 1,
+                username: 'testuser',
+                email: 'test@example.com',
+                first_name: 'Test',
+                last_name: 'User',
+                tenant_id: 1,
+                tenant_name: 'Test Tenant',
+                is_owner: true,
+                is_staff: true,
+                is_system_admin: false,
+                is_active_user: true,
+                branch_id: null,
+                branch_name: null,
+                assigned_dashboard: null,
+                assigned_dashboard_id: null,
+                assigned_dashboard_slug: null,
+                roles: ['admin'],
+                permissions: []
+            };
+            
+            localStorage.setItem('mock_auth_user_v1', JSON.stringify(mockUser));
+            alert('✅ Mock authentication set! Now select a role.');
+            checkAuth();
+        }
+        
+        function setRole(role) {
+            localStorage.setItem('selectedRole', role);
+            
+            // Dispatch role change event
+            window.dispatchEvent(new CustomEvent('role:changed', { 
+                detail: { role: role } 
+            }));
+            
+            alert(`✅ Role set to: ${role}`);
+            checkAuth();
+        }
+        
+        function updateStorageDisplay() {
+            const localStorageDiv = document.getElementById('localStorage');
+            const sessionStorageDiv = document.getElementById('sessionStorage');
+            
+            // Display localStorage
+            const localItems = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key) {
+                    localItems[key] = localStorage.getItem(key);
+                }
+            }
+            localStorageDiv.textContent = JSON.stringify(localItems, null, 2);
+            
+            // Display sessionStorage
+            const sessionItems = {};
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const key = sessionStorage.key(i);
+                if (key) {
+                    sessionItems[key] = sessionStorage.getItem(key);
+                }
+            }
+            sessionStorageDiv.textContent = JSON.stringify(sessionItems, null, 2);
+        }
+        
+        // Initial check
+        checkAuth();
+        
+        // Auto-refresh every 5 seconds
+        setInterval(checkAuth, 5000);
+    </script>
+</body>
+</html>

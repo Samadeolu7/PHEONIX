@@ -1,0 +1,59 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Linting */
+    "strict": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    
+    /* Path mapping */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
+    /* Additional options */
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "src/**/*.d.ts",
+    "src/types/hr.ts",
+    "src/services/hrService.ts",
+    "src/services/staffService.ts",
+    "src/services/searchService.ts",
+    "src/services/salaryComponentService.ts",
+    "src/hooks/useSalaryComponents.ts",
+    "src/pages/hr/StaffListPage.tsx",
+    "src/pages/hr/StaffDetailPage.tsx",
+    "src/pages/hr/StaffFormPage.tsx",
+    "src/pages/hr/StaffPayComponentsPage.tsx",
+    "src/pages/hr/EmployeeDocumentsPage.tsx",
+    "src/pages/hr/LeaveBalancesListPage.tsx",
+    "src/pages/hr/ClockInOutPage.tsx",
+    "src/pages/hr/LeaveRequestsListPage.tsx",
+    "src/pages/hr/AttendanceListPage.tsx"
+  ],
+  "exclude": [
+    "src/**/__tests__/**",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/tests/**"
+  ],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}

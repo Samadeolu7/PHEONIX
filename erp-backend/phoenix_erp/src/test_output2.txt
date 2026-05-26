@@ -1,0 +1,272 @@
+﻿python : Using existing test database for alias 'default' ('test_phoenix_db')...
+At line:1 char:1
++ python manage.py test incomes.tests.test_discount_workflows -v 2 --ke ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Using existing ...phoenix_db')...:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+test_available_workflows_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_available_workflows_endpoint)
+Test available workflows listing ... ERROR
+test_create_discount_program (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_create_discount_program)
+Test creating discount program via API ... ERROR
+test_preview_impact_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_preview_impact_endpoint)
+Test discount preview endpoint ... ERROR
+test_validate_workflow_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_validate_workflow_endpoint)
+Test workflow validation endpoint ... ERROR
+test_invalid_workflow_rejected (incomes.tests.test_discount_workflows.TestDiscountProgramWorkflowValidation.test_invalid_workflow_rejected)
+Test that workflows with transaction steps are rejected ... FAIL
+test_valid_eligibility_workflow_attachment 
+(incomes.tests.test_discount_workflows.TestDiscountProgramWorkflowValidation.test_valid_eligibility_workflow_attachment)
+Test that valid workflows can be attached ... ok
+test_workflow_required_without_workflow 
+(incomes.tests.test_discount_workflows.TestDiscountProgramWorkflowValidation.test_workflow_required_without_workflow)
+Test that requiring workflow without setting one raises error ... ok
+test_get_discount_preview (incomes.tests.test_discount_workflows.TestDiscountWorkflowService.test_get_discount_preview)
+Test discount preview calculation ... ERROR
+test_validate_eligibility_with_workflow_success 
+(incomes.tests.test_discount_workflows.TestDiscountWorkflowService.test_validate_eligibility_with_workflow_success)
+Test successful workflow execution for eligibility ... INFO 2026-01-18 19:22:21,221 workflow_executor 20892 16200 Workflow 3 status set to: running
+INFO 2026-01-18 19:22:21,221 workflow_executor 20892 16200 Executing step 1/15 for workflow eligibility_check_20260118_0001
+INFO 2026-01-18 19:22:21,221 workflow_executor 20892 16200 Executing step check (type: calculate) for workflow eligibility_check_20260118_0001
+ERROR 2026-01-18 19:22:21,221 workflow_executor 20892 16200 Step check execution failed
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_executor.py", line 208, in execute_current_step
+    raise ValueError(f"No handler found for step type: {step_type}")
+ValueError: No handler found for step type: calculate
+ERROR 2026-01-18 19:22:21,221 discount_workflow_service 20892 16200 Eligibility workflow failed for MERIT-2026: No handler found for step type: 
+calculate
+ok
+test_workflow_step_validation (incomes.tests.test_discount_workflows.TestDiscountWorkflowService.test_workflow_step_validation)
+Test workflow step type validation ... ok
+test_basic_criteria_check (incomes.tests.test_discount_workflows.TestReceivablesServiceWorkflowIntegration.test_basic_criteria_check)
+Test basic criteria checking ... ok
+test_calculate_discounts_with_workflow 
+(incomes.tests.test_discount_workflows.TestReceivablesServiceWorkflowIntegration.test_calculate_discounts_with_workflow)
+Test discount calculation with workflow execution ... ERROR 2026-01-18 19:22:24,435 discount_workflow_service 20892 16200 Exception during 
+eligibility workflow execution for MERIT-2026
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\services\discount_workflow_service.py", line 78, in 
+validate_eligibility_with_workflow
+    workflow_run = WorkflowRun.objects.create(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\manager.py", line 87, in 
+manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\query.py", line 663, in create
+    obj.save(force_insert=True, using=self.db)
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\models.py", line 664, in save
+    super().save(*args, **kwargs)
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\base.py", line 902, in save
+    self.save_base(
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\base.py", line 1008, in save_base
+    updated = self._save_table(
+              ^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\base.py", line 1169, in _save_table
+    results = self._do_insert(
+              ^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\base.py", line 1210, in _do_insert
+    return manager._insert(
+           ^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\manager.py", line 87, in 
+manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\query.py", line 1868, in _insert
+    return query.get_compiler(using=using).execute_sql(returning_fields)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\sql\compiler.py", line 1882, in 
+execute_sql
+    cursor.execute(sql, params)
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\backends\utils.py", line 79, in execute
+    return self._execute_with_wrappers(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\backends\utils.py", line 92, in 
+_execute_with_wrappers
+    return executor(sql, params, many, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\backends\utils.py", line 105, in _execute
+    return self.cursor.execute(sql, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\cursor.py", line 93, in execute
+    self._conn.wait(
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\connection.py", line 453, in wait
+    return waiting.wait(gen, self.pgconn.socket, interval=interval)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\waiting.py", line 260, in wait_select
+    s = next(gen)
+        ^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\_cursor_base.py", line 194, in _execute_gen
+    pgq = self._convert_query(query, params)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\_cursor_base.py", line 453, in 
+_convert_query
+    pgq.convert(query, params)
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\_queries.py", line 268, in convert
+    self.dump(vars)
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\_queries.py", line 278, in dump
+    self.params = tuple(
+                  ^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\_queries.py", line 279, in <genexpr>
+    self._tx.as_literal(p) if p is not None else b"NULL" for p in params
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "psycopg_binary/_psycopg/transform.pyx", line 206, in psycopg_binary._psycopg.Transformer.as_literal
+  File "psycopg_binary/_psycopg/transform.pyx", line 215, in psycopg_binary._psycopg.Transformer.as_literal
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\adapt.py", line 59, in quote
+    if (value := self.dump(obj)) is None:
+                 ^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\psycopg\types\json.py", line 218, in dump
+    if isinstance((data := dumps(obj)), str):
+                           ^^^^^^^^^^
+  File "C:\Python312\Lib\json\__init__.py", line 231, in dumps
+    return _default_encoder.encode(obj)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\json\encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\json\encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Python312\Lib\json\encoder.py", line 180, in default
+    raise TypeError(f'Object of type {o.__class__.__name__} '
+TypeError: Object of type date is not JSON serializable
+ok
+test_workflow_run_creation (incomes.tests.test_discount_workflows.TestWorkflowExecutionIntegration.test_workflow_run_creation)
+Test that workflow runs are created during eligibility check ... INFO 2026-01-18 19:22:26,097 workflow_executor 20892 16200 Workflow 4 status set 
+to: running
+INFO 2026-01-18 19:22:26,097 workflow_executor 20892 16200 Executing step 1/15 for workflow test_workflow_20260118_0001
+INFO 2026-01-18 19:22:26,097 workflow_executor 20892 16200 Executing step check (type: query) for workflow test_workflow_20260118_0001
+ERROR 2026-01-18 19:22:26,097 workflow_executor 20892 16200 Step check execution failed
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_executor.py", line 211, in execute_current_step
+    result = handler.execute(step, self.run, self.context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_steps\query_step.py", line 34, in execute
+    model = self._get_model(entity)
+            ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_steps\query_step.py", line 93, in _get_model
+    raise ValueError(f"Model {model_name} not allowed in workflows")
+ValueError: Model None not allowed in workflows
+ERROR 2026-01-18 19:22:26,105 discount_workflow_service 20892 16200 Eligibility workflow failed for TEST-2026: Model None not allowed in workflows
+ok
+
+======================================================================
+ERROR: test_available_workflows_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_available_workflows_endpoint)
+Test available workflows listing
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 351, in setUp
+    self.user.owner = self.user
+    ^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\users\models.py", line 183, in owner
+    self.tenant = value
+    ^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\fields\related_descriptors.py", 
+line 291, in __set__
+    raise ValueError(
+ValueError: Cannot assign "<User: testuser (None)>": "User.tenant" must be a "Tenant" instance.
+
+======================================================================
+ERROR: test_create_discount_program (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_create_discount_program)
+Test creating discount program via API
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 351, in setUp
+    self.user.owner = self.user
+    ^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\users\models.py", line 183, in owner
+    self.tenant = value
+    ^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\fields\related_descriptors.py", 
+line 291, in __set__
+    raise ValueError(
+ValueError: Cannot assign "<User: testuser (None)>": "User.tenant" must be a "Tenant" instance.
+
+======================================================================
+ERROR: test_preview_impact_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_preview_impact_endpoint)
+Test discount preview endpoint
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 351, in setUp
+    self.user.owner = self.user
+    ^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\users\models.py", line 183, in owner
+    self.tenant = value
+    ^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\fields\related_descriptors.py", 
+line 291, in __set__
+    raise ValueError(
+ValueError: Cannot assign "<User: testuser (None)>": "User.tenant" must be a "Tenant" instance.
+
+======================================================================
+ERROR: test_validate_workflow_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_validate_workflow_endpoint)
+Test workflow validation endpoint
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 351, in setUp
+    self.user.owner = self.user
+    ^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\users\models.py", line 183, in owner
+    self.tenant = value
+    ^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\fields\related_descriptors.py", 
+line 291, in __set__
+    raise ValueError(
+ValueError: Cannot assign "<User: testuser (None)>": "User.tenant" must be a "Tenant" instance.
+
+======================================================================
+ERROR: test_get_discount_preview (incomes.tests.test_discount_workflows.TestDiscountWorkflowService.test_get_discount_preview)
+Test discount preview calculation
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 318, in 
+test_get_discount_preview
+    preview = DiscountWorkflowService.get_discount_preview(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\services\discount_workflow_service.py", line 196, in 
+get_discount_preview
+    academic_year=term.academic_year.name,
+                  ^^^^
+NameError: name 'term' is not defined
+
+======================================================================
+FAIL: test_invalid_workflow_rejected (incomes.tests.test_discount_workflows.TestDiscountProgramWorkflowValidation.test_invalid_workflow_rejected)
+Test that workflows with transaction steps are rejected
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 143, in 
+test_invalid_workflow_rejected
+    with self.assertRaises(ValidationError) as context:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValidationError not raised
+
+----------------------------------------------------------------------
+Ran 13 tests in 14.162s
+
+FAILED (failures=1, errors=5)
+Preserving test database for alias 'default' ('test_phoenix_db')...
+
+
+================================================
+  Phoenix ERP Configuration                     
+================================================
+  DEBUG: True                                    
+  Database: phoenix_db
+  Host: localhost
+  Allowed Hosts: localhost, 127.0.0.1...
+  Celery Broker: redis://localhost:6379/0...
+================================================
+
+Found 13 test(s).
+Operations to perform:
+  Synchronize unmigrated apps: core, corsheaders, django_extensions, django_filters, drf_spectacular, messages, phoenix, rest_framework, rest_framework_simplejwt, staticfiles
+  Apply all migrations: accounts, admin, assets, auth, authtoken, automations, branches, cash_management, clients, common, contenttypes, dashboards, django_celery_beat, expenses, hr, incomes, inventory, liabilities, loans, notifications, pages, procurement, products, queries, receivables, reports, savings, sessions, tickets, token_blacklist, transactions, users, widgets
+Synchronizing apps without migrations:
+  Creating tables...
+    Running deferred SQL...
+Running migrations:
+  No migrations to apply.
+  Your models in app(s): 'incomes' have changes that are not yet reflected in a migration, and so won't be applied.
+  Run 'manage.py makemigrations' to make new migrations, and then re-run 'manage.py migrate' to apply them.
+System check identified no issues (0 silenced).

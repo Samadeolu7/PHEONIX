@@ -1,0 +1,39 @@
+import { createBrowserRouter } from 'react-router-dom';
+import DashboardPage from '../pages/DashboardPage';
+import AccountDetailPage from '../pages/AccountsListPage';
+import DynamicModulePage from '../pages/DynamicModulePage';
+import WorkflowStatusPage from '../pages/WorkflowStatusPage';
+import AppLayout from '../components/layout/AppLayout'; // If you have it
+
+export const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <AppLayout />, // Or your root layout component
+    children: [
+      {
+        path: '/',
+        element: <DashboardPage />,
+      },
+
+      // Workflow status page
+      {
+        path: '/workflows/:workflowId',
+        element: <WorkflowStatusPage />,
+      },
+
+      // Account detail page
+      {
+        path: '/accounts/:accountId',
+        element: <AccountDetailPage />,
+      },
+
+      // Dynamic module pages (uses renderers)
+      {
+        path: '/:moduleCode/:pageCode',
+        element: <DynamicModulePage />,
+      },
+
+      // Add other routes...
+    ],
+  },
+]);

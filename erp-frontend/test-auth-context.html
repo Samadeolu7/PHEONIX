@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Auth Context</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .card { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        button { padding: 12px 20px; margin: 8px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; background: #007bff; color: white; }
+        pre { background: #f8f9fa; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Auth Context Test</h1>
+    
+    <div class="card">
+        <h2>Current Storage State</h2>
+        <pre id="storageState"></pre>
+    </div>
+    
+    <div class="card">
+        <h2>Actions</h2>
+        <button onclick="testDirectAccess()">🚀 Test Direct Access</button>
+        <button onclick="forceReload()">🔄 Force Reload</button>
+        <button onclick="clearAndLogin()">🔧 Clear & Re-login</button>
+    </div>
+    
+    <div class="card">
+        <h2>Console Output</h2>
+        <pre id="consoleOutput"></pre>
+    </div>
+
+    <script>
+        function updateStorageState() {
+            const storage = {
+                'localStorage.accessToken': localStorage.getItem('accessToken') ? 'PRESENT' : 'NOT FOUND',
+                'localStorage.user': localStorage.getItem('user') ? 'PRESENT' : 'NOT FOUND',
+                'localStorage.selectedRole': localStorage.getItem('selectedRole') || 'NOT FOUND',
+                'sessionStorage.accessToken': sessionStorage.getItem('accessToken') ? 'PRESENT' : 'NOT FOUND',
+                'sessionStorage.user': sessionStorage.getItem('user') ? 'PRESENT' : 'NOT FOUND',
+            };
+            
+            document.getElementById('storageState').textContent = JSON.stringify(storage, null, 2);
+        }
+        
+        function log(message) {
+            const output = document.getElementById('consoleOutput');
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            console.log(message);
+        }
+        
+        function testDirectAccess() {
+            log('🧪 Testing direct access to roles matrix...');
+            
+            // Check current state
+            const hasToken = !!(localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken'));
+            const hasUser = !!(localStorage.getItem('user') || sessionStorage.getItem('user'));
+            const hasRole = !!localStorage.getItem('selectedRole');
+            
+            log(`Has Token: ${hasToken}`);
+            log(`Has User: ${hasUser}`);
+            log(`Has Role: ${hasRole} (${localStorage.getItem('selectedRole')})`);
+            
+            if (hasToken && hasUser && hasRole) {
+                log('✅ All requirements met, attempting navigation...');
+                
+                // Force set everything one more time
+                localStorage.setItem('selectedRole', 'Director');
+                
+                // Dispatch events
+                window.dispatchEvent(new CustomEvent('auth:login'));
+                window.dispatchEvent(new CustomEvent('role:changed', { 
+                    detail: { role: 'Director' } 
+                }));
+                
+                // Navigate after a short delay
+                setTimeout(() => {
+                    log('🚀 Navigating to /admin/roles-matrix');
+                    window.location.href = '/admin/roles-matrix';
+                }, 1000);
+                
+            } else {
+                log('❌ Missing requirements for access');
+                if (!hasToken) log('  - Missing access token');
+                if (!hasUser) log('  - Missing user data');
+                if (!hasRole) log('  - Missing role selection');
+            }
+        }
+        
+        function forceReload() {
+            log('🔄 Force reloading page...');
+            localStorage.setItem('selectedRole', 'Director');
+            window.location.reload();
+        }
+        
+        function clearAndLogin() {
+            log('🔧 Clearing storage and redirecting to login...');
+            localStorage.clear();
+            sessionStorage.clear();
+            window.location.href = '/login';
+        }
+        
+        // Initial state
+        updateStorageState();
+        setInterval(updateStorageState, 2000);
+        
+        log('🧪 Auth Context Test loaded');
+        log('Ready to test authentication state');
+    </script>
+</body>
+</html>

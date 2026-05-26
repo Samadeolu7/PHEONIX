@@ -1,0 +1,120 @@
+/* Widget Styles */
+.widget-container {
+  position: absolute;
+  padding: 1rem;
+  background-color: var(--widget-bg-color, #ffffff);
+  border-radius: var(--widget-border-radius, 8px);
+  box-shadow: var(--widget-box-shadow, 0 2px 4px rgba(0,0,0,0.1));
+}
+
+/* KPI Widget */
+.kpi-widget {
+  text-align: center;
+}
+
+.kpi-widget-title {
+  margin: 0 0 1rem;
+  color: var(--text-primary-color, #2c3e50);
+  font-size: 1rem;
+}
+
+.kpi-widget-value {
+  font-size: 2rem;
+  font-weight: bold;
+  color: var(--text-primary-color, #2c3e50);
+}
+
+.kpi-widget-comparison {
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+/* Chart Widget */
+.chart-widget {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-title {
+  margin: 0 0 1rem;
+  color: var(--text-primary-color, #2c3e50);
+  font-size: 1rem;
+}
+
+.chart-container {
+  flex: 1;
+  min-height: 300px;
+}
+
+/* Table Widget */
+.table-widget {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-title {
+  margin: 0 0 1rem;
+  color: var(--text-primary-color, #2c3e50);
+  font-size: 1rem;
+}
+
+.table-container {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.table-widget table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table-widget th,
+.table-widget td {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  text-align: left;
+}
+
+.table-widget th {
+  background-color: var(--table-header-bg, #f8fafc);
+  font-weight: 600;
+}
+
+.table-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 0;
+}
+
+.table-pagination button {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 4px;
+  background-color: var(--button-bg, #ffffff);
+  cursor: pointer;
+}
+
+.table-pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Text Widget */
+.text-widget {
+  height: 100%;
+}
+
+.text-widget-title {
+  margin: 0 0 1rem;
+  color: var(--text-primary-color, #2c3e50);
+  font-size: 1rem;
+}
+
+.text-widget-content {
+  color: var(--text-secondary-color, #4a5568);
+  line-height: 1.5;
+}

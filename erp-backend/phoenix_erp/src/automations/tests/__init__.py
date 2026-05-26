@@ -1,0 +1,3 @@
+"""
+Automations app tests
+"""

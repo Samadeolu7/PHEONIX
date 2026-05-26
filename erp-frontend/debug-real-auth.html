@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real Authentication Debug</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .container { max-width: 900px; margin: 0 auto; }
+        .card { background: white; padding: 20px; margin: 15px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .success { background-color: #d4edda; border-left: 4px solid #28a745; }
+        .error { background-color: #f8d7da; border-left: 4px solid #dc3545; }
+        .warning { background-color: #fff3cd; border-left: 4px solid #ffc107; }
+        button { padding: 12px 20px; margin: 8px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        pre { background: #f8f9fa; padding: 15px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+        .test-result { margin: 10px 0; padding: 10px; border-radius: 4px; }
+        .test-pass { background: #d4edda; color: #155724; }
+        .test-fail { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Real Authentication Debug</h1>
+        <p>Debugging real authentication (not mock) for Director access.</p>
+
+        <div id="authStatus" class="card success">
+            <h2>🔐 Real Authentication Status</h2>
+            <div class="test-result test-pass">✅ <strong>READY FOR DIRECTOR ACCESS</strong></div>
+            <div class="test-result test-pass">✅ <strong>Access Token:</strong> PRESENT (eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...)</div>
+            <div class="test-result test-pass">✅ <strong>User Data:</strong> PRESENT (samuel)</div>
+            <div class="test-result test-pass">✅ <strong>Selected Role:</strong> Director</div>
+            <div class="test-result test-pass">✅ <strong>Director Access:</strong> YES</div>
+        </div>
+
+        <div class="card">
+            <h2>🚀 Actions</h2>
+            <button class="btn-primary" onclick="checkRealAuth()">🔄 Check Real Auth</button>
+            <button class="btn-success" onclick="fixRealAuth()">✅ Fix Real Auth</button>
+            <button class="btn-primary" onclick="testRolesMatrix()">🧪 Test Roles Matrix</button>
+            <button class="btn-danger" onclick="forceNavigate()">🚀 Force Navigate</button>
+        </div>
+
+        <div class="card">
+            <h2>📊 Current Storage State</h2>
+            <pre id="storageState">{
+  "sessionStorage.accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "sessionStorage.refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "sessionStorage.user": "{\"id\":1,\"username\":\"samuel\",\"email\":\"samuel@gmail.com\",\"first_name\":\"\",\"last_name\":\"\",\"tenant_id\":1,\"tenant_name\":\"samuel\",\"is_owner\":true,\"is_staff\":true,\"is_system_admin\":false,\"is_active_user\":true,\"branch_id\":null,\"branch_name\":null,\"assigned_dashboard\":null,\"assigned_dashboard_id\":null,\"assigned_dashboard_slug\":null,\"roles\":[],\"permissions\":[]}",
+  "localStorage.selectedRole": "Director"
+}</pre>
+        </div>
+
+        <div class="card">
+            <h2>🔧 Manual Fix Instructions</h2>
+            <p>If the automatic fix doesn't work, run this in your browser console:</p>
+            <pre id="manualFix">// Force set authentication state
+localStorage.setItem('selectedRole', 'Director');
+
+// Check if using mock auth
+const useMock = import.meta?.env?.VITE_USE_MOCK_AUTH === 'true';
+console.log('Using mock auth:', useMock);
+
+// If using real auth, ensure tokens are present
+if (!useMock) {
+    const token = sessionStorage.getItem('accessToken') || localStorage.getItem('accessToken');
+    const user = sessionStorage.getItem('user') || localStorage.getItem('user');
+    console.log('Token present:', !!token);
+    console.log('User present:', !!user);
+    
+    if (!token || !user) {
+        console.log('❌ Missing real auth data - need to login properly');
+    }
+}
+
+// Force reload the app
+window.location.reload();</pre>
+        </div>
+
+        <div class="card">
+            <h2>🎯 Direct Test Links</h2>
+            <p>Try these after running the fix:</p>
+            <div>
+                <a href="/admin/roles-matrix" target="_blank" style="display: inline-block; margin: 5px; padding: 10px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">📊 Roles Matrix</a>
+                <a href="/dashboard" target="_blank" style="display: inline-block; margin: 5px; padding: 10px 15px; background: #28a745; color: white; text-decoration: none; border-radius: 4px;">📈 Dashboard</a>
+                <a href="/demo/permissions" target="_blank" style="display: inline-block; margin: 5px; padding: 10px 15px; background: #17a2b8; color: white; text-decoration: none; border-radius: 4px;">🧪 Permission Test</a>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🐛 Debugging Steps</h2>
+            <ol>
+                <li><strong>Check Environment:</strong> Verify if app is using mock or real authentication</li>
+                <li><strong>Verify Tokens:</strong> Ensure access tokens are in the correct storage location</li>
+                <li><strong>Check Role Service:</strong> Verify role selection is properly stored and retrieved</li>
+                <li><strong>Test Auth Context:</strong> Check if React AuthContext is reading the auth state correctly</li>
+                <li><strong>Force Reload:</strong> Sometimes the React context needs a refresh to pick up changes</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        function checkRealAuth() {
+            console.log('🔍 Checking real authentication state...');
+            
+            // Check environment
+            const useMock = window.location.search.includes('mock=true') || 
+                           localStorage.getItem('VITE_USE_MOCK_AUTH') === 'true';
+            console.log('Using mock auth:', useMock);
+            
+            // Check tokens
+            const accessToken = sessionStorage.getItem('accessToken') || localStorage.getItem('accessToken');
+            const refreshToken = sessionStorage.getItem('refreshToken') || localStorage.getItem('refreshToken');
+            const user = sessionStorage.getItem('user') || localStorage.getItem('user');
+            const selectedRole = localStorage.getItem('selectedRole');
+            
+            console.log('Access token:', accessToken ? 'PRESENT' : 'MISSING');
+            console.log('Refresh token:', refreshToken ? 'PRESENT' : 'MISSING');
+            console.log('User data:', user ? 'PRESENT' : 'MISSING');
+            console.log('Selected role:', selectedRole || 'MISSING');
+            
+            if (user) {
+                try {
+                    const userData = JSON.parse(user);
+                    console.log('User details:', userData);
+                } catch (e) {
+                    console.error('Invalid user JSON:', e);
+                }
+            }
+            
+            updateStorageDisplay();
+        }
+        
+        function fixRealAuth() {
+            console.log('🔧 Fixing real authentication...');
+            
+            // Ensure Director role is set
+            localStorage.setItem('selectedRole', 'Director');
+            
+            // Check if we have real auth tokens
+            const accessToken = sessionStorage.getItem('accessToken') || localStorage.getItem('accessToken');
+            const user = sessionStorage.getItem('user') || localStorage.getItem('user');
+            
+            if (!accessToken || !user) {
+                alert('❌ Missing real authentication tokens. Please login first through the normal login page.');
+                window.location.href = '/login';
+                return;
+            }
+            
+            // Dispatch events to notify React app
+            window.dispatchEvent(new CustomEvent('auth:login'));
+            window.dispatchEvent(new CustomEvent('role:changed', { 
+                detail: { role: 'Director' } 
+            }));
+            
+            // Force storage event (for same-tab updates)
+            window.dispatchEvent(new StorageEvent('storage', {
+                key: 'selectedRole',
+                newValue: 'Director',
+                storageArea: localStorage
+            }));
+            
+            console.log('✅ Real authentication fixed');
+            alert('✅ Authentication state updated. The page will reload.');
+            
+            // Force reload to ensure React picks up the changes
+            setTimeout(() => {
+                window.location.reload();
+            }, 1000);
+        }
+        
+        function testRolesMatrix() {
+            console.log('🧪 Testing roles matrix access...');
+            
+            // Check auth state first
+            const accessToken = sessionStorage.getItem('accessToken') || localStorage.getItem('accessToken');
+            const selectedRole = localStorage.getItem('selectedRole');
+            
+            if (!accessToken) {
+                alert('❌ No access token found. Please login first.');
+                return;
+            }
+            
+            if (selectedRole !== 'Director') {
+                alert('❌ Role is not Director. Current role: ' + (selectedRole || 'None'));
+                return;
+            }
+            
+            console.log('✅ Auth state looks good, attempting navigation...');
+            
+            // Try to navigate
+            window.location.href = '/admin/roles-matrix';
+        }
+        
+        function forceNavigate() {
+            console.log('🚀 Force navigating to roles matrix...');
+            
+            // Set everything we need
+            localStorage.setItem('selectedRole', 'Director');
+            
+            // Dispatch all possible events
+            window.dispatchEvent(new CustomEvent('auth:login'));
+            window.dispatchEvent(new CustomEvent('role:changed', { detail: { role: 'Director' } }));
+            window.dispatchEvent(new StorageEvent('storage', {
+                key: 'selectedRole',
+                newValue: 'Director',
+                storageArea: localStorage
+            }));
+            
+            // Navigate immediately
+            window.location.href = '/admin/roles-matrix';
+        }
+        
+        function updateStorageDisplay() {
+            const storage = {
+                'sessionStorage.accessToken': sessionStorage.getItem('accessToken') || 'NOT FOUND',
+                'sessionStorage.refreshToken': sessionStorage.getItem('refreshToken') || 'NOT FOUND',
+                'sessionStorage.user': sessionStorage.getItem('user') || 'NOT FOUND',
+                'localStorage.accessToken': localStorage.getItem('accessToken') || 'NOT FOUND',
+                'localStorage.refreshToken': localStorage.getItem('refreshToken') || 'NOT FOUND',
+                'localStorage.user': localStorage.getItem('user') || 'NOT FOUND',
+                'localStorage.selectedRole': localStorage.getItem('selectedRole') || 'NOT FOUND',
+                'localStorage.rememberMe': localStorage.getItem('rememberMe') || 'NOT FOUND'
+            };
+            
+            document.getElementById('storageState').textContent = JSON.stringify(storage, null, 2);
+        }
+        
+        // Initial check
+        checkRealAuth();
+        
+        // Update display every 5 seconds
+        setInterval(updateStorageDisplay, 5000);
+    </script>
+</body>
+</html>

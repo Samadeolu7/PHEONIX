@@ -1,0 +1,61 @@
+/* ActionButtonsSection.css */
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.action-button-spinner {
+  animation: spin 1s linear infinite;
+}
+
+/* Focus styles for accessibility */
+.action-button:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.action-button:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.action-button:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Hover effects that work with inline styles */
+.action-button-secondary:hover:not(:disabled) {
+  border-color: #9ca3af !important;
+  background-color: #f9fafb !important;
+}
+
+.action-button-primary:hover:not(:disabled) {
+  background-color: #2563eb !important;
+}
+
+.action-button-accent:hover:not(:disabled) {
+  background-color: #059669 !important;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .action-button {
+    border-width: 2px;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .action-button-spinner {
+    animation: none;
+  }
+  
+  .action-button {
+    transition: none;
+  }
+}

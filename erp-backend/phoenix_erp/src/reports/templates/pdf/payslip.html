@@ -1,0 +1,554 @@
+{% extends "pdf/base.html" %}
+
+{% block title %}Payslip – {{ staff_name }} – {{ period_label }}{% endblock %}
+
+{% block bank_details %}{% endblock %}{# Payslips don't show bank payment instructions #}
+
+{% block extra_css %}
+/* ══════════════════════════════════════════════════════════════════════════
+   PAYSLIP SPECIFIC STYLES
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+    --brand:      {{ company_primary_color|default:"#1a4e8a" }};
+    --brand-light:{{ company_primary_color|default:"#1a4e8a" }}22;
+    --accent:     #e8f0fc;
+    --text-dark:  #1a1a1a;
+    --text-mid:   #444;
+    --text-light: #777;
+    --border:     #d0d9e8;
+    --green:      #2e7d32;
+    --green-bg:   #e8f5e9;
+    --red:        #c62828;
+    --red-bg:     #ffebee;
+    --net-bg:     #1a4e8a;
+    --divider:    #b0bec5;
+    --net-blue:   #0f3460;
+}
+
+/* ── Override base header for payslip ── */
+.document-header {
+    border-bottom: 3px solid var(--brand);
+    margin-bottom: 0;
+    padding-bottom: 14px;
+}
+.company-name { font-size: 17px; }
+.document-type h2 {
+    color: #fff;
+    background: var(--brand);
+    font-size: 18px;
+    letter-spacing: 2px;
+    font-weight: 900;
+    padding: 6px 18px;
+    display: inline-block;
+    border-radius: 3px;
+}
+
+/* ── Payslip meta bar ── */
+.payslip-meta {
+    display: flex;
+    justify-content: space-between;
+    background: var(--accent);
+    border: 1px solid var(--border);
+    border-top: none;
+    padding: 8px 16px;
+    font-size: 10.5px;
+    margin-bottom: 14px;
+    color: var(--text-mid);
+}
+.payslip-meta .meta-item { display: flex; flex-direction: column; }
+.payslip-meta .meta-label { font-size: 9px; text-transform: uppercase; color: var(--text-light); letter-spacing: 0.5px; }
+.payslip-meta .meta-value { font-weight: 700; color: var(--text-dark); font-size: 11px; margin-top: 1px; }
+
+/* ── Employee info card ── */
+.employee-card {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 14px;
+    overflow: hidden;
+}
+.employee-card .left-band {
+    background: var(--brand);
+    width: 6px;
+    flex-shrink: 0;
+}
+.employee-card .employee-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    flex: 1;
+    padding: 10px 14px;
+}
+.employee-card .field-item {
+    flex: 1 1 160px;
+    margin-bottom: 6px;
+    padding-right: 16px;
+}
+.employee-card .field-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-light);
+    display: block;
+}
+.employee-card .field-value {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text-dark);
+}
+
+/* ── Two-column earnings / deductions layout ── */
+.pay-columns {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 14px;
+    align-items: flex-start;
+}
+.pay-col { flex: 1; min-width: 0; }
+
+/* ── Section header ── */
+.section-header {
+    display: flex;
+    align-items: center;
+    background: var(--brand);
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 3px 3px 0 0;
+}
+.section-header .header-amount { margin-left: auto; }
+
+/* ── Pay rows ── */
+.pay-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-top: none;
+}
+.pay-table tr { border-bottom: 1px solid #ecf0f1; }
+.pay-table tr:last-child { border-bottom: none; }
+.pay-table td { padding: 5px 10px; color: var(--text-dark); }
+.pay-table .label-col { width: 65%; }
+.pay-table .amount-col { text-align: right; font-family: "Courier New", monospace; font-size: 11px; }
+
+/* Taxable badge */
+.tag-taxable {
+    display: inline-block;
+    font-size: 8px;
+    background: #fff3e0;
+    color: #e65100;
+    border: 1px solid #ffb74d;
+    border-radius: 2px;
+    padding: 0 4px;
+    margin-left: 5px;
+    vertical-align: middle;
+    line-height: 14px;
+}
+.tag-non-taxable {
+    display: inline-block;
+    font-size: 8px;
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #81c784;
+    border-radius: 2px;
+    padding: 0 4px;
+    margin-left: 5px;
+    vertical-align: middle;
+    line-height: 14px;
+}
+
+/* Subtotal row */
+.pay-table .subtotal-row td {
+    background: #f5f8ff;
+    font-weight: 700;
+    border-top: 2px solid var(--border);
+}
+
+/* ── Net pay banner ── */
+.net-pay-banner {
+    background: var(--net-blue);
+    color: #fff;
+    border-radius: 5px;
+    padding: 14px 22px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    box-shadow: 0 2px 6px rgba(15,52,96,0.25);
+}
+.net-pay-banner .npl { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; }
+.net-pay-banner .npa { font-size: 26px; font-weight: 900; font-family: "Courier New", monospace; }
+.net-pay-words {
+    text-align: center;
+    font-size: 10.5px;
+    color: var(--text-mid);
+    font-style: italic;
+    margin-bottom: 14px;
+    padding: 6px;
+    border: 1px dashed var(--divider);
+    border-radius: 3px;
+}
+
+/* ── PAYE breakdown ── */
+.paye-section {
+    border: 1px solid #fff3e0;
+    border-radius: 4px;
+    margin-bottom: 14px;
+    overflow: hidden;
+}
+.paye-section-header {
+    background: #fff3e0;
+    border-bottom: 1px solid #ffe0b2;
+    padding: 6px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #e65100;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    justify-content: space-between;
+}
+.paye-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5px;
+}
+.paye-table th {
+    background: #fff8e1;
+    padding: 4px 8px;
+    text-align: left;
+    color: #795548;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 8.5px;
+}
+.paye-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #fff3e0;
+    color: var(--text-dark);
+}
+.paye-table .num { text-align: right; font-family: "Courier New", monospace; }
+.paye-table .zero { color: var(--text-light); }
+.paye-table .total-row td { background: #fff3e0; font-weight: 700; }
+
+/* ── Pension table ── */
+.pension-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+    border: 1px solid #c8e6c9;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 14px;
+}
+.pension-table .pension-head td {
+    background: #e8f5e9;
+    padding: 5px 10px;
+    font-weight: 800;
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #2e7d32;
+}
+.pension-table td { padding: 5px 10px; color: var(--text-dark); }
+.pension-table .amount-col { text-align: right; font-family: "Courier New", monospace; }
+.pension-table .note-col { font-size: 9px; color: var(--text-light); padding-left: 8px; }
+.pension-table .total-row td { background: #f1f8e9; font-weight: 700; }
+
+/* ── Attendance row ── */
+.attendance-row {
+    display: flex;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 14px;
+}
+.att-cell {
+    flex: 1;
+    text-align: center;
+    padding: 8px 4px;
+    border-right: 1px solid var(--border);
+    font-size: 10px;
+}
+.att-cell:last-child { border-right: none; }
+.att-cell .att-val { font-size: 18px; font-weight: 900; color: var(--brand); }
+.att-cell .att-lbl { font-size: 9px; color: var(--text-light); text-transform: uppercase; margin-top: 2px; }
+
+/* ── Staff IOU / Loan balance block ── */
+.iou-section {
+    border: 1px solid #ffe0b2;
+    border-radius: 4px;
+    margin-bottom: 14px;
+    overflow: hidden;
+}
+.iou-section-header {
+    background: #fff3e0;
+    border-bottom: 1px solid #ffe0b2;
+    padding: 6px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #e65100;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    justify-content: space-between;
+}
+.iou-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+}
+.iou-table th {
+    background: #fff8e1;
+    padding: 4px 10px;
+    text-align: left;
+    color: #795548;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 8.5px;
+}
+.iou-table td { padding: 5px 10px; border-bottom: 1px solid #fff3e0; color: var(--text-dark); }
+.iou-table .num { text-align: right; font-family: "Courier New", monospace; }
+.iou-table .after-col { color: var(--green); font-weight: 700; }
+.iou-table .total-row td { background: #fff3e0; font-weight: 700; border-top: 1px solid #ffb74d; }
+.iou-note { font-size: 8.5px; color: #e65100; font-style: italic; padding: 5px 10px; background: #fff8e1; }
+
+
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.sig-item { text-align: center; flex: 1; }
+.sig-line {
+    width: 70%;
+    margin: 0 auto 4px;
+    border-bottom: 1px solid #333;
+    height: 30px;
+}
+.sig-label { font-size: 9px; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ── Confidential watermark note ── */
+.confidential-note {
+    text-align: center;
+    font-size: 8.5px;
+    color: #aaa;
+    margin-top: 10px;
+    font-style: italic;
+}
+{% endblock %}
+
+{% block content %}
+{% load l10n %}
+
+{# ── PAYSLIP META BAR ──────────────────────────────────────────────────── #}
+<div class="payslip-meta">
+    <div class="meta-item">
+        <span class="meta-label">Payslip No.</span>
+        <span class="meta-value">{{ payslip_number }}</span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Pay Period</span>
+        <span class="meta-value">{{ period_label }}</span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Pay Date</span>
+        <span class="meta-value">{{ pay_date|date:"d M Y" }}</span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Currency</span>
+        <span class="meta-value">{{ currency_code }} ({{ currency_symbol }})</span>
+    </div>
+    <div class="meta-item">
+        <span class="meta-label">Pay Basis</span>
+        <span class="meta-value">Monthly</span>
+    </div>
+</div>
+
+{# ── EMPLOYEE CARD ─────────────────────────────────────────────────────── #}
+<div class="employee-card">
+    <div class="left-band"></div>
+    <div class="employee-fields">
+        <div class="field-item">
+            <span class="field-label">Employee Name</span>
+            <span class="field-value">{{ staff_name }}</span>
+        </div>
+        <div class="field-item">
+            <span class="field-label">Staff ID</span>
+            <span class="field-value">{{ staff_id }}</span>
+        </div>
+        <div class="field-item">
+            <span class="field-label">Position</span>
+            <span class="field-value">{{ staff_position }}</span>
+        </div>
+        <div class="field-item">
+            <span class="field-label">Department</span>
+            <span class="field-value">{{ staff_dept }}</span>
+        </div>
+        <div class="field-item">
+            <span class="field-label">Location</span>
+            <span class="field-value">{{ staff_location }}</span>
+        </div>
+    </div>
+</div>
+
+{# ── EARNINGS / DEDUCTIONS COLUMNS ─────────────────────────────────────── #}
+<div class="pay-columns">
+
+    {# ── EARNINGS ── #}
+    <div class="pay-col">
+        <div class="section-header" style="background:{{ company_primary_color|default:'#1a4e8a' }};">
+            <span>Earnings</span>
+            <span class="header-amount">Amount ({{ currency_symbol }})</span>
+        </div>
+        <table class="pay-table">
+            {% for row in earnings_rows %}
+            <tr>
+                <td class="label-col">{{ row.label }}</td>
+                <td class="amount-col">{{ currency_symbol }}&nbsp;{{ row.amount|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="subtotal-row">
+                <td class="label-col">Gross Pay</td>
+                <td class="amount-col">{{ currency_symbol }}&nbsp;{{ gross_pay|floatformat:2 }}</td>
+            </tr>
+        </table>
+    </div>
+
+    {# ── DEDUCTIONS ── #}
+    <div class="pay-col">
+        <div class="section-header" style="background:#c62828;">
+            <span>Deductions</span>
+            <span class="header-amount">Amount ({{ currency_symbol }})</span>
+        </div>
+        <table class="pay-table">
+            <tr>
+                <td class="label-col">PAYE Tax</td>
+                <td class="amount-col">{{ currency_symbol }}&nbsp;{{ paye_tax|floatformat:2 }}</td>
+            </tr>
+            <tr>
+                <td class="label-col">Pension (Employee 8%)</td>
+                <td class="amount-col">{{ currency_symbol }}&nbsp;{{ employee_pension|floatformat:2 }}</td>
+            </tr>
+            {% for ded in other_deductions %}
+            <tr>
+                <td class="label-col">{{ ded.label }}</td>
+                <td class="amount-col">{{ currency_symbol }}&nbsp;{{ ded.amount|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="subtotal-row">
+                <td class="label-col">Total Deductions</td>
+                <td class="amount-col">{{ currency_symbol }}&nbsp;{{ total_deductions|floatformat:2 }}</td>
+            </tr>
+        </table>
+    </div>
+
+</div>
+
+{# ── NET PAY BANNER ────────────────────────────────────────────────────── #}
+<div class="net-pay-banner">
+    <span class="npl">Net Pay (Take Home)</span>
+    <span class="npa">{{ currency_symbol }}&thinsp;{{ net_pay|floatformat:2 }}</span>
+</div>
+
+
+{# ── STAFF IOU / LOAN BALANCE SUMMARY ─────────────────────────────────── #}
+{% if iou_details %}
+<div class="iou-section">
+    <div class="iou-section-header">
+        <span>Staff Loan / IOU — Balance Transparency</span>
+        <span>Deducted this period: {{ currency_symbol }}&nbsp;{{ iou_monthly_deduction|floatformat:2 }}</span>
+    </div>
+    <table class="iou-table">
+        <thead>
+            <tr>
+                <th>IOU Reference</th>
+                <th class="num">Monthly Instalment</th>
+                <th class="num">Balance Before</th>
+                <th class="num">Balance After This Period</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for iou in iou_details %}
+            <tr>
+                <td>{{ iou.reference }}</td>
+                <td class="num">{{ currency_symbol }}&nbsp;{{ iou.monthly_installment|floatformat:2 }}</td>
+                <td class="num">{{ currency_symbol }}&nbsp;{{ iou.balance_before|floatformat:2 }}</td>
+                <td class="num after-col">{{ currency_symbol }}&nbsp;{{ iou.balance_after|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="total-row">
+                <td><strong>Total</strong></td>
+                <td class="num">{{ currency_symbol }}&nbsp;{{ iou_monthly_deduction|floatformat:2 }}</td>
+                <td class="num">{{ currency_symbol }}&nbsp;{{ iou_total_outstanding|floatformat:2 }}</td>
+                <td class="num after-col">{{ currency_symbol }}&nbsp;{{ iou_balance_after|floatformat:2 }}</td>
+            </tr>
+        </tbody>
+    </table>
+    <div class="iou-note">* Balance After This Period is the projected balance once this payslip's deduction is applied upon payroll payment.</div>
+</div>
+{% endif %}
+
+{# ── ATTENDANCE SUMMARY ────────────────────────────────────────────────── #}
+<div class="attendance-row">
+    <div class="att-cell">
+        <div class="att-val">{{ days_worked }}</div>
+        <div class="att-lbl">Days Worked</div>
+    </div>
+    <div class="att-cell">
+        <div class="att-val">{{ days_absent }}</div>
+        <div class="att-lbl">Days Absent</div>
+    </div>
+    <div class="att-cell">
+        <div class="att-val">{{ days_on_leave }}</div>
+        <div class="att-lbl">Days on Leave</div>
+    </div>
+    <div class="att-cell">
+        <div class="att-val">{{ overtime_hours }}</div>
+        <div class="att-lbl">Overtime Hrs</div>
+    </div>
+    <div class="att-cell">
+        <div class="att-val" style="font-size:13px;">{{ gross_pay|floatformat:0 }}</div>
+        <div class="att-lbl">Gross ({{ currency_code }})</div>
+    </div>
+    <div class="att-cell" style="background:#f0f4ff;">
+        <div class="att-val" style="font-size:13px;color:var(--net-blue);">{{ net_pay|floatformat:0 }}</div>
+        <div class="att-lbl">Net ({{ currency_code }})</div>
+    </div>
+</div>
+
+{# ── SIGNATURE BLOCK ───────────────────────────────────────────────────── #}
+<div class="signature-block">
+    <div class="sig-item">
+        <div class="sig-line"></div>
+        <div class="sig-label">Authorised by / HR Manager</div>
+    </div>
+    <div class="sig-item">
+        <div class="sig-line"></div>
+        <div class="sig-label">Employee Signature &amp; Date</div>
+    </div>
+    <div class="sig-item">
+        <div class="sig-line"></div>
+        <div class="sig-label">Accounts / Finance</div>
+    </div>
+</div>
+
+<div class="confidential-note">
+    &#128274;&nbsp; This payslip is strictly confidential. It is a computer-generated document and does not require a physical signature unless stated otherwise.
+</div>
+
+{% endblock %}
+
+{% block footer %}
+<p>Generated on {% now "F d, Y" %} &mdash; {{ company_name }}
+{% if branch_name %} &mdash; {{ branch_name }}{% endif %}
+</p>
+{% endblock %}

@@ -1,0 +1,3 @@
+"""
+Expenses tests package
+"""

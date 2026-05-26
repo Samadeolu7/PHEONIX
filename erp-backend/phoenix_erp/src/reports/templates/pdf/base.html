@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ document_title }}{% endblock %}</title>
+    <style>
+        /* ── Base document styles ─────────────────────────────────────────── */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 11px;
+            color: #1a1a1a;
+            background: #fff;
+        }
+
+        .document {
+            width: 100%;
+            max-width: 820px;
+            margin: 0 auto;
+            padding: 20px 24px;
+        }
+
+        /* ── Document header ───────────────────────────────────────────────── */
+        .document-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding-bottom: 14px;
+            border-bottom: 2px solid {{ company_primary_color|default:"#0066cc" }};
+            margin-bottom: 18px;
+        }
+
+        .company-logo img {
+            max-height: 70px;
+            max-width: 200px;
+            object-fit: contain;
+        }
+
+        .company-info {
+            flex: 1;
+        }
+
+        .company-name {
+            font-size: 18px;
+            font-weight: 900;
+            color: {{ company_primary_color|default:"#0066cc" }};
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .company-address {
+            font-size: 10px;
+            color: #444;
+            white-space: pre-line;
+            margin-bottom: 3px;
+        }
+
+        .company-contact {
+            font-size: 10px;
+            color: #555;
+        }
+        .company-contact span { margin-right: 12px; }
+
+        .company-ids {
+            font-size: 9px;
+            color: #777;
+            margin-top: 3px;
+        }
+        .company-ids span { margin-right: 12px; }
+
+        .document-type {
+            text-align: right;
+            min-width: 160px;
+        }
+
+        .document-type h2 {
+            font-size: 16px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: {{ company_primary_color|default:"#0066cc" }};
+            letter-spacing: 1px;
+        }
+
+        /* ── Issuing branch banner (shown when branch differs from HQ) ─────── */
+        .branch-banner {
+            background: #f5f5f5;
+            border-left: 3px solid {{ company_primary_color|default:"#0066cc" }};
+            padding: 5px 10px;
+            font-size: 10px;
+            color: #444;
+            margin-bottom: 14px;
+        }
+        .branch-banner strong { color: #1a1a1a; }
+
+        /* ── Main content area ─────────────────────────────────────────────── */
+        .document-content {
+            min-height: 500px;
+        }
+
+        /* ── Bank / payment details block (used by invoice templates) ──────── */
+        .bank-details-section {
+            margin-top: 20px;
+            border-top: 1px solid #ddd;
+            padding-top: 12px;
+        }
+
+        .bank-details-section h4 {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: {{ company_primary_color|default:"#0066cc" }};
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .bank-accounts-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .bank-account-card {
+            flex: 1 1 220px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px 12px;
+            background: #fafafa;
+            font-size: 10px;
+        }
+
+        .bank-account-card .bank-label {
+            font-weight: 700;
+            font-size: 11px;
+            color: #1a1a1a;
+            margin-bottom: 4px;
+        }
+
+        .bank-account-card .bank-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+        }
+
+        .bank-account-card .bank-row .lbl { color: #666; }
+        .bank-account-card .bank-row .val { font-weight: 600; color: #111; }
+
+        /* ── Document footer ───────────────────────────────────────────────── */
+        .document-footer {
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+            font-size: 9px;
+            color: #888;
+            text-align: center;
+        }
+
+        {% block extra_css %}{% endblock %}
+    </style>
+</head>
+<body>
+    <div class="document">
+
+        <!-- ══ DOCUMENT HEADER ══════════════════════════════════════════════ -->
+        <header class="document-header">
+            <!-- Logo (left) -->
+            {% if company_logo_url %}
+            <div class="company-logo" style="margin-right:16px;">
+                <img src="{{ company_logo_url }}" alt="{{ company_name }} logo">
+            </div>
+            {% endif %}
+
+            <!-- Company identity (centre-left) -->
+            <div class="company-info">
+                <h1 class="company-name">{{ company_name }}</h1>
+
+                {% if company_address %}
+                <p class="company-address">{{ company_address }}</p>
+                {% endif %}
+
+                <div class="company-contact">
+                    {% if company_phone %}<span>&#9742; {{ company_phone }}</span>{% endif %}
+                    {% if company_email %}<span>&#9993; {{ company_email }}</span>{% endif %}
+                    {% if company_website %}<span>&#127760; {{ company_website }}</span>{% endif %}
+                </div>
+
+                {% if company_registration_number or company_tax_number %}
+                <div class="company-ids">
+                    {% if company_registration_number %}
+                    <span>RC No.: {{ company_registration_number }}</span>
+                    {% endif %}
+                    {% if company_tax_number %}
+                    <span>TIN: {{ company_tax_number }}</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Document type label (right) -->
+            <div class="document-type">
+                <h2>{{ document_type }}</h2>
+            </div>
+        </header>
+
+        <!-- ══ ISSUING BRANCH BANNER ════════════════════════════════════════ -->
+        {% if branch_name %}
+        <div class="branch-banner">
+            <strong>Issuing Branch:</strong>&nbsp;{{ branch_name }}
+            {% if branch_address %}&nbsp;|&nbsp;{{ branch_address|linebreaksbr }}{% endif %}
+            {% if branch_phone %}&nbsp;|&nbsp;&#9742; {{ branch_phone }}{% endif %}
+            {% if branch_email %}&nbsp;|&nbsp;&#9993; {{ branch_email }}{% endif %}
+        </div>
+        {% endif %}
+
+        <!-- ══ MAIN CONTENT ═════════════════════════════════════════════════ -->
+        <main class="document-content">
+            {% block content %}{% endblock %}
+        </main>
+
+        <!-- ══ BANK / PAYMENT DETAILS ═══════════════════════════════════════ -->
+        {% block bank_details %}
+        {% if bank_accounts %}
+        <div class="bank-details-section">
+            <h4>Payment Details &mdash; Please remit to:</h4>
+            <div class="bank-accounts-grid">
+                {% for acct in bank_accounts %}
+                <div class="bank-account-card">
+                    <div class="bank-label">{{ acct.bank_name }}{% if acct.bank_branch %} &mdash; {{ acct.bank_branch }}{% endif %}</div>
+                    <div class="bank-row">
+                        <span class="lbl">Account Name</span>
+                        <span class="val">{{ acct.account_name }}</span>
+                    </div>
+                    <div class="bank-row">
+                        <span class="lbl">Account Number</span>
+                        <span class="val">{{ acct.account_number }}</span>
+                    </div>
+                    <div class="bank-row">
+                        <span class="lbl">Account Type</span>
+                        <span class="val">{{ acct.account_type }}</span>
+                    </div>
+                    <div class="bank-row">
+                        <span class="lbl">Currency</span>
+                        <span class="val">{{ acct.currency }}</span>
+                    </div>
+                    {% if acct.sort_code %}
+                    <div class="bank-row">
+                        <span class="lbl">Sort Code</span>
+                        <span class="val">{{ acct.sort_code }}</span>
+                    </div>
+                    {% endif %}
+                    {% if acct.swift_code %}
+                    <div class="bank-row">
+                        <span class="lbl">SWIFT/BIC</span>
+                        <span class="val">{{ acct.swift_code }}</span>
+                    </div>
+                    {% endif %}
+                    {% if acct.iban %}
+                    <div class="bank-row">
+                        <span class="lbl">IBAN</span>
+                        <span class="val">{{ acct.iban }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        {% endblock bank_details %}
+
+        <!-- ══ FOOTER ═══════════════════════════════════════════════════════ -->
+        <footer class="document-footer">
+            {% block footer %}
+            <p>This is a computer-generated document. No signature is required.</p>
+            <p class="generated-at">Generated on {% now "F d, Y H:i" %} &mdash; {{ company_name }}</p>
+            {% endblock %}
+        </footer>
+
+    </div>
+</body>
+</html>

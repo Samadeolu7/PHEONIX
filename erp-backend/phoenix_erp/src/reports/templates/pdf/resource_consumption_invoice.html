@@ -1,0 +1,383 @@
+{% extends "pdf/base.html" %}
+
+{% block title %}{{ document_title }} - {{ consumption_number }}{% endblock %}
+
+{% block content %}
+<div class="document-header">
+    <div class="header-grid">
+        <div class="header-left">
+            <div class="document-type">{{ document_type }}</div>
+            <h1 class="document-number">#{{ consumption_number }}</h1>
+            <div class="document-meta">
+                <div class="meta-item">
+                    <span class="meta-label">Date:</span>
+                    <span class="meta-value">{{ consumption_date|date:"F d, Y" }}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Status:</span>
+                    <span class="meta-value status-badge {% if is_posted %}status-posted{% elif is_approved %}status-approved{% else %}status-draft{% endif %}">
+                        {{ status }}
+                    </span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">Payment:</span>
+                    <span class="meta-value">{{ payment_flow }}</span>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="company-info">
+                <div class="company-name">{{ company_name }}</div>
+                <div class="company-address">{{ company_address|linebreaksbr }}</div>
+                {% if company_phone %}<div class="company-contact">☎ {{ company_phone }}</div>{% endif %}
+                {% if company_email %}<div class="company-contact">✉ {{ company_email }}</div>{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Resource & Beneficiary Information -->
+<div class="info-grid">
+    <div class="info-box">
+        <h3 class="box-title">Resource Details</h3>
+        <table class="info-table">
+            <tr>
+                <td class="label">Resource:</td>
+                <td class="value"><strong>{{ resource_name }}</strong></td>
+            </tr>
+            <tr>
+                <td class="label">Type:</td>
+                <td class="value">{{ resource_type }}</td>
+            </tr>
+            {% if resource_category %}
+            <tr>
+                <td class="label">Category:</td>
+                <td class="value">{{ resource_category }}</td>
+            </tr>
+            {% endif %}
+            <tr>
+                <td class="label">Unit Cost:</td>
+                <td class="value">${{ unit_cost|floatformat:2 }} per {{ unit }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="info-box">
+        <h3 class="box-title">Consumed By</h3>
+        <table class="info-table">
+            <tr>
+                <td class="label">Type:</td>
+                <td class="value">{{ beneficiary_type }}</td>
+            </tr>
+            <tr>
+                <td class="label">Name:</td>
+                <td class="value"><strong>{{ beneficiary_name }}</strong></td>
+            </tr>
+            {% if beneficiary_reference %}
+            <tr>
+                <td class="label">Reference:</td>
+                <td class="value">{{ beneficiary_reference }}</td>
+            </tr>
+            {% endif %}
+            {% if asset_code %}
+            <tr>
+                <td class="label">Asset Code:</td>
+                <td class="value">{{ asset_code }}</td>
+            </tr>
+            {% endif %}
+            {% if employee_code %}
+            <tr>
+                <td class="label">Employee ID:</td>
+                <td class="value">{{ employee_code }}</td>
+            </tr>
+            {% endif %}
+            {% if employee_department %}
+            <tr>
+                <td class="label">Department:</td>
+                <td class="value">{{ employee_department }}</td>
+            </tr>
+            {% endif %}
+        </table>
+    </div>
+</div>
+
+<!-- Vehicle-Specific Information (if applicable) -->
+{% if is_vehicle %}
+<div class="info-section vehicle-section">
+    <h3 class="section-title">🚗 Vehicle Information</h3>
+    <div class="info-grid">
+        <div class="info-item">
+            <span class="label">Plate Number:</span>
+            <span class="value"><strong>{{ plate_number }}</strong></span>
+        </div>
+        {% if vehicle_make %}
+        <div class="info-item">
+            <span class="label">Make/Model:</span>
+            <span class="value">{{ vehicle_make }} {{ vehicle_model }}</span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Usage Metrics (if applicable) -->
+{% if has_readings %}
+<div class="info-section metrics-section">
+    <h3 class="section-title">📊 Usage Metrics</h3>
+    <div class="metrics-grid">
+        <div class="metric-box">
+            <div class="metric-label">{{ reading_type }}</div>
+            <div class="metric-values">
+                <div class="metric-row">
+                    <span class="metric-sublabel">Previous:</span>
+                    <span class="metric-value">{{ previous_reading|floatformat:1 }}</span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-sublabel">Current:</span>
+                    <span class="metric-value">{{ current_reading|floatformat:1 }}</span>
+                </div>
+                <div class="metric-row usage-row">
+                    <span class="metric-sublabel">Usage:</span>
+                    <span class="metric-value"><strong>{{ usage_since_last|floatformat:1 }}</strong></span>
+                </div>
+            </div>
+        </div>
+        {% if consumption_rate %}
+        <div class="metric-box">
+            <div class="metric-label">Efficiency</div>
+            <div class="metric-values">
+                <div class="metric-row">
+                    <span class="metric-sublabel">Rate:</span>
+                    <span class="metric-value">{{ consumption_rate|floatformat:2 }}</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Consumption Details -->
+<div class="consumption-summary">
+    <h3 class="section-title">Consumption Details</h3>
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th>Description</th>
+                <th class="text-right">Quantity</th>
+                <th class="text-right">Unit</th>
+                <th class="text-right">Unit Cost</th>
+                <th class="text-right">Total Cost</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{{ resource_name }}</td>
+                <td class="text-right">{{ quantity|floatformat:2 }}</td>
+                <td class="text-right">{{ unit }}</td>
+                <td class="text-right">${{ unit_cost|floatformat:4 }}</td>
+                <td class="text-right"><strong>${{ total_cost|floatformat:2 }}</strong></td>
+            </tr>
+        </tbody>
+        <tfoot>
+            <tr class="total-row">
+                <td colspan="4" class="text-right"><strong>TOTAL AMOUNT:</strong></td>
+                <td class="text-right total-amount"><strong>${{ total_cost|floatformat:2 }}</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+</div>
+
+<!-- Prepaid Voucher Details -->
+{% if is_prepaid and voucher_number %}
+<div class="info-section voucher-section">
+    <h3 class="section-title">🎫 Prepaid Voucher Details</h3>
+    <div class="info-grid">
+        <div class="info-item">
+            <span class="label">Voucher Number:</span>
+            <span class="value"><strong>{{ voucher_number }}</strong></span>
+        </div>
+        <div class="info-item">
+            <span class="label">Voucher Value:</span>
+            <span class="value">${{ voucher_value|floatformat:2 }}</span>
+        </div>
+        <div class="info-item">
+            <span class="label">Remaining Balance:</span>
+            <span class="value">${{ voucher_balance|floatformat:2 }}</span>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Supplier Details (for postpaid) -->
+{% if is_postpaid and supplier_name %}
+<div class="info-section supplier-section">
+    <h3 class="section-title">Supplier/Vendor Information</h3>
+    <div class="info-grid">
+        <div class="info-box">
+            <table class="info-table">
+                <tr>
+                    <td class="label">Supplier:</td>
+                    <td class="value"><strong>{{ supplier_name }}</strong></td>
+                </tr>
+                {% if supplier_contact %}
+                <tr>
+                    <td class="label">Contact Person:</td>
+                    <td class="value">{{ supplier_contact }}</td>
+                </tr>
+                {% endif %}
+                {% if supplier_phone %}
+                <tr>
+                    <td class="label">Phone:</td>
+                    <td class="value">{{ supplier_phone }}</td>
+                </tr>
+                {% endif %}
+                {% if supplier_email %}
+                <tr>
+                    <td class="label">Email:</td>
+                    <td class="value">{{ supplier_email }}</td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+        {% if supplier_address %}
+        <div class="info-box">
+            <div class="label">Address:</div>
+            <div class="value">{{ supplier_address|linebreaksbr }}</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Transaction Details -->
+<div class="info-section transaction-section">
+    <h3 class="section-title">Transaction Details</h3>
+    <div class="info-grid">
+        {% if operator_name %}
+        <div class="info-item">
+            <span class="label">Operator/Driver:</span>
+            <span class="value">{{ operator_name }}</span>
+        </div>
+        {% endif %}
+        {% if consumption_location %}
+        <div class="info-item">
+            <span class="label">Location:</span>
+            <span class="value">{{ consumption_location }}</span>
+        </div>
+        {% endif %}
+        {% if receipt_number %}
+        <div class="info-item">
+            <span class="label">Receipt #:</span>
+            <span class="value">{{ receipt_number }}</span>
+        </div>
+        {% endif %}
+        {% if invoice_number %}
+        <div class="info-item">
+            <span class="label">Invoice #:</span>
+            <span class="value">{{ invoice_number }}</span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Irregularity Alert (if applicable) -->
+{% if is_irregular %}
+<div class="alert-box irregularity-alert">
+    <h3 class="alert-title">⚠️ Irregularity Detected</h3>
+    <table class="info-table">
+        <tr>
+            <td class="label">Type:</td>
+            <td class="value">{{ irregularity_type }}</td>
+        </tr>
+        <tr>
+            <td class="label">Variance:</td>
+            <td class="value">{{ variance_percentage }}%</td>
+        </tr>
+        {% if irregularity_notes %}
+        <tr>
+            <td class="label">System Notes:</td>
+            <td class="value">{{ irregularity_notes }}</td>
+        </tr>
+        {% endif %}
+        {% if explanation_provided %}
+        <tr>
+            <td class="label">Explanation:</td>
+            <td class="value">{{ explanation_provided }}</td>
+        </tr>
+        {% endif %}
+    </table>
+</div>
+{% endif %}
+
+<!-- Notes -->
+{% if notes %}
+<div class="notes-section">
+    <h3 class="section-title">Notes</h3>
+    <div class="notes-content">{{ notes|linebreaksbr }}</div>
+</div>
+{% endif %}
+
+<!-- Approval & Posting Info -->
+<div class="info-grid approval-grid">
+    {% if is_approved %}
+    <div class="approval-box">
+        <h3 class="box-title">✓ Approved</h3>
+        <table class="info-table">
+            <tr>
+                <td class="label">Approved By:</td>
+                <td class="value">{{ approved_by_name }}</td>
+            </tr>
+            <tr>
+                <td class="label">Date:</td>
+                <td class="value">{{ approved_at|date:"F d, Y H:i" }}</td>
+            </tr>
+        </table>
+    </div>
+    {% endif %}
+    
+    {% if is_posted %}
+    <div class="approval-box">
+        <h3 class="box-title">✓ Posted to Accounts</h3>
+        <table class="info-table">
+            <tr>
+                <td class="label">Posted By:</td>
+                <td class="value">{{ posted_by_name }}</td>
+            </tr>
+            <tr>
+                <td class="label">Date:</td>
+                <td class="value">{{ posted_at|date:"F d, Y H:i" }}</td>
+            </tr>
+        </table>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Signature Blocks (for manual signing) -->
+{% if is_prepaid %}
+<div class="signatures">
+    <div class="signature-block">
+        <div class="signature-line"></div>
+        <div class="signature-label">Driver/Operator Signature</div>
+        <div class="signature-sublabel">{{ operator_name }}</div>
+    </div>
+    
+    <div class="signature-block">
+        <div class="signature-line"></div>
+        <div class="signature-label">Authorized Signatory</div>
+        <div class="signature-sublabel">Company Authorization</div>
+    </div>
+    
+    <div class="signature-block">
+        <div class="signature-line"></div>
+        <div class="signature-label">Vendor/Station Stamp</div>
+        <div class="signature-sublabel">{{ consumption_location }}</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="footer-note">
+    This document was generated electronically on {% now "F d, Y H:i:s" %} &mdash; {{ company_name }}{% if company_registration_number %} (RC: {{ company_registration_number }}){% endif %}
+</div>
+{% endblock %}
+

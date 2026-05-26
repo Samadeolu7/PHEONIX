@@ -1,0 +1,65 @@
+.dashboard-page {
+  padding: 2rem;
+}
+
+.dashboard-header {
+  margin-bottom: 2rem;
+}
+
+.dashboard-header h1 {
+  color: var(--text-primary-color, #2c3e50);
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.dashboard-content {
+  background-color: var(--content-bg-color, #f8fafc);
+  border-radius: var(--content-border-radius, 12px);
+  padding: 2rem;
+  min-height: calc(100vh - 200px);
+}
+
+.layout {
+  position: relative;
+}
+
+/* Grid Layout styles */
+.react-grid-item {
+  background: var(--widget-bg-color, #ffffff);
+  border-radius: var(--widget-border-radius, 8px);
+  box-shadow: var(--widget-box-shadow, 0 2px 4px rgba(0,0,0,0.1));
+  transition: box-shadow 0.3s ease;
+}
+
+.react-grid-item:hover {
+  box-shadow: var(--widget-box-shadow-hover, 0 4px 6px rgba(0,0,0,0.1));
+}
+
+.react-grid-item.react-grid-placeholder {
+  background: var(--placeholder-bg-color, #e2e8f0);
+  border-radius: var(--widget-border-radius, 8px);
+  opacity: 0.2;
+}
+
+.dashboard-page .widget-error {
+  position: relative;
+}
+
+.dashboard-page .widget-error .error-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 0, 0, 0.1);
+  border: 2px solid #ff0000;
+  border-radius: var(--widget-border-radius, 8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ff0000;
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.875rem;
+}

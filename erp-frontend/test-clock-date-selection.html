@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clock Date Selection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .date-picker {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+        }
+        .date-picker input {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+        .today { background: #dcfce7; color: #166534; }
+        .historical { background: #dbeafe; color: #1e40af; }
+        .future { background: #fef3c7; color: #92400e; }
+        .feature-list {
+            list-style: none;
+            padding: 0;
+        }
+        .feature-list li {
+            padding: 8px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .feature-list li:before {
+            content: "✅ ";
+            color: #10b981;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🕐 Clock Date Selection - Feature Test</h1>
+        <p>This demonstrates the new editable date functionality in the clock in/out page.</p>
+        
+        <div class="date-picker">
+            <label for="testDate"><strong>Select Date:</strong></label>
+            <input type="date" id="testDate" value="">
+            <div id="dateStatus" class="status"></div>
+        </div>
+        
+        <div id="clockBehavior" class="container">
+            <h3>Clock Behavior Based on Selected Date:</h3>
+            <div id="behaviorDescription"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>✅ Implemented Features</h2>
+        <ul class="feature-list">
+            <li><strong>Editable Date Picker:</strong> Users can select any date in the clock in/out page</li>
+            <li><strong>Visual Date Indicators:</strong> Different display for today vs historical dates</li>
+            <li><strong>Smart Clock Restrictions:</strong> Clock in/out buttons only work for today's date</li>
+            <li><strong>Historical Data View:</strong> Can view attendance records for any selected date</li>
+            <li><strong>Dynamic Summary Titles:</strong> Shows "Today's Summary" vs "Summary for [Date]"</li>
+            <li><strong>Real-time Updates:</strong> Current time display only shows for today</li>
+            <li><strong>User Guidance:</strong> Clear messaging about when clock operations are available</li>
+        </ul>
+    </div>
+
+    <div class="container">
+        <h2>🎯 How to Test</h2>
+        <ol>
+            <li><strong>Navigate to:</strong> <code>http://localhost:3000/hr/clock</code></li>
+            <li><strong>Select a staff member</strong> from the left panel</li>
+            <li><strong>Change the date</strong> using the date picker at the top</li>
+            <li><strong>Observe the behavior:</strong>
+                <ul>
+                    <li>Today's date: Shows current time, clock buttons enabled</li>
+                    <li>Historical date: Shows date only, clock buttons disabled</li>
+                    <li>Future date: Shows date only, clock buttons disabled</li>
+                </ul>
+            </li>
+            <li><strong>Check attendance data</strong> for different dates</li>
+        </ol>
+    </div>
+
+    <div class="container">
+        <h2>🔄 Integration Points</h2>
+        <ul class="feature-list">
+            <li><strong>ClockInOutPage:</strong> Added date picker and passes selectedDate to widget</li>
+            <li><strong>ClockInOutWidget:</strong> Accepts selectedDate prop and adapts behavior</li>
+            <li><strong>useClock Hook:</strong> Updated to accept date parameter for attendance queries</li>
+            <li><strong>clockService:</strong> Enhanced getCurrentAttendanceStatus to accept date</li>
+            <li><strong>Type Definitions:</strong> Updated ClockInRequest/ClockOutRequest to include date</li>
+        </ul>
+    </div>
+
+    <script>
+        const dateInput = document.getElementById('testDate');
+        const dateStatus = document.getElementById('dateStatus');
+        const behaviorDescription = document.getElementById('behaviorDescription');
+        
+        // Set today's date as default
+        const today = new Date().toISOString().split('T')[0];
+        dateInput.value = today;
+        
+        function updateDateStatus() {
+            const selectedDate = dateInput.value;
+            const selected = new Date(selectedDate);
+            const todayDate = new Date(today);
+            
+            if (selectedDate === today) {
+                dateStatus.className = 'status today';
+                dateStatus.textContent = '✅ Today - Clock operations enabled';
+                behaviorDescription.innerHTML = `
+                    <div class="today">
+                        <h4>Today's Date Behavior:</h4>
+                        <ul>
+                            <li>Shows real-time clock with current time</li>
+                            <li>Clock In/Out buttons are enabled</li>
+                            <li>Summary shows "Today's Summary"</li>
+                            <li>Real-time attendance status updates</li>
+                        </ul>
+                    </div>
+                `;
+            } else if (selected < todayDate) {
+                dateStatus.className = 'status historical';
+                dateStatus.textContent = '📅 Historical Date - View only mode';
+                behaviorDescription.innerHTML = `
+                    <div class="historical">
+                        <h4>Historical Date Behavior:</h4>
+                        <ul>
+                            <li>Shows selected date instead of current time</li>
+                            <li>Clock In/Out buttons are disabled</li>
+                            <li>Summary shows "Summary for [Selected Date]"</li>
+                            <li>Displays historical attendance data if available</li>
+                            <li>Shows "Historical Date" badge</li>
+                        </ul>
+                    </div>
+                `;
+            } else {
+                dateStatus.className = 'status future';
+                dateStatus.textContent = '🔮 Future Date - View only mode';
+                behaviorDescription.innerHTML = `
+                    <div class="future">
+                        <h4>Future Date Behavior:</h4>
+                        <ul>
+                            <li>Shows selected date instead of current time</li>
+                            <li>Clock In/Out buttons are disabled</li>
+                            <li>Summary shows "Summary for [Selected Date]"</li>
+                            <li>No attendance data (future dates have no records)</li>
+                            <li>Shows "Historical Date" badge</li>
+                        </ul>
+                    </div>
+                `;
+            }
+        }
+        
+        dateInput.addEventListener('change', updateDateStatus);
+        updateDateStatus(); // Initial call
+    </script>
+</body>
+</html>

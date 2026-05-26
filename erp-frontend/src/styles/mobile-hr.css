@@ -1,0 +1,226 @@
+/* Mobile HR System Enhancements */
+
+/* Touch-friendly buttons */
+.touch-button {
+  min-height: 44px;
+  min-width: 44px;
+  touch-action: manipulation;
+}
+
+/* Mobile-optimized form inputs */
+.mobile-input {
+  font-size: 16px; /* Prevents zoom on iOS */
+  padding: 12px;
+  border-radius: 8px;
+}
+
+/* Mobile-friendly tables */
+@media (max-width: 1023px) {
+  .mobile-table-hide {
+    display: none;
+  }
+  
+  .mobile-card-view {
+    display: block;
+  }
+}
+
+@media (min-width: 1024px) {
+  .mobile-card-view {
+    display: none;
+  }
+}
+
+/* GPS Clock In/Out Mobile Optimizations */
+.gps-clock-button {
+  min-height: 48px;
+  font-size: 16px;
+  padding: 12px 24px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Mobile modal optimizations */
+@media (max-width: 640px) {
+  .mobile-modal {
+    margin: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
+}
+
+/* Mobile-friendly navigation */
+.mobile-nav-button {
+  min-height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
+
+/* Responsive text sizing */
+@media (max-width: 640px) {
+  .mobile-text-responsive {
+    font-size: 14px;
+  }
+  
+  .mobile-heading-responsive {
+    font-size: 20px;
+  }
+}
+
+/* Mobile-optimized spacing */
+@media (max-width: 640px) {
+  .mobile-spacing-sm {
+    padding: 16px;
+  }
+  
+  .mobile-spacing-xs {
+    padding: 12px;
+  }
+}
+
+/* Touch-friendly action buttons */
+.mobile-action-button {
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 14px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Mobile-friendly status badges */
+.mobile-status-badge {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 12px;
+}
+
+/* Responsive grid adjustments */
+@media (max-width: 640px) {
+  .mobile-grid-1 {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+  
+  .mobile-grid-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .tablet-grid-1 {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+  
+  .tablet-grid-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Mobile-optimized form layouts */
+@media (max-width: 640px) {
+  .mobile-form-stack {
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .mobile-form-button {
+    width: 100%;
+    min-height: 48px;
+    font-size: 16px;
+  }
+}
+
+/* Improved touch targets for mobile */
+.mobile-touch-target {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 12px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Mobile-friendly dropdown menus */
+.mobile-select {
+  font-size: 16px;
+  padding: 12px;
+  min-height: 44px;
+  border-radius: 8px;
+}
+
+/* Responsive table alternatives */
+.mobile-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: white;
+}
+
+.mobile-card-header {
+  display: flex;
+  justify-content: between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.mobile-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-card-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f3f4f6;
+}
+
+/* Mobile-optimized pagination */
+@media (max-width: 640px) {
+  .mobile-pagination {
+    flex-direction: column;
+    gap: 16px;
+    text-align: center;
+  }
+  
+  .mobile-pagination-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+  }
+  
+  .mobile-pagination-button {
+    min-height: 44px;
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+}
+
+/* Accessibility improvements for mobile */
+@media (prefers-reduced-motion: reduce) {
+  .mobile-no-animation {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .mobile-high-contrast {
+    border-width: 2px;
+    font-weight: 600;
+  }
+}
+
+/* Dark mode support for mobile */
+@media (prefers-color-scheme: dark) {
+  .mobile-dark-mode {
+    background-color: #1f2937;
+    color: #f9fafb;
+  }
+}

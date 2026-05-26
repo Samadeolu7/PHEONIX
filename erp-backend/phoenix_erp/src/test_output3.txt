@@ -1,0 +1,191 @@
+﻿python : Using existing test database for alias 'default' ('test_phoenix_db')...
+At line:1 char:1
++ python manage.py test incomes.tests.test_discount_workflows -v 2 --ke ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Using existing ...phoenix_db')...:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+test_available_workflows_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_available_workflows_endpoint)
+Test available workflows listing ... ERROR
+test_create_discount_program (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_create_discount_program)
+Test creating discount program via API ... ERROR
+test_preview_impact_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_preview_impact_endpoint)
+Test discount preview endpoint ... ERROR
+test_validate_workflow_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_validate_workflow_endpoint)
+Test workflow validation endpoint ... ERROR
+test_invalid_workflow_rejected (incomes.tests.test_discount_workflows.TestDiscountProgramWorkflowValidation.test_invalid_workflow_rejected)
+Test that workflows with transaction steps are rejected ... FAIL
+test_valid_eligibility_workflow_attachment 
+(incomes.tests.test_discount_workflows.TestDiscountProgramWorkflowValidation.test_valid_eligibility_workflow_attachment)
+Test that valid workflows can be attached ... ok
+test_workflow_required_without_workflow 
+(incomes.tests.test_discount_workflows.TestDiscountProgramWorkflowValidation.test_workflow_required_without_workflow)
+Test that requiring workflow without setting one raises error ... ok
+test_get_discount_preview (incomes.tests.test_discount_workflows.TestDiscountWorkflowService.test_get_discount_preview)
+Test discount preview calculation ... ok
+test_validate_eligibility_with_workflow_success 
+(incomes.tests.test_discount_workflows.TestDiscountWorkflowService.test_validate_eligibility_with_workflow_success)
+Test successful workflow execution for eligibility ... INFO 2026-01-18 19:24:14,316 workflow_executor 21992 4412 Workflow 5 status set to: running
+INFO 2026-01-18 19:24:14,316 workflow_executor 21992 4412 Executing step 1/15 for workflow eligibility_check_20260118_0001
+INFO 2026-01-18 19:24:14,316 workflow_executor 21992 4412 Executing step check (type: calculate) for workflow eligibility_check_20260118_0001
+ERROR 2026-01-18 19:24:14,316 workflow_executor 21992 4412 Step check execution failed
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_executor.py", line 208, in execute_current_step
+    raise ValueError(f"No handler found for step type: {step_type}")
+ValueError: No handler found for step type: calculate
+ERROR 2026-01-18 19:24:14,326 discount_workflow_service 21992 4412 Eligibility workflow failed for MERIT-2026: No handler found for step type: 
+calculate
+ok
+test_workflow_step_validation (incomes.tests.test_discount_workflows.TestDiscountWorkflowService.test_workflow_step_validation)
+Test workflow step type validation ... ok
+test_basic_criteria_check (incomes.tests.test_discount_workflows.TestReceivablesServiceWorkflowIntegration.test_basic_criteria_check)
+Test basic criteria checking ... ok
+test_calculate_discounts_with_workflow 
+(incomes.tests.test_discount_workflows.TestReceivablesServiceWorkflowIntegration.test_calculate_discounts_with_workflow)
+Test discount calculation with workflow execution ... INFO 2026-01-18 19:24:17,507 workflow_executor 21992 4412 Workflow 6 status set to: running
+INFO 2026-01-18 19:24:17,507 workflow_executor 21992 4412 Executing step 1/15 for workflow gpa_check_20260118_0001
+INFO 2026-01-18 19:24:17,507 workflow_executor 21992 4412 Executing step check (type: calculate) for workflow gpa_check_20260118_0001
+ERROR 2026-01-18 19:24:17,507 workflow_executor 21992 4412 Step check execution failed
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_executor.py", line 208, in execute_current_step
+    raise ValueError(f"No handler found for step type: {step_type}")
+ValueError: No handler found for step type: calculate
+ERROR 2026-01-18 19:24:17,507 discount_workflow_service 21992 4412 Eligibility workflow failed for MERIT-2026: No handler found for step type: 
+calculate
+ok
+test_workflow_run_creation (incomes.tests.test_discount_workflows.TestWorkflowExecutionIntegration.test_workflow_run_creation)
+Test that workflow runs are created during eligibility check ... INFO 2026-01-18 19:24:18,604 workflow_executor 21992 4412 Workflow 7 status set 
+to: running
+INFO 2026-01-18 19:24:18,604 workflow_executor 21992 4412 Executing step 1/15 for workflow test_workflow_20260118_0001
+INFO 2026-01-18 19:24:18,604 workflow_executor 21992 4412 Executing step check (type: query) for workflow test_workflow_20260118_0001
+ERROR 2026-01-18 19:24:18,604 workflow_executor 21992 4412 Step check execution failed
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_executor.py", line 211, in execute_current_step
+    result = handler.execute(step, self.run, self.context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_steps\query_step.py", line 34, in execute
+    model = self._get_model(entity)
+            ^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\automations\workflow_steps\query_step.py", line 93, in _get_model
+    raise ValueError(f"Model {model_name} not allowed in workflows")
+ValueError: Model None not allowed in workflows
+ERROR 2026-01-18 19:24:18,604 discount_workflow_service 21992 4412 Eligibility workflow failed for TEST-2026: Model None not allowed in workflows
+ok
+
+======================================================================
+ERROR: test_available_workflows_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_available_workflows_endpoint)
+Test available workflows listing
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 354, in setUp
+    self.tenant = Tenant.objects.create(
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\manager.py", line 87, in 
+manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\query.py", line 661, in create
+    obj = self.model(**kwargs)
+          ^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\base.py", line 569, in __init__
+    raise TypeError(
+TypeError: Tenant() got unexpected keyword arguments: 'code'
+
+======================================================================
+ERROR: test_create_discount_program (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_create_discount_program)
+Test creating discount program via API
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 354, in setUp
+    self.tenant = Tenant.objects.create(
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\manager.py", line 87, in 
+manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\query.py", line 661, in create
+    obj = self.model(**kwargs)
+          ^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\base.py", line 569, in __init__
+    raise TypeError(
+TypeError: Tenant() got unexpected keyword arguments: 'code'
+
+======================================================================
+ERROR: test_preview_impact_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_preview_impact_endpoint)
+Test discount preview endpoint
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 354, in setUp
+    self.tenant = Tenant.objects.create(
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\manager.py", line 87, in 
+manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\query.py", line 661, in create
+    obj = self.model(**kwargs)
+          ^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\base.py", line 569, in __init__
+    raise TypeError(
+TypeError: Tenant() got unexpected keyword arguments: 'code'
+
+======================================================================
+ERROR: test_validate_workflow_endpoint (incomes.tests.test_discount_workflows.TestDiscountProgramAPI.test_validate_workflow_endpoint)
+Test workflow validation endpoint
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 354, in setUp
+    self.tenant = Tenant.objects.create(
+                  ^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\manager.py", line 87, in 
+manager_method
+    return getattr(self.get_queryset(), name)(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\query.py", line 661, in create
+    obj = self.model(**kwargs)
+          ^^^^^^^^^^^^^^^^^^^^
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\my_env\Lib\site-packages\django\db\models\base.py", line 569, in __init__
+    raise TypeError(
+TypeError: Tenant() got unexpected keyword arguments: 'code'
+
+======================================================================
+FAIL: test_invalid_workflow_rejected (incomes.tests.test_discount_workflows.TestDiscountProgramWorkflowValidation.test_invalid_workflow_rejected)
+Test that workflows with transaction steps are rejected
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Users\User\Desktop\PHEONIX-ERP\erp-backend\phoenix_erp\src\incomes\tests\test_discount_workflows.py", line 144, in 
+test_invalid_workflow_rejected
+    with self.assertRaises(ValidationError) as context:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValidationError not raised
+
+----------------------------------------------------------------------
+Ran 13 tests in 14.242s
+
+FAILED (failures=1, errors=4)
+Preserving test database for alias 'default' ('test_phoenix_db')...
+
+
+================================================
+  Phoenix ERP Configuration                     
+================================================
+  DEBUG: True                                    
+  Database: phoenix_db
+  Host: localhost
+  Allowed Hosts: localhost, 127.0.0.1...
+  Celery Broker: redis://localhost:6379/0...
+================================================
+
+Found 13 test(s).
+Operations to perform:
+  Synchronize unmigrated apps: core, corsheaders, django_extensions, django_filters, drf_spectacular, messages, phoenix, rest_framework, rest_framework_simplejwt, staticfiles
+  Apply all migrations: accounts, admin, assets, auth, authtoken, automations, branches, cash_management, clients, common, contenttypes, dashboards, django_celery_beat, expenses, hr, incomes, inventory, liabilities, loans, notifications, pages, procurement, products, queries, receivables, reports, savings, sessions, tickets, token_blacklist, transactions, users, widgets
+Synchronizing apps without migrations:
+  Creating tables...
+    Running deferred SQL...
+Running migrations:
+  No migrations to apply.
+  Your models in app(s): 'incomes' have changes that are not yet reflected in a migration, and so won't be applied.
+  Run 'manage.py makemigrations' to make new migrations, and then re-run 'manage.py migrate' to apply them.
+System check identified no issues (0 silenced).

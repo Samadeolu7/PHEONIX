@@ -1,0 +1,242 @@
+{% extends "pdf/base.html" %}
+
+{% block content %}
+<div class="purchase-order">
+    <!-- PO Header Information -->
+    <div class="po-header-section">
+        <div class="po-info-grid">
+            <div class="po-info-left">
+                <div class="info-group">
+                    <label>PO Number:</label>
+                    <strong>{{ po_number }}</strong>
+                </div>
+                <div class="info-group">
+                    <label>Date:</label>
+                    <span>{{ po_date|date:"M d, Y" }}</span>
+                </div>
+                {% if expected_delivery_date %}
+                <div class="info-group">
+                    <label>Expected Delivery:</label>
+                    <span>{{ expected_delivery_date|date:"M d, Y" }}</span>
+                </div>
+                {% endif %}
+            </div>
+            <div class="po-info-right">
+                {% if status %}
+                <div class="info-group">
+                    <label>Status:</label>
+                    <span class="status-badge status-{{ status|lower }}">{{ status }}</span>
+                </div>
+                {% endif %}
+                {% if requisitioner %}
+                <div class="info-group">
+                    <label>Requisitioner:</label>
+                    <span>{{ requisitioner }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Vendor and Ship To Information -->
+    <div class="address-section">
+        <div class="address-grid">
+            <!-- Vendor -->
+            <div class="address-block vendor-block">
+                <h3>VENDOR</h3>
+                <div class="address-content">
+                    <p class="vendor-name"><strong>{{ vendor_name }}</strong></p>
+                    {% if vendor_contact %}
+                    <p>{{ vendor_contact }}</p>
+                    {% endif %}
+                    {% if vendor_address %}
+                    <p>{{ vendor_address|linebreaks }}</p>
+                    {% endif %}
+                    {% if vendor_phone %}
+                    <p>Phone: {{ vendor_phone }}</p>
+                    {% endif %}
+                    {% if vendor_email %}
+                    <p>Email: {{ vendor_email }}</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Ship To -->
+            <div class="address-block shipto-block">
+                <h3>SHIP TO</h3>
+                <div class="address-content">
+                    <p class="shipto-name"><strong>{{ ship_to_name }}</strong></p>
+                    {% if ship_to_location %}
+                    <p>{{ ship_to_location }}</p>
+                    {% endif %}
+                    {% if ship_to_address %}
+                    <p>{{ ship_to_address|linebreaks }}</p>
+                    {% endif %}
+                    {% if ship_to_phone %}
+                    <p>Phone: {{ ship_to_phone }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Terms Section -->
+    <div class="terms-section">
+        <div class="terms-grid">
+            <div class="term-item">
+                <label>Requisitioner:</label>
+                <span>{{ requisitioner|default:"N/A" }}</span>
+            </div>
+            <div class="term-item">
+                <label>Ship Via:</label>
+                <span>{{ shipping_terms|default:"Standard" }}</span>
+            </div>
+            <div class="term-item">
+                <label>F.O.B.:</label>
+                <span>{{ fob|default:"Destination" }}</span>
+            </div>
+            <div class="term-item">
+                <label>Shipping Terms:</label>
+                <span>{{ shipping_terms|default:"Standard Delivery" }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Items Table -->
+    <div class="items-section">
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th class="col-item-number">ITEM #</th>
+                    <th class="col-description">DESCRIPTION</th>
+                    <th class="col-qty">QTY</th>
+                    <th class="col-unit-price">UNIT PRICE</th>
+                    <th class="col-total">TOTAL</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td class="col-item-number">
+                        {% if item.item %}
+                            {{ item.item.sku }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td class="col-description">
+                        {{ item.description }}
+                        {% if item.notes %}
+                        <br><span class="item-notes">{{ item.notes }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="col-qty text-right">{{ item.quantity }}</td>
+                    <td class="col-unit-price text-right">${{ item.unit_price|floatformat:2 }}</td>
+                    <td class="col-total text-right">${{ item.total_price|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-center">No items</td>
+                </tr>
+                {% endfor %}
+                
+                <!-- Empty rows for formatting -->
+                {% for i in "12345678" %}
+                {% if forloop.counter|add:items|length <= 15 %}
+                <tr class="empty-row">
+                    <td>&nbsp;</td>
+                    <td>-</td>
+                    <td class="text-right">-</td>
+                    <td class="text-right">-</td>
+                    <td class="text-right">-</td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Totals and Notes -->
+    <div class="bottom-section">
+        <div class="bottom-grid">
+            <!-- Comments/Notes -->
+            <div class="comments-section">
+                <h4>Comments or Special Instructions</h4>
+                <div class="comments-content">
+                    {% if notes %}
+                    {{ notes|linebreaks }}
+                    {% else %}
+                    <p class="no-comments">No special instructions</p>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Totals -->
+            <div class="totals-section">
+                <table class="totals-table">
+                    <tr>
+                        <td>SUBTOTAL</td>
+                        <td class="text-right">${{ subtotal|floatformat:2 }}</td>
+                    </tr>
+                    {% if tax_amount and tax_amount > 0 %}
+                    <tr>
+                        <td>TAX</td>
+                        <td class="text-right">${{ tax_amount|floatformat:2 }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td>TAX</td>
+                        <td class="text-right">-</td>
+                    </tr>
+                    {% endif %}
+                    {% if shipping_cost and shipping_cost > 0 %}
+                    <tr>
+                        <td>SHIPPING</td>
+                        <td class="text-right">${{ shipping_cost|floatformat:2 }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td>SHIPPING</td>
+                        <td class="text-right">-</td>
+                    </tr>
+                    {% endif %}
+                    {% if discount and discount > 0 %}
+                    <tr>
+                        <td>OTHER</td>
+                        <td class="text-right">-${{ discount|floatformat:2 }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td>OTHER</td>
+                        <td class="text-right">-</td>
+                    </tr>
+                    {% endif %}
+                    <tr class="total-row">
+                        <td><strong>TOTAL</strong></td>
+                        <td class="text-right"><strong>${{ total_amount|floatformat:2 }}</strong></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer Contact -->
+    <div class="contact-footer">
+        <p>If you have any questions about this purchase order, please contact:</p>
+        <p><strong>{{ contact_name }}</strong> - Phone: {{ contact_phone }} - Email: {{ contact_email }}</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block footer %}
+<div class="footer-info">
+    <p>This is a computer-generated purchase order &mdash; {{ company_name }}.</p>
+    {% if company_registration_number %}<p>RC No.: {{ company_registration_number }}{% if company_tax_number %} &nbsp;|&nbsp; TIN: {{ company_tax_number }}{% endif %}</p>{% endif %}
+    {% if approved_by %}
+    <p>Approved by: {{ approved_by }} on {{ approved_at|date:"M d, Y H:i" }}</p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{# Purchase orders are not payment requests; bank details are not shown. #}
+{% block bank_details %}{% endblock %}

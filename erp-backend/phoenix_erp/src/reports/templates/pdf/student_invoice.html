@@ -1,0 +1,555 @@
+{% extends "pdf/base.html" %}
+
+{% block content %}
+<style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
+
+    body {
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 12px;
+        color: #000;
+        background: #fff;
+    }
+
+    .invoice-wrapper {
+        width: 100%;
+        max-width: 780px;
+        margin: 0 auto;
+        padding: 18px;
+        border: 1px solid #aaa;
+    }
+
+    /* ── TOP HEADER ── */
+    .top-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 10px;
+    }
+
+    .logo-block img {
+        max-height: 90px;
+        max-width: 260px;
+    }
+
+    .logo-block .school-name-text {
+        font-size: 20px;
+        font-weight: 900;
+        color: #1a1a1a;
+        letter-spacing: 1px;
+    }
+
+    .logo-block .school-address {
+        font-size: 10px;
+        color: #333;
+        margin-top: 4px;
+        line-height: 1.5;
+    }
+
+    .invoice-title-block {
+        text-align: right;
+    }
+
+    .invoice-title-block h1 {
+        font-size: 32px;
+        font-weight: 700;
+        color: #1a1a1a;
+        letter-spacing: 1px;
+    }
+
+    /* ── DATE / INVOICE NUMBER BOX ── */
+    .date-invoice-table {
+        float: right;
+        border-collapse: collapse;
+        margin-top: 6px;
+        min-width: 220px;
+    }
+
+    .date-invoice-table th,
+    .date-invoice-table td {
+        border: 1px solid #aaa;
+        padding: 5px 12px;
+        text-align: center;
+        font-size: 11px;
+    }
+
+    .date-invoice-table th {
+        background: #f0f0f0;
+        font-weight: 700;
+    }
+
+    .date-invoice-table td {
+        min-width: 90px;
+    }
+
+    /* ── BILL TO BOX ── */
+    .bill-to-section {
+        clear: both;
+        margin-top: 10px;
+        margin-bottom: 10px;
+    }
+
+    .bill-to-box {
+        border: 1px solid #aaa;
+        padding: 8px 10px;
+        display: inline-block;
+        min-width: 280px;
+        min-height: 80px;
+        vertical-align: top;
+    }
+
+    .bill-to-label {
+        font-weight: 700;
+        font-size: 11px;
+        margin-bottom: 6px;
+        color: #000;
+    }
+
+    .bill-to-name {
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 3px;
+    }
+
+    .bill-to-detail {
+        font-size: 11px;
+        color: #333;
+        line-height: 1.6;
+    }
+
+    /* ── PO / TERMS / PROJECT ROW ── */
+    .ref-row-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 0;
+    }
+
+    .ref-row-table th,
+    .ref-row-table td {
+        border: 1px solid #aaa;
+        padding: 5px 10px;
+        text-align: center;
+        font-size: 11px;
+    }
+
+    .ref-row-table th {
+        background: #f0f0f0;
+        font-weight: 700;
+        width: 33.3%;
+    }
+
+    .ref-row-table td {
+        width: 33.3%;
+        min-height: 24px;
+    }
+
+    /* ── MAIN LINE ITEMS TABLE ── */
+    .line-items-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 0;
+    }
+
+    .line-items-table th {
+        background: #e8e8e8;
+        border: 1px solid #aaa;
+        padding: 7px 8px;
+        font-size: 11px;
+        font-weight: 700;
+        text-align: left;
+    }
+
+    .line-items-table th.center {
+        text-align: center;
+    }
+
+    .line-items-table th.right {
+        text-align: right;
+    }
+
+    .line-items-table td {
+        border: 1px solid #ccc;
+        padding: 6px 8px;
+        font-size: 11px;
+        vertical-align: top;
+    }
+
+    .line-items-table td.center {
+        text-align: center;
+    }
+
+    .line-items-table td.right {
+        text-align: right;
+    }
+
+    /* Column widths */
+    .col-qty         { width: 9%; }
+    .col-description { width: 46%; }
+    .col-um          { width: 9%; }
+    .col-rate        { width: 18%; }
+    .col-amount      { width: 18%; }
+
+    /* Alternating row shading (like the sample) */
+    .line-items-table tbody tr:nth-child(even) {
+        background-color: #f5f5f5;
+    }
+
+    .line-items-table tbody tr.blank-row td {
+        height: 20px;
+        padding: 0;
+    }
+
+    /* PTA note row */
+    .pta-note-row td {
+        font-size: 11px;
+        font-weight: 600;
+        color: #000;
+        line-height: 1.6;
+        background: #fff !important;
+    }
+
+    /* Discount row */
+    .discount-row td {
+        color: #27ae60;
+        font-weight: 600;
+    }
+
+    /* ── TOTAL ROW ── */
+    .total-row th,
+    .total-row td {
+        border: 1px solid #aaa;
+        padding: 7px 8px;
+        font-weight: 700;
+        font-size: 12px;
+    }
+
+    .total-row th {
+        background: #f0f0f0;
+        text-align: right;
+    }
+
+    .total-row td {
+        text-align: right;
+        background: #f0f0f0;
+    }
+
+    /* ── FOOTER BANK DETAILS ── */
+    .bank-footer {
+        margin-top: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        border-top: 1px solid #aaa;
+        padding-top: 8px;
+    }
+
+    .bank-footer .bank-left {
+        font-size: 11px;
+        line-height: 1.7;
+        color: #000;
+    }
+
+    .bank-footer .bank-left strong {
+        font-weight: 700;
+    }
+
+    .bank-footer .bank-right {
+        font-size: 11px;
+        line-height: 1.7;
+        color: #555;
+        text-align: right;
+    }
+
+    .status-pill {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-left: 8px;
+        vertical-align: middle;
+    }
+
+    .status-paid     { background: #27ae60; color: #fff; }
+    .status-overdue  { background: #e74c3c; color: #fff; }
+    .status-sent,
+    .status-partial  { background: #f39c12; color: #fff; }
+    .status-draft    { background: #95a5a6; color: #fff; }
+
+    /* Print */
+    @media print {
+        .invoice-wrapper { border: none; padding: 0; }
+        .line-items-table tbody tr:nth-child(even) {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            background-color: #f5f5f5;
+        }
+    }
+</style>
+
+<div class="invoice-wrapper">
+
+    <!-- ══════════ INVOICE TITLE + DATE/NUMBER ══════════ -->
+    <div class="top-header">
+
+        <!-- "Invoice" title + status pill + Date/Invoice# table (full width) -->
+        <div class="invoice-title-block" style="text-align:left; flex:1;">
+            <h1>Invoice
+                <span class="status-pill status-{{ status|lower|default:'draft' }}">
+                    {{ status|upper|default:'DRAFT' }}
+                </span>
+            </h1>
+        </div>
+
+        <div style="text-align:right;">
+            <table class="date-invoice-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Invoice #</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>{{ invoice_date|date:"d/m/Y"|default:"" }}</td>
+                        <td>{{ invoice_number|default:"" }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+    </div><!-- /top-header -->
+
+    <!-- ══════════ BILL TO ══════════ -->
+    <div class="bill-to-section">
+        <div class="bill-to-box">
+            <div class="bill-to-label">Bill To:</div>
+            <div class="bill-to-name">{{ student_name|default:"" }}</div>
+            <div class="bill-to-detail">
+                {% if student_id %}Student ID: {{ student_id }}<br>{% endif %}
+                {% if student_class %}Class: {{ student_class }}<br>{% endif %}
+                {% if parent_name %}Parent/Guardian: {{ parent_name }}<br>{% endif %}
+                {% if parent_phone %}Phone: {{ parent_phone }}<br>{% endif %}
+                {% if parent_email %}{{ parent_email }}{% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ P.O. / TERMS / PROJECT ══════════ -->
+    <table class="ref-row-table">
+        <thead>
+            <tr>
+                <th>P.O. No.</th>
+                <th>Terms</th>
+                <th>Project / Term</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{{ batch_id|default:"" }}</td>
+                <td>Due on receipt</td>
+                <td>{{ term|default:"" }}{% if academic_year %} &ndash; {{ academic_year }}{% endif %}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- ══════════ LINE ITEMS TABLE ══════════ -->
+    <table class="line-items-table">
+        <thead>
+            <tr>
+                <th class="col-qty center">Quantity</th>
+                <th class="col-description">Description</th>
+                <th class="col-um center">U/M</th>
+                <th class="col-rate right">Rate (₦)</th>
+                <th class="col-amount right">Amount (₦)</th>
+            </tr>
+        </thead>
+        <tbody>
+
+            <!-- ── Line items (unified invoice system) ── -->
+            {% if has_line_items %}
+            {% for item in line_items %}
+            <tr>
+                <td class="center">{{ item.quantity|floatformat:0 }}</td>
+                <td>
+                    <strong>{{ item.description }}</strong>
+                    {% if item.service_item and item.service_item.category %}
+                    <br><small>{{ item.service_item.category.name }}</small>
+                    {% elif item.inventory_item %}
+                    <br><small>Inventory &mdash; {{ item.inventory_item.name }}</small>
+                    {% endif %}
+                </td>
+                <td class="center">{% if item.item_type == 'inventory' %}Unit{% else %}&mdash;{% endif %}</td>
+                <td class="right">{{ item.unit_price|floatformat:2 }}</td>
+                <td class="right">{{ item.line_total|floatformat:2 }}</td>
+            </tr>
+            {% if item.discount_amount %}
+            <tr class="discount-row">
+                <td></td>
+                <td style="font-size:10px; color:#27ae60;">&#10003; Item discount</td>
+                <td></td>
+                <td class="right" style="color:#27ae60;">-{{ item.discount_amount|floatformat:2 }}</td>
+                <td class="right" style="color:#27ae60;">-{{ item.discount_amount|floatformat:2 }}</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            {% else %}
+            <!-- ── Legacy fallback: single fee row ── -->
+            <tr>
+                <td class="center">1</td>
+                <td>
+                    <strong>{{ fee_name|default:"School Fees" }}</strong>
+                    {% if fee_category %} &mdash; <em>{{ fee_category }}</em>{% endif %}
+                    {% if term_name %}<br><small>{{ term_name }}</small>{% endif %}
+                </td>
+                <td class="center">Term</td>
+                <td class="right">{{ base_amount|floatformat:2 }}</td>
+                <td class="right">{{ base_amount|floatformat:2 }}</td>
+            </tr>
+            {% endif %}
+
+            <!-- ── Discounts / Scholarships ── -->
+            {% if has_discount %}
+            {% for program in discount_programs %}
+            <tr class="discount-row">
+                <td class="center"></td>
+                <td>
+                    &#10003; {{ program.program_name }}
+                    <small>({{ program.program_type|title }}
+                    {% if program.discount_type == 'percentage' %} &ndash; {{ program.discount_value }}% off
+                    {% elif program.discount_type == 'fixed_amount' %} &ndash; ₦{{ program.discount_value|floatformat:2 }} off
+                    {% elif program.discount_type == 'full_waiver' %} &ndash; Full Waiver
+                    {% endif %})</small>
+                    {% if program.program_code %} <small>[{{ program.program_code }}]</small>{% endif %}
+                </td>
+                <td></td>
+                <td class="right" style="color:#27ae60;">-{{ program.discount_amount|floatformat:2 }}</td>
+                <td class="right" style="color:#27ae60;">-{{ program.discount_amount|floatformat:2 }}</td>
+            </tr>
+            {% endfor %}
+            {% endif %}
+
+            <!-- ── Blank spacer rows (like the sample) ── -->
+            {% for i in "12345678" %}
+            <tr class="blank-row">
+                <td></td><td></td><td></td><td></td><td></td>
+            </tr>
+            {% endfor %}
+
+            <!-- ── PTA note row (embedded in description, like sample) ── -->
+            {% if pta_fee %}
+            <tr class="pta-note-row">
+                <td class="center">1</td>
+                <td>
+                    <strong>PTA: {{ pta_fee|floatformat:0 }}</strong><br>
+                    KINDLY NOTE THAT THE PTA LEVY IS TO BE PAID<br>
+                    INTO THE {{ company_name|upper }} PTA ACCOUNT<br>
+                    {% if pta_bank_details %}
+                        {{ pta_bank_details.account_number }}<br>
+                        {{ pta_bank_details.bank_name|upper }}
+                    {% endif %}
+                    {% if pta_special_instructions %}<br>{{ pta_special_instructions }}{% endif %}
+                </td>
+                <td class="center">—</td>
+                <td class="right">{{ pta_fee|floatformat:2 }}</td>
+                <td class="right">{{ pta_fee|floatformat:2 }}</td>
+            </tr>
+            {% endif %}
+
+            <!-- ── Notes row (if any) ── -->
+            {% if notes %}
+            <tr>
+                <td></td>
+                <td colspan="4" style="font-size:11px; color:#444;">{{ notes|linebreaksbr }}</td>
+            </tr>
+            {% endif %}
+
+            <!-- ── Subtotal (only when there are multiple items) ── -->
+            {% if has_line_items %}
+            <tr>
+                <td colspan="4" style="text-align:right; font-weight:600; border-top:1px solid #ddd; padding-top:4px;">Subtotal:</td>
+                <td class="right" style="font-weight:600; border-top:1px solid #ddd;">₦{{ subtotal|floatformat:2 }}</td>
+            </tr>
+            {% endif %}
+
+            <!-- ── Invoice-level discount ── -->
+            {% if has_discount %}
+            <tr class="discount-row">
+                <td colspan="4" style="text-align:right; color:#27ae60; font-weight:600;">Discount Applied:</td>
+                <td class="right" style="color:#27ae60; font-weight:600;">-₦{{ discount_amount|floatformat:2 }}</td>
+            </tr>
+            {% endif %}
+
+            <!-- ── TOTAL ROW ── -->
+            <tr class="total-row">
+                <td colspan="4" style="text-align:right; border-color:#aaa; background:#f0f0f0; font-weight:700;">
+                    TOTAL
+                </td>
+                <td style="text-align:right; border-color:#aaa; background:#f0f0f0; font-weight:700; font-size:13px;">
+                    ₦{{ final_amount|floatformat:2 }}
+                </td>
+            </tr>
+
+            <!-- ── Amount paid / Balance (if partial) ── -->
+            {% if amount_paid > 0 %}
+            <tr>
+                <td colspan="4" style="text-align:right; font-weight:600;">Amount Paid:</td>
+                <td class="right" style="color:#27ae60; font-weight:600;">₦{{ amount_paid|floatformat:2 }}</td>
+            </tr>
+            <tr>
+                <td colspan="4" style="text-align:right; font-weight:700;">Balance Due:</td>
+                <td class="right" style="font-weight:700; {% if balance > 0 %}color:#e74c3c;{% else %}color:#27ae60;{% endif %}">
+                    {% if balance > 0 %}₦{{ balance|floatformat:2 }}{% else %}FULLY PAID{% endif %}
+                </td>
+            </tr>
+            {% endif %}
+
+        </tbody>
+    </table>
+
+    <!-- ══════════ FOOTER: BANK DETAILS ══════════ -->
+    <div class="bank-footer">
+        <div class="bank-left">
+            {% if bank_accounts %}
+                {% for acct in bank_accounts %}
+                <div style="margin-bottom:{% if not forloop.last %}8px{% else %}0{% endif %};">
+                    <strong>{{ acct.account_name }}</strong><br>
+                    Acc. No.: {{ acct.account_number }}<br>
+                    {{ acct.bank_name }}{% if acct.bank_branch %} &mdash; {{ acct.bank_branch }}{% endif %}
+                    {% if acct.sort_code %}<br>Sort: {{ acct.sort_code }}{% endif %}
+                    {% if acct.swift_code %}<br>SWIFT: {{ acct.swift_code }}{% endif %}
+                    ({{ acct.currency }})
+                </div>
+                {% endfor %}
+            {% else %}
+                <strong>{{ company_name }}</strong>
+            {% endif %}
+        </div>
+        <div class="bank-right">
+            {% if is_overdue %}
+                <span style="color:#e74c3c; font-weight:700;">&#9888; {{ days_overdue }} days overdue</span><br>
+            {% endif %}
+            Due Date: {{ due_date|date:"d/m/Y"|default:"" }}<br>
+            {% if approved_by %}Approved by: {{ approved_by }}{% endif %}
+        </div>
+    </div>
+
+    <!-- ══════════ PAYMENT INSTRUCTIONS ══════════ -->
+    {% if payment_instructions %}
+    <div style="margin-top:10px; font-size:10px; color:#555; border-top:1px dashed #ccc; padding-top:6px;">
+        {{ payment_instructions }}
+    </div>
+    {% endif %}
+
+</div><!-- /invoice-wrapper -->
+
+{% endblock %}
+
+{# Student invoice renders bank details inline; suppress the base block to avoid duplication. #}
+{% block bank_details %}{% endblock %}

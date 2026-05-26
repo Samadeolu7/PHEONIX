@@ -1,0 +1,325 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+
+// Configure axios to send credentials and add auth header
+const getAuthConfig = () => {
+  const token = localStorage.getItem('accessToken');
+  const tenant = localStorage.getItem('currentTenant');
+  
+  return {
+    headers: {
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+      ...(tenant && { 'X-Tenant-ID': tenant }),
+    },
+    withCredentials: true, // Include cookies
+  };
+};
+
+interface Account {
+  id: number;
+  code: string;
+  name: string;
+  account_type: string;
+  account_level: string;
+  parent?: number;
+}
+
+interface AccountCategory {
+  id: number;
+  name: string;
+  code_prefix: string;
+  section: number;
+}
+
+interface CascadingAccountSelectorProps {
+  value: number | null;
+  onChange: (accountId: number | null) => void;
+  filterTypes?: string[]; // Optional filter for account types
+  placeholder?: string;
+  required?: boolean;
+  style?: React.CSSProperties;
+}
+
+/**
+ * Cascading Account Selector (4-Level Hierarchy)
+ * Allows users to select accounts hierarchically: 
+ * GL Section → Category (optional) → Parent → Child
+ * 
+ * Structure:
+ * 1. General Ledger Section (Assets, Liabilities, Equity, Income, Expenses)
+ * 2. Category (Inventory, Savings, Loans, etc.) - OPTIONAL
+ * 3. Parent Account
+ * 4. Child Account
+ */
+export const CascadingAccountSelector: React.FC<CascadingAccountSelectorProps> = ({
+  value,
+  onChange,
+  filterTypes,
+  placeholder = 'Select account',
+  required = false,
+  style,
+}) => {
+  const [categories, setCategories] = useState<AccountCategory[]>([]);
+  const [allAccounts, setAllAccounts] = useState<Account[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // 4-level state
+  const [selectedSection, setSelectedSection] = useState<number | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
+  const [skipCategory, setSkipCategory] = useState(false); // Allow skipping category level
+  const [selectedParent, setSelectedParent] = useState<number | null>(null);
+  const [selectedChild, setSelectedChild] = useState<number | null>(null);
+
+  // GL Sections (hardcoded - these are standard)
+  const GL_SECTIONS = [
+    { id: 1, name: 'Assets', code: '1xx', range: '100-199' },
+    { id: 2, name: 'Liabilities', code: '2xx', range: '200-299' },
+    { id: 3, name: 'Equity', code: '3xx', range: '300-399' },
+    { id: 4, name: 'Income', code: '4xx', range: '400-499' },
+    { id: 5, name: 'Expenses', code: '5xx', range: '500-599' },
+  ];
+
+  // Fetch data on mount
+  useEffect(() => {
+    Promise.all([fetchCategories(), fetchAccounts()]).finally(() => setLoading(false));
+  }, []);
+
+  // Initialize selection if value is provided
+  useEffect(() => {
+    if (value && allAccounts.length > 0) {
+      const account = allAccounts.find(a => a.id === value);
+      if (account) {
+        // If it's a child account, set parent and category
+        if (account.account_level === 'CHILD' && account.parent) {
+          const parent = allAccounts.find(p => p.id === account.parent);
+          if (parent) {
+            setSelectedParent(parent.id);
+            setSelectedCategory(parent.parent || null);
+          }
+        }
+        // If it's a parent account, set category
+        else if (account.account_level === 'PARENT' && account.parent) {
+          setSelectedCategory(account.parent);
+        }
+        setSelectedChild(value);
+      }
+    }
+  }, [value, allAccounts]);
+
+  const fetchCategories = async () => {
+    try {
+      const response = await axios.get('/api/accounts/categories/', getAuthConfig());
+      setCategories(response.data);
+    } catch (err) {
+      console.error('Failed to fetch categories:', err);
+    }
+  };
+
+  const fetchAccounts = async () => {
+    try {
+      const response = await axios.get('/api/accounts/', getAuthConfig());
+      let accounts = response.data;
+
+      // Apply filter if provided
+      if (filterTypes && filterTypes.length > 0) {
+        accounts = accounts.filter((acc: Account) => filterTypes.includes(acc.account_type));
+      }
+
+      setAllAccounts(accounts);
+    } catch (err) {
+      console.error('Failed to fetch accounts:', err);
+    }
+  };
+
+  // Get parent accounts for selected category
+  const getParentAccounts = (): Account[] => {
+    if (!selectedCategory) return [];
+    return allAccounts.filter(
+      acc => acc.account_level === 'PARENT' && acc.parent === selectedCategory
+    );
+  };
+
+  // Get child accounts for selected parent
+  const getChildAccounts = (): Account[] => {
+    if (!selectedParent) return [];
+    return allAccounts.filter(
+      acc => acc.account_level === 'CHILD' && acc.parent === selectedParent
+    );
+  };
+
+  // Handle category selection
+  const handleCategoryChange = (categoryId: string) => {
+    const id = categoryId ? parseInt(categoryId) : null;
+    setSelectedCategory(id);
+    setSelectedParent(null);
+    setSelectedChild(null);
+    onChange(null);
+  };
+
+  // Handle parent selection
+  const handleParentChange = (parentId: string) => {
+    const id = parentId ? parseInt(parentId) : null;
+    setSelectedParent(id);
+    setSelectedChild(null);
+    
+    // If parent has no children, select the parent itself
+    const parent = allAccounts.find(a => a.id === id);
+    if (parent) {
+      const hasChildren = allAccounts.some(
+        acc => acc.account_level === 'CHILD' && acc.parent === id
+      );
+      if (!hasChildren) {
+        onChange(id);
+        setSelectedChild(id);
+      } else {
+        onChange(null);
+      }
+    } else {
+      onChange(null);
+    }
+  };
+
+  // Handle child selection
+  const handleChildChange = (childId: string) => {
+    const id = childId ? parseInt(childId) : null;
+    setSelectedChild(id);
+    onChange(id);
+  };
+
+  const defaultStyle: React.CSSProperties = {
+    padding: '10px',
+    border: '1px solid #d1d5db',
+    borderRadius: '6px',
+    fontSize: '14px',
+    width: '100%',
+    ...style,
+  };
+
+  if (loading) {
+    return (
+      <div style={defaultStyle}>
+        <option>Loading accounts...</option>
+      </div>
+    );
+  }
+
+  const parentAccounts = getParentAccounts();
+  const childAccounts = getChildAccounts();
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* Step 1: Select Category (General Ledger) */}
+      <div>
+        <label
+          style={{
+            display: 'block',
+            fontSize: '12px',
+            fontWeight: 500,
+            marginBottom: '4px',
+            color: '#6b7280',
+          }}
+        >
+          1. Select General Ledger Category
+        </label>
+        <select
+          value={selectedCategory || ''}
+          onChange={e => handleCategoryChange(e.target.value)}
+          style={defaultStyle}
+          required={required}
+        >
+          <option value="">-- Select category --</option>
+          {categories.map(cat => (
+            <option key={cat.id} value={cat.id}>
+              {cat.name} ({cat.code_prefix})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Step 2: Select Parent Account (if category selected) */}
+      {selectedCategory && parentAccounts.length > 0 && (
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '12px',
+              fontWeight: 500,
+              marginBottom: '4px',
+              color: '#6b7280',
+            }}
+          >
+            2. Select Parent Account
+          </label>
+          <select
+            value={selectedParent || ''}
+            onChange={e => handleParentChange(e.target.value)}
+            style={defaultStyle}
+            required={required}
+          >
+            <option value="">-- Select parent account --</option>
+            {parentAccounts.map(acc => (
+              <option key={acc.id} value={acc.id}>
+                {acc.code} - {acc.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Step 3: Select Child Account (if parent selected and has children) */}
+      {selectedParent && childAccounts.length > 0 && (
+        <div>
+          <label
+            style={{
+              display: 'block',
+              fontSize: '12px',
+              fontWeight: 500,
+              marginBottom: '4px',
+              color: '#6b7280',
+            }}
+          >
+            3. Select Child Account
+          </label>
+          <select
+            value={selectedChild || ''}
+            onChange={e => handleChildChange(e.target.value)}
+            style={defaultStyle}
+            required={required}
+          >
+            <option value="">-- Select child account --</option>
+            {childAccounts.map(acc => (
+              <option key={acc.id} value={acc.id}>
+                {acc.code} - {acc.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Helper text */}
+      {selectedCategory && parentAccounts.length === 0 && (
+        <p style={{ fontSize: '12px', color: '#ef4444', margin: 0 }}>
+          No parent accounts found in this category.
+        </p>
+      )}
+
+      {selectedParent && childAccounts.length === 0 && !selectedChild && (
+        <p style={{ fontSize: '12px', color: '#10b981', margin: 0 }}>
+          ✓ Parent account selected (no child accounts available)
+        </p>
+      )}
+
+      {selectedChild && (
+        <p style={{ fontSize: '12px', color: '#10b981', margin: 0 }}>
+          ✓ Account selected:{' '}
+          <strong>
+            {allAccounts.find(a => a.id === selectedChild)?.code} -{' '}
+            {allAccounts.find(a => a.id === selectedChild)?.name}
+          </strong>
+        </p>
+      )}
+    </div>
+  );
+};
+
+export default CascadingAccountSelector;
