@@ -16,7 +16,7 @@ Workflows are still used for:
 - Business logic (eligibility checks, discounts)
 But NOT for creating the actual journal entries.
 """
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.core.exceptions import ValidationError
 from accounts.utils.account_creation import get_or_create_child_account, get_system_account
 from django.utils import timezone
@@ -141,19 +141,36 @@ class IncomeAccountingService:
 
                 account_number = f'CASH-{new_num:04d}'
 
-                # Create cashier account
-                cashier_account = CashierAccount.objects.create(
-                    cashier=user,
-                    account=cashier_gl_account,
-                    account_number=account_number,
-                    name=f'Cashier - {user.get_full_name() or user.username}',
-                    owner=owner,
-                    branch=branch,
-                    created_by=user,
-                    is_active=True
-                )
-
-                logger.info(f"Auto-created CashierAccount {account_number} for user {user.username}")
+                # Create cashier account (tenant-aware + race-safe)
+                try:
+                    with transaction.atomic():
+                        cashier_account = CashierAccount.objects.create(
+                            cashier=user,
+                            account=cashier_gl_account,
+                            account_number=account_number,
+                            name=f'Cashier - {user.get_full_name() or user.username}',
+                            owner=owner,
+                            branch=branch,
+                            tenant=getattr(user, 'tenant', None),
+                            created_by=user,
+                            is_active=True
+                        )
+                    logger.info(f"Auto-created CashierAccount {account_number} for user {user.username}")
+                except IntegrityError:
+                    # A concurrent/previous create may already exist. Use base manager to
+                    # bypass thread-local tenant filtering and recover the account.
+                    cashier_account = CashierAccount._base_manager.filter(
+                        cashier=user,
+                        owner=owner,
+                        branch=branch,
+                        is_active=True,
+                        is_deleted=False,
+                    ).order_by('-id').first()
+                    if not cashier_account:
+                        raise
+                    if not getattr(cashier_account, 'tenant_id', None) and getattr(user, 'tenant', None):
+                        cashier_account.tenant = user.tenant
+                        cashier_account.save(update_fields=['tenant'])
 
             # Return the cashier's GL account
             return cashier_account.account

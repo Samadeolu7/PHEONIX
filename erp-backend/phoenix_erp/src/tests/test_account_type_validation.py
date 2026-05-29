@@ -79,11 +79,22 @@ class AccountTypeValidationTest(TestCase):
         )
         
         # Create accounts of different types
+        income_parent = Account.objects.create(
+            name='Income Parent',
+            code='4000',
+            account_type='INCOME',
+            account_level='PARENT',
+            category=self.income_category,
+            owner=self.user,
+            branch=self.branch,
+            created_by=self.user
+        )
         self.income_account = Account.objects.create(
             name='Test Income',
             code='4010',
             account_type='INCOME',
-            account_level='PARENT',
+            account_level='CHILD',
+            parent=income_parent,
             category=self.income_category,
             owner=self.user,
             branch=self.branch,
