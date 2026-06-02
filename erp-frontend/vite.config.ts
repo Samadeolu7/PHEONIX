@@ -39,9 +39,9 @@ export default defineConfig(({ mode }) => {
       open: true,
       proxy: {
         '/api': {
-          target: 'https://api.erp.krystartrust.ng',
+          target: env.VITE_PROXY_TARGET || 'http://localhost:8000',
           changeOrigin: true,
-          secure: true,
+          secure: false,
         },
       },
     },
@@ -49,9 +49,9 @@ export default defineConfig(({ mode }) => {
       port: 4173,
       proxy: {
         '/api': {
-          target: 'https://api.erp.krystartrust.ng',
+          target: env.VITE_PROXY_TARGET || 'http://localhost:8000',
           changeOrigin: true,
-          secure: true,
+          secure: false,
         },
       },
     },

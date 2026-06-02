@@ -58,6 +58,30 @@ html.dark {
   color-scheme: dark;
 }
 
+/* ── Sidebar scrollbar ─────────────────────────────────────────────────── */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(183, 151, 88, 0.25);
+  border-radius: 99px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(183, 151, 88, 0.50);
+}
+
+/* ── Dashboard card hover lift ─────────────────────────────────────────── */
+.dashboard-card-hover {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.dashboard-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(10, 24, 87, 0.12);
+}
+
 html.light {
   color-scheme: light;
 }

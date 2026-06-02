@@ -98,6 +98,7 @@ const DynamicModulePage = lazy(() => import('./pages/DynamicModulePage'));
 const DashboardDebugTest = lazy(() => import('./pages/DashboardDebugTest'));
 const DashboardCreatePage = lazy(() => import('./pages/DashboardCreatePage'));
 const RefreshTokenTest = lazy(() => import('./components/debug/RefreshTokenTest'));
+const RoleSidebarConfigPage = lazy(() => import('./pages/settings/RoleSidebarConfigPage'));
 const ReportsListPage = lazy(() => import('./pages/ReportsListPage'));
 
 // Form/Workflow pages
@@ -676,6 +677,16 @@ function App() {
                                         <DashboardPage />
                                       </ProtectedRoute>
                                     </DashboardThemeProvider>
+                                  }
+                                />
+
+                                {/* Settings routes */}
+                                <Route
+                                  path="/settings/role-navigation"
+                                  element={
+                                    <ProtectedRoute requiredPermission="dashboard-view">
+                                      <RoleSidebarConfigPage />
+                                    </ProtectedRoute>
                                   }
                                 />
 

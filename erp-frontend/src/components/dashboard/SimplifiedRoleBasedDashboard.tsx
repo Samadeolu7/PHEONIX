@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
-import { StatsCard } from './StatsCard';
+import { BRAND } from '../../constants/brand';
 import {
   Clock,
   User,
@@ -18,7 +18,15 @@ import {
   CreditCard,
   Activity,
   Grid,
+  ArrowRight,
+  TrendingUp,
+  ChevronRight,
+  Menu,
+  X,
+  Settings,
 } from 'lucide-react';
+import { getRoleSidebarButtons, NAV_CONFIG_ROLES } from '../../config/roleSidebarConfig';
+import RenderedSidebarButton from './RenderedSidebarButton';
 import { permissionService } from '@/services/permissionService';
 import {
   dashboardStatsService,
@@ -93,38 +101,43 @@ const MODULES = [
   },
 ];
 
-// Color mappings for module cards
-// Color mappings for module cards
+// Color mappings for module cards - KTIL brand-aligned
 const COLOR_STYLES = {
   blue: {
-    light: '#3b82f620',
-    medium: '#3b82f6',
-    gradient: 'linear-gradient(135deg, #1e40af, #3b82f6)',
+    light: 'rgba(10,24,87,0.06)',
+    medium: BRAND.colors.navyPrimary,
+    gradient: `linear-gradient(135deg, ${BRAND.colors.navyDark}, ${BRAND.colors.navyLight})`,
+    border: 'rgba(10,24,87,0.18)',
   },
   green: {
-    light: '#10b98120',
-    medium: '#10b981',
-    gradient: 'linear-gradient(135deg, #059669, #10b981)',
+    light: '#10b98112',
+    medium: '#059669',
+    gradient: 'linear-gradient(135deg, #065f46, #059669)',
+    border: '#10b98130',
   },
   purple: {
-    light: '#8b5cf620',
-    medium: '#8b5cf6',
-    gradient: 'linear-gradient(135deg, #7c3aed, #8b5cf6)',
+    light: '#7c3aed12',
+    medium: '#7c3aed',
+    gradient: 'linear-gradient(135deg, #5b21b6, #7c3aed)',
+    border: '#7c3aed30',
   },
   orange: {
-    light: '#f9731620',
-    medium: '#f97316',
-    gradient: 'linear-gradient(135deg, #ea580c, #f97316)',
+    light: `rgba(183,151,88,0.10)`,
+    medium: BRAND.colors.gold,
+    gradient: `linear-gradient(135deg, ${BRAND.colors.goldDark}, ${BRAND.colors.gold})`,
+    border: `${BRAND.colors.gold}40`,
   },
   gray: {
-    light: '#6b728020',
-    medium: '#6b7280',
-    gradient: 'linear-gradient(135deg, #4b5563, #6b7280)',
+    light: `rgba(183,151,88,0.12)`,
+    medium: BRAND.colors.goldDark,
+    gradient: `linear-gradient(135deg, ${BRAND.colors.navyDark} 0%, ${BRAND.colors.goldDark} 100%)`,
+    border: `rgba(183,151,88,0.40)`,
   },
   teal: {
-    light: '#14b8a620',
-    medium: '#14b8a6',
-    gradient: 'linear-gradient(135deg, #0d9488, #14b8a6)',
+    light: '#0d948812',
+    medium: '#0d9488',
+    gradient: 'linear-gradient(135deg, #0f766e, #14b8a6)',
+    border: '#14b8a630',
   },
 };
 
@@ -452,6 +465,11 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
 
   const effectiveRole = selectedRole || 'Officer';
 
+  // Slide-over navigation panel
+  const [navOpen, setNavOpen] = useState(false);
+  const canConfigNav = NAV_CONFIG_ROLES.includes(effectiveRole);
+  const roleSidebarButtons = getRoleSidebarButtons(effectiveRole);
+
   // Build role-specific KPI cards from live data (fall back to zeros while loading)
   const emptyStats: MicrofinanceDashboardStats = {
     total_clients: 0,
@@ -521,33 +539,29 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
 
   if (loading || !permissionsLoaded) {
     return (
-      <div className={`space-y-6 ${className}`}>
-        {/* Loading skeleton - same as before */}
-        <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg p-6 animate-pulse">
-          <div className="h-8 bg-white/20 rounded w-64 mb-2"></div>
-          <div className="h-4 bg-white/20 rounded w-96 mb-4"></div>
+      <div className="space-y-6 animate-pulse">
+        {/* Welcome banner skeleton */}
+        <div
+          className="rounded-2xl p-8"
+          style={{ background: `linear-gradient(135deg, ${BRAND.colors.navyDark}, ${BRAND.colors.navyLight})` }}
+        >
+          <div className="h-7 rounded-lg w-56 mb-3" style={{ background: 'rgba(183,151,88,0.25)' }} />
+          <div className="h-4 rounded w-80 mb-6" style={{ background: 'rgba(255,255,255,0.12)' }} />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {[1, 2, 3].map(i => (
-              <div key={i} className="bg-white/10 rounded-lg p-4">
-                <div className="h-3 bg-white/20 rounded w-20 mb-2"></div>
-                <div className="h-6 bg-white/20 rounded w-16"></div>
+              <div key={i} className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.08)' }}>
+                <div className="h-3 rounded w-20 mb-2" style={{ background: 'rgba(183,151,88,0.25)' }} />
+                <div className="h-6 rounded w-14" style={{ background: 'rgba(255,255,255,0.15)' }} />
               </div>
             ))}
           </div>
         </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map(i => (
-            <div
-              key={i}
-              className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 animate-pulse"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="h-4 bg-gray-200 rounded w-24"></div>
-                <div className="h-8 w-8 bg-gray-200 rounded-lg"></div>
-              </div>
-              <div className="h-8 bg-gray-200 rounded w-20 mb-2"></div>
-              <div className="h-3 bg-gray-200 rounded w-16"></div>
+            <div key={i} className="bg-white rounded-xl border p-5" style={{ borderColor: BRAND.colors.border }}>
+              <div className="h-4 bg-gray-100 rounded w-24 mb-3" />
+              <div className="h-8 bg-gray-100 rounded w-20 mb-2" />
+              <div className="h-3 bg-gray-50 rounded w-16" />
             </div>
           ))}
         </div>
@@ -555,117 +569,327 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
     );
   }
 
-  // Show message if no modules accessible
   if (accessibleModules.length === 0) {
     return (
-      <div className={`space-y-6 ${className}`}>
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 text-center">
-          <AlertTriangle className="h-12 w-12 text-yellow-500 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">No Accessible Modules</h2>
-          <p className="text-gray-600">
-            Your current role doesn't have permissions to access any modules. Please contact your
-            administrator.
-          </p>
+      <div className="flex flex-col items-center justify-center py-20">
+        <div
+          className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
+          style={{ background: `rgba(183,151,88,0.12)`, border: `1.5px solid ${BRAND.colors.border}` }}
+        >
+          <AlertTriangle className="w-8 h-8" style={{ color: BRAND.colors.gold }} />
         </div>
+        <h2 className="text-xl font-bold mb-2" style={{ color: BRAND.colors.navyPrimary }}>
+          No Accessible Modules
+        </h2>
+        <p className="text-sm text-center max-w-sm" style={{ color: BRAND.colors.textSecondary }}>
+          Your current role doesn't have permissions to access any modules. Contact your administrator.
+        </p>
       </div>
     );
   }
 
   return (
-    <div className={`space-y-6 ${className}`}>
-      {/* Welcome Banner */}
+    <>
+      {/* ── SLIDE-OVER NAV PANEL ─────────────────────────────────────── */}
+      {navOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40"
+            style={{ background: 'rgba(6,14,48,0.55)', backdropFilter: 'blur(2px)' }}
+            onClick={() => setNavOpen(false)}
+          />
+          {/* Drawer */}
+          <div
+            className="fixed top-0 left-0 h-full z-50 flex flex-col"
+            style={{
+              width: '288px',
+              background: `linear-gradient(180deg, ${BRAND.colors.navyDark} 0%, ${BRAND.colors.navyPrimary} 100%)`,
+              boxShadow: '6px 0 40px rgba(6,14,48,0.55)',
+            }}
+          >
+            {/* Gold top accent */}
+            <div
+              className="h-1 flex-shrink-0"
+              style={{ background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark}, ${BRAND.colors.gold})` }}
+            />
+            {/* Header */}
+            <div
+              className="flex items-center justify-between px-4 py-4 flex-shrink-0"
+              style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', background: BRAND.colors.navyDark }}
+            >
+              <div>
+                <p className="text-sm font-black text-white">Quick Navigation</p>
+                <p className="text-xs mt-0.5" style={{ color: BRAND.colors.gold }}>{effectiveRole}</p>
+              </div>
+              <button
+                onClick={() => setNavOpen(false)}
+                className="w-8 h-8 rounded-lg flex items-center justify-center"
+                style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)' }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(183,151,88,0.18)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
+              >
+                <X className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.65)' }} />
+              </button>
+            </div>
+
+            {/* Nav buttons */}
+            <div
+              className="flex-1 overflow-y-auto py-2"
+              style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' } as React.CSSProperties}
+            >
+              {roleSidebarButtons.length > 0 ? (
+                roleSidebarButtons.map(btn => (
+                  <RenderedSidebarButton
+                    key={btn.id}
+                    button={btn}
+                    level={0}
+                    onNavigate={url => { navigate(url); setNavOpen(false); }}
+                  />
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                  <Menu className="w-10 h-10 mb-3" style={{ color: 'rgba(255,255,255,0.15)' }} />
+                  <p className="text-sm" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                    No navigation configured for this role.
+                  </p>
+                  {canConfigNav && (
+                    <button
+                      onClick={() => { navigate('/settings/role-navigation'); setNavOpen(false); }}
+                      className="mt-4 text-xs underline"
+                      style={{ color: BRAND.colors.gold }}
+                    >
+                      Configure now →
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div
+              className="flex-shrink-0 px-4 py-4"
+              style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              {canConfigNav ? (
+                <button
+                  onClick={() => { navigate('/settings/role-navigation'); setNavOpen(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold"
+                  style={{
+                    background: 'rgba(183,151,88,0.12)',
+                    color: BRAND.colors.gold,
+                    border: '1px solid rgba(183,151,88,0.25)',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(183,151,88,0.22)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(183,151,88,0.12)'; }}
+                >
+                  <Settings className="w-4 h-4 flex-shrink-0" />
+                  Configure Navigation
+                </button>
+              ) : (
+                <p className="text-center text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                  Contact a Director to configure navigation
+                </p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      <div className="space-y-6">
+
+      {/* ── HERO: split 3-col identity + 2-col KPI grid ─────────────── */}
       <div
-        className="rounded-lg p-6 text-white"
+        className="rounded-2xl overflow-hidden"
         style={{
-          background: `linear-gradient(135deg, #1e40af, #3b82f6)`,
+          background: `linear-gradient(135deg, ${BRAND.colors.navyDark} 0%, ${BRAND.colors.navyPrimary} 55%, ${BRAND.colors.navyLight} 100%)`,
+          boxShadow: `0 8px 40px rgba(10,24,87,0.32)`,
         }}
       >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold mb-2">
-              {getGreeting()}, {userName.split(' ')[0]}
-            </h1>
-            <p className="text-white/90 mb-4">
-              Welcome to your {effectiveRole} dashboard. Here's your overview.
-            </p>
+        <div className="p-7 grid grid-cols-1 lg:grid-cols-5 gap-6">
 
-            {/* Quick Stats */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {statsCards.slice(0, 3).map(stat => {
-                const Icon = stat.icon;
-                return (
-                  <div key={stat.id} className="bg-white/10 rounded-lg p-4 backdrop-blur-sm">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <p className="text-white/80 text-sm">{stat.title}</p>
-                        <p className="text-2xl font-bold">{stat.value}</p>
-                      </div>
-                      <Icon className="h-6 w-6 text-white/70" />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* User Avatar */}
-          <div className="hidden lg:block ml-6">
-            <div className="w-20 h-20 bg-white/20 rounded-full flex items-center justify-center">
-              <User className="h-10 w-10 text-white" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Quick Actions - Only show if user has permissions */}
-      {accessibleQuickActions.length > 0 && (
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {accessibleQuickActions.map(action => {
-              const Icon = action.icon;
-              return (
-                <button
-                  key={action.id}
-                  onClick={() => handleActionClick(action.path)}
-                  className="p-4 bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-blue-300 transition-all duration-200 text-left group"
+          {/* Left: identity + period progress */}
+          <div className="lg:col-span-3 flex flex-col justify-between gap-5">
+            <div>
+              {/* Role + FY badges */}
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <span
+                  className="text-xs font-black uppercase tracking-widest px-3 py-1 rounded-full"
+                  style={{
+                    background: 'rgba(183,151,88,0.22)',
+                    color: BRAND.colors.gold,
+                    border: '1px solid rgba(183,151,88,0.40)',
+                  }}
                 >
-                  <div className="flex items-start space-x-3">
-                    <div className="p-2 rounded-lg group-hover:scale-110 transition-transform duration-200 bg-blue-50">
-                      <Icon className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-medium text-gray-900 group-hover:text-blue-600">
-                        {action.title}
-                      </h3>
-                    </div>
-                  </div>
+                  {effectiveRole}
+                </span>
+                {liveStats.active_financial_year && (
+                  <span
+                    className="text-xs font-semibold px-3 py-1 rounded-full"
+                    style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.55)' }}
+                  >
+                    FY {liveStats.active_financial_year}
+                  </span>
+                )}
+                {/* Navigation drawer toggle */}
+                <button
+                  onClick={() => setNavOpen(true)}
+                  className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all"
+                  style={{
+                    background: 'rgba(255,255,255,0.07)',
+                    color: 'rgba(255,255,255,0.70)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(183,151,88,0.18)';
+                    e.currentTarget.style.color = BRAND.colors.gold;
+                    e.currentTarget.style.borderColor = 'rgba(183,151,88,0.40)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                    e.currentTarget.style.color = 'rgba(255,255,255,0.70)';
+                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
+                  }}
+                >
+                  <Menu className="w-3.5 h-3.5" />
+                  Navigation
                 </button>
+              </div>
+
+              {/* Large greeting */}
+              <p className="text-4xl font-black text-white leading-none">
+                {getGreeting()},
+              </p>
+              <p className="text-4xl font-black leading-none mt-0.5" style={{ color: BRAND.colors.gold }}>
+                {userName.split(' ')[0]}.
+              </p>
+              <p className="text-sm mt-3" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                {new Date().toLocaleDateString('en-NG', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </p>
+            </div>
+
+            {/* Period progress bar */}
+            <div
+              className="rounded-xl p-4"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.10)',
+              }}
+            >
+              <div className="flex justify-between items-center mb-2">
+                <span
+                  className="text-xs font-bold uppercase tracking-wider"
+                  style={{ color: 'rgba(255,255,255,0.5)' }}
+                >
+                  {liveStats.active_period ?? 'Current Period'}
+                </span>
+                <span className="text-sm font-black" style={{ color: BRAND.colors.gold }}>
+                  {liveStats.period_progress_pct}%
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.10)' }}>
+                <div
+                  className="h-2 rounded-full transition-all duration-700"
+                  style={{
+                    width: `${Math.min(liveStats.period_progress_pct, 100)}%`,
+                    background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark})`,
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Right: 2×2 KPI tiles */}
+          <div className="lg:col-span-2 grid grid-cols-2 gap-3">
+            {statsCards.map((stat, i) => {
+              const Icon = stat.icon;
+              const isPrimary = i === 0;
+              return (
+                <div
+                  key={stat.id}
+                  className="rounded-xl p-4 flex flex-col justify-between"
+                  style={{
+                    background: isPrimary ? 'rgba(183,151,88,0.20)' : 'rgba(255,255,255,0.07)',
+                    border: isPrimary
+                      ? '1px solid rgba(183,151,88,0.40)'
+                      : '1px solid rgba(255,255,255,0.10)',
+                  }}
+                >
+                  <Icon
+                    className="w-4 h-4 mb-3"
+                    style={{ color: isPrimary ? BRAND.colors.gold : 'rgba(255,255,255,0.40)' }}
+                  />
+                  <div>
+                    <p className="text-xl font-black text-white leading-none mb-1">{stat.value}</p>
+                    <p className="text-xs" style={{ color: 'rgba(255,255,255,0.50)' }}>
+                      {stat.title}
+                    </p>
+                  </div>
+                </div>
               );
             })}
           </div>
         </div>
-      )}
 
-      {/* Key Metrics */}
-      <div>
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Key Performance Indicators</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {statsCards.map(stat => (
-            <StatsCard
-              key={stat.id}
-              {...stat}
-              className="dashboard-card-hover"
-              onClick={() => console.log(`Clicked ${stat.title}`)}
-            />
-          ))}
-        </div>
+        {/* Gold accent line */}
+        <div
+          className="h-px"
+          style={{ background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark} 50%, transparent)` }}
+        />
       </div>
 
-      {/* Modules - Now dynamically generated based on permissions */}
+      {/* ── QUICK ACTIONS: horizontal pill strip ─────────────────────── */}
+      {accessibleQuickActions.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <span
+            className="text-xs font-black uppercase tracking-widest flex-shrink-0"
+            style={{ color: BRAND.colors.textSecondary }}
+          >
+            Quick Actions
+          </span>
+          <div className="w-px h-4 flex-shrink-0" style={{ background: BRAND.colors.border }} />
+          {accessibleQuickActions.map(action => {
+            const Icon = action.icon;
+            return (
+              <button
+                key={action.id}
+                onClick={() => handleActionClick(action.path)}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all duration-200 border"
+                style={{
+                  background: '#ffffff',
+                  borderColor: BRAND.colors.border,
+                  color: BRAND.colors.navyPrimary,
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = BRAND.colors.navyPrimary;
+                  e.currentTarget.style.color = '#ffffff';
+                  e.currentTarget.style.borderColor = BRAND.colors.navyPrimary;
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(10,24,87,0.20)';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = '#ffffff';
+                  e.currentTarget.style.color = BRAND.colors.navyPrimary;
+                  e.currentTarget.style.borderColor = BRAND.colors.border;
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {action.title}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── MODULES: gradient colored tiles ──────────────────────────── */}
       <div>
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Your Modules</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <SectionHeader icon={Grid} title="Your Modules" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {accessibleModules.map(module => {
             const Icon = module.icon;
             const colors = COLOR_STYLES[module.color as keyof typeof COLOR_STYLES];
@@ -673,129 +897,245 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
               <button
                 key={module.id}
                 onClick={() => handleModuleClick(module.path)}
-                className="p-6 bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md hover:border-blue-300 transition-all duration-200 text-left group"
+                className="group relative rounded-2xl p-5 text-left overflow-hidden transition-all duration-300"
+                style={{
+                  background: colors.gradient,
+                  boxShadow: `0 4px 16px ${colors.border}`,
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.transform = 'translateY(-4px) scale(1.03)';
+                  e.currentTarget.style.boxShadow = `0 14px 32px ${colors.border}`;
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.transform = 'translateY(0) scale(1)';
+                  e.currentTarget.style.boxShadow = `0 4px 16px ${colors.border}`;
+                }}
               >
-                <div className="flex items-start space-x-4">
-                  <div
-                    className="p-3 rounded-lg group-hover:scale-110 transition-transform duration-200"
-                    style={{ backgroundColor: colors.light }}
-                  >
-                    <Icon className="h-6 w-6" style={{ color: colors.medium }} />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 mb-2">
-                      {module.title}
-                    </h3>
-                    <p className="text-sm text-gray-500">{module.description}</p>
-                  </div>
-                </div>
+                {/* Radial shine overlay */}
+                <div
+                  className="absolute inset-0 opacity-20 pointer-events-none"
+                  style={{
+                    background:
+                      'radial-gradient(circle at top right, rgba(255,255,255,0.35), transparent 65%)',
+                  }}
+                />
+                <Icon
+                  className="w-6 h-6 mb-4 relative z-10"
+                  style={{ color: 'rgba(255,255,255,0.92)' }}
+                />
+                <h3 className="text-xs font-black text-white leading-snug relative z-10">
+                  {module.title}
+                </h3>
+                <ArrowRight
+                  className="w-3.5 h-3.5 mt-2 opacity-0 group-hover:opacity-70 transition-opacity relative z-10"
+                  style={{ color: '#fff' }}
+                />
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Loan Portfolio At a Glance */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Operational Period */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Activity className="h-5 w-5 text-blue-600" />
-            Loan Portfolio
-          </h3>
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-600">Financial Year</span>
-              <span className="font-medium text-gray-900">
-                {liveStats.active_financial_year ?? '—'}
+      {/* ── BOTTOM SECTION: dark portfolio panel + priority queue ─────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+        {/* Portfolio overview — spans 2 cols, dark card */}
+        <div
+          className="lg:col-span-2 rounded-2xl p-6"
+          style={{
+            background: `linear-gradient(135deg, ${BRAND.colors.navyDark} 0%, ${BRAND.colors.navyPrimary} 100%)`,
+            boxShadow: '0 4px 24px rgba(10,24,87,0.22)',
+          }}
+        >
+          <p
+            className="text-xs font-black uppercase tracking-widest mb-5"
+            style={{ color: BRAND.colors.gold }}
+          >
+            Portfolio Overview
+          </p>
+
+          {/* 4 headline figures */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+            {[
+              { label: 'Loan Book', value: formatNaira(liveStats.total_loan_book) },
+              { label: 'Active Loans', value: liveStats.active_loans.toLocaleString() },
+              { label: 'Disbursed (Mo.)', value: formatNaira(liveStats.total_disbursed_this_month) },
+              { label: 'Total Savings', value: formatNaira(liveStats.total_savings) },
+            ].map(item => (
+              <div key={item.label}>
+                <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.40)' }}>
+                  {item.label}
+                </p>
+                <p className="text-lg font-black text-white leading-tight">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Repayment rate */}
+          <div>
+            <div className="flex justify-between items-baseline mb-2">
+              <span
+                className="text-xs font-bold uppercase tracking-wide"
+                style={{ color: 'rgba(255,255,255,0.45)' }}
+              >
+                Loan Repayment Rate
+              </span>
+              <span className="text-2xl font-black" style={{ color: BRAND.colors.gold }}>
+                {formatPercent(liveStats.loan_repayment_rate)}
               </span>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-600">Active Period</span>
-              <span className="font-medium text-gray-900">{liveStats.active_period ?? '—'}</span>
+            <div
+              className="w-full h-3 rounded-full"
+              style={{ background: 'rgba(255,255,255,0.08)' }}
+            >
+              <div
+                className="h-3 rounded-full transition-all duration-700"
+                style={{
+                  width: `${Math.min(liveStats.loan_repayment_rate, 100)}%`,
+                  background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark})`,
+                }}
+              />
             </div>
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-sm text-gray-600">Repayment Rate</span>
-                <span className="text-sm font-medium text-blue-600">
-                  {formatPercent(liveStats.loan_repayment_rate)}
-                </span>
-              </div>
-              <div className="w-full bg-gray-200 rounded-full h-2">
+          </div>
+
+          {/* Overdue callout */}
+          {liveStats.overdue_loans > 0 && (
+            <div
+              className="mt-4 flex items-center gap-3 rounded-xl px-4 py-3"
+              style={{
+                background: 'rgba(220,38,38,0.12)',
+                border: '1px solid rgba(220,38,38,0.25)',
+              }}
+            >
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: '#f87171' }} />
+              <span className="text-xs font-semibold" style={{ color: 'rgba(255,255,255,0.70)' }}>
+                {liveStats.overdue_loans} overdue loan
+                {liveStats.overdue_loans !== 1 ? 's' : ''} require attention
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Priority queue — right col, white card */}
+        <div
+          className="rounded-2xl p-5 bg-white"
+          style={{ border: `1.5px solid ${BRAND.colors.border}` }}
+        >
+          <p
+            className="text-xs font-black uppercase tracking-widest mb-4"
+            style={{ color: BRAND.colors.navyPrimary }}
+          >
+            Priority Queue
+          </p>
+          <div className="space-y-1">
+            {[
+              { label: 'Loan Approvals',    value: liveStats.pending_approvals,       icon: CheckCircle, accent: BRAND.colors.navyPrimary },
+              { label: 'Leave Requests',    value: liveStats.pending_leave_requests,  icon: Clock,       accent: '#7c3aed' },
+              { label: 'Purchase Orders',   value: liveStats.pending_purchase_orders, icon: ShoppingCart, accent: '#0d9488' },
+              { label: 'Open Tickets',      value: liveStats.pending_tickets,         icon: AlertTriangle, accent: '#dc2626' },
+              { label: 'Requisitions',      value: liveStats.pending_requisitions,    icon: FileText,    accent: BRAND.colors.goldDark },
+            ].map(item => {
+              const Icon = item.icon;
+              return (
                 <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(liveStats.loan_repayment_rate, 100)}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Pending Actions */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Clock className="h-5 w-5 text-yellow-600" />
-            Pending Actions
-          </h3>
-          <div className="space-y-3">
-            {[
-              {
-                label: 'Approvals',
-                value: liveStats.pending_approvals,
-                color: 'text-yellow-700 bg-yellow-50',
-              },
-              {
-                label: 'Leave Requests',
-                value: liveStats.pending_leave_requests,
-                color: 'text-purple-700 bg-purple-50',
-              },
-              {
-                label: 'Purchase Orders',
-                value: liveStats.pending_purchase_orders,
-                color: 'text-blue-700 bg-blue-50',
-              },
-              {
-                label: 'Open Tickets',
-                value: liveStats.pending_tickets,
-                color: 'text-red-700 bg-red-50',
-              },
-            ].map(item => (
-              <div key={item.label} className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">{item.label}</span>
-                <span className={`text-sm font-semibold px-2 py-0.5 rounded-full ${item.color}`}>
-                  {item.value}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Client Summary */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Users className="h-5 w-5 text-green-600" />
-            Client Summary
-          </h3>
-          <div className="space-y-3">
-            {[
-              { label: 'Total Clients', value: liveStats.total_clients.toLocaleString() },
-              { label: 'Active Clients', value: liveStats.active_clients.toLocaleString() },
-              {
-                label: 'New This Month',
-                value: liveStats.new_clients_this_month.toLocaleString(),
-              },
-              { label: 'Total Staff', value: liveStats.total_staff.toLocaleString() },
-            ].map(item => (
-              <div key={item.label} className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">{item.label}</span>
-                <span className="font-semibold text-gray-900">{item.value}</span>
-              </div>
-            ))}
+                  key={item.label}
+                  className="flex items-center justify-between py-2 px-3 rounded-lg transition-colors"
+                  style={{ cursor: 'default' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f9f7f3'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                      style={{ background: `${item.accent}14` }}
+                    >
+                      <Icon className="w-3 h-3" style={{ color: item.accent }} />
+                    </div>
+                    <span className="text-xs font-medium" style={{ color: BRAND.colors.textSecondary }}>
+                      {item.label}
+                    </span>
+                  </div>
+                  <span
+                    className="text-sm font-black px-2 py-0.5 rounded-full"
+                    style={{ background: `${item.accent}14`, color: item.accent }}
+                  >
+                    {item.value}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
-    </div>
+
+      {/* ── CLIENT SUMMARY: 4-tile strip ─────────────────────────────── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[
+          { label: 'Total Clients',  value: liveStats.total_clients.toLocaleString(),        icon: Users },
+          { label: 'Active Clients', value: liveStats.active_clients.toLocaleString(),       icon: CheckCircle },
+          { label: 'New This Month', value: liveStats.new_clients_this_month.toLocaleString(), icon: TrendingUp },
+          { label: 'Total Staff',    value: liveStats.total_staff.toLocaleString(),           icon: Users },
+        ].map(item => {
+          const Icon = item.icon;
+          return (
+            <div
+              key={item.label}
+              className="rounded-xl px-4 py-4 bg-white flex items-center gap-4"
+              style={{ border: `1.5px solid ${BRAND.colors.border}` }}
+            >
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{ background: 'rgba(10,24,87,0.06)' }}
+              >
+                <Icon className="w-4 h-4" style={{ color: BRAND.colors.navyPrimary }} />
+              </div>
+              <div className="min-w-0">
+                <p
+                  className="text-xl font-black leading-none mb-0.5 truncate"
+                  style={{ color: BRAND.colors.navyPrimary }}
+                >
+                  {item.value}
+                </p>
+                <p className="text-xs truncate" style={{ color: BRAND.colors.textSecondary }}>
+                  {item.label}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      </div>
+    </>
   );
 };
+
+// ── Sub-components ──────────────────────────────────────────────────────────
+
+function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
+  return (
+    <div className="flex items-center gap-3 mb-4">
+      <div
+        className="w-7 h-7 rounded-lg flex items-center justify-center"
+        style={{ background: `${BRAND.colors.navyPrimary}0e`, border: `1px solid ${BRAND.colors.border}` }}
+      >
+        <Icon className="w-3.5 h-3.5" style={{ color: BRAND.colors.navyPrimary }} />
+      </div>
+      <h2 className="text-sm font-bold uppercase tracking-widest" style={{ color: BRAND.colors.navyPrimary }}>
+        {title}
+      </h2>
+      <div className="flex-1 h-px" style={{ background: BRAND.colors.border }} />
+    </div>
+  );
+}
+
+function PortfolioRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between items-center py-1">
+      <span className="text-xs font-medium" style={{ color: BRAND.colors.textSecondary }}>{label}</span>
+      <span className="text-sm font-bold" style={{ color: BRAND.colors.navyPrimary }}>{value}</span>
+    </div>
+  );
+}
 
 export default SimplifiedRoleBasedDashboard;

@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom';
 import { usePermission } from '../../hooks/usePermissions';
 import { useAuth } from '../../contexts/AuthContext';
 import { getFeaturesGroupedByCategory } from '../../config/featureRegistry';
+import { ArrowLeft, TrendingUp, ChevronRight } from 'lucide-react';
+import { BRAND } from '../../constants/brand';
 
 export const FinancialManagementPage: React.FC = () => {
   const { hasPermission } = usePermission();
@@ -24,101 +26,111 @@ export const FinancialManagementPage: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">Financial Management</h1>
-              <p className="mt-2 text-lg text-gray-600">
-                Comprehensive financial operations including receivables, invoicing, and financial
-                reporting
-              </p>
+    <div className="min-h-screen" style={{ background: BRAND.colors.offWhite }}>
+      {/* Navy gradient banner */}
+      <div style={{ background: 'linear-gradient(135deg, #060e30 0%, #0a1857 60%, #162570 100%)' }}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-8">
+          <Link
+            to="/dashboard/role-based"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide mb-5 transition-opacity hover:opacity-75"
+            style={{ color: BRAND.colors.goldLight }}
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Back to Dashboard
+          </Link>
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(183,151,88,0.18)' }}>
+                <TrendingUp className="w-6 h-6" style={{ color: BRAND.colors.gold }} />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white mb-1">Financial Management</h1>
+                <p className="text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                  Receivables, invoicing, payables and comprehensive financial reporting
+                </p>
+              </div>
             </div>
-            <div className="text-sm text-gray-500">{totalFeatures} available features</div>
+            {totalFeatures > 0 && (
+              <div className="text-right flex-shrink-0 hidden sm:block">
+                <div className="text-3xl font-bold tabular-nums" style={{ color: BRAND.colors.gold }}>{totalFeatures}</div>
+                <div className="text-xs uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.45)' }}>features</div>
+              </div>
+            )}
           </div>
+          <div className="h-px mt-6" style={{ background: 'linear-gradient(90deg, rgba(183,151,88,0.6), transparent)' }} />
         </div>
+      </div>
 
-        {/* No access message */}
+      {/* Content */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {totalFeatures === 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 text-center">
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">
-              No Financial Features Available
-            </h2>
-            <p className="text-gray-600">
+          <div className="bg-white rounded-2xl border p-12 text-center" style={{ borderColor: BRAND.colors.border }}>
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(183,151,88,0.1)' }}>
+              <TrendingUp className="w-7 h-7" style={{ color: BRAND.colors.gold }} />
+            </div>
+            <h2 className="text-lg font-bold mb-2" style={{ color: BRAND.colors.navyPrimary }}>No Financial Features Available</h2>
+            <p className="text-sm" style={{ color: BRAND.colors.textSecondary }}>
               Your current role doesn&apos;t have permissions to access any financial features.
             </p>
           </div>
         )}
 
-        {/* Categories */}
         {Object.entries(groupedFeatures).map(([category, features]) => (
-          <div key={category} className="mb-12">
-            <h2 className="text-2xl font-semibold text-gray-800 mb-6 border-b border-gray-200 pb-2">
-              {category}
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div key={category} className="mb-10">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-1 h-5 rounded-full flex-shrink-0" style={{ background: BRAND.colors.gold }} />
+              <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: BRAND.colors.navyPrimary }}>
+                {category}
+              </h2>
+              <div className="flex-1 h-px" style={{ background: '#e0d8cc' }} />
+              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full" style={{ background: 'rgba(10,24,87,0.07)', color: BRAND.colors.textSecondary }}>
+                {features.length}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {features.map(feature => {
                 const Icon = feature.icon;
                 return (
                   <Link
                     key={feature.id}
                     to={feature.path}
-                    className="group bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md hover:border-blue-300 transition-all duration-200"
+                    className="group relative bg-white rounded-xl border p-5 hover:shadow-lg transition-all duration-200 flex items-start gap-4"
+                    style={{ borderColor: '#e8e0d0' }}
                   >
-                    <div className="flex items-start space-x-4">
-                      <div className="flex-shrink-0">
-                        <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 group-hover:bg-blue-200 transition-colors">
-                          <Icon size={20} />
-                        </div>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center space-x-2 mb-2">
-                          <h3 className="text-lg font-medium text-gray-900 group-hover:text-blue-600 transition-colors">
-                            {feature.title}
-                          </h3>
-                          {feature.isNew && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                              NEW
-                            </span>
-                          )}
-                          {feature.isEnhanced && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                              ENHANCED
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-gray-600 leading-relaxed">
-                          {feature.description}
-                        </p>
-                      </div>
+                    <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(10,24,87,0.07)' }}>
+                      <Icon size={18} style={{ color: BRAND.colors.navyPrimary }} />
                     </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <h3 className="text-sm font-semibold truncate" style={{ color: BRAND.colors.navyPrimary }}>
+                          {feature.title}
+                        </h3>
+                        {feature.isNew && (
+                          <span className="flex-shrink-0 text-xs font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(183,151,88,0.15)', color: BRAND.colors.goldDark }}>NEW</span>
+                        )}
+                        {feature.isEnhanced && (
+                          <span className="flex-shrink-0 text-xs font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(10,24,87,0.08)', color: BRAND.colors.navyPrimary }}>ENH</span>
+                        )}
+                      </div>
+                      <p className="text-xs leading-relaxed line-clamp-2" style={{ color: BRAND.colors.textSecondary }}>
+                        {feature.description}
+                      </p>
+                    </div>
+                    <ChevronRight
+                      className="flex-shrink-0 w-4 h-4 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                      style={{ color: BRAND.colors.gold }}
+                    />
+                    <div
+                      className="absolute inset-x-0 bottom-0 h-0.5 rounded-b-xl opacity-0 group-hover:opacity-100 transition-opacity"
+                      style={{ background: `linear-gradient(90deg, ${BRAND.colors.gold}, transparent)` }}
+                    />
                   </Link>
                 );
               })}
             </div>
           </div>
         ))}
-
-        {/* Debug section - remove in production */}
-        {/* {process.env.NODE_ENV === 'development' && (
-          <div className="mt-8 p-4 bg-gray-100 rounded-lg">
-            <h3 className="text-lg font-semibold mb-2">Debug Info</h3>
-            <p>Total Features: {totalFeatures}</p>
-            <p>Categories: {Object.keys(groupedFeatures).join(', ')}</p>
-            <button 
-              onClick={() => {
-                console.log('All Financial Features:', FEATURE_REGISTRY.filter(f => f.moduleId === 'financial'));
-                console.log('Grouped Features:', groupedFeatures);
-                console.log('Has accounts-view permission:', hasPermission('accounts-view'));
-              }}
-              className="mt-2 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              Log to Console
-            </button>
-          </div>
-        )} */}
       </div>
     </div>
   );
