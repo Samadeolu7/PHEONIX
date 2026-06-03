@@ -80,6 +80,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Ensure target directory exists
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            mkdir -p /opt/phoenix-kti
+
       - name: Copy docker-compose to server
         uses: appleboy/scp-action@v0.1.7
         with:
