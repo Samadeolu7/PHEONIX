@@ -1,0 +1,211 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: phoenix_kti_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - kti_postgres_data:/var/lib/postgresql/data
+    networks:
+      - phoenix_kti_backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: phoenix_kti_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - kti_redis_data:/data
+    networks:
+      - phoenix_kti_backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
+    container_name: phoenix_kti_backend
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cd /app/src
+        python manage.py migrate
+        python manage.py collectstatic --noinput
+        exec gunicorn phoenix.wsgi:application \
+          --bind 0.0.0.0:8000 \
+          --workers 3 \
+          --worker-class gthread \
+          --threads 2 \
+          --timeout 120 \
+          --access-logfile - \
+          --error-logfile -
+    environment:
+      - DJANGO_SETTINGS_MODULE=phoenix.settings
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=${DEBUG:-False}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - EMAIL_BACKEND=${EMAIL_BACKEND}
+      - EMAIL_HOST=${EMAIL_HOST}
+      - EMAIL_PORT=${EMAIL_PORT}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD}
+      - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL}
+      - PYTHONPATH=/app/src
+    volumes:
+      - kti_static_files:/app/src/staticfiles
+      - kti_media_files:/app/src/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - phoenix_kti_backend
+      - traefik_public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.phoenix-kti-api.rule=Host(`api.kti.krystartrust.ng`)"
+      - "traefik.http.routers.phoenix-kti-api.entrypoints=websecure"
+      - "traefik.http.routers.phoenix-kti-api.tls=true"
+      - "traefik.http.routers.phoenix-kti-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.phoenix-kti-api.loadbalancer.server.port=8000"
+      - "traefik.docker.network=traefik_public"
+  celery_worker:
+    image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
+    container_name: phoenix_kti_celery_worker
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cd /app/src
+        exec celery -A phoenix worker --loglevel=info --concurrency=2
+    environment:
+      - DJANGO_SETTINGS_MODULE=phoenix.settings
+      - SECRET_KEY=${SECRET_KEY}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - PYTHONPATH=/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - phoenix_kti_backend
+
+  celery_beat:
+    image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
+    container_name: phoenix_kti_celery_beat
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cd /app/src
+        exec celery -A phoenix beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      - DJANGO_SETTINGS_MODULE=phoenix.settings
+      - SECRET_KEY=${SECRET_KEY}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - PYTHONPATH=/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - phoenix_kti_backend
+
+  flower:
+    image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
+    container_name: phoenix_kti_flower
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cd /app/src
+        exec celery -A phoenix flower --port=5555
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - PYTHONPATH=/app/src
+    depends_on:
+      - redis
+      - celery_worker
+    networks:
+      - phoenix_kti_backend
+      - traefik_public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.phoenix-kti-flower.rule=Host(`flower.kti.krystartrust.ng`)"
+      - "traefik.http.routers.phoenix-kti-flower.entrypoints=websecure"
+      - "traefik.http.routers.phoenix-kti-flower.tls=true"
+      - "traefik.http.routers.phoenix-kti-flower.tls.certresolver=letsencrypt"
+      - "traefik.http.services.phoenix-kti-flower.loadbalancer.server.port=5555"
+      - "traefik.docker.network=traefik_public"
+
+  frontend:
+    image: ${DOCKER_IMAGE_FRONTEND:-samadeolu7/phoenix-kti-frontend:latest}
+    container_name: phoenix_kti_frontend
+    restart: unless-stopped
+    networks:
+      - traefik_public
+      - phoenix_kti_backend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.phoenix-kti-frontend.rule=Host(`erp.krystartrust.ng`)"
+      - "traefik.http.routers.phoenix-kti-frontend.entrypoints=websecure"
+      - "traefik.http.routers.phoenix-kti-frontend.tls=true"
+      - "traefik.http.routers.phoenix-kti-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.phoenix-kti-frontend.tls.domains[0].main=erp.krystartrust.ng"
+      - "traefik.http.services.phoenix-kti-frontend.loadbalancer.server.port=80"
+      - "traefik.docker.network=traefik_public"
+      - "traefik.http.routers.phoenix-kti-frontend-http.rule=Host(`erp.krystartrust.ng`)"
+      - "traefik.http.routers.phoenix-kti-frontend-http.entrypoints=web"
+      - "traefik.http.routers.phoenix-kti-frontend-http.middlewares=kti-redirect-to-https"
+      - "traefik.http.middlewares.kti-redirect-to-https.redirectscheme.scheme=https"
+networks:
+  phoenix_kti_backend:
+    driver: bridge
+  traefik_public:
+    external: true
+    name: traefik_public
+volumes:
+  kti_postgres_data:
+  kti_redis_data:
+  kti_static_files:
+  kti_media_files:
