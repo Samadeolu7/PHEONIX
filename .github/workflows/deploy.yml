@@ -88,7 +88,10 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             mkdir -p /opt/phoenix-kti
-
+      - name: Debug workspace
+        run: |
+            pwd
+            find . -name "docker-compose.yml"
       - name: Copy docker-compose to server
         uses: appleboy/scp-action@v0.1.7
         with:
