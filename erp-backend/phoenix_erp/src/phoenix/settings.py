@@ -54,8 +54,11 @@ ALLOWED_HOSTS = [
     "testserver",
     "172.20.0.4",
     ".localhost",                    # Allow any subdomain of localhost (tenant1.localhost)
-    ".krystartrust.ng",              # Allow any subdomain (tenant1.yourdomain.com)
-    ".mastermouldersacademy.org",    # Custom-domain tenant (erp.mastermouldersacademy.org)
+    ".krystartrust.ng",              # Allow any subdomain (erp.krystartrust.ng, api.kti.krystartrust.ng, etc.)
+    ".mastermouldersacademy.org",    # Custom-domain tenant
+    "erp.krystartrust.ng",           # KTI frontend
+    "api.kti.krystartrust.ng",       # KTI backend API
+    "flower.kti.krystartrust.ng",    # KTI Flower dashboard
 ]
 
 # Add additional hosts from environment variable
@@ -226,7 +229,7 @@ else:
         for origin in os.environ.get(
             'CORS_ALLOWED_ORIGINS',
             'https://erp.krystartrust.ng,'
-            'https://api.erp.krystartrust.ng,'
+            'https://api.kti.krystartrust.ng,'
             'https://erp.mastermouldersacademy.org,'
             'https://erp-cgun.vercel.app,'
             'http://localhost:3000,'
