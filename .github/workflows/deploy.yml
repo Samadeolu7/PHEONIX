@@ -99,7 +99,8 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "erp-backend/phoenix_erp/docker-compose.yml"
-          target: "/opt/phoenix-kti/"
+          target: "/opt/phoenix-kti/docker-compose.yml"
+          strip_components: 2
 
       - name: Pull images and restart services
         uses: appleboy/ssh-action@v1.0.3
