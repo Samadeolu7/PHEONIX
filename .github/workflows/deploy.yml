@@ -100,7 +100,6 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           source: "erp-backend/phoenix_erp/docker-compose.yml"
           target: "/opt/phoenix-kti/"
-          strip_components: 3   # removes erp-backend/phoenix_erp/ prefix
 
       - name: Pull images and restart services
         uses: appleboy/ssh-action@v1.0.3
