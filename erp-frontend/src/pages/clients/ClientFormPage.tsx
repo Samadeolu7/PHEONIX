@@ -1095,7 +1095,15 @@ const ClientFormPage: React.FC = () => {
                 </div>
               </div>
             )}
-                  </div>
+            {activeSection === 'employment' && (
+              <div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gap: '1.5rem',
+                  }}
+                >
 
                   <div>
                     <label

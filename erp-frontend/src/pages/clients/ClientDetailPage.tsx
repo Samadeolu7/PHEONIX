@@ -693,6 +693,7 @@ const ClientDetailPage: React.FC = () => {
           </SectionCard>
         )}
       </div>
+      )}
 
       {/* Mini Invoice List Section */}
       <div
@@ -1025,7 +1026,6 @@ const ClientDetailPage: React.FC = () => {
           </div>
         )}
       </div>
-      )} {/* end activeTab === 'overview' */}
 
       {/* Audit Log Tab */}
       {activeTab === 'audit' && (
