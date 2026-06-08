@@ -1,17 +1,20 @@
 # branches/views.py
-from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import serializers
 
 from common.views import ScopedModelViewSet
 from .models import Branch
-from rest_framework import serializers
 
 
 class BranchSerializer(serializers.ModelSerializer):
     """Serializer for Branch model"""
     class Meta:
         model = Branch
-        fields = '__all__'
+        fields =[
+            'id', 'name', 'code', 'city', 'state', 'country', 'postal_code',
+            'latitude', 'longitude', 'main_bank_account',
+        ]
+        read_only_fields = ['id', 'tenant', 'is_deleted', 'created_at', 'updated_at']
 
 
 class BranchViewSet(ScopedModelViewSet):

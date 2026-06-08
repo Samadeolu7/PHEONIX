@@ -36,9 +36,9 @@ const ClientFormPage: React.FC = () => {
   const [staffList, setStaffList] = useState<{ id: number; name: string }[]>([]);
   const [ninWarning, setNinWarning] = useState<string | null>(null);
   const ninTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [activeSection, setActiveSection] = useState<
-    'basic' | 'financial' | 'nok' | 'employment'
-  >('basic');
+  const [activeSection, setActiveSection] = useState<'basic' | 'financial' | 'nok' | 'employment'>(
+    'basic'
+  );
   const [originalData, setOriginalData] = useState<Partial<Client>>({});
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -92,7 +92,7 @@ const ClientFormPage: React.FC = () => {
     classification: undefined,
     status: 'active',
     // Microfinance client-specific fields
-    client_type: '',      // WL, ML, DC, PR
+    client_type: '', // WL, ML, DC, PR
     nationality: 'Nigerian',
     state_of_origin: '',
     lga: '',
@@ -142,7 +142,8 @@ const ClientFormPage: React.FC = () => {
       const bmRoles = ['branch_manager', 'supervisor', 'director', 'admin', 'operations'];
       if (selectedRole && bmRoles.includes(selectedRole)) {
         try {
-          const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+          const token =
+            localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
           const res = await fetch('/api/hr/staff/?is_active=true&page_size=200', {
             headers: { Authorization: `Bearer ${token}` },
           });
@@ -186,7 +187,9 @@ const ClientFormPage: React.FC = () => {
         const result = await clientService.ninCheck(trimmed);
         if (result.exists) {
           const where = result.branch ? ` (Branch: ${result.branch})` : '';
-          setNinWarning(`NIN already registered${where}. Each NIN must be unique across all branches.`);
+          setNinWarning(
+            `NIN already registered${where}. Each NIN must be unique across all branches.`
+          );
         }
       } catch {
         // Ignore check errors silently
@@ -683,13 +686,25 @@ const ClientFormPage: React.FC = () => {
                 >
                   {/* Client Type */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Client Type <span style={{ color: '#dc2626' }}>*</span>
                     </label>
                     <select
                       value={(formData as any).client_type || ''}
                       onChange={e => handleChange('client_type' as any, e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                     >
                       <option value="">Select type...</option>
                       <option value="ML">Monthly Loan (ML)</option>
@@ -701,13 +716,25 @@ const ClientFormPage: React.FC = () => {
 
                   {/* Marital Status */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Marital Status
                     </label>
                     <select
                       value={formData.marital_status || ''}
                       onChange={e => handleChange('marital_status', e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                     >
                       <option value="">Select...</option>
                       <option value="single">Single</option>
@@ -719,7 +746,14 @@ const ClientFormPage: React.FC = () => {
 
                   {/* Date of Birth */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Date of Birth <span style={{ color: '#dc2626' }}>*</span>
                     </label>
                     <input
@@ -728,60 +762,113 @@ const ClientFormPage: React.FC = () => {
                       onChange={e => handleChange('date_of_birth', e.target.value)}
                       required
                       max={new Date().toISOString().split('T')[0]}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                     />
                   </div>
 
                   {/* Nationality */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Nationality
                     </label>
                     <input
                       type="text"
                       value={(formData as any).nationality || 'Nigerian'}
                       onChange={e => handleChange('nationality' as any, e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                     />
                   </div>
 
                   {/* State of Origin */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       State of Origin
                     </label>
                     <input
                       type="text"
                       value={(formData as any).state_of_origin || ''}
                       onChange={e => handleChange('state_of_origin' as any, e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                       placeholder="e.g., Ogun"
                     />
                   </div>
 
                   {/* LGA */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Local Government Area
                     </label>
                     <input
                       type="text"
                       value={(formData as any).lga || ''}
                       onChange={e => handleChange('lga' as any, e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                       placeholder="e.g., Ijebu-Ode"
                     />
                   </div>
 
                   {/* ID Type */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       ID Type
                     </label>
                     <select
                       value={formData.id_type || ''}
                       onChange={e => handleChange('id_type', e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                     >
                       <option value="">Select...</option>
                       <option value="national_id">National ID (NIN)</option>
@@ -793,21 +880,40 @@ const ClientFormPage: React.FC = () => {
 
                   {/* ID Number */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       ID Number
                     </label>
                     <input
                       type="text"
                       value={formData.id_number || ''}
                       onChange={e => handleChange('id_number', e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                       placeholder="ID card number"
                     />
                   </div>
 
                   {/* NIN */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       NIN (National Identification Number)
                     </label>
                     <input
@@ -816,7 +922,9 @@ const ClientFormPage: React.FC = () => {
                       onChange={e => handleNinChange(e.target.value)}
                       maxLength={11}
                       style={{
-                        width: '100%', padding: '0.5rem', borderRadius: '0.375rem',
+                        width: '100%',
+                        padding: '0.5rem',
+                        borderRadius: '0.375rem',
                         border: ninWarning ? '1px solid #f59e0b' : '1px solid #d1d5db',
                       }}
                       placeholder="11-digit NIN"
@@ -830,7 +938,14 @@ const ClientFormPage: React.FC = () => {
 
                   {/* BVN */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Bank Verification Number (BVN)
                     </label>
                     <input
@@ -838,28 +953,52 @@ const ClientFormPage: React.FC = () => {
                       value={formData.bank_verification_number || ''}
                       onChange={e => handleChange('bank_verification_number', e.target.value)}
                       maxLength={11}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                       placeholder="11-digit BVN"
                     />
                   </div>
 
                   {/* Bank Name */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Bank Name
                     </label>
                     <input
                       type="text"
                       value={formData.bank_name || ''}
                       onChange={e => handleChange('bank_name', e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                       placeholder="e.g., First Bank"
                     />
                   </div>
 
                   {/* Bank Account Number */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Bank Account Number
                     </label>
                     <input
@@ -867,51 +1006,99 @@ const ClientFormPage: React.FC = () => {
                       value={formData.bank_account_number || ''}
                       onChange={e => handleChange('bank_account_number', e.target.value)}
                       maxLength={10}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                       placeholder="10-digit NUBAN"
                     />
                   </div>
 
                   {/* Bank Account Name */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Bank Account Name
                     </label>
                     <input
                       type="text"
                       value={formData.bank_account_name || ''}
                       onChange={e => handleChange('bank_account_name', e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                       placeholder="Account name as on bank records"
                     />
                   </div>
 
                   {/* Client Classification */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Classification / Group
                     </label>
                     <select
                       value={formData.classification || ''}
-                      onChange={e => handleChange('classification', e.target.value ? Number(e.target.value) : undefined)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      onChange={e =>
+                        handleChange(
+                          'classification',
+                          e.target.value ? Number(e.target.value) : undefined
+                        )
+                      }
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                     >
                       <option value="">Select group...</option>
                       {classifications.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
                       ))}
                     </select>
                   </div>
 
                   {/* Referral Source */}
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       How did you hear about us?
                     </label>
                     <select
                       value={formData.referral_source || ''}
                       onChange={e => handleChange('referral_source', e.target.value)}
-                      style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
                     >
                       <option value="">Select...</option>
                       <option value="field_officer">Field Officer</option>
@@ -924,23 +1111,45 @@ const ClientFormPage: React.FC = () => {
                   </div>
 
                   {/* Account Manager (BM+ only) */}
-                  {['branch_manager', 'supervisor', 'director', 'admin', 'operations'].includes(selectedRole || '') && staffList.length > 0 && (
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
-                        Account Manager
-                      </label>
-                      <select
-                        value={(formData as any).account_manager || ''}
-                        onChange={e => handleChange('account_manager' as any, e.target.value ? Number(e.target.value) : null)}
-                        style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}
-                      >
-                        <option value="">— Unassigned —</option>
-                        {staffList.map(s => (
-                          <option key={s.id} value={s.id}>{s.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                  {['branch_manager', 'supervisor', 'director', 'admin', 'operations'].includes(
+                    selectedRole || ''
+                  ) &&
+                    staffList.length > 0 && (
+                      <div>
+                        <label
+                          style={{
+                            display: 'block',
+                            fontSize: '0.875rem',
+                            fontWeight: 500,
+                            marginBottom: '0.5rem',
+                          }}
+                        >
+                          Account Manager
+                        </label>
+                        <select
+                          value={(formData as any).account_manager || ''}
+                          onChange={e =>
+                            handleChange(
+                              'account_manager' as any,
+                              e.target.value ? Number(e.target.value) : null
+                            )
+                          }
+                          style={{
+                            width: '100%',
+                            padding: '0.5rem',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '0.375rem',
+                          }}
+                        >
+                          <option value="">— Unassigned —</option>
+                          {staffList.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                 </div>
               </div>
             )}
@@ -951,18 +1160,59 @@ const ClientFormPage: React.FC = () => {
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem' }}>
                   Next of Kin
                 </h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem', marginBottom: '2rem' }}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gap: '1.5rem',
+                    marginBottom: '2rem',
+                  }}
+                >
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Full Name <span style={{ color: '#dc2626' }}>*</span>
                     </label>
-                    <input type="text" value={formData.next_of_kin_name || ''} onChange={e => handleChange('next_of_kin_name', e.target.value)} required style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} />
+                    <input
+                      type="text"
+                      value={formData.next_of_kin_name || ''}
+                      onChange={e => handleChange('next_of_kin_name', e.target.value)}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Relationship <span style={{ color: '#dc2626' }}>*</span>
                     </label>
-                    <select value={formData.next_of_kin_relationship || ''} onChange={e => handleChange('next_of_kin_relationship', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}>
+                    <select
+                      value={formData.next_of_kin_relationship || ''}
+                      onChange={e => handleChange('next_of_kin_relationship', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    >
                       <option value="">Select...</option>
                       <option value="spouse">Spouse</option>
                       <option value="father">Father</option>
@@ -973,33 +1223,136 @@ const ClientFormPage: React.FC = () => {
                     </select>
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Phone Number <span style={{ color: '#dc2626' }}>*</span>
                     </label>
-                    <input type="tel" value={formData.next_of_kin_phone || ''} onChange={e => handleChange('next_of_kin_phone', e.target.value)} required style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} />
+                    <input
+                      type="tel"
+                      value={formData.next_of_kin_phone || ''}
+                      onChange={e => handleChange('next_of_kin_phone', e.target.value)}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Email</label>
-                    <input type="email" value={formData.next_of_kin_email || ''} onChange={e => handleChange('next_of_kin_email', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Email
+                    </label>
+                    <input
+                      type="email"
+                      value={formData.next_of_kin_email || ''}
+                      onChange={e => handleChange('next_of_kin_email', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    />
                   </div>
                   <div style={{ gridColumn: 'span 2' }}>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Address</label>
-                    <input type="text" value={formData.next_of_kin_address || ''} onChange={e => handleChange('next_of_kin_address', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} placeholder="Home address of next of kin" />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Address
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.next_of_kin_address || ''}
+                      onChange={e => handleChange('next_of_kin_address', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                      placeholder="Home address of next of kin"
+                    />
                   </div>
                 </div>
 
                 {/* Guarantor */}
-                <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: '#6b7280' }}>
+                <h3
+                  style={{
+                    fontSize: '1rem',
+                    fontWeight: 600,
+                    marginBottom: '1rem',
+                    color: '#6b7280',
+                  }}
+                >
                   Guarantor (for Loan Applications)
                 </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
+                <div
+                  style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}
+                >
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Full Name</label>
-                    <input type="text" value={(formData as any).guarantor_name || ''} onChange={e => handleChange('guarantor_name' as any, e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Full Name
+                    </label>
+                    <input
+                      type="text"
+                      value={(formData as any).guarantor_name || ''}
+                      onChange={e => handleChange('guarantor_name' as any, e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Relationship</label>
-                    <select value={(formData as any).guarantor_relationship || ''} onChange={e => handleChange('guarantor_relationship' as any, e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Relationship
+                    </label>
+                    <select
+                      value={(formData as any).guarantor_relationship || ''}
+                      onChange={e => handleChange('guarantor_relationship' as any, e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    >
                       <option value="">Select...</option>
                       <option value="family">Family Member</option>
                       <option value="colleague">Colleague</option>
@@ -1009,20 +1362,100 @@ const ClientFormPage: React.FC = () => {
                     </select>
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Phone Number</label>
-                    <input type="tel" value={(formData as any).guarantor_phone || ''} onChange={e => handleChange('guarantor_phone' as any, e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Phone Number
+                    </label>
+                    <input
+                      type="tel"
+                      value={(formData as any).guarantor_phone || ''}
+                      onChange={e => handleChange('guarantor_phone' as any, e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Occupation</label>
-                    <input type="text" value={(formData as any).guarantor_occupation || ''} onChange={e => handleChange('guarantor_occupation' as any, e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Occupation
+                    </label>
+                    <input
+                      type="text"
+                      value={(formData as any).guarantor_occupation || ''}
+                      onChange={e => handleChange('guarantor_occupation' as any, e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    />
                   </div>
                   <div style={{ gridColumn: 'span 2' }}>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Home Address</label>
-                    <input type="text" value={(formData as any).guarantor_home_address || ''} onChange={e => handleChange('guarantor_home_address' as any, e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} placeholder="Guarantor's home address" />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Home Address
+                    </label>
+                    <input
+                      type="text"
+                      value={(formData as any).guarantor_home_address || ''}
+                      onChange={e => handleChange('guarantor_home_address' as any, e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                      placeholder="Guarantor's home address"
+                    />
                   </div>
                   <div style={{ gridColumn: 'span 2' }}>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Office / Business Address</label>
-                    <input type="text" value={(formData as any).guarantor_office_address || ''} onChange={e => handleChange('guarantor_office_address' as any, e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} placeholder="Guarantor's office or business address" />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Office / Business Address
+                    </label>
+                    <input
+                      type="text"
+                      value={(formData as any).guarantor_office_address || ''}
+                      onChange={e =>
+                        handleChange('guarantor_office_address' as any, e.target.value)
+                      }
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                      placeholder="Guarantor's office or business address"
+                    />
                   </div>
                 </div>
               </div>
@@ -1034,12 +1467,30 @@ const ClientFormPage: React.FC = () => {
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem' }}>
                   Employment & Business Details
                 </h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}>
+                <div
+                  style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.5rem' }}
+                >
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
                       Employment Status <span style={{ color: '#dc2626' }}>*</span>
                     </label>
-                    <select value={formData.employment_status || ''} onChange={e => handleChange('employment_status', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}>
+                    <select
+                      value={formData.employment_status || ''}
+                      onChange={e => handleChange('employment_status', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    >
                       <option value="">Select...</option>
                       <option value="self_employed">Self-employed / Trader</option>
                       <option value="employed">Salaried (Employed)</option>
@@ -1051,20 +1502,108 @@ const ClientFormPage: React.FC = () => {
                     </select>
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Occupation / Job Title</label>
-                    <input type="text" value={formData.occupation || ''} onChange={e => handleChange('occupation', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} placeholder="e.g., Trader, Teacher, Mechanic" />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Occupation / Job Title
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.occupation || ''}
+                      onChange={e => handleChange('occupation', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                      placeholder="e.g., Trader, Teacher, Mechanic"
+                    />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Employer / Business Name</label>
-                    <input type="text" value={formData.employer_name || ''} onChange={e => handleChange('employer_name', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} placeholder="Company or business name" />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Employer / Business Name
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.employer_name || ''}
+                      onChange={e => handleChange('employer_name', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                      placeholder="Company or business name"
+                    />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Monthly / Average Income (₦)</label>
-                    <input type="number" value={formData.annual_income ? String(Math.round(formData.annual_income / 12)) : ''} onChange={e => handleChange('annual_income', e.target.value ? Number(e.target.value) * 12 : undefined)} min={0} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} placeholder="Estimated monthly income" />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Monthly / Average Income (₦)
+                    </label>
+                    <input
+                      type="number"
+                      value={
+                        formData.annual_income
+                          ? String(Math.round(formData.annual_income / 12))
+                          : ''
+                      }
+                      onChange={e =>
+                        handleChange(
+                          'annual_income',
+                          e.target.value ? Number(e.target.value) * 12 : undefined
+                        )
+                      }
+                      min={0}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                      placeholder="Estimated monthly income"
+                    />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Income Source</label>
-                    <select value={formData.income_source || ''} onChange={e => handleChange('income_source', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Income Source
+                    </label>
+                    <select
+                      value={formData.income_source || ''}
+                      onChange={e => handleChange('income_source', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    >
                       <option value="">Select...</option>
                       <option value="salary">Salary</option>
                       <option value="business">Business Profit</option>
@@ -1076,8 +1615,26 @@ const ClientFormPage: React.FC = () => {
                     </select>
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Education Level</label>
-                    <select value={formData.education_level || ''} onChange={e => handleChange('education_level', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Education Level
+                    </label>
+                    <select
+                      value={formData.education_level || ''}
+                      onChange={e => handleChange('education_level', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    >
                       <option value="">Select...</option>
                       <option value="none">No Formal Education</option>
                       <option value="primary">Primary School</option>
@@ -1089,8 +1646,28 @@ const ClientFormPage: React.FC = () => {
                     </select>
                   </div>
                   <div style={{ gridColumn: 'span 2' }}>
-                    <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.5rem' }}>Business / Employer Address</label>
-                    <input type="text" value={formData.employer_address || ''} onChange={e => handleChange('employer_address', e.target.value)} style={{ width: '100%', padding: '0.5rem', border: '1px solid #d1d5db', borderRadius: '0.375rem' }} placeholder="Address of workplace or business" />
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Business / Employer Address
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.employer_address || ''}
+                      onChange={e => handleChange('employer_address', e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                      placeholder="Address of workplace or business"
+                    />
                   </div>
                 </div>
               </div>
@@ -1104,7 +1681,6 @@ const ClientFormPage: React.FC = () => {
                     gap: '1.5rem',
                   }}
                 >
-
                   <div>
                     <label
                       style={{
