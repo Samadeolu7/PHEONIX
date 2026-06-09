@@ -118,6 +118,9 @@ export interface Client {
   // Timestamps
   created_at: string;
   updated_at: string;
+
+  // Branch info (for multi-branch setups)
+  branch?: number | null;
 }
 
 export interface ClientFilters {
@@ -141,6 +144,7 @@ export interface CreateClientData {
   status?: 'active' | 'inactive' | 'suspended' | 'blacklisted';
   usage_context: 'financial' | 'student' | 'patient' | 'customer';
   classification?: number;
+  branch?: number;
 }
 
 // Simple client option for dropdowns
@@ -336,7 +340,11 @@ export const clientService = {
 
   // ===== CLIENT GROUPS (Ajo / Group Savings) =====
 
-  async listClientGroups(params?: { search?: string; client_type?: string; is_active?: boolean }): Promise<ClientGroup[]> {
+  async listClientGroups(params?: {
+    search?: string;
+    client_type?: string;
+    is_active?: boolean;
+  }): Promise<ClientGroup[]> {
     const res = await api.get('/clients/groups/', { params });
     return Array.isArray(res) ? res : (res?.results ?? []);
   },

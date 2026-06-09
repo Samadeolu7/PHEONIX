@@ -5,6 +5,7 @@ import { ArrowLeft, Save, Upload, User, X } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../../hooks/useToast';
 import hrService from '../../services/hrService';
+import { Branch, branchService } from '../../services/branchService';
 import { CreateStaffData, UpdateStaffData, HR_VALIDATION_RULES } from '../../types/hr';
 
 const StaffFormPage: React.FC = () => {
@@ -40,6 +41,22 @@ const StaffFormPage: React.FC = () => {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [branches, setBranches] = useState<Branch[]>([]);
+
+  // Fetch branches for dropdown
+  useEffect(() => {
+    const fetchBranches = async () => {
+      try {
+        const branchesData = await branchService.getBranches();
+        setBranches(branchesData.results);
+      } catch (error) {
+        console.error('Error fetching branches:', error);
+        toast.error('Failed to fetch branches. Please try again.');
+      }
+    };
+
+    fetchBranches();
+  }, []);
 
   // Fetch staff data for editing
   const { data: staffData, isLoading: loadingStaff } = useQuery({
@@ -664,6 +681,42 @@ const StaffFormPage: React.FC = () => {
                     </p>
                   )}
                 </div>
+              </div>
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                  }}
+                >
+                  Branch
+                </label>
+                <select
+                  name="branch"
+                  value={formData.branch}
+                  onChange={handleInputChange}
+                  style={{
+                    width: '100%',
+                    padding: '12px',
+                    border: errors.branch ? '2px solid #ef4444' : '2px solid #e5e7eb',
+                    borderRadius: '8px',
+                    fontSize: '14px',
+                  }}
+                >
+                  <option value="">Select branch...</option>
+                  {branches.map(branch => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
+                     </option>
+                  ))}
+                </select>
+                {errors.branch && (
+                  <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#ef4444' }}>
+                    {errors.branch}
+                  </p>
+                )}
               </div>
 
               {/* Pension Information */}

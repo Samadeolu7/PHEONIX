@@ -20,6 +20,8 @@ import { clientService, Client } from '../../services/clientService';
 import { useToast } from '../../hooks/useToast';
 import { useDomainLabels } from '../../contexts/DomainLabelContext';
 import { ClientClassification } from '@/services/clientClassificationService';
+import { Branch } from '@/services/branchService';
+import { branchService } from '@/services/branchService';
 import { useAuth } from '../../contexts/AuthContext';
 
 const ClientFormPage: React.FC = () => {
@@ -33,6 +35,7 @@ const ClientFormPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [classifications, setClassifications] = useState<ClientClassification[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [staffList, setStaffList] = useState<{ id: number; name: string }[]>([]);
   const [ninWarning, setNinWarning] = useState<string | null>(null);
   const ninTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -108,6 +111,8 @@ const ClientFormPage: React.FC = () => {
     // occupation, employer_name, employer_address, employment_status
     // annual_income, income_source, bank_name, bank_account_name
     // bank_account_number, bank_verification_number
+    // branch: undefined, // For multi-branch setups
+    branch: undefined,
   } as Partial<Client>);
 
   useEffect(() => {
@@ -137,6 +142,9 @@ const ClientFormPage: React.FC = () => {
     try {
       const classData = await clientService.getClassifications();
       setClassifications(classData);
+      const branchData = await branchService.getBranches();
+      console.log(branchData);
+      setBranches(branchData.results || []);
 
       // Load staff list for account manager selector (BM+ roles)
       const bmRoles = ['branch_manager', 'supervisor', 'director', 'admin', 'operations'];
@@ -596,6 +604,38 @@ const ClientFormPage: React.FC = () => {
                         borderRadius: '0.375rem',
                       }}
                     />
+                  </div>
+                  {/* Branch */}
+                  <div>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Branch
+                    </label>
+                    <select
+                      value={formData.branch || ''}
+                      onChange={e =>
+                        handleChange('branch', e.target.value ? Number(e.target.value) : undefined)
+                      }
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    >
+                      <option value="">Select branch...</option>
+                      {branches.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
 
