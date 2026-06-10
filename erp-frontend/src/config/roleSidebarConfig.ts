@@ -30,6 +30,7 @@ export const ALL_ROLES = [
   'Store Officer',
   'Registrar',
   'Officer',
+  'Credit Officer',
 ];
 
 // ── Storage key ──────────────────────────────────────────────────────────────
@@ -96,20 +97,31 @@ function defaultModuleIds(role: string): Set<string> {
 
     case 'Finance Officer':
     case 'Accountant':
-      return pickModules('btn-acct', 'btn-bank', 'btn-petty', 'btn-student');
+      return pickModules(
+        'btn-acct', 'btn-bank', 'btn-recv', 'btn-ap', 'btn-petty', 'btn-student',
+        'btn-savings', 'btn-loans',
+      );
 
     case 'HR Officer':
     case 'HR Manager':
       return pickModules('btn-hr');
 
     case 'Procurement Officer':
+      return pickModules('btn-proc', 'btn-ap', 'btn-inv');
+
     case 'Store Officer':
       return pickModules('btn-proc', 'btn-inv');
 
     case 'Registrar':
       return pickModules('btn-student', 'btn-bank');
 
-    default: // Officer and anything else
+    case 'Credit Officer':
+    case 'Officer':
+      // Officers see clients, savings and loans — data is scoped server-side
+      // to clients assigned to them
+      return pickModules('btn-student', 'btn-savings', 'btn-loans', 'btn-recv');
+
+    default:
       return pickModules('btn-student', 'btn-bank');
   }
 }

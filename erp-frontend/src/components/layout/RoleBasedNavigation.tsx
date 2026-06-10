@@ -6,7 +6,6 @@ import {
   Menu,
   X,
   DollarSign,
-  Package,
   Users,
   LogOut,
   User,
@@ -15,6 +14,7 @@ import {
   Wallet,
   Clock,
   LayoutDashboard,
+  Navigation,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
@@ -45,14 +45,6 @@ const NAV_MODULES = [
     icon: Users,
     description: 'Borrower profiles, KYC, loan applications, and account management',
     requiredPermissions: ['client-view', 'classification-view', 'entitlement-list'],
-  },
-  {
-    id: 'operations',
-    title: 'Operations',
-    path: '/operations',
-    icon: Package,
-    description: 'Procurement, inventory, and resource management',
-    requiredPermissions: ['po-list', 'pr-list', 'item-list', 'consumption-list', 'voucher-list'],
   },
   {
     id: 'administration',
@@ -95,11 +87,13 @@ const DEFAULT_ROLE_COLOR = { primary: BRAND.colors.navyPrimary, accent: BRAND.co
 interface RoleBasedNavigationProps {
   isMobileMenuOpen: boolean;
   setIsMobileMenuOpen: (open: boolean) => void;
+  onOpenSidebar: () => void;
 }
 
 export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
   isMobileMenuOpen,
   setIsMobileMenuOpen,
+  onOpenSidebar,
 }) => {
   const { user, selectedRole, logout } = useAuth();
   const { hasPermission } = usePermission();
@@ -278,6 +272,15 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                     <NotificationDropdown />
                   </div>
 
+                  {/* Sidebar navigation panel trigger */}
+                  <button
+                    onClick={onOpenSidebar}
+                    className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+                    title="Quick Navigation"
+                  >
+                    <Navigation className="h-4 w-4" />
+                  </button>
+
                   <Link
                     to="/dashboard/select"
                     className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-md transition-colors"
@@ -375,6 +378,14 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
 
               {/* Action Buttons */}
               <div className="pt-4 border-t border-white/20 space-y-1">
+                {/* Sidebar quick navigation */}
+                <button
+                  onClick={() => { closeMobileMenu(); onOpenSidebar(); }}
+                  className="flex items-center space-x-3 px-3 py-3 rounded-md text-base font-medium text-white/80 hover:text-white hover:bg-white/10 transition-colors w-full"
+                >
+                  <Navigation className="h-5 w-5" />
+                  <span>Quick Navigation</span>
+                </button>
                 <Link
                   to="/approvals"
                   onClick={closeMobileMenu}

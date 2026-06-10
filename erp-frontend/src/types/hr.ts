@@ -29,6 +29,7 @@ export interface Staff {
 
 export interface CreateStaffData {
   user?: number | null;
+  branch?: number | null;
   first_name: string; // [ 1 .. 100 ] characters
   last_name: string; // [ 1 .. 100 ] characters
   department?: string; // <= 100 characters

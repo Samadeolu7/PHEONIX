@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { RoleBasedNavigation } from './RoleBasedNavigation';
 import { useAuth } from '../../contexts/AuthContext';
+import RoleSidebarPanel from '../dashboard/RoleSidebarPanel';
 
 interface RoleBasedLayoutProps {
   children?: React.ReactNode;
@@ -12,6 +13,7 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
   const { user, selectedRole } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Don't show navigation on auth pages
   const isAuthPage =
@@ -42,9 +44,16 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
     <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
       <RoleBasedNavigation
-        role={effectiveRole}
         isMobileMenuOpen={isMobileMenuOpen}
         setIsMobileMenuOpen={setIsMobileMenuOpen}
+        onOpenSidebar={() => setIsSidebarOpen(true)}
+      />
+
+      {/* Sidebar navigation panel — available on every page */}
+      <RoleSidebarPanel
+        open={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        role={effectiveRole}
       />
 
       {/* Main Content */}

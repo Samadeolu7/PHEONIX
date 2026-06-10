@@ -1,12 +1,18 @@
 /**
  * dashboardSidebarConfig.ts
  *
- * Default 8-module sidebar navigation configuration that exactly mirrors
- * the Python build_sidebar_config() in create_director_dashboards.py.
- *
- * Used by SidebarWidgetConfigModal:
- *   1. Seeds state when no buttons have been configured yet.
- *   2. Restores defaults when the user clicks "Reset to default".
+ * Sidebar navigation configuration.
+ * Modules are organised per the restructuring plan:
+ *   Operation     → Fixed Asset (separate), Inventory (separate),
+ *                   Procurement (separate)
+ *   Financial Mgmt→ Receivable (separate), Financial Reports (under Account),
+ *                   Bank (separate), Accounting (under Account),
+ *                   Account Payable (separate)
+ *   Treasury      → Bank Management (separate → merged into BANK),
+ *                   Petty Cash (separate)
+ *   + NEW: LOANS, SAVINGS modules
+ *   Deleted items → Invoicing, Entitlements, Fee Structures (moved to Loans),
+ *                   Resource Consumption, Voucher Management
  *
  * IDs are stable, deterministic strings so that React keys are consistent
  * across renders and HMR sessions.
@@ -80,6 +86,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
     ]),
 
     // 2. ACCOUNT
+    // Includes: core accounting, financial reports, prepaid expenses (moved from Inventory)
     grp('btn-acct', 'ACCOUNT', 'bar-chart', [
       grp('btn-acct-master', 'MASTER', 'file-text', [
         leaf('Chart of Accounts',   '/accounts'),
@@ -96,14 +103,16 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Profit & Loss',       '/reports/financial/profit-loss'),
         leaf('Balance Sheet',       '/reports/financial/balance-sheet'),
         leaf('Cash Flow Statement', '/reports/financial/cash-flow'),
+        leaf('Prepaid Expenses',    '/expenses/prepaid'),
+        leaf('New Prepaid Expense', '/expenses/prepaid/create'),
       ]),
     ]),
 
     // 3. CLIENT SERVICE
+    // Removed: Invoicing, Credit Notes, Entitlements, Bulk Invoice Wizard, Loan Products
     grp('btn-student', 'CLIENT SERVICE', 'graduation-cap', [
       grp('btn-student-master', 'MASTER', 'file-text', [
         leaf('Client Classifications', '/clients/classifications'),
-        leaf('Loan Products',           '/incomes/fee-structures'),
         leaf('Discount Programs',       '/discounts/programs'),
         leaf('Financial Periods',       '/incomes/academic-sessions'),
         leaf('Service Items',           '/incomes/service-items'),
@@ -112,20 +121,16 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
       grp('btn-student-tx', 'TRANSACTION', 'file-text', [
         leaf('Client Management',      '/clients'),
         leaf('Register New Client',    '/clients/create'),
-        leaf('Client Entitlements',    '/incomes/entitlements'),
-        leaf('Entitlements Dashboard', '/incomes/entitlements/dashboard'),
-        leaf('Create Invoice',         '/invoices/create'),
-        leaf('Invoices List',          '/sales/invoices'),
-        leaf('Credit Notes',           '/sales/credit-notes'),
-        leaf('Bulk Invoice Wizard',    '/demo/bulk-invoice-wizard'),
         leaf('Client Statements',      '/receivables/statements'),
         leaf('Discount Applications',  '/discounts/applications'),
         leaf('Access Control Checker', '/demo/access-control'),
       ]),
     ]),
 
-    // 4. PROCUREMENT
+    // 4. PROCUREMENT (Operation → separate)
+    // Removed: 3-Way Matching, Accounts Payable, AP Aging, Supplier Quotes → moved to ACCOUNTS PAYABLE
     grp('btn-proc', 'PROCUREMENT', 'shopping-cart', [
+      leaf('📋 Module Overview', '/procurement'),
       grp('btn-proc-master', 'MASTER', 'file-text', [
         leaf('Suppliers',            '/procurement/suppliers'),
         leaf('Add Supplier',         '/procurement/suppliers/create'),
@@ -140,16 +145,13 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('New GRN',               '/procurement/grn/create'),
         leaf('Purchase Returns',      '/procurement/returns'),
         leaf('New Return',            '/procurement/returns/create'),
-        leaf('Supplier Quotes',       '/procurement/quotes'),
-        leaf('3-Way Matching',        '/liabilities/matching'),
-        leaf('Accounts Payable',      '/liabilities/payables'),
-        leaf('New Payable',           '/liabilities/payables/new'),
-        leaf('AP Aging Report',       '/liabilities/vendors'),
       ]),
     ]),
 
-    // 5. INVENTORY
+    // 5. INVENTORY (Operation → separate)
+    // Removed: Resource Consumption, Voucher Management, Expiring Vouchers, Prepaid Expenses
     grp('btn-inv', 'INVENTORY', 'package', [
+      leaf('📋 Module Overview', '/inventory'),
       grp('btn-inv-master', 'MASTER', 'file-text', [
         leaf('Inventory Items',    '/inventory/items'),
         leaf('Stock Locations',    '/inventory/locations'),
@@ -170,15 +172,12 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('New Write-off',           '/inventory/write-offs/new'),
         leaf('Physical Counts',         '/inventory/physical-counts'),
         leaf('New Physical Count',      '/inventory/physical-counts/new'),
-        leaf('Resource Consumption',    '/expenses/resource-consumption'),
-        leaf('Voucher Management',      '/expenses/vouchers'),
-        leaf('Expiring Vouchers',       '/expenses/vouchers/expiring'),
-        leaf('Prepaid Expenses',        '/expenses/prepaid'),
       ]),
     ]),
 
-    // 6. ASSET MANAGEMENT
-    grp('btn-assets', 'ASSET MANAGEMENT', 'home', [
+    // 6. FIXED ASSET (Operation → separate, was embedded under Asset Management)
+    grp('btn-assets', 'FIXED ASSET', 'home', [
+      leaf('📋 Module Overview', '/fixed-asset'),
       grp('btn-assets-master', 'MASTER', 'file-text', [
         leaf('Asset Categories', '/assets/categories'),
       ]),
@@ -198,21 +197,15 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
       ]),
     ]),
 
-    // 7. BANK
+    // 7. BANK (Financial Management → separate; Bank Management → separate under BANK)
     grp('btn-bank', 'BANK', 'credit-card', [
+      leaf('📋 Module Overview', '/bank'),
       grp('btn-bank-master', 'MASTER', 'file-text', [
         leaf('Banks',            '/banks'),
         leaf('Bank Accounts',    '/banks/accounts'),
         leaf('New Bank Account', '/banks/accounts/new'),
       ]),
       grp('btn-bank-tx', 'TRANSACTION', 'file-text', [
-        leaf('Receivables',           '/receivables/list'),
-        leaf('Record Payment',        '/receivables/payments/record'),
-        leaf('Aging Report',          '/receivables/aging-report'),
-        leaf('Bulk Payment Upload',   '/receivables/bulk-payment-upload'),
-        leaf('Collections Dashboard', '/receivables/collections'),
-        leaf('Collection Workbench',  '/receivables/collections/workbench'),
-        leaf('Reminder Management',   '/receivables/reminders'),
         leaf('Bank Payments',         '/banks/payments'),
         leaf('New Bank Payment',      '/banks/payments/new'),
         leaf('Inter-bank Transfers',  '/banks/transfers'),
@@ -225,8 +218,35 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
       ]),
     ]),
 
-    // 8. PETTY CASH
+    // 8. RECEIVABLE (Financial Management → separate)
+    grp('btn-recv', 'RECEIVABLE', 'trending-up', [
+      leaf('📋 Module Overview', '/receivable'),
+      grp('btn-recv-tx', 'TRANSACTION', 'file-text', [
+        leaf('Receivables',           '/receivables/list'),
+        leaf('Record Payment',        '/receivables/payments/record'),
+        leaf('Aging Report',          '/receivables/aging-report'),
+        leaf('Bulk Payment Upload',   '/receivables/bulk-payment-upload'),
+        leaf('Collections Dashboard', '/receivables/collections'),
+        leaf('Collection Workbench',  '/receivables/collections/workbench'),
+        leaf('Reminder Management',   '/receivables/reminders'),
+      ]),
+    ]),
+
+    // 9. ACCOUNT PAYABLE (Financial Management → separate)
+    grp('btn-ap', 'ACCOUNT PAYABLE', 'file-minus', [
+      leaf('📋 Module Overview', '/accounts-payable'),
+      grp('btn-ap-tx', 'TRANSACTION', 'file-text', [
+        leaf('Accounts Payable',  '/liabilities/payables'),
+        leaf('New Payable',       '/liabilities/payables/new'),
+        leaf('AP Aging Report',   '/liabilities/vendors'),
+        leaf('3-Way Matching',    '/liabilities/matching'),
+        leaf('Supplier Quotes',   '/procurement/quotes'),
+      ]),
+    ]),
+
+    // 10. PETTY CASH (Treasury & Expenses → separate)
     grp('btn-petty', 'PETTY CASH', 'wallet', [
+      leaf('📋 Module Overview', '/petty-cash'),
       grp('btn-petty-master', 'MASTER', 'file-text', [
         leaf('Petty Cash Funds', '/treasury/petty-cash'),
         leaf('New Fund',         '/treasury/petty-cash/funds/new'),
@@ -236,7 +256,35 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('New Voucher',         '/treasury/petty-cash/vouchers/new'),
         leaf('Replenishments',      '/treasury/petty-cash/replenishments'),
         leaf('New Replenishment',   '/treasury/petty-cash/replenishments/new'),
-        leaf('Expiring Vouchers',   '/expenses/vouchers/expiring'),
+      ]),
+    ]),
+
+    // 11. SAVINGS (NEW — Client savings accounts & collection)
+    grp('btn-savings', 'SAVINGS', 'piggy-bank', [
+      leaf('📋 Module Overview', '/savings'),
+      grp('btn-savings-master', 'MASTER', 'file-text', [
+        leaf('Savings Products',   '/savings/products'),
+        leaf('Compulsory Policy',  '/savings/policy'),
+      ]),
+      grp('btn-savings-tx', 'TRANSACTION', 'file-text', [
+        leaf('Savings Accounts',    '/savings/accounts'),
+        leaf('New Savings Account', '/savings/accounts/create'),
+        leaf('Savings Collection',  '/savings/collection'),
+      ]),
+    ]),
+
+    // 12. LOANS (NEW — Client loan accounts, workflow & daily collection)
+    grp('btn-loans', 'LOANS', 'landmark', [
+      leaf('📋 Module Overview', '/loans'),
+      grp('btn-loans-master', 'MASTER', 'file-text', [
+        leaf('Loan Products',     '/loans/products'),
+      ]),
+      grp('btn-loans-tx', 'TRANSACTION', 'file-text', [
+        leaf('Loan Accounts',          '/loans/accounts'),
+        leaf('New Loan Application',   '/loans/accounts/create'),
+        leaf('Loan Verification',      '/loans/verification'),
+        leaf('Loan Disbursements',     '/loans/disbursements'),
+        leaf('Daily Collection Sheet', '/cash-management/daily-collection'),
       ]),
     ]),
 

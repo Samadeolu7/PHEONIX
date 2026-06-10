@@ -56,14 +56,41 @@ const FinancialManagementPage = lazy(() =>
 const AdministrationPage = lazy(() =>
   import('./pages/modules/AdministrationPage').then(m => ({ default: m.AdministrationPage }))
 );
-const OperationsPage = lazy(() =>
-  import('./pages/modules/OperationsPage').then(m => ({ default: m.OperationsPage }))
-);
+
 const StudentServicesPage = lazy(() =>
   import('./pages/modules/StudentServicesPage').then(m => ({ default: m.StudentServicesPage }))
 );
 const AllAccessPage = lazy(() =>
   import('./pages/modules/AllAccessPage').then(m => ({ default: m.AllAccessPage }))
+);
+const InventoryModulePage = lazy(() =>
+  import('./pages/modules/InventoryModulePage').then(m => ({ default: m.InventoryModulePage }))
+);
+const ProcurementModulePage = lazy(() =>
+  import('./pages/modules/ProcurementModulePage').then(m => ({
+    default: m.ProcurementModulePage,
+  }))
+);
+const FixedAssetModulePage = lazy(() =>
+  import('./pages/modules/FixedAssetModulePage').then(m => ({ default: m.FixedAssetModulePage }))
+);
+const PettyCashModulePage = lazy(() =>
+  import('./pages/modules/PettyCashModulePage').then(m => ({ default: m.PettyCashModulePage }))
+);
+const BankModulePage = lazy(() =>
+  import('./pages/modules/BankModulePage').then(m => ({ default: m.BankModulePage }))
+);
+const ReceivableModulePage = lazy(() =>
+  import('./pages/modules/ReceivableModulePage').then(m => ({ default: m.ReceivableModulePage }))
+);
+const SavingsModulePage = lazy(() =>
+  import('./pages/modules/SavingsModulePage').then(m => ({ default: m.SavingsModulePage }))
+);
+const LoansModulePage = lazy(() =>
+  import('./pages/modules/LoansModulePage').then(m => ({ default: m.LoansModulePage }))
+);
+const AccountsPayableModulePage = lazy(() =>
+  import('./pages/modules/AccountsPayablePage').then(m => ({ default: m.AccountsPayablePage }))
 );
 
 // Debug components
@@ -499,6 +526,20 @@ const DailyCollectionSheetPage = lazy(() => import('./pages/cash-management/Dail
 // Savings Collection page (Feature #1 — Savings Cycles)
 const SavingsCollectionPage = lazy(() => import('./pages/savings/SavingsCollectionPage'));
 
+// Savings Accounts list page
+const SavingsAccountsPage = lazy(() => import('./pages/savings/SavingsAccountsPage'));
+
+// Savings new account form & policy
+const SavingsAccountFormPage = lazy(() => import('./pages/savings/SavingsAccountFormPage'));
+const SavingsPolicyPage = lazy(() => import('./pages/savings/SavingsPolicyPage'));
+
+// Loan Accounts list page
+const LoanAccountsPage = lazy(() => import('./pages/loans/LoanAccountsPage'));
+
+// Loan new application form & products
+const LoanAccountFormPage = lazy(() => import('./pages/loans/LoanAccountFormPage'));
+const LoanProductsPage = lazy(() => import('./pages/loans/LoanProductsPage'));
+
 // Liabilities / Accounts Payable pages
 const PayablesListPage = lazy(() => import('./pages/liabilities/PayablesListPage'));
 const PayableDetailPage = lazy(() => import('./pages/liabilities/PayableDetailPage'));
@@ -888,7 +929,7 @@ function App() {
                                   path="/inventory"
                                   element={
                                     <ProtectedRoute requiredPermission="item-list">
-                                      <InventoryIndexPage />
+                                      <InventoryModulePage />
                                     </ProtectedRoute>
                                   }
                                 />
@@ -1525,7 +1566,7 @@ function App() {
                                   path="/procurement"
                                   element={
                                     <ProtectedRoute requiredPermission="pr-list">
-                                      <ProcurementIndexPage />
+                                      <ProcurementModulePage />
                                     </ProtectedRoute>
                                   }
                                 />
@@ -3103,6 +3144,14 @@ function App() {
 
                                 {/* Fixed Asset Management routes */}
                                 <Route
+                                  path="/fixed-asset"
+                                  element={
+                                    <ProtectedRoute requiredPermission="asset-list">
+                                      <FixedAssetModulePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
                                   path="/assets"
                                   element={
                                     <ProtectedRoute requiredPermission="asset-list">
@@ -3288,14 +3337,7 @@ function App() {
                                     </ProtectedRoute>
                                   }
                                 />
-                                <Route
-                                  path="/operations"
-                                  element={
-                                    <ProtectedRoute requiredPermission="item-list">
-                                      <OperationsPage />
-                                    </ProtectedRoute>
-                                  }
-                                />
+
                                 <Route
                                   path="/administration"
                                   element={
@@ -3390,6 +3432,56 @@ function App() {
                                 />
 
                                 {/* Petty Cash Management routes */}
+                                <Route
+                                  path="/petty-cash"
+                                  element={
+                                    <ProtectedRoute requiredPermission="treasury-list">
+                                      <PettyCashModulePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* New standalone module landing pages */}
+                                <Route
+                                  path="/bank"
+                                  element={
+                                    <ProtectedRoute requiredPermission="">
+                                      <BankModulePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/receivable"
+                                  element={
+                                    <ProtectedRoute requiredPermission="receivables-list">
+                                      <ReceivableModulePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/savings"
+                                  element={
+                                    <ProtectedRoute requiredPermission="">
+                                      <SavingsModulePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/loans"
+                                  element={
+                                    <ProtectedRoute requiredPermission="">
+                                      <LoansModulePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/accounts-payable"
+                                  element={
+                                    <ProtectedRoute requiredPermission="payable-list">
+                                      <AccountsPayableModulePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
                                 <Route
                                   path="/treasury/petty-cash"
                                   element={
@@ -3695,6 +3787,96 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="savings-list">
                                       <SavingsCollectionPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Savings Accounts list */}
+                                <Route
+                                  path="/savings/accounts"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-list">
+                                      <SavingsAccountsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Savings — New Account form */}
+                                <Route
+                                  path="/savings/accounts/create"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-create">
+                                      <SavingsAccountFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Savings — Compulsory Policy */}
+                                <Route
+                                  path="/savings/policy"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-list">
+                                      <SavingsPolicyPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Savings Products (managed via /products?type=SAVINGS) */}
+                                <Route
+                                  path="/savings/products"
+                                  element={
+                                    <ProtectedRoute requiredPermission="product-list">
+                                      <ProductManagementPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loan Accounts list */}
+                                <Route
+                                  path="/loans/accounts"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-list">
+                                      <LoanAccountsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — New Application form */}
+                                <Route
+                                  path="/loans/accounts/create"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-create">
+                                      <LoanAccountFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Products list */}
+                                <Route
+                                  path="/loans/products"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-list">
+                                      <LoanProductsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loan Verification list (entry point without loanId) */}
+                                <Route
+                                  path="/loans/verification"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-list">
+                                      <LoanAccountsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loan Disbursements list (entry point without loanId) */}
+                                <Route
+                                  path="/loans/disbursements"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-disbursement-list">
+                                      <LoanAccountsPage />
                                     </ProtectedRoute>
                                   }
                                 />

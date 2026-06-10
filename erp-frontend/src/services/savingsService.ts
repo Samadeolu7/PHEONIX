@@ -159,6 +159,26 @@ export const generateScheduleForMonth = (
   });
 };
 
+// ── Create Savings Account ─────────────────────────────────────────────────
+
+export interface CreateSavingsAccountData {
+  client: number;
+  product: number;
+  nickname?: string;
+  opened_on: string;
+  interest_rate: string;
+  interest_calculation_method: string;
+  minimum_balance?: string;
+  allow_overdraft?: boolean;
+  overdraft_limit?: string;
+  auto_renew?: boolean;
+  statement_frequency?: string;
+  contribution_day_of_week?: number | null;
+}
+
+export const createSavingsAccount = (data: CreateSavingsAccountData): Promise<SavingsAccount> =>
+  api.post(BASE_ACCOUNTS + '/', data);
+
 // Compulsory Savings Policy
 export const getCompulsorySavingsPolicies = (): Promise<CompulsorySavingsPolicy[]> =>
   api.get(BASE_POLICY + '/');
