@@ -3,6 +3,8 @@ from .views import (
     LoanProductViewSet, LoanAccountViewSet,
     LoanCollateralViewSet, LoanGuarantorViewSet,
     LoanVerificationRequestViewSet, LoanDisbursementViewSet,
+    LoanProductFeeViewSet, LoanProductSavingsRequirementViewSet,
+    LoanFeeApplicationViewSet, FeesPreviewView,
 )
 
 router = DefaultRouter()
@@ -12,6 +14,11 @@ router.register(r'collateral', LoanCollateralViewSet, basename='loancollateral')
 router.register(r'guarantors', LoanGuarantorViewSet, basename='loanguarantor')
 router.register(r'verification-requests', LoanVerificationRequestViewSet, basename='loanverification')
 router.register(r'disbursements', LoanDisbursementViewSet, basename='loandisbursement')
+# Fee config endpoints (flat — filter by loan_product= / loan_account= query param)
+router.register(r'product-fees', LoanProductFeeViewSet, basename='loanproduct-fees')
+router.register(r'product-savings-requirements', LoanProductSavingsRequirementViewSet, basename='loanproduct-savingsreqs')
+router.register(r'fee-applications', LoanFeeApplicationViewSet, basename='loanaccount-feeapps')
+router.register(r'fees-preview', FeesPreviewView, basename='loanproduct-fees-preview')
 
 app_name = 'loans'
 

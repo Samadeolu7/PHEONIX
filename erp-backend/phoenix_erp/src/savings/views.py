@@ -315,15 +315,32 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
             if schedule.savings_account.product.contribution_cycle
             else 'Savings'
         )
-        journal = schedule.savings_account.deposit(
+        description = (
+            f"{cycle_label} contribution – "
+            f"{schedule.savings_account.account_number} – {schedule.expected_date}"
+        )
+
+        # First-deposit-as-income check: if this is the first deposit of the
+        # calendar month on a daily-contribution product configured to treat
+        # the first payment as income, the full amount goes to the income GL
+        # and the savings balance is NOT credited.
+        from .services import handle_first_deposit_income
+        journal, was_income = handle_first_deposit_income(
+            savings_account=schedule.savings_account,
             amount=schedule.expected_amount,
-            description=(
-                f"{cycle_label} contribution – "
-                f"{schedule.savings_account.account_number} – {schedule.expected_date}"
-            ),
+            deposit_date=timezone.localdate(),
             cashier_account=cashier_account,
             transacted_by=request.user,
         )
+
+        if not was_income:
+            # Normal deposit path
+            journal = schedule.savings_account.deposit(
+                amount=schedule.expected_amount,
+                description=description,
+                cashier_account=cashier_account,
+                transacted_by=request.user,
+            )
 
         schedule.status = ContributionSchedule.PAID
         schedule.paid_on = timezone.localdate()
@@ -374,3 +391,223 @@ class CompulsorySavingsPolicyViewSet(ScopedModelViewSet):
     queryset = CompulsorySavingsPolicy.objects.all()
     serializer_class = CompulsorySavingsPolicySerializer
 
+
+
+# ---------------------------------------------------------------------------
+# Savings product configuration view
+# ---------------------------------------------------------------------------
+
+from .models import SavingsProduct, WithdrawalApprovalTier, SavingsWithdrawalRequest, WithdrawalApprovalStep
+from .serializers import (
+    SavingsProductSerializer,
+    WithdrawalApprovalTierSerializer,
+    SavingsWithdrawalRequestSerializer,
+    WithdrawalApprovalActionSerializer,
+    WithdrawalApprovalStepSerializer,
+)
+from .services import initiate_withdrawal, process_withdrawal_approval
+
+
+class SavingsProductConfigViewSet(ScopedModelViewSet):
+    """
+    CRUD for SavingsProduct config records.
+    One config per savings Product (one-to-one).
+    GET/POST /api/savings/product-configs/
+    GET/PUT/PATCH /api/savings/product-configs/{id}/
+    """
+    queryset = SavingsProduct.objects.all()
+    serializer_class = SavingsProductSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        product_id = self.request.query_params.get('product')
+        if product_id:
+            qs = qs.filter(product_id=product_id)
+        return qs
+
+
+class WithdrawalApprovalTierViewSet(ScopedModelViewSet):
+    """
+    Global (per-tenant) approval tier configuration.
+    Admin-only write access.
+    GET/POST /api/savings/withdrawal-tiers/
+    """
+    queryset = WithdrawalApprovalTier.objects.all()
+    serializer_class = WithdrawalApprovalTierSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+
+    def get_queryset(self):
+        qs = WithdrawalApprovalTier.objects.filter(
+            owner=self.request.user
+        ).order_by('order')
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
+
+class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
+    """
+    Withdrawal request management.
+
+    POST  /api/savings/withdrawals/           � initiate a new request
+    GET   /api/savings/withdrawals/           � list (branch-scoped; directors see all)
+    GET   /api/savings/withdrawals/pending/   � steps pending MY approval
+    POST  /api/savings/withdrawals/{id}/approve_step/ � approve/reject a step
+    POST  /api/savings/withdrawals/{id}/cancel/       � cancel (before approvals)
+    """
+    queryset = SavingsWithdrawalRequest.objects.select_related(
+        'savings_account__client',
+        'savings_account__product',
+        'requested_by',
+        'applied_tier',
+    ).prefetch_related('approval_steps')
+    serializer_class = SavingsWithdrawalRequestSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+
+        # Directors (cross-branch permission) see all; others see their branch only
+        if not user.has_perm('savings.view_all_branches'):
+            qs = qs.filter(branch=user.branch)
+
+        # Optional filters
+        params = self.request.query_params
+        savings_account_id = params.get('savings_account')
+        if savings_account_id:
+            qs = qs.filter(savings_account_id=savings_account_id)
+
+        req_status = params.get('status')
+        if req_status:
+            qs = qs.filter(status=req_status)
+
+        return qs.order_by('-created_at')
+
+    def create(self, request, *args, **kwargs):
+        """Initiate a new withdrawal request."""
+        from savings.models import SavingsAccount
+        from accounts.models import Account
+
+        data = request.data
+        try:
+            savings_account = SavingsAccount.objects.get(pk=data['savings_account'])
+        except (SavingsAccount.DoesNotExist, KeyError):
+            return Response({'detail': 'savings_account not found.'}, status=400)
+
+        try:
+            from decimal import Decimal
+            amount = Decimal(str(data.get('amount', 0)))
+        except Exception:
+            return Response({'detail': 'Invalid amount.'}, status=400)
+
+        cashier_account = None
+        if data.get('cashier_account'):
+            try:
+                cashier_account = Account.objects.get(pk=data['cashier_account'])
+            except Account.DoesNotExist:
+                return Response({'detail': 'cashier_account not found.'}, status=400)
+
+        destination_bank = None
+        if data.get('destination_bank_account'):
+            from banks.models import BankAccount
+            try:
+                destination_bank = BankAccount.objects.get(pk=data['destination_bank_account'])
+            except Exception:
+                return Response({'detail': 'destination_bank_account not found.'}, status=400)
+
+        try:
+            wr = initiate_withdrawal(
+                savings_account=savings_account,
+                amount=amount,
+                requested_by=request.user,
+                description=data.get('description', ''),
+                cashier_account=cashier_account,
+                destination_bank_account=destination_bank,
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+        return Response(
+            SavingsWithdrawalRequestSerializer(wr, context={'request': request}).data,
+            status=201,
+        )
+
+    @action(detail=False, methods=['get'], url_path='pending')
+    def pending_my_approval(self, request):
+        """Return withdrawal steps pending the current user's approval."""
+        user = request.user
+        user_groups = set(user.groups.values_list('name', flat=True))
+
+        # Get steps this user is eligible to approve
+        steps = WithdrawalApprovalStep.objects.filter(
+            status=WithdrawalApprovalStep.STATUS_PENDING,
+            withdrawal_request__status__in=[
+                SavingsWithdrawalRequest.STATUS_PENDING,
+                SavingsWithdrawalRequest.STATUS_PARTIAL,
+            ],
+        ).select_related('withdrawal_request__savings_account__client')
+
+        # Filter by branch unless director
+        if not user.has_perm('savings.view_all_branches'):
+            steps = steps.filter(withdrawal_request__branch=user.branch)
+
+        # Filter by approver role eligibility
+        eligible_steps = []
+        for step in steps:
+            tier = step.withdrawal_request.applied_tier
+            allowed = set(tier.approver_roles) if tier and tier.approver_roles else set()
+            if not allowed or (allowed & user_groups):
+                eligible_steps.append(step)
+
+        return Response(
+            WithdrawalApprovalStepSerializer(eligible_steps, many=True).data
+        )
+
+    @action(detail=True, methods=['post'], url_path='approve-step')
+    def approve_step(self, request, pk=None):
+        """Approve or reject the next pending step on this withdrawal request."""
+        wr = self.get_object()
+        serializer = WithdrawalApprovalActionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+
+        # Find the next pending step
+        step = wr.approval_steps.filter(
+            status=WithdrawalApprovalStep.STATUS_PENDING
+        ).order_by('step_number').first()
+
+        if not step:
+            return Response({'detail': 'No pending steps for this request.'}, status=400)
+
+        try:
+            updated_wr = process_withdrawal_approval(
+                step=step,
+                approver=request.user,
+                approved=serializer.validated_data['approved'],
+                comment=serializer.validated_data.get('comment', ''),
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+        return Response(
+            SavingsWithdrawalRequestSerializer(updated_wr, context={'request': request}).data
+        )
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None):
+        """Cancel a withdrawal request (only before any approvals are given)."""
+        wr = self.get_object()
+        try:
+            wr.cancel(request.user)
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=400)
+        return Response(
+            SavingsWithdrawalRequestSerializer(wr, context={'request': request}).data
+        )

@@ -532,6 +532,8 @@ const SavingsAccountsPage = lazy(() => import('./pages/savings/SavingsAccountsPa
 // Savings new account form & policy
 const SavingsAccountFormPage = lazy(() => import('./pages/savings/SavingsAccountFormPage'));
 const SavingsPolicyPage = lazy(() => import('./pages/savings/SavingsPolicyPage'));
+const SavingsProductConfigPage = lazy(() => import('./pages/savings/SavingsProductConfigPage'));
+const SavingsWithdrawalsPage = lazy(() => import('./pages/savings/SavingsWithdrawalsPage'));
 
 // Loan Accounts list page
 const LoanAccountsPage = lazy(() => import('./pages/loans/LoanAccountsPage'));
@@ -539,6 +541,7 @@ const LoanAccountsPage = lazy(() => import('./pages/loans/LoanAccountsPage'));
 // Loan new application form & products
 const LoanAccountFormPage = lazy(() => import('./pages/loans/LoanAccountFormPage'));
 const LoanProductsPage = lazy(() => import('./pages/loans/LoanProductsPage'));
+const LoanProductConfigPage = lazy(() => import('./pages/loans/LoanProductConfigPage'));
 
 // Liabilities / Accounts Payable pages
 const PayablesListPage = lazy(() => import('./pages/liabilities/PayablesListPage'));
@@ -3821,12 +3824,32 @@ function App() {
                                   }
                                 />
 
+                                {/* Savings — Withdrawal requests & approval inbox */}
+                                <Route
+                                  path="/savings/withdrawals"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-list">
+                                      <SavingsWithdrawalsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
                                 {/* Savings Products (managed via /products?type=SAVINGS) */}
                                 <Route
                                   path="/savings/products"
                                   element={
                                     <ProtectedRoute requiredPermission="product-list">
                                       <ProductManagementPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Savings — Product behaviour config */}
+                                <Route
+                                  path="/savings/products/:id/config"
+                                  element={
+                                    <ProtectedRoute requiredPermission="product-list">
+                                      <SavingsProductConfigPage />
                                     </ProtectedRoute>
                                   }
                                 />
@@ -3857,6 +3880,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="loan-list">
                                       <LoanProductsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Product fee & savings requirements config */}
+                                <Route
+                                  path="/loans/products/:id/config"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-list">
+                                      <LoanProductConfigPage />
                                     </ProtectedRoute>
                                   }
                                 />

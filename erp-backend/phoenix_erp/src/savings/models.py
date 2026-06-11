@@ -567,3 +567,365 @@ class CompulsorySavingsPolicy(TimeStampedModel, BranchScopedModel, SoftDeleteMod
     def __str__(self):
         state = "enabled" if self.enabled else "disabled"
         return f"Compulsory Savings Policy – ₦{self.amount} ({state})"
+
+
+# ---------------------------------------------------------------------------
+# Savings Product Configuration
+# ---------------------------------------------------------------------------
+
+class SavingsProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Extended configuration for a savings Product.
+    One-to-one with Product (product_type='SAVINGS').
+
+    Covers two distinct behaviour modes that can both be active on the same product:
+
+    1. DAILY CONTRIBUTION (first_deposit_is_income=True)
+       ─────────────────────────────────────────────────
+       Clients are expected to make daily deposits throughout the month.
+       The *first* deposit each calendar month is treated as income for the
+       organisation (posted to first_deposit_income_account) and does NOT
+       increase the client's savings balance.  Subsequent deposits in the same
+       month add to the savings balance as normal.
+
+    2. SAVINGS CYCLE (has_savings_cycle=True)
+       ─────────────────────────────────────
+       Clients who keep their balance untouched for cycle_length_months earn
+       cycle_interest_rate% interest (posted as expense to
+       interest_expense_account).  If they break the cycle early (i.e. make a
+       withdrawal before maturity) a penalty of cycle_break_penalty_rate% of
+       the balance is charged (posted as income to penalty_income_account).
+    """
+    product = models.OneToOneField(
+        Product,
+        on_delete=models.PROTECT,
+        limit_choices_to={'product_type': 'SAVINGS'},
+        related_name='savings_product_config',
+    )
+
+    # ── GL accounts ─────────────────────────────────────────────────────────
+    interest_expense_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        limit_choices_to={'account_type': Account.EXPENSE},
+        related_name='savings_interest_expense',
+        help_text="Expense GL account for interest paid TO clients at cycle end.",
+    )
+    penalty_income_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        limit_choices_to={'account_type': Account.INCOME},
+        related_name='savings_cycle_penalty_income',
+        help_text="Income GL account for penalties on early cycle withdrawal.",
+    )
+
+    # ── Daily contribution settings ──────────────────────────────────────────
+    is_daily_contribution = models.BooleanField(
+        default=False,
+        help_text="True for Ajo / daily-collection type accounts.",
+    )
+    first_deposit_is_income = models.BooleanField(
+        default=False,
+        help_text=(
+            "When True, the first deposit each calendar month is posted as income "
+            "rather than added to the client's savings balance."
+        ),
+    )
+    first_deposit_income_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        limit_choices_to={'account_type': Account.INCOME},
+        related_name='savings_first_deposit_income',
+        help_text="Income GL account for first-deposit income. Required when first_deposit_is_income=True.",
+    )
+
+    # ── Cycle savings settings ───────────────────────────────────────────────
+    has_savings_cycle = models.BooleanField(
+        default=False,
+        help_text="Enable fixed-term cycle savings (e.g. 3-month cycle with interest/penalty).",
+    )
+    cycle_length_months = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Length of the savings cycle in months (e.g. 3).",
+    )
+    cycle_interest_rate = models.DecimalField(
+        max_digits=5, decimal_places=2,
+        null=True, blank=True,
+        help_text="Interest rate (%) paid on opening balance if cycle completes.",
+    )
+    cycle_break_penalty_rate = models.DecimalField(
+        max_digits=5, decimal_places=2,
+        null=True, blank=True,
+        help_text="Penalty rate (%) of balance charged on early cycle break.",
+    )
+    cycle_auto_renew = models.BooleanField(
+        default=True,
+        help_text="Automatically start a new cycle when the current one matures.",
+    )
+
+    # ── Withdrawal controls ──────────────────────────────────────────────────
+    withdrawal_needs_approval = models.BooleanField(
+        default=True,
+        help_text="All withdrawals on this product must go through the approval workflow.",
+    )
+    only_account_manager_can_withdraw = models.BooleanField(
+        default=True,
+        help_text=(
+            "Only the client's assigned account manager (Client.account_manager) "
+            "may initiate a withdrawal request."
+        ),
+    )
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['product__name']
+
+    def __str__(self):
+        return f"SavingsProduct config – {self.product.name}"
+
+    def clean(self):
+        if self.first_deposit_is_income and not self.first_deposit_income_account_id:
+            raise ValidationError(
+                "first_deposit_income_account is required when first_deposit_is_income is True."
+            )
+        if self.has_savings_cycle:
+            if not self.cycle_length_months:
+                raise ValidationError("cycle_length_months is required when has_savings_cycle is True.")
+            if self.cycle_interest_rate is None:
+                raise ValidationError("cycle_interest_rate is required when has_savings_cycle is True.")
+            if self.cycle_break_penalty_rate is None:
+                raise ValidationError("cycle_break_penalty_rate is required when has_savings_cycle is True.")
+            if not self.interest_expense_account_id:
+                raise ValidationError("interest_expense_account is required when has_savings_cycle is True.")
+            if not self.penalty_income_account_id:
+                raise ValidationError("penalty_income_account is required when has_savings_cycle is True.")
+
+
+# ---------------------------------------------------------------------------
+# Withdrawal approval tiers and requests
+# ---------------------------------------------------------------------------
+
+class WithdrawalApprovalTier(TimeStampedModel, SoftDeleteModel):
+    """
+    Global (per-owner) tiered approval configuration for savings withdrawals.
+
+    Example setup:
+      Tier 1  ₦0       – ₦49,999   → 1 approver  (Managers)
+      Tier 2  ₦50,000  – ₦499,999  → 2 approvers (Managers + Admins)
+      Tier 3  ₦500,000 – unlimited → 3 approvers  (Managers + Admins + Director)
+
+    max_amount = None means "no upper limit" (catch-all top tier).
+    approver_roles: JSON list of auth.Group names that can approve at this tier,
+    e.g. ["Branch Manager", "Admin", "Director"].
+    """
+    owner = models.ForeignKey(
+        'users.User',
+        on_delete=models.CASCADE,
+        related_name='withdrawal_approval_tiers',
+    )
+    tier_name = models.CharField(max_length=100)
+    min_amount = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal('0.00'),
+    )
+    max_amount = models.DecimalField(
+        max_digits=18, decimal_places=2,
+        null=True, blank=True,
+        help_text="Leave blank for no upper limit (highest tier).",
+    )
+    required_approvers = models.PositiveIntegerField(
+        default=1,
+        help_text="Number of distinct approvals needed before the withdrawal executes.",
+    )
+    approver_roles = models.JSONField(
+        default=list,
+        help_text='List of Django auth.Group names that can approve, e.g. ["Manager", "Admin"].',
+    )
+    is_active = models.BooleanField(default=True)
+    order = models.PositiveIntegerField(
+        default=0,
+        help_text="Evaluated from lowest to highest order; first matching tier is used.",
+    )
+
+    class Meta:
+        ordering = ['owner', 'order']
+
+    def __str__(self):
+        upper = f"₦{self.max_amount:,.2f}" if self.max_amount else "∞"
+        return f"{self.tier_name} (₦{self.min_amount:,.2f} – {upper}, {self.required_approvers} approver(s))"
+
+    def matches(self, amount: Decimal) -> bool:
+        """Return True if amount falls within this tier's range."""
+        if amount < self.min_amount:
+            return False
+        if self.max_amount is not None and amount > self.max_amount:
+            return False
+        return True
+
+
+class SavingsWithdrawalRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    A withdrawal request that must go through the tiered approval workflow.
+
+    Lifecycle:
+      pending → partially_approved → fully_approved → completed
+                                   → rejected
+              → cancelled (before first approval)
+
+    The actual GL debit/credit happens ONLY when status becomes 'completed'
+    (i.e. all required approvals collected).
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_PARTIAL = 'partially_approved'
+    STATUS_APPROVED = 'fully_approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_COMPLETED = 'completed'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_PARTIAL, 'Partially Approved'),
+        (STATUS_APPROVED, 'Fully Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+        (STATUS_CANCELLED, 'Cancelled'),
+        (STATUS_COMPLETED, 'Completed'),
+    ]
+
+    savings_account = models.ForeignKey(
+        SavingsAccount,
+        on_delete=models.PROTECT,
+        related_name='withdrawal_requests',
+    )
+    requested_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.PROTECT,
+        related_name='initiated_withdrawal_requests',
+        help_text="Must be the client's account_manager when only_account_manager_can_withdraw is True.",
+    )
+    amount = models.DecimalField(max_digits=18, decimal_places=2)
+    description = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+
+    # Approval tracking (snapshot at creation)
+    required_approvals = models.PositiveIntegerField(
+        help_text="Snapshot of WithdrawalApprovalTier.required_approvers at creation time.",
+    )
+    approvals_received = models.PositiveIntegerField(default=0)
+    applied_tier = models.ForeignKey(
+        WithdrawalApprovalTier,
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name='withdrawal_requests',
+        help_text="The tier that was matched for this request.",
+    )
+
+    # Where the money goes once approved
+    destination_bank_account = models.ForeignKey(
+        'banks.BankAccount',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name='incoming_withdrawal_requests',
+        help_text="Bank account to credit when withdrawal completes.",
+    )
+    cashier_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        limit_choices_to={'account_type': Account.ASSET},
+        related_name='withdrawal_request_cashier',
+        help_text="Cash / Cashier GL account debited from savings, used when no bank account.",
+    )
+
+    # GL journal entry — set only when status = completed
+    journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='savings_withdrawal_requests',
+    )
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['savings_account', 'status']),
+        ]
+
+    def __str__(self):
+        return (
+            f"Withdrawal ₦{self.amount:,.2f} from {self.savings_account.account_number} "
+            f"[{self.get_status_display()}]"
+        )
+
+    @property
+    def is_fully_approved(self) -> bool:
+        return self.approvals_received >= self.required_approvals
+
+    def cancel(self, user):
+        """Cancel before any approvals have been collected."""
+        if self.approvals_received > 0:
+            raise ValidationError("Cannot cancel a request that has already received approvals.")
+        self.status = self.STATUS_CANCELLED
+        self.save(update_fields=['status', 'updated_at'])
+
+
+class WithdrawalApprovalStep(TimeStampedModel, SoftDeleteModel):
+    """
+    One row per approver slot per withdrawal request.
+    Steps are created upfront (required_approvals rows), then filled in as
+    approvers respond.
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    withdrawal_request = models.ForeignKey(
+        SavingsWithdrawalRequest,
+        on_delete=models.CASCADE,
+        related_name='approval_steps',
+    )
+    step_number = models.PositiveIntegerField(
+        help_text="1-based position in the approval chain.",
+    )
+    approver = models.ForeignKey(
+        'users.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='withdrawal_approval_steps',
+        help_text="Populated when an eligible user claims and responds to this step.",
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+    comment = models.TextField(blank=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['withdrawal_request', 'step_number']
+        unique_together = [['withdrawal_request', 'step_number']]
+
+    def __str__(self):
+        return (
+            f"Step {self.step_number} for {self.withdrawal_request} "
+            f"— {self.get_status_display()}"
+        )

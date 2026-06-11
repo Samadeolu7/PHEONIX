@@ -1509,3 +1509,183 @@ class LoanWriteOff(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             'status', 'approved_by', 'approved_at',
             'rejection_reason', 'updated_at',
         ])
+
+
+# ---------------------------------------------------------------------------
+# Product-driven fee configuration
+# ---------------------------------------------------------------------------
+
+class LoanProductFee(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Dynamic fee lines attached to a LoanProduct.
+
+    Each fee line has its own GL income account so that e.g. "Admin Fee",
+    "Registration Fee" and "Risk Premium" can post to separate GL codes.
+
+    posting_trigger controls WHEN the fee becomes income:
+      - 'approval'     → posted when the loan moves to 'approved' status
+      - 'disbursement' → posted when the loan moves to 'disbursed' status
+    """
+    POSTING_TRIGGER_CHOICES = [
+        ('approval', 'At Loan Approval'),
+        ('disbursement', 'At Disbursement'),
+    ]
+    FEE_TYPE_CHOICES = [
+        ('fixed', 'Fixed Amount'),
+        ('percentage', 'Percentage of Loan Amount'),
+    ]
+
+    loan_product = models.ForeignKey(
+        LoanProduct,
+        on_delete=models.CASCADE,
+        related_name='fee_lines',
+    )
+    name = models.CharField(
+        max_length=100,
+        help_text="e.g. Admin Fee, Registration Fee, Risk Premium",
+    )
+    fee_type = models.CharField(max_length=20, choices=FEE_TYPE_CHOICES, default='fixed')
+    fixed_amount = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal('0.00'),
+        help_text="Used when fee_type = fixed",
+    )
+    percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0.00'),
+        help_text="Percentage of approved loan amount. Used when fee_type = percentage.",
+    )
+    gl_income_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        limit_choices_to={'account_type': Account.INCOME},
+        related_name='loan_product_fee_lines',
+        help_text="Income GL account where this fee is posted.",
+    )
+    posting_trigger = models.CharField(
+        max_length=20,
+        choices=POSTING_TRIGGER_CHOICES,
+        default='disbursement',
+    )
+    is_active = models.BooleanField(default=True)
+    order = models.PositiveIntegerField(
+        default=0,
+        help_text="Display order on forms and reports.",
+    )
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['loan_product', 'order', 'name']
+        unique_together = [['loan_product', 'name']]
+
+    def __str__(self):
+        return f"{self.loan_product} — {self.name}"
+
+    def calculate(self, loan_amount: Decimal) -> Decimal:
+        """Return the fee amount for the given loan principal."""
+        if self.fee_type == 'fixed':
+            return self.fixed_amount
+        return (loan_amount * self.percentage / Decimal('100')).quantize(Decimal('0.01'))
+
+
+class LoanProductSavingsRequirement(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Configures a minimum savings balance a client must hold before a loan
+    of this product can be created.
+
+    requirement_type:
+      - 'percentage' → client must hold at least (value % of requested_amount)
+      - 'fixed'      → client must hold at least value naira
+
+    savings_product: the specific savings Product to check (e.g. 'Normal Savings').
+    """
+    REQUIREMENT_TYPE_CHOICES = [
+        ('percentage', 'Percentage of Loan Amount'),
+        ('fixed', 'Fixed Amount'),
+    ]
+
+    loan_product = models.ForeignKey(
+        LoanProduct,
+        on_delete=models.CASCADE,
+        related_name='savings_requirements',
+    )
+    savings_product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        limit_choices_to={'product_type': 'SAVINGS'},
+        related_name='loan_savings_requirements',
+        help_text="The savings product whose balance is checked.",
+    )
+    requirement_type = models.CharField(
+        max_length=20,
+        choices=REQUIREMENT_TYPE_CHOICES,
+        default='percentage',
+    )
+    value = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="10 = 10% of loan amount (percentage) or ₦10,000 (fixed).",
+    )
+    is_active = models.BooleanField(default=True)
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['loan_product', 'savings_product']
+
+    def __str__(self):
+        return (
+            f"{self.loan_product} requires "
+            f"{'%' if self.requirement_type == 'percentage' else '₦'}{self.value} in "
+            f"{self.savings_product}"
+        )
+
+    def required_amount(self, loan_amount: Decimal) -> Decimal:
+        """Compute the minimum savings balance needed for the given loan amount."""
+        if self.requirement_type == 'percentage':
+            return (loan_amount * self.value / Decimal('100')).quantize(Decimal('0.01'))
+        return self.value
+
+
+class LoanFeeApplication(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Audit record: one row per fee line per loan account.
+    Created when fees are calculated at approval/disbursement.
+    The journal_entry FK is set when the GL posting actually happens.
+    """
+    loan_account = models.ForeignKey(
+        LoanAccount,
+        on_delete=models.CASCADE,
+        related_name='fee_applications',
+    )
+    fee_config = models.ForeignKey(
+        LoanProductFee,
+        on_delete=models.PROTECT,
+        related_name='applications',
+    )
+    calculated_amount = models.DecimalField(
+        max_digits=18, decimal_places=2,
+        help_text="Amount computed at the time the fee was applied.",
+    )
+    posted = models.BooleanField(default=False)
+    posting_date = models.DateField(null=True, blank=True)
+    journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_fee_applications',
+    )
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        unique_together = [['loan_account', 'fee_config']]
+
+    def __str__(self):
+        status = "posted" if self.posted else "pending"
+        return (
+            f"{self.fee_config.name} on {self.loan_account.loan_number} "
+            f"— ₦{self.calculated_amount} ({status})"
+        )

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Plus,
   Edit,
@@ -16,6 +17,7 @@ import {
   Info,
   Sparkles,
   Settings,
+  Settings2,
   CreditCard,
   Briefcase,
   Receipt,
@@ -1591,6 +1593,30 @@ const ProductManagementPage: React.FC = () => {
 
                 {/* Actions */}
                 <div style={{ display: 'flex', gap: '8px' }}>
+                  {product.product_type === 'SAVINGS' && product.id && (
+                    <Link
+                      to={`/savings/products/${product.id}/config`}
+                      style={{
+                        flex: 1,
+                        padding: '8px',
+                        border: '1px solid #6366f1',
+                        borderRadius: '6px',
+                        background: 'white',
+                        color: '#6366f1',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        textDecoration: 'none',
+                      }}
+                    >
+                      <Settings2 size={16} />
+                      Configure
+                    </Link>
+                  )}
                   <button
                     onClick={() => handleEdit(product)}
                     style={{

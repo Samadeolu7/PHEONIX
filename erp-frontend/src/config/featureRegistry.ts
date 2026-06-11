@@ -971,6 +971,28 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     category: 'Savings',
     isNew: true,
   },
+  {
+    id: 'savings-product-config',
+    title: '⚙️ Savings Product Config',
+    description: 'Configure cycle savings, first-deposit income rules, and tiered withdrawal controls per product',
+    path: '/savings/products',
+    icon: Settings,
+    requiredPermission: 'savings-products',
+    moduleId: 'client-services',
+    category: 'Savings',
+    isNew: true,
+  },
+  {
+    id: 'savings-withdrawals',
+    title: '💸 Withdrawal Approvals',
+    description: 'Review and approve member withdrawal requests. Configure tiered multi-approver rules.',
+    path: '/savings/withdrawals',
+    icon: Banknote,
+    requiredPermission: 'savings-list',
+    moduleId: 'client-services',
+    category: 'Savings',
+    isNew: true,
+  },
 
   // ==========================================================================
   // CLIENT SERVICES — Loans Category
@@ -1041,9 +1063,17 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     category: 'Loans',
     isNew: true,
   },
-
-  // ==========================================================================
-  // INVENTORY MODULE
+  {
+    id: 'loan-product-config',
+    title: '⚙️ Loan Product Fee Config',
+    description: 'Configure dynamic fee lines (admin, registration, risk premium) and savings requirements per loan product',
+    path: '/loans/products',
+    icon: Settings,
+    requiredPermission: 'loan-products-list',
+    moduleId: 'client-services',
+    category: 'Loans',
+    isNew: true,
+  },
   // ==========================================================================
   {
     id: 'inventory-items-list',
@@ -1547,6 +1577,28 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     category: 'Configuration',
     isNew: true,
   },
+  {
+    id: 'savings-mod-product-config',
+    title: '⚙️ Savings Product Config',
+    description: 'Configure cycle savings, first-deposit income rules, and tiered withdrawal controls per product',
+    path: '/savings/products',
+    icon: Settings,
+    requiredPermission: 'savings-products',
+    moduleId: 'savings',
+    category: 'Configuration',
+    isNew: true,
+  },
+  {
+    id: 'savings-mod-withdrawals',
+    title: '💸 Withdrawal Approvals',
+    description: 'Review and approve member withdrawal requests. Configure tiered multi-approver rules.',
+    path: '/savings/withdrawals',
+    icon: Banknote,
+    requiredPermission: 'savings-list',
+    moduleId: 'savings',
+    category: 'Operations',
+    isNew: true,
+  },
 
   // ==========================================================================
   // LOANS MODULE (standalone landing page — mirrors client-services entries)
@@ -1612,6 +1664,17 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     description: 'Manage loan product types, interest rates, terms, fees, and eligibility criteria',
     path: '/loans/products',
     icon: Layers,
+    requiredPermission: 'loan-products-list',
+    moduleId: 'loans',
+    category: 'Configuration',
+    isNew: true,
+  },
+  {
+    id: 'loans-mod-product-config',
+    title: '⚙️ Loan Product Fee Config',
+    description: 'Configure dynamic fee lines (admin, registration, risk premium) and savings requirements per loan product',
+    path: '/loans/products',
+    icon: Settings,
     requiredPermission: 'loan-products-list',
     moduleId: 'loans',
     category: 'Configuration',

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from common.serializers import TenantModelSerializer
 
 from .models import (
     SavingsAccount,
@@ -7,6 +8,10 @@ from .models import (
     SmartSavingsAccount,
     SmartSavingsEvent,
     CompulsorySavingsPolicy,
+    SavingsProduct,
+    WithdrawalApprovalTier,
+    SavingsWithdrawalRequest,
+    WithdrawalApprovalStep,
 )
 
 
@@ -139,3 +144,106 @@ class SavingsGoalSerializer(serializers.ModelSerializer):
             'status', 'progress_percentage',
         ]
         read_only_fields = ['current_amount', 'progress_percentage']
+
+
+# ---------------------------------------------------------------------------
+# Savings product configuration
+# ---------------------------------------------------------------------------
+
+class SavingsProductSerializer(TenantModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+
+    class Meta:
+        model = SavingsProduct
+        fields = [
+            'id', 'product', 'product_name',
+            'interest_expense_account', 'penalty_income_account',
+            'is_daily_contribution', 'first_deposit_is_income', 'first_deposit_income_account',
+            'has_savings_cycle', 'cycle_length_months', 'cycle_interest_rate',
+            'cycle_break_penalty_rate', 'cycle_auto_renew',
+            'withdrawal_needs_approval', 'only_account_manager_can_withdraw',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'product_name', 'owner', 'branch', 'created_at', 'updated_at']
+
+
+# ---------------------------------------------------------------------------
+# Withdrawal approval tiers
+# ---------------------------------------------------------------------------
+
+class WithdrawalApprovalTierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WithdrawalApprovalTier
+        fields = [
+            'id', 'owner', 'tier_name', 'min_amount', 'max_amount',
+            'required_approvers', 'approver_roles', 'is_active', 'order',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
+
+
+# ---------------------------------------------------------------------------
+# Withdrawal requests
+# ---------------------------------------------------------------------------
+
+class WithdrawalApprovalStepSerializer(serializers.ModelSerializer):
+    approver_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WithdrawalApprovalStep
+        fields = [
+            'id', 'step_number', 'approver', 'approver_name',
+            'status', 'comment', 'responded_at',
+            'created_at',
+        ]
+        read_only_fields = [
+            'id', 'step_number', 'approver', 'approver_name',
+            'status', 'comment', 'responded_at', 'created_at',
+        ]
+
+    def get_approver_name(self, obj):
+        if obj.approver_id:
+            return getattr(obj.approver, 'get_full_name', lambda: str(obj.approver))()
+        return None
+
+
+class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
+    steps = WithdrawalApprovalStepSerializer(
+        source='approval_steps', many=True, read_only=True
+    )
+    account_number = serializers.CharField(
+        source='savings_account.account_number', read_only=True
+    )
+    client_name = serializers.CharField(
+        source='savings_account.client.full_name', read_only=True
+    )
+    requested_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SavingsWithdrawalRequest
+        fields = [
+            'id', 'savings_account', 'account_number', 'client_name',
+            'requested_by', 'requested_by_name',
+            'amount', 'description', 'status',
+            'required_approvals', 'approvals_received',
+            'applied_tier', 'destination_bank_account', 'cashier_account',
+            'journal_entry', 'steps',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'account_number', 'client_name', 'requested_by_name',
+            'status', 'required_approvals', 'approvals_received',
+            'applied_tier', 'journal_entry', 'steps',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+
+    def get_requested_by_name(self, obj):
+        if obj.requested_by_id:
+            return getattr(obj.requested_by, 'get_full_name', lambda: str(obj.requested_by))()
+        return None
+
+
+class WithdrawalApprovalActionSerializer(serializers.Serializer):
+    """Used by approve/reject action endpoints."""
+    approved = serializers.BooleanField()
+    comment = serializers.CharField(required=False, allow_blank=True, default='')

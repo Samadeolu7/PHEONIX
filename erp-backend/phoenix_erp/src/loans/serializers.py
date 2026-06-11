@@ -5,6 +5,7 @@ from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule,
     LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement,
+    LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
 )
 
 
@@ -225,3 +226,59 @@ class LoanDisbursementSerializer(TenantModelSerializer):
             'disbursed_by',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
+
+
+# ---------------------------------------------------------------------------
+# Product fee configuration serializers
+# ---------------------------------------------------------------------------
+
+class LoanProductFeeSerializer(TenantModelSerializer):
+    class Meta:
+        model = LoanProductFee
+        fields = [
+            'id', 'loan_product', 'name', 'fee_type',
+            'fixed_amount', 'percentage', 'gl_income_account',
+            'posting_trigger', 'is_active', 'order',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'owner', 'branch', 'created_at', 'updated_at']
+
+
+class LoanProductSavingsRequirementSerializer(TenantModelSerializer):
+    savings_product_name = serializers.CharField(
+        source='savings_product.name', read_only=True
+    )
+
+    class Meta:
+        model = LoanProductSavingsRequirement
+        fields = [
+            'id', 'loan_product', 'savings_product', 'savings_product_name',
+            'requirement_type', 'value', 'is_active',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'savings_product_name', 'owner', 'branch', 'created_at', 'updated_at']
+
+
+class LoanFeeApplicationSerializer(TenantModelSerializer):
+    fee_name = serializers.CharField(source='fee_config.name', read_only=True)
+    gl_account_name = serializers.CharField(
+        source='fee_config.gl_income_account.name', read_only=True
+    )
+
+    class Meta:
+        model = LoanFeeApplication
+        fields = [
+            'id', 'loan_account', 'fee_config', 'fee_name',
+            'gl_account_name', 'calculated_amount',
+            'posted', 'posting_date', 'journal_entry',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'fee_name', 'gl_account_name', 'owner', 'branch', 'created_at', 'updated_at']
+
+
+class FeePreviewer(serializers.Serializer):
+    """Read-only: preview fees for a given loan product and amount."""
+    name = serializers.CharField(read_only=True)
+    fee_type = serializers.CharField(read_only=True)
+    amount = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
+    posting_trigger = serializers.CharField(read_only=True)

@@ -6,7 +6,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, Loader2, RefreshCw, Landmark } from 'lucide-react';
+import { AlertCircle, Loader2, RefreshCw, Landmark, Settings2 } from 'lucide-react';
 import { loanService, LoanProduct } from '../../services/loanService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -126,6 +126,7 @@ export default function LoanProductsPage() {
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Method</th>
                   <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Processing Fee</th>
                   <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
+                  <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -158,6 +159,15 @@ export default function LoanProductsPage() {
                       }`}>
                         {p.is_active ? 'Active' : 'Inactive'}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <Link
+                        to={`/loans/products/${p.id}/config`}
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors"
+                      >
+                        <Settings2 className="w-3.5 h-3.5" />
+                        Configure
+                      </Link>
                     </td>
                   </tr>
                 ))}

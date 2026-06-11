@@ -1,0 +1,812 @@
+/**
+ * Loan Product Config Page
+ * Manage dynamic fee lines and savings requirements for a specific loan product.
+ * Route: /loans/products/:id/config
+ *
+ * Tabs:
+ *   1. Fee Lines — add / edit / remove income fees (admin fee, registration, risk premium, etc.)
+ *   2. Savings Requirements — configure required savings balance before a loan is allowed
+ */
+
+import React, { useCallback, useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+  AlertCircle,
+  Loader2,
+  Plus,
+  Pencil,
+  Trash2,
+  Save,
+  X,
+  ChevronLeft,
+  BadgeDollarSign,
+  ShieldCheck,
+} from 'lucide-react';
+import { api as apiClient } from '../../api';
+import {
+  loanService,
+  LoanProduct,
+  LoanProductFee,
+  LoanProductSavingsRequirement,
+} from '../../services/loanService';
+import { accountService } from '../../services/accountService';
+import { Account } from '../../types/accounts';
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function fmt(v: string | number | null | undefined): string {
+  const n = parseFloat(String(v ?? '0'));
+  return isNaN(n) ? '—' : n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// ── Sub-component: Fee line form (inline) ───────────────────────────────────
+
+interface FeeFormProps {
+  productId: number;
+  initial?: LoanProductFee;
+  onSaved: (fee: LoanProductFee) => void;
+  onCancel: () => void;
+  incomeAccounts: Account[];
+}
+
+function FeeLineForm({ productId, initial, onSaved, onCancel, incomeAccounts }: FeeFormProps) {
+  const isEdit = !!initial;
+  const [name, setName] = useState(initial?.name ?? '');
+  const [feeType, setFeeType] = useState<'fixed' | 'percentage'>(initial?.fee_type ?? 'fixed');
+  const [fixedAmount, setFixedAmount] = useState(initial?.fixed_amount ?? '0');
+  const [percentage, setPercentage] = useState(initial?.percentage ?? '0');
+  const [glAccount, setGlAccount] = useState<string>(String(initial?.gl_income_account ?? ''));
+  const [trigger, setTrigger] = useState<'approval' | 'disbursement'>(initial?.posting_trigger ?? 'disbursement');
+  const [isActive, setIsActive] = useState(initial?.is_active ?? true);
+  const [order, setOrder] = useState(initial?.order ?? 1);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) { setError('Name is required.'); return; }
+    if (!glAccount) { setError('GL income account is required.'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const payload: Partial<LoanProductFee> = {
+        loan_product: productId,
+        name: name.trim(),
+        fee_type: feeType,
+        fixed_amount: feeType === 'fixed' ? fixedAmount : '0',
+        percentage: feeType === 'percentage' ? percentage : '0',
+        gl_income_account: Number(glAccount),
+        posting_trigger: trigger,
+        is_active: isActive,
+        order,
+      };
+      const saved = isEdit
+        ? await loanService.updateProductFee(initial!.id, payload)
+        : await loanService.createProductFee(payload);
+      onSaved(saved);
+    } catch (e: any) {
+      setError(e?.message ?? e?.detail ?? 'Failed to save fee.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-3"
+    >
+      <p className="text-sm font-semibold text-blue-800 mb-3">{isEdit ? 'Edit Fee Line' : 'Add Fee Line'}</p>
+      {error && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{error}</div>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        {/* Name */}
+        <div className="col-span-2 sm:col-span-1">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Fee Name *</label>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="e.g. Admin Fee, Registration Fee"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
+        {/* Order */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Display Order</label>
+          <input
+            type="number"
+            min={1}
+            value={order}
+            onChange={e => setOrder(Number(e.target.value))}
+            title="Display order"
+            placeholder="1"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
+        {/* Fee Type */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Fee Type</label>
+          <select
+            value={feeType}
+            onChange={e => setFeeType(e.target.value as 'fixed' | 'percentage')}
+            aria-label="Fee type"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            <option value="fixed">Fixed Amount</option>
+            <option value="percentage">Percentage of Loan</option>
+          </select>
+        </div>
+        {/* Amount / Percentage */}
+        {feeType === 'fixed' ? (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Amount (₦)</label>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={fixedAmount}
+              onChange={e => setFixedAmount(e.target.value)}
+              title="Fixed fee amount"
+              placeholder="0.00"
+              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+        ) : (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Percentage (%)</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.01"
+              value={percentage}
+              onChange={e => setPercentage(e.target.value)}
+              title="Fee percentage"
+              placeholder="0.00"
+              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+        )}
+        {/* GL Income Account */}
+        <div className="col-span-2 sm:col-span-1">
+          <label className="block text-xs font-medium text-gray-600 mb-1">GL Income Account *</label>
+          <select
+            value={glAccount}
+            onChange={e => setGlAccount(e.target.value)}
+            aria-label="GL income account"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            <option value="">— Select account —</option>
+            {incomeAccounts.map(a => (
+              <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+            ))}
+          </select>
+        </div>
+        {/* Posting Trigger */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Post Fee At</label>
+          <select
+            value={trigger}
+            onChange={e => setTrigger(e.target.value as 'approval' | 'disbursement')}
+            aria-label="Posting trigger"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            <option value="approval">Loan Approval</option>
+            <option value="disbursement">Disbursement</option>
+          </select>
+        </div>
+        {/* Active toggle */}
+        <div className="col-span-2 flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="fee-active"
+            checked={isActive}
+            onChange={e => setIsActive(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          <label htmlFor="fee-active" className="text-sm text-gray-700">Active</label>
+        </div>
+      </div>
+      <div className="flex gap-2 mt-4">
+        <button
+          type="submit"
+          disabled={saving}
+          className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          {isEdit ? 'Update' : 'Add Fee'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex items-center gap-1.5 text-gray-600 border border-gray-300 text-sm px-4 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          <X className="w-3.5 h-3.5" /> Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ── Sub-component: Savings requirement form (inline) ─────────────────────────
+
+interface SavingsReqFormProps {
+  productId: number;
+  initial?: LoanProductSavingsRequirement;
+  onSaved: (req: LoanProductSavingsRequirement) => void;
+  onCancel: () => void;
+  savingsProducts: { id: number; name: string }[];
+}
+
+function SavingsRequirementForm({ productId, initial, onSaved, onCancel, savingsProducts }: SavingsReqFormProps) {
+  const isEdit = !!initial;
+  const [savingsProduct, setSavingsProduct] = useState<string>(String(initial?.savings_product ?? ''));
+  const [reqType, setReqType] = useState<'percentage' | 'fixed'>(initial?.requirement_type ?? 'percentage');
+  const [value, setValue] = useState(initial?.value ?? '10');
+  const [isActive, setIsActive] = useState(initial?.is_active ?? true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!savingsProduct) { setError('Savings product is required.'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const payload: Partial<LoanProductSavingsRequirement> = {
+        loan_product: productId,
+        savings_product: Number(savingsProduct),
+        requirement_type: reqType,
+        value,
+        is_active: isActive,
+      };
+      const saved = isEdit
+        ? await loanService.updateSavingsRequirement(initial!.id, payload)
+        : await loanService.createSavingsRequirement(payload);
+      onSaved(saved);
+    } catch (e: any) {
+      setError(e?.message ?? e?.detail ?? 'Failed to save requirement.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="bg-green-50 border border-green-200 rounded-xl p-4 mb-3"
+    >
+      <p className="text-sm font-semibold text-green-800 mb-3">
+        {isEdit ? 'Edit Savings Requirement' : 'Add Savings Requirement'}
+      </p>
+      {error && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{error}</div>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2 sm:col-span-1">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Savings Product *</label>
+          <select
+            value={savingsProduct}
+            onChange={e => setSavingsProduct(e.target.value)}
+            aria-label="Savings product"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+          >
+            <option value="">— Select savings product —</option>
+            {savingsProducts.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Requirement Type</label>
+          <select
+            value={reqType}
+            onChange={e => setReqType(e.target.value as 'percentage' | 'fixed')}
+            aria-label="Requirement type"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+          >
+            <option value="percentage">% of Loan Amount</option>
+            <option value="fixed">Fixed Amount (₦)</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            {reqType === 'percentage' ? 'Percentage (%)' : 'Amount (₦)'}
+          </label>
+          <input
+            type="number"
+            min={0}
+            step="0.01"
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            title="Requirement value"
+            placeholder="10"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+          />
+        </div>
+        <div className="col-span-2 flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="req-active"
+            checked={isActive}
+            onChange={e => setIsActive(e.target.checked)}
+            className="rounded border-gray-300"
+          />
+          <label htmlFor="req-active" className="text-sm text-gray-700">Active (enforced as hard block)</label>
+        </div>
+      </div>
+      <div className="flex gap-2 mt-4">
+        <button
+          type="submit"
+          disabled={saving}
+          className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          {isEdit ? 'Update' : 'Add Requirement'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex items-center gap-1.5 text-gray-600 border border-gray-300 text-sm px-4 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          <X className="w-3.5 h-3.5" /> Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ── Main page ────────────────────────────────────────────────────────────────
+
+type Tab = 'fees' | 'savings_requirements';
+
+export default function LoanProductConfigPage() {
+  const { id } = useParams<{ id: string }>();
+  const productId = Number(id);
+  const navigate = useNavigate();
+
+  const [product, setProduct] = useState<LoanProduct | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>('fees');
+
+  // Fee lines state
+  const [fees, setFees] = useState<LoanProductFee[]>([]);
+  const [feesLoading, setFeesLoading] = useState(false);
+  const [feesError, setFeesError] = useState<string | null>(null);
+  const [showFeeForm, setShowFeeForm] = useState(false);
+  const [editingFee, setEditingFee] = useState<LoanProductFee | null>(null);
+  const [deletingFeeId, setDeletingFeeId] = useState<number | null>(null);
+
+  // Savings requirements state
+  const [requirements, setRequirements] = useState<LoanProductSavingsRequirement[]>([]);
+  const [reqLoading, setReqLoading] = useState(false);
+  const [reqError, setReqError] = useState<string | null>(null);
+  const [showReqForm, setShowReqForm] = useState(false);
+  const [editingReq, setEditingReq] = useState<LoanProductSavingsRequirement | null>(null);
+  const [deletingReqId, setDeletingReqId] = useState<number | null>(null);
+
+  // Support data
+  const [incomeAccounts, setIncomeAccounts] = useState<Account[]>([]);
+  const [savingsProducts, setSavingsProducts] = useState<{ id: number; name: string }[]>([]);
+
+  // Load product
+  useEffect(() => {
+    loanService.getProduct(productId).then(setProduct).catch(() => {});
+  }, [productId]);
+
+  // Load income GL accounts
+  useEffect(() => {
+    accountService.getAccounts({ account_type: 'INCOME' }).then(data => {
+      setIncomeAccounts(Array.isArray(data) ? data : (data as any)?.results ?? []);
+    }).catch(() => {});
+  }, []);
+
+  // Load savings products list (product_type=SAVINGS via products endpoint)
+  useEffect(() => {
+    apiClient.get('/products/', { params: { product_type: 'SAVINGS', is_active: true } })
+      .then((data: any) => {
+        const list = Array.isArray(data) ? data : (data?.results ?? []);
+        setSavingsProducts(list.map((p: any) => ({ id: p.id, name: p.name })));
+      })
+      .catch(() => {});
+  }, []);
+
+  const loadFees = useCallback(async () => {
+    setFeesLoading(true);
+    setFeesError(null);
+    try {
+      const data = await loanService.listProductFees(productId);
+      setFees(data.sort((a, b) => a.order - b.order));
+    } catch (e: any) {
+      setFeesError(e?.message ?? 'Failed to load fees.');
+    } finally {
+      setFeesLoading(false);
+    }
+  }, [productId]);
+
+  const loadRequirements = useCallback(async () => {
+    setReqLoading(true);
+    setReqError(null);
+    try {
+      const data = await loanService.listSavingsRequirements(productId);
+      setRequirements(data);
+    } catch (e: any) {
+      setReqError(e?.message ?? 'Failed to load savings requirements.');
+    } finally {
+      setReqLoading(false);
+    }
+  }, [productId]);
+
+  useEffect(() => { loadFees(); }, [loadFees]);
+  useEffect(() => { loadRequirements(); }, [loadRequirements]);
+
+  // Fee handlers
+  const handleFeeSaved = (fee: LoanProductFee) => {
+    setFees(prev => {
+      const idx = prev.findIndex(f => f.id === fee.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = fee; return next.sort((a, b) => a.order - b.order); }
+      return [...prev, fee].sort((a, b) => a.order - b.order);
+    });
+    setShowFeeForm(false);
+    setEditingFee(null);
+  };
+
+  const handleDeleteFee = async (feeId: number) => {
+    setDeletingFeeId(feeId);
+    try {
+      await loanService.deleteProductFee(feeId);
+      setFees(prev => prev.filter(f => f.id !== feeId));
+    } catch {
+      // silently ignore
+    } finally {
+      setDeletingFeeId(null);
+    }
+  };
+
+  // Requirement handlers
+  const handleReqSaved = (req: LoanProductSavingsRequirement) => {
+    setRequirements(prev => {
+      const idx = prev.findIndex(r => r.id === req.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = req; return next; }
+      return [...prev, req];
+    });
+    setShowReqForm(false);
+    setEditingReq(null);
+  };
+
+  const handleDeleteReq = async (reqId: number) => {
+    setDeletingReqId(reqId);
+    try {
+      await loanService.deleteSavingsRequirement(reqId);
+      setRequirements(prev => prev.filter(r => r.id !== reqId));
+    } catch {
+      // silently ignore
+    } finally {
+      setDeletingReqId(null);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200 px-6 py-4">
+        <div className="max-w-5xl mx-auto flex items-center gap-4">
+          <button
+            onClick={() => navigate('/loans/products')}
+            aria-label="Back to loan products"
+            className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div>
+            <h1 className="text-lg font-bold text-gray-900">
+              {product ? `Configure: ${product.name}` : 'Loan Product Configuration'}
+            </h1>
+            <p className="text-xs text-gray-500">Manage fees and savings requirements for this product</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-5xl mx-auto px-6 py-6">
+        {/* Tab bar */}
+        <div className="flex gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit">
+          <button
+            onClick={() => setActiveTab('fees')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'fees'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            <BadgeDollarSign className="w-4 h-4" />
+            Fee Lines
+            {fees.length > 0 && (
+              <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${
+                activeTab === 'fees' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600'
+              }`}>{fees.length}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('savings_requirements')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'savings_requirements'
+                ? 'bg-green-600 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            Savings Requirements
+            {requirements.length > 0 && (
+              <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${
+                activeTab === 'savings_requirements' ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-600'
+              }`}>{requirements.length}</span>
+            )}
+          </button>
+        </div>
+
+        {/* ── TAB: FEE LINES ── */}
+        {activeTab === 'fees' && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-800">Income Fee Lines</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Each fee is posted to its own GL income account at the configured trigger point.
+                </p>
+              </div>
+              {!showFeeForm && !editingFee && (
+                <button
+                  onClick={() => setShowFeeForm(true)}
+                  className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> Add Fee
+                </button>
+              )}
+            </div>
+
+            {feesError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 mb-4 text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {feesError}
+              </div>
+            )}
+
+            {/* Add form */}
+            {showFeeForm && !editingFee && (
+              <FeeLineForm
+                productId={productId}
+                incomeAccounts={incomeAccounts}
+                onSaved={handleFeeSaved}
+                onCancel={() => setShowFeeForm(false)}
+              />
+            )}
+
+            {feesLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+              </div>
+            ) : fees.length === 0 ? (
+              <div className="bg-white rounded-xl border border-dashed border-gray-300 p-10 text-center">
+                <BadgeDollarSign className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No fee lines configured yet.</p>
+                <p className="text-xs text-gray-400 mt-1">Click "Add Fee" to create your first fee line.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">#</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Name</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Type</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Amount / %</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">GL Account</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Post At</th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Active</th>
+                      <th className="px-4 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {fees.map(fee => (
+                      <React.Fragment key={fee.id}>
+                        <tr className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 text-gray-400 text-xs">{fee.order}</td>
+                          <td className="px-4 py-3 font-medium text-gray-900">{fee.name}</td>
+                          <td className="px-4 py-3">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              fee.fee_type === 'fixed'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-purple-100 text-purple-700'
+                            }`}>
+                              {fee.fee_type === 'fixed' ? 'Fixed' : 'Percentage'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right text-gray-700">
+                            {fee.fee_type === 'fixed'
+                              ? `₦${fmt(fee.fixed_amount)}`
+                              : `${fmt(fee.percentage)}%`}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600 text-xs">
+                            {fee.gl_income_account_name ?? `Account #${fee.gl_income_account}`}
+                          </td>
+                          <td className="px-4 py-3 text-xs text-gray-600">
+                            {fee.posting_trigger === 'approval' ? 'On Approval' : 'On Disbursement'}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-block w-2 h-2 rounded-full ${fee.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1 justify-end">
+                              <button
+                                onClick={() => { setEditingFee(fee); setShowFeeForm(false); }}
+                                className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteFee(fee.id)}
+                                disabled={deletingFeeId === fee.id}
+                                className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50"
+                                title="Delete"
+                              >
+                                {deletingFeeId === fee.id
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <Trash2 className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {editingFee?.id === fee.id && (
+                          <tr>
+                            <td colSpan={8} className="px-4 py-2">
+                              <FeeLineForm
+                                productId={productId}
+                                initial={editingFee}
+                                incomeAccounts={incomeAccounts}
+                                onSaved={handleFeeSaved}
+                                onCancel={() => setEditingFee(null)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── TAB: SAVINGS REQUIREMENTS ── */}
+        {activeTab === 'savings_requirements' && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-800">Savings Balance Requirements</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  A client must meet ALL active requirements before a loan can be created (hard block).
+                </p>
+              </div>
+              {!showReqForm && !editingReq && (
+                <button
+                  onClick={() => setShowReqForm(true)}
+                  className="flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white text-sm px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> Add Requirement
+                </button>
+              )}
+            </div>
+
+            {reqError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 mb-4 text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {reqError}
+              </div>
+            )}
+
+            {/* Add form */}
+            {showReqForm && !editingReq && (
+              <SavingsRequirementForm
+                productId={productId}
+                savingsProducts={savingsProducts}
+                onSaved={handleReqSaved}
+                onCancel={() => setShowReqForm(false)}
+              />
+            )}
+
+            {reqLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-green-500" />
+              </div>
+            ) : requirements.length === 0 ? (
+              <div className="bg-white rounded-xl border border-dashed border-gray-300 p-10 text-center">
+                <ShieldCheck className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                <p className="text-sm text-gray-500">No savings requirements configured.</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Without a requirement, loans can be created regardless of savings balance.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Savings Product</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Requirement</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Value</th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Active</th>
+                      <th className="px-4 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {requirements.map(req => (
+                      <React.Fragment key={req.id}>
+                        <tr className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 font-medium text-gray-900">
+                            {req.savings_product_name ?? `Product #${req.savings_product}`}
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              req.requirement_type === 'percentage'
+                                ? 'bg-teal-100 text-teal-700'
+                                : 'bg-orange-100 text-orange-700'
+                            }`}>
+                              {req.requirement_type === 'percentage' ? '% of loan' : 'Fixed amount'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right text-gray-700">
+                            {req.requirement_type === 'percentage'
+                              ? `${fmt(req.value)}%`
+                              : `₦${fmt(req.value)}`}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`inline-block w-2 h-2 rounded-full ${req.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1 justify-end">
+                              <button
+                                onClick={() => { setEditingReq(req); setShowReqForm(false); }}
+                                className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteReq(req.id)}
+                                disabled={deletingReqId === req.id}
+                                className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50"
+                                title="Delete"
+                              >
+                                {deletingReqId === req.id
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <Trash2 className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {editingReq?.id === req.id && (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-2">
+                              <SavingsRequirementForm
+                                productId={productId}
+                                initial={editingReq}
+                                savingsProducts={savingsProducts}
+                                onSaved={handleReqSaved}
+                                onCancel={() => setEditingReq(null)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -317,6 +317,86 @@ export const loanService = {
   async rejectDisbursement(id: number, reason: string): Promise<LoanDisbursement> {
     return api.post(`${BASE}/disbursements/${id}/reject/`, { reason });
   },
+
+  // ===== LOAN PRODUCT FEES =====
+
+  async listProductFees(loanProductId: number): Promise<LoanProductFee[]> {
+    const res = await api.get(`${BASE}/product-fees/`, { params: { loan_product: loanProductId } });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  async createProductFee(data: Partial<LoanProductFee>): Promise<LoanProductFee> {
+    return api.post(`${BASE}/product-fees/`, data);
+  },
+
+  async updateProductFee(id: number, data: Partial<LoanProductFee>): Promise<LoanProductFee> {
+    return api.patch(`${BASE}/product-fees/${id}/`, data);
+  },
+
+  async deleteProductFee(id: number): Promise<void> {
+    return api.delete(`${BASE}/product-fees/${id}/`);
+  },
+
+  async previewFees(loanProductId: number, amount: number): Promise<FeePreviewItem[]> {
+    const res = await api.get(`${BASE}/fees-preview/`, { params: { loan_product: loanProductId, amount } });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  // ===== LOAN PRODUCT SAVINGS REQUIREMENTS =====
+
+  async listSavingsRequirements(loanProductId: number): Promise<LoanProductSavingsRequirement[]> {
+    const res = await api.get(`${BASE}/product-savings-requirements/`, { params: { loan_product: loanProductId } });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  async createSavingsRequirement(data: Partial<LoanProductSavingsRequirement>): Promise<LoanProductSavingsRequirement> {
+    return api.post(`${BASE}/product-savings-requirements/`, data);
+  },
+
+  async updateSavingsRequirement(id: number, data: Partial<LoanProductSavingsRequirement>): Promise<LoanProductSavingsRequirement> {
+    return api.patch(`${BASE}/product-savings-requirements/${id}/`, data);
+  },
+
+  async deleteSavingsRequirement(id: number): Promise<void> {
+    return api.delete(`${BASE}/product-savings-requirements/${id}/`);
+  },
 };
 
 export default loanService;
+
+// ── New types for product-driven configuration ─────────────────────────────
+
+export interface LoanProductFee {
+  id: number;
+  loan_product: number;
+  name: string;
+  fee_type: 'fixed' | 'percentage';
+  fixed_amount: string;
+  percentage: string;
+  gl_income_account: number | null;
+  gl_income_account_name?: string;
+  posting_trigger: 'approval' | 'disbursement';
+  is_active: boolean;
+  order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoanProductSavingsRequirement {
+  id: number;
+  loan_product: number;
+  savings_product: number | null;
+  savings_product_name?: string;
+  requirement_type: 'percentage' | 'fixed';
+  value: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FeePreviewItem {
+  name: string;
+  fee_type: 'fixed' | 'percentage';
+  posting_trigger: 'approval' | 'disbursement';
+  calculated_amount: string;
+}
