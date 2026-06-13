@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('accounts', '0003_period_and_more'),
+        ('accounts', '0012_subledger_account_codes'),
         ('branches', '0004_add_contact_fields_and_invoice_bank_flag'),
         ('clients', '0009_java_app_prep_bvn_bankfeed_loanwriteoff'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
