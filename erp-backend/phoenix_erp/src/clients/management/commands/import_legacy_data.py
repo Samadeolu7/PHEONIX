@@ -795,19 +795,19 @@ class Command(BaseCommand):
 
         Duplicate names (same bank across multiple financial years)
         -----------------------------------------------------------
-        The old system has one Bank row per financial year.  If "GTBank"
-        already exists when a second "GTBank" row is processed we append a
-        numeric suffix:
+        The old system has one Bank row per financial year.  When multiple rows
+        share the same bank name a numeric suffix is appended:
 
-            GTBank          (first occurrence)
-            GTBank-1        (second occurrence)
-            GTBank-2        (third occurrence)   … etc.
+            GTBank          (1st occurrence in source order)
+            GTBank-1        (2nd occurrence)
+            GTBank-2        (3rd occurrence)   … etc.
 
         Idempotency
         -----------
-        Each source row has a unique integer `id` from the export.  We store
-        it as "[legacy_id:<id>]" in the Account.description field.  Re-running
-        the import skips any bank whose legacy_id is already recorded.
+        Banks are processed in the same pk order every run (export sorts by pk).
+        An in-memory counter assigns a deterministic name to each source row —
+        the Nth occurrence of "GTBank" always maps to the same suffixed name.
+        Re-running simply finds that name already exists and skips it.
 
         Codes start at 1101 upward under parent 1100 (Cash and Cash Equivalents).
         """
@@ -816,12 +816,24 @@ class Command(BaseCommand):
         created_count = 0
         skipped_existing = 0
 
-        for rec in banks_data:
-            legacy_tag = f"[legacy_id:{rec['id']}]"
+        # Tracks how many times each base name has been seen so far in this run.
+        # Ensures occurrence 0 → "GTBank", occurrence 1 → "GTBank-1", etc.,
+        # regardless of what already exists in the DB.
+        name_occurrence: dict = {}
 
-            # Idempotency: skip if this bank row was already imported
+        for rec in banks_data:
+            base_name = rec["name"]
+
+            # Which occurrence of this base name is this source row?
+            occurrence = name_occurrence.get(base_name, 0)
+            name_occurrence[base_name] = occurrence + 1
+
+            # Build the deterministic account name for this row
+            account_name = base_name if occurrence == 0 else f"{base_name}-{occurrence}"
+
+            # Idempotency: skip if this exact name already exists under the parent
             if Account.objects.filter(
-                description__contains=legacy_tag,
+                name=account_name,
                 parent=parent_acct,
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
@@ -830,24 +842,9 @@ class Command(BaseCommand):
                 skipped_existing += 1
                 continue
 
-            # Build a unique display name — add suffix if the base name is taken
-            base_name = rec["name"]
-            candidate = base_name
-            suffix_n = 0
-            while Account.objects.filter(
-                name=candidate,
-                parent=parent_acct,
-                tenant=ctx["tenant"],
-                branch=ctx["branch"],
-                is_deleted=False,
-            ).exists():
-                suffix_n += 1
-                candidate = f"{base_name}-{suffix_n}"
-
             Account.objects.create(
                 code=str(code_counter),
-                name=candidate,
-                description=legacy_tag,
+                name=account_name,
                 account_type=Account.ASSET,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
