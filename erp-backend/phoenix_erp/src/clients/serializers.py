@@ -1,6 +1,15 @@
 from rest_framework import serializers
 from common.serializers import TenantModelSerializer
-from clients.models import Client, ClientClassification, ClientDocument, ClientRelationship, ClientNote, ClientGroup, CustomerAuditLog
+from clients.models import (
+    Client,
+    ClientClassification,
+    ClientDocument,
+    ClientRelationship,
+    ClientNote,
+    ClientGroup,
+    CustomerAuditLog,
+    ClientRegistrationConfig,
+)
 
 
 class ClientClassificationSerializer(TenantModelSerializer):
@@ -323,6 +332,60 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
             if not value.content_type.startswith('image/'):
                 raise serializers.ValidationError('Only image files are allowed for signature')
         return value
+
+    def validate_client_type(self, value):
+        if value is None or value == '':
+            return value
+        normalized = str(value).lower()
+        allowed = {'dc', 'wl', 'ml', 'pr'}
+        if normalized not in allowed:
+            raise serializers.ValidationError('client_type must be one of dc, wl, ml, pr')
+        return normalized
+
+
+class ClientRegistrationConfigSerializer(TenantModelSerializer):
+    registration_income_account_name = serializers.CharField(
+        source='registration_income_account.name', read_only=True
+    )
+    id_fee_income_account_name = serializers.CharField(
+        source='id_fee_income_account.name', read_only=True
+    )
+
+    class Meta:
+        model = ClientRegistrationConfig
+        fields = [
+            'id',
+            'registration_income_account', 'registration_income_account_name',
+            'id_fee_income_account', 'id_fee_income_account_name',
+            'daily_registration_fee', 'daily_id_fee',
+            'weekly_registration_fee', 'weekly_id_fee',
+            'monthly_registration_fee', 'monthly_id_fee',
+            'is_active',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'owner', 'branch', 'created_at', 'updated_at']
+
+
+class ProspectPublicRegistrationSerializer(serializers.ModelSerializer):
+    """
+    Minimal public prospect registration serializer.
+    Creates prospects only (client_type='pr').
+    """
+    class Meta:
+        model = Client
+        fields = [
+            'first_name', 'middle_name', 'last_name',
+            'gender', 'date_of_birth',
+            'phone_primary', 'email',
+            'address_street', 'address_city', 'address_state',
+            'usage_context', 'client_type',
+        ]
+
+    def validate(self, attrs):
+        attrs['usage_context'] = 'client'
+        attrs['client_type'] = 'pr'
+        attrs['status'] = 'active'
+        return attrs
 
 
 class ClientGroupSerializer(TenantModelSerializer):

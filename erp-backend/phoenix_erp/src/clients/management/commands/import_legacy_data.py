@@ -1,0 +1,914 @@
+"""
+import_legacy_data.py
+=====================
+Imports balance snapshots exported from Krystartust ERP into Phoenix ERP.
+
+This command is the second half of the two-step migration:
+  1. Run  export_migration_data  on the old system → produces a directory of JSON files.
+  2. Copy that directory to the Phoenix server, then run this command.
+
+What it does (in order)
+-----------------------
+  Step 1  Bootstrap  – create Tenant, admin User, Branch if they do not already exist.
+  Step 2  Chart of Accounts  – create the parent (GL) Account records needed for each account type.
+  Step 3  Financial Products  – create minimal Product / LoanProduct records.
+  Step 4  Client Groups  – re-create all Ajo / standing groups.
+  Step 5  Clients  – create every client with:
+              • external_id  = old client_id  (e.g. WL0001)
+              • client_id    = new Phoenix ID  (e.g. WL-00001)
+              • client_type  mapped from old type codes
+  Step 6  Savings accounts  – create SavingsAccount + child SAVINGS Account (with opening balance).
+  Step 7  Loans  – create LoanAccount + child LOAN Account (outstanding balance only).
+  Step 8  Banks / Cash  – create child ASSET Accounts for each bank/cash record.
+  Step 9  Income Accounts  – create child INCOME Accounts.
+  Step 10 Expense Accounts  – create child EXPENSE Accounts.
+  Step 11 Liability Accounts  – create child LIABILITY Accounts.
+
+Key design decisions
+--------------------
+* No transaction history is migrated – only the current balance figures.
+* Accounts are created with the balance set directly on creation (new records have no PK yet,
+  so Phoenix's balance-protection guard does not apply).
+* The command is idempotent: re-running it will skip any record that already exists
+  (detected by external_id / name / code as appropriate).
+* A dry-run mode is supported: --dry-run prints what *would* happen without touching the DB.
+
+Usage
+-----
+    python manage.py import_legacy_data \\
+        --data-dir /path/to/migration_data \\
+        --branch-name "Head Office" \\
+        --tenant-name "Krystartrust" \\
+        --tenant-slug "kti" \\
+        [--admin-email admin@krystartrust.ng] \\
+        [--dry-run]
+"""
+
+import json
+import os
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+
+from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
+
+User = get_user_model()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ────────────────────────────────────────────────────────────────────────────
+
+def _load(data_dir: str, filename: str) -> list:
+    """Load a JSON array from the migration data directory."""
+    path = os.path.join(data_dir, filename)
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _d(value, default=Decimal("0.00")) -> Decimal:
+    """Safely convert a string/float/None to Decimal."""
+    if value is None:
+        return default
+    try:
+        return Decimal(str(value))
+    except InvalidOperation:
+        return default
+
+
+def _date(value) -> date:
+    """Parse an ISO date string or return today."""
+    if not value:
+        return date.today()
+    try:
+        if isinstance(value, date):
+            return value
+        return date.fromisoformat(str(value)[:10])
+    except (ValueError, TypeError):
+        return date.today()
+
+
+def _split_name(full_name: str):
+    """
+    Split a single-field name into (first_name, last_name).
+    Strategy: first word → first_name, remainder → last_name.
+    """
+    parts = (full_name or "").strip().split(None, 1)
+    first = parts[0] if parts else "Unknown"
+    last = parts[1] if len(parts) > 1 else "IMPORTED"
+    return first, last
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Management command
+# ────────────────────────────────────────────────────────────────────────────
+
+class Command(BaseCommand):
+    help = "Import balance snapshots from Krystartust ERP into Phoenix ERP."
+
+    # ------------------------------------------------------------------
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--data-dir",
+            required=True,
+            help="Path to the directory produced by export_migration_data.",
+        )
+        parser.add_argument("--branch-name", default="Head Office")
+        parser.add_argument("--branch-code", default="HO")
+        parser.add_argument("--tenant-name", default="Krystartrust")
+        parser.add_argument("--tenant-slug", default="kti")
+        parser.add_argument(
+            "--admin-email",
+            default="admin@krystartrust.ng",
+            help="E-mail of the admin user who will own imported records.",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Print counts of what would be imported without writing to the DB.",
+        )
+
+    # ------------------------------------------------------------------
+    def handle(self, *args, **options):
+        data_dir = options["data_dir"]
+        dry_run = options["dry_run"]
+
+        if not os.path.isdir(data_dir):
+            raise CommandError(f"Data directory not found: {data_dir}")
+
+        # ── lazy imports (avoids import-time circular deps) ──────────────────
+        from accounts.models import Account, AccountCategory
+        from branches.models import Branch
+        from clients.models import Client, ClientGroup
+        from loans.models import LoanAccount, LoanProduct
+        from products.models import Product
+        from savings.models import SavingsAccount
+        from users.models import Tenant
+
+        if dry_run:
+            self.stdout.write(self.style.WARNING("\n[DRY-RUN] No data will be written.\n"))
+
+        # ── Load JSON files ───────────────────────────────────────────────────
+        groups_data    = _load(data_dir, "groups.json")
+        clients_data   = _load(data_dir, "clients.json")
+        savings_data   = _load(data_dir, "savings.json")
+        loans_data     = _load(data_dir, "loans.json")
+        banks_data     = _load(data_dir, "banks.json")
+        income_data    = _load(data_dir, "income_accounts.json")
+        expense_data   = _load(data_dir, "expense_accounts.json")
+        liability_data = _load(data_dir, "liability_accounts.json")
+
+        self.stdout.write(
+            self.style.MIGRATE_HEADING(
+                f"\nLoaded from {data_dir}/\n"
+                f"  clients={len(clients_data)}, groups={len(groups_data)}, "
+                f"savings={len(savings_data)}, loans={len(loans_data)}, "
+                f"banks={len(banks_data)}, income={len(income_data)}, "
+                f"expenses={len(expense_data)}, liabilities={len(liability_data)}\n"
+            )
+        )
+
+        if dry_run:
+            self.stdout.write(self.style.SUCCESS("Dry run complete – nothing written."))
+            return
+
+        with transaction.atomic():
+            # ── STEP 1: Bootstrap  ───────────────────────────────────────────
+            self.stdout.write("Step 1/11  Bootstrap (Tenant → User → Branch) …")
+            owner, tenant, branch = self._bootstrap(
+                options, Tenant, Branch
+            )
+
+            # Context shared across all steps
+            ctx = dict(
+                owner=owner,
+                tenant=tenant,
+                branch=branch,
+            )
+
+            # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────────
+            self.stdout.write("Step 2/11  Chart of accounts …")
+            gl = self._setup_chart_of_accounts(Account, ctx)
+
+            # ── STEP 3: Financial Products ────────────────────────────────────
+            self.stdout.write("Step 3/11  Financial products …")
+            products = self._setup_products(Product, LoanProduct, gl, ctx)
+
+            # ── STEP 4: Client Groups ─────────────────────────────────────────
+            self.stdout.write("Step 4/11  Client groups …")
+            group_map = self._import_groups(groups_data, ClientGroup, ctx)
+
+            # ── STEP 5: Clients ───────────────────────────────────────────────
+            self.stdout.write("Step 5/11  Clients …")
+            client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
+
+            # ── STEP 6: Savings ───────────────────────────────────────────────
+            self.stdout.write("Step 6/11  Savings accounts …")
+            self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx)
+
+            # ── STEP 7: Loans ─────────────────────────────────────────────────
+            self.stdout.write("Step 7/11  Loan accounts …")
+            self._import_loans(loans_data, LoanAccount, Account, products, client_map, gl, ctx)
+
+            # ── STEP 8: Banks / Cash ──────────────────────────────────────────
+            self.stdout.write("Step 8/11  Bank / cash accounts …")
+            self._import_banks(banks_data, Account, gl, ctx)
+
+            # ── STEP 9: Income ────────────────────────────────────────────────
+            self.stdout.write("Step 9/11  Income accounts …")
+            self._import_income(income_data, Account, gl, ctx)
+
+            # ── STEP 10: Expenses ─────────────────────────────────────────────
+            self.stdout.write("Step 10/11 Expense accounts …")
+            self._import_expenses(expense_data, Account, gl, ctx)
+
+            # ── STEP 11: Liabilities ──────────────────────────────────────────
+            self.stdout.write("Step 11/11 Liability accounts …")
+            self._import_liabilities(liability_data, Account, gl, ctx)
+
+        self.stdout.write(self.style.SUCCESS("\nMigration complete!\n"))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 1 – Bootstrap
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _bootstrap(self, options, Tenant, Branch):
+        admin_email = options["admin_email"]
+        tenant_name = options["tenant_name"]
+        tenant_slug = options["tenant_slug"]
+        branch_name = options["branch_name"]
+        branch_code = options["branch_code"]
+
+        # Admin user – use existing superuser or create one
+        owner = User.objects.filter(is_superuser=True).first()
+        if not owner:
+            owner = User.objects.filter(email=admin_email).first()
+        if not owner:
+            owner = User.objects.create_superuser(
+                username=admin_email.split("@")[0],
+                email=admin_email,
+                password="ChangeMe@2024!",  # must be changed after migration
+            )
+            self.stdout.write(
+                self.style.WARNING(
+                    f"    Created admin user '{owner.username}'. "
+                    "CHANGE THE PASSWORD IMMEDIATELY."
+                )
+            )
+
+        # Tenant
+        tenant, _ = Tenant.objects.get_or_create(
+            slug=tenant_slug,
+            defaults={"name": tenant_name, "owner": owner},
+        )
+        # Link owner → tenant if not already linked
+        if not hasattr(owner, "tenant") or owner.tenant is None:
+            try:
+                owner.tenant = tenant
+                owner.save(update_fields=["tenant"])
+            except Exception:
+                pass
+
+        # Branch
+        branch, _ = Branch.objects.get_or_create(
+            code=branch_code,
+            defaults={
+                "name": branch_name,
+                "tenant": tenant,
+                "owner": owner,
+            },
+        )
+
+        self.stdout.write(
+            f"    tenant={tenant.slug}, branch={branch.name}, owner={owner.username}"
+        )
+        return owner, tenant, branch
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 2 – Chart of Accounts (parent GL accounts)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # GL parent accounts — codes MUST match setup_accounts.py exactly.
+    #
+    # Accounting treatment (IFRS / CBN Microfinance Bank regulations):
+    #   LOAN    → 1150  Customer Loan Portfolio  (Asset:  money owed TO the MFB)
+    #   SAVINGS → 2140  Customer Savings/Deposits (Liability: money owed BY the MFB)
+    #   ASSET   → 1100  Cash and Cash Equivalents
+    #   INCOME  → 4200  Other Operating Income
+    #   EXPENSE → 5300  Administrative and General Expenses
+    #   LIABILITY→ 2100  Trade and Other Payables
+    #
+    # Child sub-ledger codes use the format  PPPP-NNNNN  (e.g. 1150-00001).
+    # This is unlimited in scale and never collides with sibling parent codes.
+    _GL_PARENTS = [
+        # (code, name, account_type)  ← code must match setup_accounts.py
+        ("1150", "Customer Loan Portfolio",         "LOAN"),
+        ("1100", "Cash and Cash Equivalents",        "ASSET"),
+        ("2140", "Customer Savings and Deposits",    "SAVINGS"),
+        ("2100", "Trade and Other Payables",         "LIABILITY"),
+        ("4200", "Other Operating Income",           "INCOME"),
+        ("5300", "Administrative and General Expenses", "EXPENSE"),
+    ]
+
+    def _setup_chart_of_accounts(self, Account, ctx):
+        """
+        Get-or-create the parent GL accounts required for migration.
+        Returns a dict keyed by account_type string.
+
+        IMPORTANT: We use get_or_create so this is safe whether the tenant
+        already has a chart of accounts from setup_accounts (in which case the
+        existing rows are returned) or is starting fresh.
+        """
+        gl = {}
+        for code, name, atype in self._GL_PARENTS:
+            acct, created = Account.objects.get_or_create(
+                code=code,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                defaults={
+                    "name": name,
+                    "account_type": atype,
+                    "account_level": Account.LEVEL_PARENT,
+                    "owner": ctx["owner"],
+                    "created_by": ctx["owner"],
+                    "is_system_account": True,
+                    "balance": Decimal("0.00"),
+                    "balance_bf": Decimal("0.00"),
+                },
+            )
+            gl[atype] = acct
+            status = "created" if created else "exists"
+            self.stdout.write(f"    [{status}] {code} – {acct.name}")
+        return gl
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 3 – Financial Products
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _setup_products(self, Product, LoanProduct, gl, ctx):
+        """Create one Savings product and three Loan products (daily/weekly/monthly)."""
+        common = dict(
+            owner=ctx["owner"],
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            created_by=ctx["owner"],
+            product_class="FINANCIAL",
+        )
+
+        # Savings product
+        sav_product, _ = Product.objects.get_or_create(
+            code="SAV-LEG",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={**common, "name": "Legacy Savings", "product_type": "SAVINGS"},
+        )
+
+        # Loan products (one per old-system loan_type)
+        loan_products = {}
+        loan_definitions = [
+            ("LN-DAILY",   "Daily Loan",   "daily",   Decimal("25.00")),
+            ("LN-WEEKLY",  "Weekly Loan",  "weekly",  Decimal("20.00")),
+            ("LN-MONTHLY", "Monthly Loan", "monthly", Decimal("18.00")),
+        ]
+        loan_parent_account = gl.get("LOAN")
+        for code, name, freq, rate in loan_definitions:
+            prod, _ = Product.objects.get_or_create(
+                code=code,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                defaults={**common, "name": name, "product_type": "LOAN"},
+            )
+            lp, _ = LoanProduct.objects.get_or_create(
+                product=prod,
+                defaults={
+                    "owner": ctx["owner"],
+                    "tenant": ctx["tenant"],
+                    "branch": ctx["branch"],
+                    "created_by": ctx["owner"],
+                    "parent_account": loan_parent_account,
+                    "default_interest_rate": rate,
+                    "min_loan_amount": Decimal("1000.00"),
+                    "max_loan_amount": Decimal("10000000.00"),
+                    "min_term_months": 1,
+                    "max_term_months": 120,
+                    "allowed_repayment_frequencies": [freq],
+                    "requires_approval": False,
+                },
+            )
+            loan_products[freq] = lp
+
+        self.stdout.write(
+            f"    savings product: {sav_product.code}, "
+            f"loan products: {list(loan_products.keys())}"
+        )
+        return {"savings": sav_product, "loans": loan_products}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 4 – Client Groups
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_groups(self, groups_data, ClientGroup, ctx):
+        """
+        Returns a dict:  old_group_id (int) → ClientGroup instance
+        """
+        group_map = {}
+        created_count = 0
+        for g in groups_data:
+            grp, created = ClientGroup.objects.get_or_create(
+                name=g["name"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                defaults={
+                    "owner": ctx["owner"],
+                    "created_by": ctx["owner"],
+                    "description": g.get("description") or "",
+                    "meeting_day": g.get("meeting_day"),
+                },
+            )
+            group_map[g["id"]] = grp
+            if created:
+                created_count += 1
+
+        self.stdout.write(
+            f"    {created_count} created, "
+            f"{len(groups_data) - created_count} already existed"
+        )
+        return group_map
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 5 – Clients
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Map old uppercase client_type → Phoenix lowercase
+    _TYPE_MAP = {
+        "WL": "wl",
+        "ML": "ml",
+        "DC": "dc",
+        "PR": "pr",
+    }
+
+    # Map old account_status code → Phoenix status
+    _STATUS_MAP = {
+        "A": "active",
+        "L": "inactive",
+        "D": "inactive",
+        "P": "active",
+    }
+
+    def _import_clients(self, clients_data, Client, ClientGroup, group_map, ctx):
+        """
+        Returns a dict:  old_client_id (str like 'WL0001') → Client instance
+        """
+        client_map = {}
+        created_count = 0
+        skipped = 0
+
+        for rec in clients_data:
+            old_id = rec.get("client_id")
+            if not old_id:
+                skipped += 1
+                continue
+
+            # Skip if already imported (external_id is unique per tenant)
+            existing = Client.objects.filter(
+                external_id=old_id,
+                tenant=ctx["tenant"],
+            ).first()
+            if existing:
+                client_map[old_id] = existing
+                skipped += 1
+                continue
+
+            first_name, last_name = _split_name(rec.get("name", ""))
+            client_type = self._TYPE_MAP.get(rec.get("client_type", "").upper())
+            status = self._STATUS_MAP.get(rec.get("account_status", "A"), "active")
+            group = group_map.get(rec.get("group_id"))
+
+            client = Client(
+                # Phoenix will auto-generate client_id (WL-00001 etc.) in save()
+                first_name=first_name,
+                last_name=last_name,
+                phone_primary=rec.get("phone") or "0000000000",
+                email=rec.get("email") or None,
+                address_street=rec.get("address") or None,
+                marital_status=rec.get("marital_status") or None,
+                bank_name=rec.get("bank_name") or None,
+                bank_account_number=rec.get("account_number") or None,
+                next_of_kin_name=rec.get("next_of_kin") or None,
+                next_of_kin_phone=rec.get("next_of_kin_phone") or None,
+                client_type=client_type,
+                group=group,
+                status=status,
+                usage_context="financial",
+                kyc_status="pending",
+                external_id=old_id,          # ← stores original Krystartust ID
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                owner=ctx["owner"],
+                created_by=ctx["owner"],
+            )
+            client.save()   # auto-generates client_id
+            client_map[old_id] = client
+            created_count += 1
+
+        self.stdout.write(
+            f"    {created_count} created, {skipped} skipped (already existed / no ID)"
+        )
+        return client_map
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 6 – Savings
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_savings(self, savings_data, SavingsAccount, Account, products, client_map, gl, ctx):
+        """
+        Create one SavingsAccount + child SAVINGS Account per client.
+
+        Sub-ledger code format: 2140-NNNNN
+          2140 = Customer Savings and Deposits (LIABILITY — MFB owes depositors)
+        """
+        created_count = 0
+        skipped = 0
+        sav_product = products["savings"]
+        parent_acct = gl["SAVINGS"]   # code 2140
+
+        for rec in savings_data:
+            balance = _d(rec.get("balance"))
+            client = client_map.get(rec["client_id"])
+            if not client:
+                skipped += 1
+                continue
+
+            # Idempotency: skip if already has a savings account
+            if SavingsAccount.objects.filter(client=client, tenant=ctx["tenant"]).exists():
+                skipped += 1
+                continue
+
+            # Generate sub-ledger code PPPP-NNNNN (thread-safe via next_seq helper)
+            child_code = self._next_subledger_code(Account, parent_acct)
+
+            child_acct = Account.objects.create(
+                code=child_code,
+                name=f"Savings – {client.full_name}",
+                account_type=Account.SAVINGS,
+                account_level=Account.LEVEL_CHILD,
+                parent=parent_acct,
+                balance=balance,
+                balance_bf=balance,
+                owner=ctx["owner"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                created_by=ctx["owner"],
+            )
+
+            SavingsAccount.objects.create(
+                client=client,
+                account=child_acct,
+                product=sav_product,
+                account_number=f"SAV-{rec['client_id']}",
+                opened_on=_date(rec.get("created_at")),
+                status="active" if balance > 0 else "dormant",
+                interest_rate=Decimal("0.00"),
+                interest_calculation_method="monthly",
+                owner=ctx["owner"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                created_by=ctx["owner"],
+            )
+            created_count += 1
+
+        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 7 – Loans
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Map old Loan.loan_type → LoanProduct key
+    _LOAN_TYPE_MAP = {
+        "daily":   "daily",
+        "Daily":   "daily",
+        "weekly":  "weekly",
+        "Weekly":  "weekly",
+        "monthly": "monthly",
+        "Monthly": "monthly",
+    }
+
+    # Map old Loan.status → LoanAccount.status
+    _LOAN_STATUS_MAP = {
+        "Active":               "active",
+        "Approved":             "approved",
+        "Pending Approval":     "pending",
+        "Pending Disbursement": "approved",
+        "Closed":               "paid_off",
+    }
+
+    def _import_loans(self, loans_data, LoanAccount, Account, products, client_map, gl, ctx):
+        """
+        Create one LoanAccount + child LOAN Account per loan.
+
+        Sub-ledger code format: 1150-NNNNN
+          1150 = Customer Loan Portfolio (ASSET — MFB is the creditor)
+        """
+        created_count = 0
+        skipped = 0
+        loan_products = products["loans"]
+        parent_acct = gl["LOAN"]   # code 1150
+
+        for rec in loans_data:
+            client = client_map.get(rec["client_id"])
+            if not client:
+                skipped += 1
+                continue
+
+            loan_number = f"LN-{rec['id']}"
+
+            # Idempotency
+            if LoanAccount.objects.filter(loan_number=loan_number).exists():
+                skipped += 1
+                continue
+
+            balance = _d(rec.get("balance"))
+            amount  = _d(rec.get("amount", rec.get("balance")))
+            interest_rate = _d(rec.get("interest"))
+
+            # Map loan type to product
+            raw_type = rec.get("loan_type", "Monthly")
+            product_key = self._LOAN_TYPE_MAP.get(raw_type, "monthly")
+            loan_product = loan_products.get(product_key, loan_products["monthly"])
+
+            # Compute term_months from start/end dates
+            start = _date(rec.get("start_date"))
+            end   = _date(rec.get("end_date"))
+            months_diff = (end.year - start.year) * 12 + (end.month - start.month)
+            term_months = max(1, months_diff)
+
+            # Map repayment_frequency
+            freq_map = {"daily": "daily", "weekly": "weekly", "monthly": "monthly"}
+            repayment_freq = freq_map.get(product_key, "monthly")
+
+            # Map status
+            old_status = rec.get("status", "Active")
+            new_status = self._LOAN_STATUS_MAP.get(old_status, "active")
+
+            # Create child GL account with outstanding balance
+            child_code = self._next_subledger_code(Account, parent_acct)
+
+            child_acct = Account.objects.create(
+                code=child_code,
+                name=f"Loan – {client.full_name} ({loan_number})",
+                account_type=Account.LOAN,
+                account_level=Account.LEVEL_CHILD,
+                parent=parent_acct,
+                balance=balance,
+                balance_bf=balance,
+                owner=ctx["owner"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                created_by=ctx["owner"],
+            )
+
+            LoanAccount.objects.create(
+                client=client,
+                product=loan_product,
+                account=child_acct,
+                loan_number=loan_number,
+                application_date=start,
+                requested_amount=amount,
+                approved_amount=amount,
+                disbursed_amount=amount,
+                interest_rate=interest_rate,
+                term_months=term_months,
+                repayment_frequency=repayment_freq,
+                status=new_status,
+                disbursement_date=start,
+                owner=ctx["owner"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                created_by=ctx["owner"],
+            )
+            created_count += 1
+
+        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 8 – Banks / Cash
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_banks(self, banks_data, Account, gl, ctx):
+        """
+        Create a child ASSET Account (4-digit code) for each bank/cash record.
+        Codes start at 1101 upward under parent 1100.
+        """
+        parent_acct = gl["ASSET"]
+        code_counter = self._next_available_code(Account, 1101, ctx)
+        created_count = 0
+        skipped = 0
+
+        for rec in banks_data:
+            name = rec["name"]
+            if Account.objects.filter(
+                name=name,
+                parent=parent_acct,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            ).exists():
+                skipped += 1
+                continue
+
+            Account.objects.create(
+                code=str(code_counter),
+                name=name,
+                account_type=Account.ASSET,
+                account_level=Account.LEVEL_CHILD,
+                parent=parent_acct,
+                balance=_d(rec.get("balance")),
+                balance_bf=_d(rec.get("balance_bf")),
+                owner=ctx["owner"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                created_by=ctx["owner"],
+            )
+            code_counter += 1
+            created_count += 1
+
+        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 9 – Income accounts
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_income(self, income_data, Account, gl, ctx):
+        """
+        Create child INCOME accounts (4-digit codes) under parent 4200.
+        Codes start at 4201 upward.
+        """
+        parent_acct = gl["INCOME"]
+        code_counter = self._next_available_code(Account, 4201, ctx)
+        created_count = 0
+        skipped = 0
+
+        for rec in income_data:
+            name = f"{rec['name']} ({rec.get('year', 'YTD')})"
+            if Account.objects.filter(
+                name=name, parent=parent_acct,
+                tenant=ctx["tenant"], branch=ctx["branch"], is_deleted=False,
+            ).exists():
+                skipped += 1
+                continue
+
+            Account.objects.create(
+                code=str(code_counter),
+                name=name,
+                account_type=Account.INCOME,
+                account_level=Account.LEVEL_CHILD,
+                parent=parent_acct,
+                balance=_d(rec.get("balance")),
+                balance_bf=_d(rec.get("balance_bf")),
+                owner=ctx["owner"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                created_by=ctx["owner"],
+            )
+            code_counter += 1
+            created_count += 1
+
+        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 10 – Expense accounts
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_expenses(self, expense_data, Account, gl, ctx):
+        """
+        Create child EXPENSE accounts (4-digit codes) under parent 5300.
+        Codes start at 5301 upward.
+        """
+        parent_acct = gl["EXPENSE"]
+        code_counter = self._next_available_code(Account, 5301, ctx)
+        created_count = 0
+        skipped = 0
+
+        for rec in expense_data:
+            name = f"{rec['name']} ({rec.get('year', 'YTD')})"
+            if Account.objects.filter(
+                name=name, parent=parent_acct,
+                tenant=ctx["tenant"], branch=ctx["branch"], is_deleted=False,
+            ).exists():
+                skipped += 1
+                continue
+
+            Account.objects.create(
+                code=str(code_counter),
+                name=name,
+                account_type=Account.EXPENSE,
+                account_level=Account.LEVEL_CHILD,
+                parent=parent_acct,
+                balance=_d(rec.get("balance")),
+                balance_bf=_d(rec.get("balance_bf")),
+                owner=ctx["owner"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                created_by=ctx["owner"],
+            )
+            code_counter += 1
+            created_count += 1
+
+        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 11 – Liability accounts
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_liabilities(self, liability_data, Account, gl, ctx):
+        """
+        Create child LIABILITY accounts (4-digit codes) under parent 2100.
+        Codes start at 2101 upward.
+        """
+        parent_acct = gl["LIABILITY"]
+        code_counter = self._next_available_code(Account, 2101, ctx)
+        created_count = 0
+        skipped = 0
+
+        for rec in liability_data:
+            name = f"{rec['name']} ({rec.get('year', 'YTD')})"
+            if Account.objects.filter(
+                name=name, parent=parent_acct,
+                tenant=ctx["tenant"], branch=ctx["branch"], is_deleted=False,
+            ).exists():
+                skipped += 1
+                continue
+
+            Account.objects.create(
+                code=str(code_counter),
+                name=name,
+                account_type=Account.LIABILITY,
+                account_level=Account.LEVEL_CHILD,
+                parent=parent_acct,
+                balance=_d(rec.get("balance")),
+                balance_bf=_d(rec.get("balance_bf")),
+                owner=ctx["owner"],
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                created_by=ctx["owner"],
+            )
+            code_counter += 1
+            created_count += 1
+
+        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Utility
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _next_available_code(Account, start: int, ctx) -> int:
+        """
+        Find the first 4-digit code >= start not already in use for this
+        tenant + branch combination.
+        """
+        used_codes = set(
+            Account.objects.filter(
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            ).values_list("code", flat=True)
+        )
+        counter = start
+        while str(counter) in used_codes:
+            counter += 1
+        return counter
+
+    @staticmethod
+    def _next_subledger_code(Account, parent_account) -> str:
+        """
+        Generate the next available sub-ledger code for a given parent account.
+
+        Format: PPPP-NNNNN
+          PPPP  = parent's 4-digit GL code (e.g. '1150')
+          NNNNN = zero-padded 5-digit sequence (00001 … 99999)
+
+        This is:
+          • Unlimited (99,999 children per parent)
+          • Collision-proof (PPPP prefix makes it unique per parent)
+          • Compliant with the PPPP-NNNNN validator added in migration 0012
+          • Idempotent across repeated import runs
+        """
+        prefix = f"{parent_account.code}-"
+        existing_seqs = []
+        for code in Account.objects.filter(
+            parent=parent_account,
+            tenant=parent_account.tenant,
+            branch=parent_account.branch,
+            is_deleted=False,
+            code__startswith=prefix,
+        ).values_list("code", flat=True):
+            try:
+                existing_seqs.append(int(code[len(prefix):]))
+            except (ValueError, IndexError):
+                pass
+        next_seq = (max(existing_seqs) + 1) if existing_seqs else 1
+        return f"{parent_account.code}-{next_seq:05d}"

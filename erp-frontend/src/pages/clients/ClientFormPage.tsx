@@ -36,6 +36,10 @@ const ClientFormPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [classifications, setClassifications] = useState<ClientClassification[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [feePreview, setFeePreview] = useState<{ registration_fee: string; id_fee: string; total: string } | null>(
+    null
+  );
+  const [feeLoading, setFeeLoading] = useState(false);
   const [staffList, setStaffList] = useState<{ id: number; name: string }[]>([]);
   const [ninWarning, setNinWarning] = useState<string | null>(null);
   const ninTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -184,6 +188,27 @@ const ClientFormPage: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    const ctype = ((formData.client_type as string) || '').toLowerCase();
+    if (!ctype || isEditMode) {
+      setFeePreview(null);
+      return;
+    }
+
+    setFeeLoading(true);
+    clientService
+      .getRegistrationFeePreview(ctype as 'dc' | 'wl' | 'ml' | 'pr')
+      .then(preview => {
+        setFeePreview({
+          registration_fee: preview.registration_fee,
+          id_fee: preview.id_fee,
+          total: preview.total,
+        });
+      })
+      .catch(() => setFeePreview(null))
+      .finally(() => setFeeLoading(false));
+  }, [formData.client_type, isEditMode]);
+
   const handleNinChange = (value: string) => {
     handleChange('nin' as any, value);
     setNinWarning(null);
@@ -286,7 +311,15 @@ const ClientFormPage: React.FC = () => {
         await clientService.updateClient(Number(id), formData, imageFile);
         success('Client updated successfully');
       } else {
-        await clientService.createClient(formData, imageFile);
+        const ctype = ((formData.client_type as string) || '').toLowerCase();
+        const isProspect = ctype === 'pr';
+
+        if (!isProspect) {
+          await clientService.createClientWithFeeCollection({ ...formData, client_type: ctype }, undefined, imageFile);
+        } else {
+          await clientService.createClient({ ...formData, client_type: ctype }, imageFile);
+        }
+
         success('Client registered successfully');
       }
       navigate('/clients');
@@ -738,7 +771,7 @@ const ClientFormPage: React.FC = () => {
                     </label>
                     <select
                       value={(formData as any).client_type || ''}
-                      onChange={e => handleChange('client_type' as any, e.target.value)}
+                      onChange={e => handleChange('client_type' as any, e.target.value.toLowerCase())}
                       style={{
                         width: '100%',
                         padding: '0.5rem',
@@ -747,11 +780,63 @@ const ClientFormPage: React.FC = () => {
                       }}
                     >
                       <option value="">Select type...</option>
-                      <option value="ML">Monthly Loan (ML)</option>
-                      <option value="WL">Weekly Loan (WL)</option>
-                      <option value="DC">Daily Contribution / Ajo (DC)</option>
-                      <option value="PR">Prospect (PR)</option>
+                      <option value="ml">Monthly Client</option>
+                      <option value="wl">Weekly Client</option>
+                      <option value="dc">Daily Contributor / Ajo</option>
+                      <option value="pr">Prospect</option>
                     </select>
+                  </div>
+
+                  {/* Registration Fee Preview (non-editable) */}
+                  <div>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Registration Fee
+                    </label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={feeLoading ? 'Loading...' : `₦${Number(feePreview?.registration_fee || 0).toLocaleString()}`}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                        background: '#f9fafb',
+                      }}
+                    />
+                  </div>
+
+                  {/* ID Fee Preview (non-editable) */}
+                  <div>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      ID Card Fee
+                    </label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={feeLoading ? 'Loading...' : `₦${Number(feePreview?.id_fee || 0).toLocaleString()}`}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                        background: '#f9fafb',
+                      }}
+                    />
                   </div>
 
                   {/* Marital Status */}

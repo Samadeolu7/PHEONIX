@@ -4,6 +4,8 @@ from .views import (
     ClientViewSet, ClientClassificationViewSet, 
     ClientDocumentViewSet, ClientRelationshipViewSet, ClientNoteViewSet,
     ClientGroupViewSet,
+    ClientRegistrationConfigViewSet,
+    ProspectPublicRegistrationView,
 )
 from .views_statement import ClientStatementViewSet
 
@@ -15,7 +17,11 @@ router.register(r'relationships', ClientRelationshipViewSet, basename='clientrel
 router.register(r'notes', ClientNoteViewSet, basename='clientnote')
 router.register(r'statements', ClientStatementViewSet, basename='client-statement')
 router.register(r'groups', ClientGroupViewSet, basename='clientgroup')
+router.register(r'registration-configs', ClientRegistrationConfigViewSet, basename='client-registration-config')
 
 app_name = 'clients'
 
-urlpatterns = router.urls
+urlpatterns = [
+    path('prospects/public-register/', ProspectPublicRegistrationView.as_view(), name='prospect-public-register'),
+    *router.urls,
+]

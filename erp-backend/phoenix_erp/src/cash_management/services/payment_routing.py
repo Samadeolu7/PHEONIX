@@ -9,6 +9,7 @@ from typing import Optional, TYPE_CHECKING
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 
 from accounts.models import Account
 from transactions.models import Transaction as JournalEntry, TransactionEntry as JournalEntryLine
@@ -34,6 +35,14 @@ class PaymentRoutingService:
     
     CASH_PAYMENT_METHODS = ['cash', 'mobile_money']
     BANK_PAYMENT_METHODS = ['bank_transfer', 'check', 'credit_card', 'online']
+
+    @staticmethod
+    def _is_director(user: User) -> bool:
+        """Return True when user has any active role containing 'director'."""
+        try:
+            return user.roles.filter(is_active=True, name__icontains='director').exists()
+        except Exception:
+            return False
     
     @staticmethod
     def get_or_create_cashier_account(user: User) -> CashierAccount:
@@ -129,6 +138,64 @@ class PaymentRoutingService:
         )
         
         return cashier_account
+
+    @staticmethod
+    def resolve_cashier_gl_account(
+        user: User,
+        *,
+        owner=None,
+        branch=None,
+        cashier_account_id: Optional[int] = None,
+    ) -> Account:
+        """
+        Resolve the GL ASSET account to use for cash-collected postings.
+
+        Resolution order:
+        1. Explicit cashier_account_id (if supplied)
+        2. User cashier account (auto-created when missing)
+        """
+        if cashier_account_id:
+            own_cashier = CashierAccount.objects.filter(
+                cashier=user,
+                is_active=True,
+                is_suspended=False
+            ).first()
+            own_gl_account_id = own_cashier.account_id if own_cashier else None
+
+            filters = {
+                'pk': cashier_account_id,
+                'account_type': Account.ASSET,
+            }
+            if owner is not None:
+                filters['owner'] = owner
+            if branch is not None:
+                filters['branch'] = branch
+
+            try:
+                explicit_account = Account.objects.get(**filters)
+            except Account.DoesNotExist as exc:
+                raise ValidationError('Cashier account not found.') from exc
+
+            # Non-directors cannot post into another staff member's cashier GL account.
+            if (
+                explicit_account.id != own_gl_account_id
+                and not PaymentRoutingService._is_director(user)
+            ):
+                raise ValidationError(
+                    'Only directors may use another staff cashier account. '
+                    'Use your own cashier account instead.'
+                )
+
+            return explicit_account
+
+        cashier = PaymentRoutingService.get_or_create_cashier_account(user)
+        if cashier and cashier.account:
+            return cashier.account
+
+        raise ValidationError(
+            'Unable to resolve cashier account automatically. '
+            'Please configure a cashier account for this user.'
+        )
     
     @staticmethod
     def determine_payment_route(payment_method: str) -> str:

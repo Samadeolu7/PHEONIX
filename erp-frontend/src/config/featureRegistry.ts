@@ -593,6 +593,30 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     category: 'Client Management',
     isNew: true,
   },
+  {
+    id: 'client-registration-config',
+    title: '⚙️ Registration Fee Config',
+    description:
+      'Configure per-branch registration fee and ID card fee by client type, including linked income GL accounts.',
+    path: '/clients/registration-config',
+    icon: Settings,
+    requiredPermission: 'client-edit',
+    moduleId: 'client-services',
+    category: 'Client Management',
+    isNew: true,
+  },
+  {
+    id: 'prospect-public-registration',
+    title: '🌐 Public Prospect Link',
+    description:
+      'Public self-service prospect onboarding form. Prospects are created without fee collection and converted later.',
+    path: '/prospects/register',
+    icon: Globe,
+    requiredPermission: 'client-list',
+    moduleId: 'client-services',
+    category: 'Client Management',
+    isNew: true,
+  },
 
 // ==========================================================================
   // ADMINISTRATION MODULE

@@ -311,10 +311,10 @@ class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     # Primary loan product type for this client
     CLIENT_TYPE_CHOICES = [
-        ('dc', 'Daily/Ajo'),
-        ('wl', 'Weekly Loan'),
-        ('ml', 'Monthly Loan'),
-        ('pr', 'Premium'),
+        ('dc', 'Daily Contributor'),
+        ('wl', 'Weekly Client'),
+        ('ml', 'Monthly Client'),
+        ('pr', 'Prospect'),
     ]
     client_type = models.CharField(
         max_length=5,
@@ -322,7 +322,7 @@ class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         blank=True,
         null=True,
         db_index=True,
-        help_text="Primary loan product type (DC=Daily/Ajo, WL=Weekly, ML=Monthly, PR=Premium)"
+        help_text="Primary client type (dc=daily, wl=weekly, ml=monthly, pr=prospect)"
     )
 
     # Ajo group membership (for DC / daily-contribution clients)
@@ -454,32 +454,43 @@ class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 self.tenant = self.branch.tenant
         
         if not self.client_id:
-            # Generate client ID based on usage context and timestamp
-            prefix_map = {
-                'client': 'CLI',
-                'financial': 'CLI',
-                'student': 'STU',
-                'patient': 'PAT',
-                'customer': 'CUS',
+            # Microfinance client types use type-specific prefixes (matches legacy system IDs)
+            # so that WL-00001, ML-00001, DC-00001, PR-00001 are generated instead of CLI-00001.
+            _TYPE_PREFIX_MAP = {
+                'wl': 'WL',
+                'ml': 'ML',
+                'dc': 'DC',
+                'pr': 'PR',
             }
-            prefix = prefix_map.get(self.usage_context, 'CLI')
-            
-            # Get the last client with this prefix
+            if self.client_type and self.client_type.lower() in _TYPE_PREFIX_MAP:
+                prefix = _TYPE_PREFIX_MAP[self.client_type.lower()]
+            else:
+                # Fall back to usage-context prefix for non-microfinance clients
+                _CONTEXT_PREFIX_MAP = {
+                    'client': 'CLI',
+                    'financial': 'CLI',
+                    'student': 'STU',
+                    'patient': 'PAT',
+                    'customer': 'CUS',
+                }
+                prefix = _CONTEXT_PREFIX_MAP.get(self.usage_context, 'CLI')
+
+            # Find the highest existing number for this prefix + branch
             last_client = Client.objects.filter(
-                client_id__startswith=prefix,
+                client_id__startswith=prefix + '-',
                 branch=self.branch
             ).order_by('-client_id').first()
-            
+
             if last_client and last_client.client_id:
                 try:
-                    # Extract number from last client_id (e.g., STU-00123 -> 123)
+                    # Extract number from last client_id (e.g., WL-00042 → 42)
                     last_num = int(last_client.client_id.split('-')[-1])
                     new_num = last_num + 1
                 except (ValueError, IndexError):
                     new_num = 1
             else:
                 new_num = 1
-            
+
             self.client_id = f"{prefix}-{new_num:05d}"
         
         super().save(*args, **kwargs)
@@ -496,6 +507,63 @@ class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             else:
                 self.notes = f"[{timezone.now()}] KYC Status Update to {status}: {notes}"
         self.save()
+
+
+class ClientRegistrationConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Branch-scoped registration and ID-card fee configuration by client type.
+
+    Fees are collected in cash at registration (or conversion from prospect)
+    and posted to income accounts.
+    """
+    # Income GL accounts (separate per requirement)
+    registration_income_account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.PROTECT,
+        related_name='client_registration_income_configs',
+        limit_choices_to={'account_type': 'INCOME'},
+    )
+    id_fee_income_account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.PROTECT,
+        related_name='client_id_fee_income_configs',
+        limit_choices_to={'account_type': 'INCOME'},
+    )
+
+    # Daily client fees
+    daily_registration_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    daily_id_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    # Weekly client fees
+    weekly_registration_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    weekly_id_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    # Monthly client fees
+    monthly_registration_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    monthly_id_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    # Active config marker per branch
+    is_active = models.BooleanField(default=True)
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        branch_name = self.branch.name if self.branch else 'No Branch'
+        return f"Client Registration Config - {branch_name}"
+
+    def get_fees_for_client_type(self, client_type: str):
+        ctype = (client_type or '').lower()
+        if ctype == 'dc':
+            return self.daily_registration_fee, self.daily_id_fee
+        if ctype == 'wl':
+            return self.weekly_registration_fee, self.weekly_id_fee
+        if ctype == 'ml':
+            return self.monthly_registration_fee, self.monthly_id_fee
+        return 0, 0
 
 
 class ClientClassification(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

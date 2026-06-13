@@ -310,7 +310,10 @@ export const loanService = {
     return api.post(`${BASE}/disbursements/${id}/approve/`);
   },
 
-  async executeDisbursement(id: number, data: { disbursement_account: number; notes?: string }): Promise<LoanDisbursement> {
+  async executeDisbursement(
+    id: number,
+    data: { disbursement_account: number; notes?: string }
+  ): Promise<LoanDisbursement> {
     return api.post(`${BASE}/disbursements/${id}/execute/`, data);
   },
 

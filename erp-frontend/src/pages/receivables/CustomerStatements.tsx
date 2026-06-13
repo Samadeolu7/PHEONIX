@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { receivablesService, CustomerStatement } from '../../services/receivablesService';
+import { clientService, ClientOption } from '../../services/clientService';
 import { useToast } from '../../hooks/useToast';
 import {
   FileText,
@@ -50,6 +51,8 @@ const CustomerStatements: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<StatementFilters>({});
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [loadingClients, setLoadingClients] = useState(false);
   const [pagination, setPagination] = useState({
     count: 0,
     next: null,
@@ -69,7 +72,7 @@ const CustomerStatements: React.FC = () => {
 
   // Batch generation state
   const [showBatchModal, setBatchModal] = useState(false);
-  const [batchClients, setBatchClients] = useState<string>('');
+  const [batchClientIds, setBatchClientIds] = useState<number[]>([]);
   const [batchPeriodStart, setBatchPeriodStart] = useState('');
   const [batchPeriodEnd, setBatchPeriodEnd] = useState('');
   const [batchIncludePaid, setBatchIncludePaid] = useState(false);
@@ -94,6 +97,22 @@ const CustomerStatements: React.FC = () => {
   useEffect(() => {
     loadStatements();
   }, [filters]);
+
+  useEffect(() => {
+    loadClients();
+  }, []);
+
+  const loadClients = async () => {
+    try {
+      setLoadingClients(true);
+      const clientOptions = await clientService.getClientOptions({ status: 'active' });
+      setClients(clientOptions);
+    } catch {
+      setClients([]);
+    } finally {
+      setLoadingClients(false);
+    }
+  };
 
   const loadStatements = async () => {
     try {
@@ -166,22 +185,14 @@ const CustomerStatements: React.FC = () => {
 
   // Generate batch statements
   const handleBatchGenerate = async () => {
-    if (!batchClients || !batchPeriodStart || !batchPeriodEnd) {
+    if (batchClientIds.length === 0 || !batchPeriodStart || !batchPeriodEnd) {
       showError('Please fill in all required fields');
       return;
     }
 
     try {
       setBatchLoading(true);
-      const clientIds = batchClients
-        .split(',')
-        .map(id => parseInt(id.trim()))
-        .filter(id => !isNaN(id));
-
-      if (clientIds.length === 0) {
-        showError('Please enter valid client IDs');
-        return;
-      }
+      const clientIds = batchClientIds;
 
       let successCount = 0;
       let errorCount = 0;
@@ -209,7 +220,7 @@ const CustomerStatements: React.FC = () => {
       }
 
       setBatchModal(false);
-      setBatchClients('');
+      setBatchClientIds([]);
       setBatchPeriodStart('');
       setBatchPeriodEnd('');
       setBatchIncludePaid(false);
@@ -354,14 +365,27 @@ const CustomerStatements: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
-                <input
-                  type="number"
-                  placeholder="Client ID"
+                <label className="block text-sm font-medium text-gray-700 mb-1">Client</label>
+                <select
                   value={filters.client || ''}
-                  onChange={e => handleFilterChange('client', e.target.value || undefined)}
+                  onChange={e =>
+                    handleFilterChange(
+                      'client',
+                      e.target.value ? parseInt(e.target.value, 10) : undefined
+                    )
+                  }
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                />
+                  aria-label="Client"
+                  title="Client"
+                  disabled={loadingClients}
+                >
+                  <option value="">{loadingClients ? 'Loading clients...' : 'All clients'}</option>
+                  {clients.map(client => (
+                    <option key={client.id} value={client.id}>
+                      {client.name} ({client.client_id})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -613,17 +637,28 @@ const CustomerStatements: React.FC = () => {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Client ID <span className="text-red-500">*</span>
+                  Client <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="number"
+                <select
                   value={generateData.client || ''}
                   onChange={e =>
-                    setGenerateData(prev => ({ ...prev, client: parseInt(e.target.value) || 0 }))
+                    setGenerateData(prev => ({
+                      ...prev,
+                      client: e.target.value ? parseInt(e.target.value, 10) : 0,
+                    }))
                   }
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                  placeholder="Enter client ID"
-                />
+                  aria-label="Client"
+                  title="Client"
+                  disabled={loadingClients}
+                >
+                  <option value="">{loadingClients ? 'Loading clients...' : 'Select client'}</option>
+                  {clients.map(client => (
+                    <option key={client.id} value={client.id}>
+                      {client.name} ({client.client_id})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -704,18 +739,30 @@ const CustomerStatements: React.FC = () => {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Client IDs <span className="text-red-500">*</span>
+                  Clients <span className="text-red-500">*</span>
                 </label>
-                <textarea
-                  value={batchClients}
-                  onChange={e => setBatchClients(e.target.value)}
+                <select
+                  multiple
+                  value={batchClientIds.map(String)}
+                  onChange={e => {
+                    const selected = Array.from(e.target.selectedOptions).map(option =>
+                      parseInt(option.value, 10)
+                    );
+                    setBatchClientIds(selected.filter(id => !isNaN(id)));
+                  }}
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                  rows={3}
-                  placeholder="Enter client IDs separated by commas (e.g., 1, 2, 3, 4)"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Enter multiple client IDs separated by commas
-                </p>
+                  aria-label="Clients"
+                  title="Clients"
+                  size={6}
+                  disabled={loadingClients}
+                >
+                  {clients.map(client => (
+                    <option key={client.id} value={client.id}>
+                      {client.name} ({client.client_id})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Select one or more clients</p>
               </div>
 
               <div>

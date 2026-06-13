@@ -400,7 +400,7 @@ const EntitlementForm: React.FC = () => {
                   </option>
                   {clients.map(client => (
                     <option key={client.id} value={client.id}>
-                      {client.full_name} (ID: {client.id})
+                      {client.full_name}
                     </option>
                   ))}
                 </select>

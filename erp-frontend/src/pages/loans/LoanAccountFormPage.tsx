@@ -7,7 +7,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Landmark, Loader2, AlertCircle, CheckCircle, ArrowLeft } from 'lucide-react';
-import { loanService, LoanProduct, CreateLoanAccountData } from '../../services/loanService';
+import { loanService, LoanProduct, CreateLoanAccountData, LoanAccount } from '../../services/loanService';
+import { clientService, Client } from '../../services/clientService';
 
 const REPAYMENT_FREQS = [
   { value: 'daily',   label: 'Daily' },
@@ -19,7 +20,9 @@ export default function LoanAccountFormPage() {
   const navigate = useNavigate();
 
   const [products, setProducts] = useState<LoanProduct[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(false);
+  const [loadingClients, setLoadingClients] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<LoanProduct | null>(null);
 
   const [clientId, setClientId] = useState('');
@@ -32,6 +35,7 @@ export default function LoanAccountFormPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [success, setSuccess] = useState(false);
 
   const loadProducts = useCallback(async () => {
@@ -46,7 +50,24 @@ export default function LoanAccountFormPage() {
     }
   }, []);
 
-  useEffect(() => { loadProducts(); }, [loadProducts]);
+  const loadClients = useCallback(async () => {
+    setLoadingClients(true);
+    try {
+      const response = await clientService.getClients({ status: 'active' });
+      const list = response?.results ?? response?.data ?? response ?? [];
+      setClients(Array.isArray(list) ? list : []);
+    } catch {
+      // keep empty; fallback input remains available
+      setClients([]);
+    } finally {
+      setLoadingClients(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadProducts();
+    loadClients();
+  }, [loadProducts, loadClients]);
 
   function handleProductChange(id: string) {
     setProductId(id);
@@ -62,13 +83,14 @@ export default function LoanAccountFormPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setWarnings([]);
 
     const cId = parseInt(clientId);
     const pId = parseInt(productId);
     const amount = parseFloat(requestedAmount);
     const months = parseInt(termMonths);
 
-    if (!cId || isNaN(cId))     { setError('Please enter a valid client ID.'); return; }
+    if (!cId || isNaN(cId))     { setError('Please select a valid client.'); return; }
     if (!pId || isNaN(pId))     { setError('Please select a loan product.'); return; }
     if (!amount || amount <= 0) { setError('Requested amount must be greater than zero.'); return; }
     if (!months || months <= 0) { setError('Term must be at least 1 month.'); return; }
@@ -99,9 +121,13 @@ export default function LoanAccountFormPage() {
 
     setSubmitting(true);
     try {
-      await loanService.createLoan(payload);
+      const createdLoan = await loanService.createLoan(payload) as LoanAccount & { warnings?: string[] };
+      const responseWarnings = Array.isArray(createdLoan?.warnings) ? createdLoan.warnings : [];
+      if (responseWarnings.length > 0) {
+        setWarnings(responseWarnings);
+      }
       setSuccess(true);
-      setTimeout(() => navigate('/loans/accounts'), 1500);
+      setTimeout(() => navigate('/loans/accounts'), responseWarnings.length > 0 ? 3000 : 1500);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string; non_field_errors?: string[] };
       const msg =
@@ -153,6 +179,16 @@ export default function LoanAccountFormPage() {
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-6">
+        {warnings.length > 0 && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-start gap-3 mb-5">
+            <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+            <div className="text-sm text-yellow-800">
+              {warnings.map((w, idx) => (
+                <p key={idx}>{w}</p>
+              ))}
+            </div>
+          </div>
+        )}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 mb-5">
             <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -167,18 +203,39 @@ export default function LoanAccountFormPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Client ID <span className="text-red-500">*</span>
+                  Client <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  value={clientId}
-                  onChange={e => setClientId(e.target.value)}
-                  placeholder="Enter client ID"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-                <p className="text-xs text-gray-400 mt-1">Client ID from the clients list</p>
+                {loadingClients ? (
+                  <div className="flex items-center gap-2 py-2 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading clients…
+                  </div>
+                ) : clients.length > 0 ? (
+                  <select
+                    required
+                    value={clientId}
+                    onChange={e => setClientId(e.target.value)}
+                    aria-label="Client"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="">— Select client —</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.full_name} ({c.client_id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={clientId}
+                    onChange={e => setClientId(e.target.value)}
+                    placeholder="Enter client"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                )}
+                <p className="text-xs text-gray-400 mt-1">Select by client name (ID shown in brackets)</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">

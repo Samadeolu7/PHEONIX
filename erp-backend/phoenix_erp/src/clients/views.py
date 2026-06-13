@@ -1,9 +1,13 @@
 from django.shortcuts import render
 from django.http import StreamingHttpResponse
+from django.core.exceptions import ValidationError
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.views import APIView
 from django.db.models import Q, Count, Sum, OuterRef, Subquery, DecimalField, Value
 from django.db.models.functions import Coalesce
 from decimal import Decimal
@@ -16,7 +20,8 @@ from common.views import ScopedModelViewSet
 
 from .models import (
     Client, ClientClassification, ClientDocument, 
-    ClientRelationship, ClientNote, ClientGroup, CustomerAuditLog
+    ClientRelationship, ClientNote, ClientGroup, CustomerAuditLog,
+    ClientRegistrationConfig,
 )
 from .serializers import (
     ClientListSerializer, ClientDetailSerializer, ClientCreateUpdateSerializer,
@@ -24,7 +29,11 @@ from .serializers import (
     ClientRelationshipSerializer, ClientNoteSerializer,
     ClientGroupSerializer, ClientGroupListSerializer,
     CustomerAuditLogSerializer,
+    ClientRegistrationConfigSerializer,
+    ProspectPublicRegistrationSerializer,
 )
+from .services import get_active_registration_config, collect_client_registration_fees
+from cash_management.services.payment_routing import PaymentRoutingService
 
 
 class ClientViewSet(ScopedModelViewSet):
@@ -87,6 +96,134 @@ class ClientViewSet(ScopedModelViewSet):
         elif self.action in ['create', 'update', 'partial_update']:
             return ClientCreateUpdateSerializer
         return ClientDetailSerializer
+
+    def perform_create(self, serializer):
+        """
+        Collect registration + ID fee at client creation (except prospects).
+        Posting entry:
+          Dr Cashier Account (ASSET)
+          Cr Registration Income
+          Cr ID Fee Income
+        """
+        from django.db import transaction as db_transaction
+
+        with db_transaction.atomic():
+            client = serializer.save()
+
+            # Prospects pay on conversion, not at public/staff capture.
+            if (client.client_type or '').lower() == 'pr':
+                return
+
+            try:
+                cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
+                    self.request.user,
+                    owner=client.owner,
+                    branch=client.branch,
+                    cashier_account_id=self.request.data.get('cashier_account_id'),
+                )
+            except ValidationError:
+                raise DRFValidationError({'cashier_account_id': 'Cashier account not found.'})
+
+            config = get_active_registration_config(owner=client.owner, branch=client.branch)
+            if not config:
+                raise DRFValidationError(
+                    {
+                        'registration_config': (
+                            'No active registration config found for this branch. '
+                            'Create one first before registering non-prospect clients.'
+                        )
+                    }
+                )
+
+            try:
+                collect_client_registration_fees(
+                    client=client,
+                    cashier_account=cashier_account,
+                    transacted_by=self.request.user,
+                    config=config,
+                )
+            except ValidationError as exc:
+                raise DRFValidationError({'detail': exc.messages})
+
+    @action(detail=False, methods=['get'], url_path='registration-fee-preview')
+    def registration_fee_preview(self, request):
+        client_type = (request.query_params.get('client_type') or '').lower()
+        if client_type not in {'dc', 'wl', 'ml', 'pr'}:
+            return Response(
+                {'detail': 'client_type must be one of dc, wl, ml, pr.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        config = get_active_registration_config(owner=request.user, branch=request.user.branch)
+        if not config:
+            return Response(
+                {'detail': 'No active registration config found for your branch.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        registration_fee, id_fee = config.get_fees_for_client_type(client_type)
+        return Response(
+            {
+                'client_type': client_type,
+                'registration_fee': str(registration_fee),
+                'id_fee': str(id_fee),
+                'total': str((registration_fee or 0) + (id_fee or 0)),
+                'registration_income_account': config.registration_income_account_id,
+                'id_fee_income_account': config.id_fee_income_account_id,
+            }
+        )
+
+    @action(detail=True, methods=['post'], url_path='convert-prospect')
+    def convert_prospect(self, request, pk=None):
+        """
+        Convert a prospect (pr) into an active client type and collect
+        registration + ID fee in cash.
+        """
+        from django.db import transaction as db_transaction
+
+        client = self.get_object()
+        if (client.client_type or '').lower() != 'pr':
+            return Response(
+                {'detail': 'Only prospects can be converted using this endpoint.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_type = (request.data.get('client_type') or '').lower()
+        if new_type not in {'dc', 'wl', 'ml'}:
+            return Response(
+                {'detail': 'client_type must be one of dc, wl, ml.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
+                request.user,
+                owner=client.owner,
+                branch=client.branch,
+                cashier_account_id=request.data.get('cashier_account_id'),
+            )
+        except ValidationError:
+            return Response({'detail': 'Cashier account not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        config = get_active_registration_config(owner=client.owner, branch=client.branch)
+        if not config:
+            return Response(
+                {'detail': 'No active registration config found for this branch.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with db_transaction.atomic():
+            client.client_type = new_type
+            client.status = 'active'
+            client.save(update_fields=['client_type', 'status', 'updated_at'])
+            collect_client_registration_fees(
+                client=client,
+                cashier_account=cashier_account,
+                transacted_by=request.user,
+                config=config,
+            )
+
+        return Response(ClientDetailSerializer(client, context={'request': request}).data)
     
     @action(detail=False, methods=['get'])
     def statistics(self, request):
@@ -1682,3 +1819,68 @@ class ClientGroupViewSet(ScopedModelViewSet):
         clients = group.members.filter(is_deleted=False).order_by('last_name', 'first_name')
         serializer = ClientListSerializer(clients, many=True, context={'request': request})
         return Response(serializer.data)
+
+
+class ClientRegistrationConfigViewSet(ScopedModelViewSet):
+    """
+    Branch-scoped registration + ID fee configuration by client type.
+    """
+    permission_module = 'clients'
+    permission_page = 'clients'
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+    queryset = ClientRegistrationConfig.objects.all()
+    serializer_class = ClientRegistrationConfigSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+        return qs
+
+
+class ProspectPublicRegistrationView(APIView):
+    """
+    Public endpoint that creates prospects only.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        branch_code = (request.data.get('branch_code') or '').strip()
+        if not branch_code:
+            return Response(
+                {'branch_code': 'branch_code is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from branches.models import Branch
+
+        branch = Branch.objects.filter(code__iexact=branch_code, is_active=True).first()
+        if not branch:
+            return Response(
+                {'branch_code': 'Invalid or inactive branch code.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not branch.owner_id:
+            return Response(
+                {'detail': 'Branch owner is not configured. Contact support.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ProspectPublicRegistrationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        client = serializer.save(
+            owner=branch.owner,
+            branch=branch,
+            tenant=branch.tenant,
+        )
+
+        return Response(
+            {
+                'detail': 'Prospect registration submitted successfully.',
+                'client_id': client.client_id,
+                'client_type': client.client_type,
+            },
+            status=status.HTTP_201_CREATED,
+        )

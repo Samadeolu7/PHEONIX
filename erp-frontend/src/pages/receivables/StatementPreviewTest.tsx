@@ -61,7 +61,7 @@ const StatementPreviewTest: React.FC = () => {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <User className="h-4 w-4 inline mr-1" />
-                Client ID
+                Client Reference
               </label>
               <input
                 type="number"

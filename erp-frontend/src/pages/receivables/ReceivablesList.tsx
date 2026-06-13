@@ -16,6 +16,7 @@ import { useDataCache, cacheUtils } from '../../hooks/useDataCache';
 import { useDebounce, useDebouncedCallback } from '../../hooks/useDebounce';
 import { usePerformanceMonitor } from '../../hooks/usePerformanceMonitor';
 import { invoiceService, Invoice } from '../../services/invoiceService';
+import { clientService, ClientOption } from '../../services/clientService';
 import {
   CheckSquare,
   Square,
@@ -47,6 +48,8 @@ const ReceivablesList: React.FC = () => {
   });
 
   const [receivables, setReceivables] = useState<CustomerReceivable[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [loadingClients, setLoadingClients] = useState(false);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<ReceivablesFilters>({});
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -151,6 +154,23 @@ const ReceivablesList: React.FC = () => {
   useEffect(() => {
     loadReceivables();
   }, [filters]);
+
+  useEffect(() => {
+    loadClients();
+  }, []);
+
+  const loadClients = async () => {
+    try {
+      setLoadingClients(true);
+      const clientOptions = await clientService.getClientOptions({ status: 'active' });
+      setClients(clientOptions);
+    } catch {
+      // Keep filter functional with an empty list when client lookup fails.
+      setClients([]);
+    } finally {
+      setLoadingClients(false);
+    }
+  };
 
   const loadReceivables = async () => {
     setLoading(true);
@@ -763,14 +783,29 @@ const ReceivablesList: React.FC = () => {
 
               {/* Client Filter */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Client ID</label>
-                <input
-                  type="number"
-                  placeholder="Client ID"
+                <label className="block text-sm font-medium text-gray-700 mb-1">Client</label>
+                <select
                   value={filters.client || ''}
-                  onChange={e => handleFilterChange('client', e.target.value || undefined)}
+                  onChange={e =>
+                    handleFilterChange(
+                      'client',
+                      e.target.value ? parseInt(e.target.value, 10) : undefined
+                    )
+                  }
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                />
+                  aria-label="Client"
+                  title="Client"
+                  disabled={loadingClients}
+                >
+                  <option value="">
+                    {loadingClients ? 'Loading clients...' : 'All clients'}
+                  </option>
+                  {clients.map(client => (
+                    <option key={client.id} value={client.id}>
+                      {client.name} ({client.client_id})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Ordering */}

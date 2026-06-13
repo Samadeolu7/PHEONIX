@@ -98,7 +98,7 @@ services:
     command:
       - |
         cd /app/src
-        exec celery -A phoenix worker --loglevel=info --concurrency=2
+        exec python -m celery -A phoenix worker --loglevel=info --concurrency=2
     environment:
       - DJANGO_SETTINGS_MODULE=phoenix.settings
       - SECRET_KEY=${SECRET_KEY}
@@ -128,7 +128,7 @@ services:
     command:
       - |
         cd /app/src
-        exec celery -A phoenix beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+        exec python -m celery -A phoenix beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     environment:
       - DJANGO_SETTINGS_MODULE=phoenix.settings
       - SECRET_KEY=${SECRET_KEY}
@@ -158,8 +158,15 @@ services:
     command:
       - |
         cd /app/src
-        exec celery -A phoenix flower --port=5555
+        exec python -m celery -A phoenix flower --port=5555
     environment:
+      - DJANGO_SETTINGS_MODULE=phoenix.settings
+      - SECRET_KEY=${SECRET_KEY}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=postgres
+      - DB_PORT=5432
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
       - PYTHONPATH=/app/src

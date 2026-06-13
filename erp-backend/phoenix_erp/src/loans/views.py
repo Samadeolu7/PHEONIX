@@ -24,6 +24,7 @@ from .serializers import (
     LoanVerificationRequestSerializer, LoanDisbursementSerializer,
 )
 from .utils import LoanVerifier
+from cash_management.services.payment_routing import PaymentRoutingService
 
 
 class LoanProductViewSet(ScopedModelViewSet):
@@ -67,6 +68,42 @@ class LoanAccountViewSet(ScopedModelViewSet):
         if self.action == 'create':
             return LoanAccountCreateSerializer
         return LoanAccountDetailSerializer
+
+    def _get_client_product_compat_warning(self, loan):
+        """
+        Soft warning only: informs staff when client type does not match
+        the typical repayment frequency for the selected loan setup.
+        """
+        client_type = (getattr(loan.client, 'client_type', '') or '').lower()
+        selected_frequency = (loan.repayment_frequency or '').lower()
+
+        expected_frequency_by_client_type = {
+            'dc': 'daily',
+            'wl': 'weekly',
+            'ml': 'monthly',
+        }
+        expected = expected_frequency_by_client_type.get(client_type)
+        if not expected or not selected_frequency:
+            return None
+        if selected_frequency == expected:
+            return None
+
+        return (
+            f"Compatibility warning: client type '{client_type}' is typically "
+            f"paired with '{expected}' repayment frequency, but this loan uses "
+            f"'{selected_frequency}'."
+        )
+
+    def _resolve_cashier_account(self, loan, cashier_account_id=None):
+        try:
+            return PaymentRoutingService.resolve_cashier_gl_account(
+                self.request.user,
+                owner=loan.owner,
+                branch=loan.branch,
+                cashier_account_id=cashier_account_id,
+            )
+        except ValidationError as exc:
+            raise DRFValidationError({'cashier_account_id': str(exc)})
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -147,13 +184,6 @@ class LoanAccountViewSet(ScopedModelViewSet):
         except ValidationError as exc:
             return Response({'detail': str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Post approval-trigger fees to GL
-        from .services import apply_loan_fees
-        try:
-            apply_loan_fees(loan, trigger='approval', posted_by=request.user)
-        except Exception as exc:
-            logger.error('Approval fee posting failed for loan %s: %s', loan.pk, exc)
-
         return Response(LoanAccountDetailSerializer(loan, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
@@ -189,7 +219,8 @@ class LoanAccountViewSet(ScopedModelViewSet):
         configured on the loan product (hard-block check).
         """
         from decimal import Decimal
-        from .services import check_savings_requirement
+        from django.db import transaction as db_transaction
+        from .services import check_savings_requirement, apply_loan_fees
 
         validated = serializer.validated_data
         client = validated.get('client')
@@ -202,7 +233,40 @@ class LoanAccountViewSet(ScopedModelViewSet):
             except ValidationError as exc:
                 raise DRFValidationError({'savings_requirement': exc.messages})
 
-        serializer.save()
+        with db_transaction.atomic():
+            loan = serializer.save()
+            cashier_account = self._resolve_cashier_account(
+                loan,
+                cashier_account_id=self.request.data.get('cashier_account_id'),
+            )
+
+            # Registration-time collection: capture both approval/disbursement
+            # configured fees up front at loan creation.
+            try:
+                for trigger in ('approval', 'disbursement'):
+                    apply_loan_fees(
+                        loan,
+                        trigger=trigger,
+                        posted_by=self.request.user,
+                        cashier_account=cashier_account,
+                    )
+            except ValidationError as exc:
+                raise DRFValidationError({'detail': exc.messages if hasattr(exc, 'messages') else str(exc)})
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        loan = serializer.instance
+        response_data = LoanAccountDetailSerializer(loan, context={'request': request}).data
+
+        warning = self._get_client_product_compat_warning(loan)
+        if warning:
+            response_data['warnings'] = [warning]
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(response_data, status=status.HTTP_201_CREATED, headers=headers)
 
 
 class LoanCollateralViewSet(ScopedModelViewSet):
@@ -413,13 +477,6 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
         except ValidationError as exc:
             return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Post disbursement-trigger fees to GL
-        from .services import apply_loan_fees
-        try:
-            apply_loan_fees(disbursement.loan, trigger='disbursement', posted_by=request.user)
-        except Exception as exc:
-            logger.error('Disbursement fee posting failed for loan %s: %s', disbursement.loan_id, exc)
-
         return Response(self.get_serializer(disbursement).data)
 
     @action(detail=True, methods=['post'])
@@ -542,8 +599,24 @@ class LoanFeeApplicationViewSet(ScopedModelViewSet):
         if trigger not in ('approval', 'disbursement'):
             return Response({'detail': 'trigger must be approval or disbursement'}, status=400)
 
+        cashier_account_id = request.data.get('cashier_account_id') or request.query_params.get('cashier_account_id')
         try:
-            applications = apply_loan_fees(loan, trigger, posted_by=request.user)
+            cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
+                request.user,
+                owner=loan.owner,
+                branch=loan.branch,
+                cashier_account_id=cashier_account_id,
+            )
+        except ValidationError as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+        try:
+            applications = apply_loan_fees(
+                loan,
+                trigger,
+                posted_by=request.user,
+                cashier_account=cashier_account,
+            )
         except Exception as exc:
             return Response({'detail': str(exc)}, status=400)
 

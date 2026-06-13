@@ -181,13 +181,15 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         max_length=10,
         validators=[
             RegexValidator(
-                r'^\d{4}$',
-                'Account code must be exactly 4 digits (1000–5999). '
-                'Range: 1000–1999 Assets, 2000–2999 Liabilities, '
+                r'^\d{4}(-\d{5})?$',
+                'Account code must be either a 4-digit GL code (e.g. 1150) or a '
+                'sub-ledger code in the format PPPP-NNNNN (e.g. 1150-00001). '
+                'GL ranges: 1000–1999 Assets, 2000–2999 Liabilities, '
                 '3000–3999 Equity, 4000–4999 Revenue, 5000–5999 Expenses.',
             )
         ],
         # unique=True removed - using conditional unique constraint instead (see Meta.constraints)
+        # Sub-ledger child codes use format PPPP-NNNNN (max_length=10 is sufficient: 4+1+5=10)
     )
     
     name = models.CharField(max_length=100)
@@ -549,53 +551,48 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     @transaction.atomic
     def create_with_parent(cls, parent_code: str, child_data: dict):
         """
-        Helper method to create a child account with proper parent linkage.
-        
+        Create a child (sub-ledger) account under a parent GL account.
+
+        Child codes are generated in the format  PPPP-NNNNN  where PPPP is the
+        parent's 4-digit code and NNNNN is a zero-padded sequential number
+        (e.g. 1150-00001, 1150-00002, …).  This scheme is unlimited in scale
+        (up to 99,999 children per parent) and never collides with other
+        parent codes.
+
         Args:
-            parent_code: Code of parent account (e.g., "150")
-            child_data: Dictionary with child account data
-        
+            parent_code: 4-digit code of the parent GL account (e.g. '1150').
+            child_data:  Dict of field values for the new child account.
+                         Provide 'code' to override auto-generation.
         Returns:
-            Created child account
+            The newly created child Account instance.
         """
         parent = cls.objects.select_for_update().get(
             code=parent_code,
             account_level=cls.LEVEL_PARENT
         )
-        
-        # Generate child code if not provided — 4-digit sequential
+
+        # Auto-generate sub-ledger code if not explicitly supplied
         if 'code' not in child_data:
-            base = int(parent_code)
-            existing_codes = set(
-                parent.children.values_list('code', flat=True)
-            )
-            # Also exclude any existing parent codes in the range
-            all_codes_in_range = set(
-                cls.objects.filter(
-                    owner=parent.owner, branch=parent.branch,
-                    code__gte=str(base + 1), code__lte=str(base + 99)
-                ).values_list('code', flat=True)
-            )
-            occupied = existing_codes | all_codes_in_range
-            candidate = None
-            for seq in range(1, 100):
-                candidate_code = str(base + seq)
-                if candidate_code not in occupied:
-                    candidate = candidate_code
-                    break
-            if candidate is None:
-                raise RuntimeError(
-                    f'No available child codes in range {base+1}–{base+99} '
-                    f'for parent {parent_code}'
-                )
-            child_data['code'] = candidate
-        
-        # Set required fields
+            prefix = f"{parent_code}-"
+            # Find the highest existing sequence number for this parent
+            existing_seqs = []
+            for code in parent.children.filter(
+                is_deleted=False
+            ).values_list('code', flat=True):
+                if code.startswith(prefix):
+                    try:
+                        existing_seqs.append(int(code[len(prefix):]))
+                    except (ValueError, IndexError):
+                        pass
+            next_seq = (max(existing_seqs) + 1) if existing_seqs else 1
+            child_data['code'] = f"{parent_code}-{next_seq:05d}"
+
+        # Inherit required relational fields from parent
         child_data['parent'] = parent
         child_data['account_level'] = cls.LEVEL_CHILD
         child_data['account_type'] = parent.account_type
         child_data['category'] = parent.category
-        
+
         return cls.objects.create(**child_data)
     
     def __str__(self):

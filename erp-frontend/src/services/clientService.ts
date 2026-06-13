@@ -107,7 +107,7 @@ export interface Client {
 
   // Metadata
   metadata?: Record<string, any>;
-  usage_context: 'financial' | 'student' | 'patient' | 'customer';
+  usage_context: 'client' | 'financial' | 'student' | 'patient' | 'customer';
   external_id?: string | null;
 
   // Related data (usually empty arrays when fetching single client)
@@ -142,9 +142,49 @@ export interface CreateClientData {
   phone_primary: string;
   email?: string;
   status?: 'active' | 'inactive' | 'suspended' | 'blacklisted';
-  usage_context: 'financial' | 'student' | 'patient' | 'customer';
+  usage_context: 'client' | 'financial' | 'student' | 'patient' | 'customer';
   classification?: number;
   branch?: number;
+}
+
+export interface RegistrationFeePreview {
+  client_type: 'dc' | 'wl' | 'ml' | 'pr';
+  registration_fee: string;
+  id_fee: string;
+  total: string;
+  registration_income_account: number;
+  id_fee_income_account: number;
+}
+
+export interface ClientRegistrationConfig {
+  id: number;
+  registration_income_account: number;
+  registration_income_account_name?: string;
+  id_fee_income_account: number;
+  id_fee_income_account_name?: string;
+  daily_registration_fee: string;
+  daily_id_fee: string;
+  weekly_registration_fee: string;
+  weekly_id_fee: string;
+  monthly_registration_fee: string;
+  monthly_id_fee: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProspectPublicRegistrationPayload {
+  branch_code: string;
+  first_name: string;
+  middle_name?: string;
+  last_name: string;
+  gender: 'male' | 'female' | 'other';
+  date_of_birth?: string;
+  phone_primary: string;
+  email?: string;
+  address_street?: string;
+  address_city?: string;
+  address_state?: string;
 }
 
 // Simple client option for dropdowns
@@ -257,6 +297,73 @@ export const clientService = {
       return api.postFormData('/clients/clients/', formData);
     }
     return api.post('/clients/clients/', cleaned);
+  },
+
+  async createClientWithFeeCollection(
+    data: Partial<Client>,
+    cashierAccountId?: number,
+    imageFile?: File | null
+  ): Promise<Client> {
+    const cleaned = sanitizeClientPayload(data);
+    if (imageFile) {
+      const formData = new FormData();
+      Object.keys(cleaned).forEach(key => {
+        if (key === 'image') return;
+        const value = cleaned[key as keyof typeof cleaned];
+        if (value !== undefined && value !== null && value !== '') {
+          if (typeof value === 'object') return;
+          formData.append(key, String(value));
+        }
+      });
+      if (cashierAccountId) {
+        formData.append('cashier_account_id', String(cashierAccountId));
+      }
+      formData.append('image', imageFile);
+      return api.postFormData('/clients/clients/', formData);
+    }
+    const payload: Record<string, unknown> = { ...cleaned };
+    if (cashierAccountId) {
+      payload.cashier_account_id = cashierAccountId;
+    }
+    return api.post('/clients/clients/', payload);
+  },
+
+  async getRegistrationFeePreview(clientType: 'dc' | 'wl' | 'ml' | 'pr'):
+    Promise<RegistrationFeePreview> {
+    return api.get('/clients/clients/registration-fee-preview/', {
+      params: { client_type: clientType },
+    });
+  },
+
+  async getRegistrationConfigs(): Promise<ClientRegistrationConfig[]> {
+    const response = await api.get('/clients/registration-configs/');
+    return response.results || response.data || response;
+  },
+
+  async createRegistrationConfig(
+    data: Partial<ClientRegistrationConfig>
+  ): Promise<ClientRegistrationConfig> {
+    return api.post('/clients/registration-configs/', data);
+  },
+
+  async updateRegistrationConfig(
+    id: number,
+    data: Partial<ClientRegistrationConfig>
+  ): Promise<ClientRegistrationConfig> {
+    return api.patch(`/clients/registration-configs/${id}/`, data);
+  },
+
+  async createPublicProspect(
+    data: ProspectPublicRegistrationPayload
+  ): Promise<{ detail: string; client_id: string; client_type: string }> {
+    return api.post('/clients/prospects/public-register/', data);
+  },
+
+  async convertProspect(
+    clientId: number,
+    payload: { client_type: 'dc' | 'wl' | 'ml'; cashier_account_id?: number }
+  ): Promise<Client> {
+    return api.post(`/clients/clients/${clientId}/convert-prospect/`, payload);
   },
 
   // Update an existing client

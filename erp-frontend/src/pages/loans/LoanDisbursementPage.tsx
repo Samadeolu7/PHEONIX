@@ -160,7 +160,12 @@ const LoanDisbursementPage: React.FC = () => {
     <div className="max-w-2xl mx-auto p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate(-1)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+        <button
+          onClick={() => navigate(-1)}
+          title="Go back"
+          aria-label="Go back"
+          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+        >
           <ArrowLeft className="w-5 h-5 text-gray-600" />
         </button>
         <div className="flex-1">
@@ -283,6 +288,7 @@ const LoanDisbursementPage: React.FC = () => {
                   Disbursement Account <span className="text-red-500">*</span>
                 </label>
                 <select
+                  title="Disbursement account"
                   value={selectedBankAccount}
                   onChange={(e) => setSelectedBankAccount(Number(e.target.value))}
                   className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500"

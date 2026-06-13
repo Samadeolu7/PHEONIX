@@ -174,6 +174,12 @@ const ClientBulkImportPage = lazy(() => import('./pages/clients/ClientBulkImport
 const StudentFeeExcelImportPage = lazy(() => import('./pages/clients/StudentFeeExcelImportPage'));
 const ClientClassificationsPage = lazy(() => import('./pages/ClientClassificationsPage'));
 const ClientListPage = lazy(() => import('./pages/clients/ClientListPage'));
+const ClientRegistrationConfigPage = lazy(
+  () => import('./pages/clients/ClientRegistrationConfigPage')
+);
+const ProspectPublicRegistrationPage = lazy(
+  () => import('./pages/clients/ProspectPublicRegistrationPage')
+);
 
 // Income Report pages
 const IncomeReportsDashboardPage = lazy(() => import('./pages/incomes/reports/IncomeReportsDashboardPage'));
@@ -607,6 +613,7 @@ function App() {
                                 <Route path="/" element={<HomePageWithNavigation />} />
                                 <Route path="/login" element={<LoginPageStyled />} />
                                 <Route path="/register" element={<RegisterPage />} />
+                                <Route path="/prospects/register" element={<ProspectPublicRegistrationPage />} />
 
                                 {/* New Pages Index - Quick access to all new features */}
                                 <Route
@@ -2645,6 +2652,14 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="client-view-detail">
                                       <ClientStatement />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/clients/registration-config"
+                                  element={
+                                    <ProtectedRoute requiredPermission="client-edit">
+                                      <ClientRegistrationConfigPage />
                                     </ProtectedRoute>
                                   }
                                 />

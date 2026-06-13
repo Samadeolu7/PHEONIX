@@ -11,6 +11,7 @@ import {
   createSavingsAccount,
   CreateSavingsAccountData,
 } from '../../services/savingsService';
+import { clientService, Client } from '../../services/clientService';
 
 // Product type from Products API (minimal shape needed for the dropdown)
 interface SavingsProductOption {
@@ -47,6 +48,8 @@ export default function SavingsAccountFormPage() {
   const navigate = useNavigate();
 
   const [clientId, setClientId] = useState('');
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loadingClients, setLoadingClients] = useState(false);
   const [productId, setProductId] = useState('');
   const [products, setProducts] = useState<SavingsProductOption[]>([]);
   const [nickname, setNickname] = useState('');
@@ -78,6 +81,24 @@ export default function SavingsAccountFormPage() {
     });
   }, []);
 
+  // Load active clients for name-first selection
+  useEffect(() => {
+    setLoadingClients(true);
+    clientService.getClients({ status: 'active' })
+      .then((response: unknown) => {
+        const data = response as { results?: Client[]; data?: Client[] } | Client[];
+        const list = Array.isArray(data)
+          ? data
+          : (Array.isArray(data?.results) ? data.results : (Array.isArray(data?.data) ? data.data : []));
+        setClients(list);
+      })
+      .catch(() => {
+        // Keep fallback numeric input available when clients fail to load
+        setClients([]);
+      })
+      .finally(() => setLoadingClients(false));
+  }, []);
+
   function handleProductChange(id: string) {
     setProductId(id);
     const p = products.find(x => String(x.id) === id) ?? null;
@@ -90,7 +111,7 @@ export default function SavingsAccountFormPage() {
 
     const cId = parseInt(clientId);
     const pId = parseInt(productId);
-    if (!cId || isNaN(cId)) { setError('Please enter a valid client ID.'); return; }
+    if (!cId || isNaN(cId)) { setError('Please select a valid client.'); return; }
     if (!pId || isNaN(pId)) { setError('Please select a savings product.'); return; }
 
     const payload: CreateSavingsAccountData = {
@@ -177,18 +198,39 @@ export default function SavingsAccountFormPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">
-                  Client ID <span className="text-red-500">*</span>
+                  Client <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="number"
-                  required
-                  min="1"
-                  value={clientId}
-                  onChange={e => setClientId(e.target.value)}
-                  placeholder="Enter client ID"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-                />
-                <p className="text-xs text-gray-400 mt-1">Client ID from the clients list</p>
+                {loadingClients ? (
+                  <div className="flex items-center gap-2 py-2 text-sm text-gray-500">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading clients…
+                  </div>
+                ) : clients.length > 0 ? (
+                  <select
+                    required
+                    value={clientId}
+                    onChange={e => setClientId(e.target.value)}
+                    aria-label="Client"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                  >
+                    <option value="">— Select client —</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.full_name} ({c.client_id})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={clientId}
+                    onChange={e => setClientId(e.target.value)}
+                    placeholder="Enter client"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                  />
+                )}
+                <p className="text-xs text-gray-400 mt-1">Select by client name (ID shown in brackets)</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">

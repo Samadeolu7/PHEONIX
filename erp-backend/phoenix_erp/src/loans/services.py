@@ -61,7 +61,12 @@ def check_savings_requirement(client, loan_product, requested_amount: Decimal) -
 
 
 @db_transaction.atomic
-def apply_loan_fees(loan_account: LoanAccount, trigger: str, posted_by=None) -> list[LoanFeeApplication]:
+def apply_loan_fees(
+    loan_account: LoanAccount,
+    trigger: str,
+    posted_by=None,
+    cashier_account=None,
+) -> list[LoanFeeApplication]:
     """
     Calculate and post all active fee lines for the given loan at the given trigger.
 
@@ -74,8 +79,8 @@ def apply_loan_fees(loan_account: LoanAccount, trigger: str, posted_by=None) -> 
     Returns:
         List of LoanFeeApplication records that were created/updated.
 
-    GL Entry per fee:
-        Dr. Accounts Receivable / Loan Account  (LOAN child account)
+    GL Entry per fee (cash-collected model):
+        Dr. Cashier / Cash account               (ASSET)
         Cr. Income Account                       (fee_config.gl_income_account)
     """
     from transactions.models import (
@@ -91,6 +96,11 @@ def apply_loan_fees(loan_account: LoanAccount, trigger: str, posted_by=None) -> 
 
     if not fee_lines.exists():
         return []
+
+    if cashier_account is None:
+        raise ValidationError(
+            'cashier_account is required to post loan fees in cash-collected mode.'
+        )
 
     loan_amount = loan_account.approved_amount or loan_account.requested_amount
     results = []
@@ -138,13 +148,13 @@ def apply_loan_fees(loan_account: LoanAccount, trigger: str, posted_by=None) -> 
             created_by=posted_by,
         )
 
-        # Debit: Loan Receivable account (asset — money owed by client)
+        # Debit: Cashier / cash account (asset — cash received)
         JournalEntryLine.objects.create(
             transaction=journal,
-            account=loan_account.account,
+            account=cashier_account,
             side=JournalEntryLine.DEBIT,
             amount=amount,
-            description=f"{fee.name} — debit loan account",
+            description=f"{fee.name} cash collection",
         )
 
         # Credit: Income account
