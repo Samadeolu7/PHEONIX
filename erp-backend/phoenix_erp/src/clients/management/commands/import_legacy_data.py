@@ -190,8 +190,15 @@ class Command(BaseCommand):
             )
 
             # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────────
+            # Suppress the accounts signal that auto-generates workflows/forms/pages
+            # for every parent account — we don't want that during bulk import.
             self.stdout.write("Step 2/11  Chart of accounts …")
-            gl = self._setup_chart_of_accounts(Account, ctx)
+            from common.managers import _thread_locals
+            _thread_locals.skip_account_components = True
+            try:
+                gl = self._setup_chart_of_accounts(Account, ctx)
+            finally:
+                _thread_locals.skip_account_components = False
 
             # ── STEP 3: Financial Products ────────────────────────────────────
             self.stdout.write("Step 3/11  Financial products …")
@@ -682,11 +689,14 @@ class Command(BaseCommand):
                 requested_amount=amount,
                 approved_amount=amount,
                 disbursed_amount=amount,
+                outstanding_principal=balance,
                 interest_rate=interest_rate,
                 term_months=term_months,
                 repayment_frequency=repayment_freq,
                 status=new_status,
                 disbursement_date=start,
+                first_payment_date=start,
+                maturity_date=end,          # required by receivables signal → due_date
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
