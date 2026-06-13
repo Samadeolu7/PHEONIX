@@ -175,66 +175,69 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS("Dry run complete – nothing written."))
             return
 
-        with transaction.atomic():
-            # ── STEP 1: Bootstrap  ───────────────────────────────────────────
-            self.stdout.write("Step 1/11  Bootstrap (Tenant → User → Branch) …")
-            owner, tenant, branch = self._bootstrap(
-                options, Tenant, Branch
-            )
+        # Suppress the post_save signal on Tenant/Account that tries to
+        # auto-seed a chart of accounts.  We build the chart ourselves in
+        # Steps 1-2, so the signal would only fail (no parent accounts exist
+        # yet when Tenant is first created) and produce noise in the logs.
+        from common.managers import _thread_locals
+        _thread_locals.skip_account_components = True
+        try:
+            with transaction.atomic():
+                # ── STEP 1: Bootstrap  ───────────────────────────────────────
+                self.stdout.write("Step 1/11  Bootstrap (Tenant → User → Branch) …")
+                owner, tenant, branch = self._bootstrap(
+                    options, Tenant, Branch
+                )
 
-            # Context shared across all steps
-            ctx = dict(
-                owner=owner,
-                tenant=tenant,
-                branch=branch,
-            )
+                # Context shared across all steps
+                ctx = dict(
+                    owner=owner,
+                    tenant=tenant,
+                    branch=branch,
+                )
 
-            # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────────
-            # Suppress the accounts signal that auto-generates workflows/forms/pages
-            # for every parent account — we don't want that during bulk import.
-            self.stdout.write("Step 2/11  Chart of accounts …")
-            from common.managers import _thread_locals
-            _thread_locals.skip_account_components = True
-            try:
+                # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────
+                self.stdout.write("Step 2/11  Chart of accounts …")
                 gl = self._setup_chart_of_accounts(Account, ctx)
-            finally:
-                _thread_locals.skip_account_components = False
 
-            # ── STEP 3: Financial Products ────────────────────────────────────
-            self.stdout.write("Step 3/11  Financial products …")
-            products = self._setup_products(Product, LoanProduct, gl, ctx)
+                # ── STEP 3: Financial Products ────────────────────────────────
+                self.stdout.write("Step 3/11  Financial products …")
+                products = self._setup_products(Product, LoanProduct, gl, ctx)
 
-            # ── STEP 4: Client Groups ─────────────────────────────────────────
-            self.stdout.write("Step 4/11  Client groups …")
-            group_map = self._import_groups(groups_data, ClientGroup, ctx)
+                # ── STEP 4: Client Groups ─────────────────────────────────────
+                self.stdout.write("Step 4/11  Client groups …")
+                group_map = self._import_groups(groups_data, ClientGroup, ctx)
 
-            # ── STEP 5: Clients ───────────────────────────────────────────────
-            self.stdout.write("Step 5/11  Clients …")
-            client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
+                # ── STEP 5: Clients ───────────────────────────────────────────
+                self.stdout.write("Step 5/11  Clients …")
+                client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
 
-            # ── STEP 6: Savings ───────────────────────────────────────────────
-            self.stdout.write("Step 6/11  Savings accounts …")
-            self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx)
+                # ── STEP 6: Savings ───────────────────────────────────────────
+                self.stdout.write("Step 6/11  Savings accounts …")
+                self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx)
 
-            # ── STEP 7: Loans ─────────────────────────────────────────────────
-            self.stdout.write("Step 7/11  Loan accounts …")
-            self._import_loans(loans_data, LoanAccount, Account, products, client_map, gl, ctx)
+                # ── STEP 7: Loans ─────────────────────────────────────────────
+                self.stdout.write("Step 7/11  Loan accounts …")
+                self._import_loans(loans_data, LoanAccount, Account, products, client_map, gl, ctx)
 
-            # ── STEP 8: Banks / Cash ──────────────────────────────────────────
-            self.stdout.write("Step 8/11  Bank / cash accounts …")
-            self._import_banks(banks_data, Account, gl, ctx)
+                # ── STEP 8: Banks / Cash ──────────────────────────────────────
+                self.stdout.write("Step 8/11  Bank / cash accounts …")
+                self._import_banks(banks_data, Account, gl, ctx)
 
-            # ── STEP 9: Income ────────────────────────────────────────────────
-            self.stdout.write("Step 9/11  Income accounts …")
-            self._import_income(income_data, Account, gl, ctx)
+                # ── STEP 9: Income ────────────────────────────────────────────
+                self.stdout.write("Step 9/11  Income accounts …")
+                self._import_income(income_data, Account, gl, ctx)
 
-            # ── STEP 10: Expenses ─────────────────────────────────────────────
-            self.stdout.write("Step 10/11 Expense accounts …")
-            self._import_expenses(expense_data, Account, gl, ctx)
+                # ── STEP 10: Expenses ─────────────────────────────────────────
+                self.stdout.write("Step 10/11 Expense accounts …")
+                self._import_expenses(expense_data, Account, gl, ctx)
 
-            # ── STEP 11: Liabilities ──────────────────────────────────────────
-            self.stdout.write("Step 11/11 Liability accounts …")
-            self._import_liabilities(liability_data, Account, gl, ctx)
+                # ── STEP 11: Liabilities ──────────────────────────────────────
+                self.stdout.write("Step 11/11 Liability accounts …")
+                self._import_liabilities(liability_data, Account, gl, ctx)
+
+        finally:
+            _thread_locals.skip_account_components = False
 
         self.stdout.write(self.style.SUCCESS("\nMigration complete!\n"))
 
