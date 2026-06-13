@@ -37,10 +37,10 @@ class LoanProductViewSet(ScopedModelViewSet):
         qs = super().get_queryset()
         is_active = self.request.query_params.get('is_active')
         if is_active is not None:
-            qs = qs.filter(is_active=is_active.lower() == 'true')
+            qs = qs.filter(product__is_active=is_active.lower() == 'true')
         freq = self.request.query_params.get('repayment_frequency')
         if freq:
-            qs = qs.filter(repayment_frequency=freq)
+            qs = qs.filter(allowed_repayment_frequencies__contains=[freq])
         return qs
 
 

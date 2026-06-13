@@ -10,6 +10,8 @@ from .models import (
 
 
 class LoanProductSerializer(TenantModelSerializer):
+    is_active = serializers.BooleanField(source='product.is_active', read_only=True)
+
     class Meta:
         model = LoanProduct
         fields = [
