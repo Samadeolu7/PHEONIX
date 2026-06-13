@@ -356,7 +356,24 @@ class Command(BaseCommand):
     # ══════════════════════════════════════════════════════════════════════════
 
     def _setup_products(self, Product, LoanProduct, gl, ctx):
-        """Create one Savings product and three Loan products (daily/weekly/monthly)."""
+        """
+        Create two Savings products (SAV-REG, SAV-DC) and three Loan products
+        (LN-DC, LN-WK, LN-MO) that match the canonical seed_microfinance_products
+        codes used everywhere else in Phoenix ERP.
+
+        Returns:
+            {
+                "savings": {
+                    "N": <Product SAV-REG>,   # old Savings.type 'N' = Normal
+                    "D": <Product SAV-DC>,    # old Savings.type 'D' = Daily Contribution
+                },
+                "loans": {
+                    "daily":   <LoanProduct LN-DC>,
+                    "weekly":  <LoanProduct LN-WK>,
+                    "monthly": <LoanProduct LN-MO>,
+                },
+            }
+        """
         common = dict(
             owner=ctx["owner"],
             tenant=ctx["tenant"],
@@ -365,23 +382,39 @@ class Command(BaseCommand):
             product_class="FINANCIAL",
         )
 
-        # Savings product
-        sav_product, _ = Product.objects.get_or_create(
-            code="SAV-LEG",
+        # ── Savings products ──────────────────────────────────────────────────
+        # SAV-REG: Regular Savings  →  old type 'N' (Normal)
+        sav_reg, _ = Product.objects.get_or_create(
+            code="SAV-REG",
             tenant=ctx["tenant"],
             branch=ctx["branch"],
-            defaults={**common, "name": "Legacy Savings", "product_type": "SAVINGS"},
+            defaults={**common, "name": "Regular Savings", "product_type": "SAVINGS"},
         )
 
-        # Loan products (one per old-system loan_type)
+        # SAV-DC: Daily Contribution Savings  →  old type 'D' (Daily Contribution / Ajo)
+        sav_dc, _ = Product.objects.get_or_create(
+            code="SAV-DC",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                **common,
+                "name": "Daily Contribution Savings",
+                "product_type": "SAVINGS",
+            },
+        )
+
+        sav_products = {"N": sav_reg, "D": sav_dc}
+
+        # ── Loan products ─────────────────────────────────────────────────────
         loan_products = {}
-        loan_definitions = [
-            ("LN-DAILY",   "Daily Loan",   "daily",   Decimal("25.00")),
-            ("LN-WEEKLY",  "Weekly Loan",  "weekly",  Decimal("20.00")),
-            ("LN-MONTHLY", "Monthly Loan", "monthly", Decimal("18.00")),
-        ]
         loan_parent_account = gl.get("LOAN")
-        for code, name, freq, rate in loan_definitions:
+        loan_definitions = [
+            # (product_code, product_name, freq_key, repayment_freq, interest_rate)
+            ("LN-DC",  "Daily Collection Loan", "daily",   "daily",   Decimal("15.00")),
+            ("LN-WK",  "Weekly Loan",           "weekly",  "weekly",  Decimal("15.00")),
+            ("LN-MO",  "Monthly Loan",          "monthly", "monthly", Decimal("15.00")),
+        ]
+        for code, name, freq_key, repayment_freq, rate in loan_definitions:
             prod, _ = Product.objects.get_or_create(
                 code=code,
                 tenant=ctx["tenant"],
@@ -401,17 +434,17 @@ class Command(BaseCommand):
                     "max_loan_amount": Decimal("10000000.00"),
                     "min_term_months": 1,
                     "max_term_months": 120,
-                    "allowed_repayment_frequencies": [freq],
+                    "allowed_repayment_frequencies": [repayment_freq],
                     "requires_approval": False,
                 },
             )
-            loan_products[freq] = lp
+            loan_products[freq_key] = lp
 
         self.stdout.write(
-            f"    savings product: {sav_product.code}, "
+            f"    savings products: SAV-REG (N), SAV-DC (D); "
             f"loan products: {list(loan_products.keys())}"
         )
-        return {"savings": sav_product, "loans": loan_products}
+        return {"savings": sav_products, "loans": loan_products}
 
     # ══════════════════════════════════════════════════════════════════════════
     # STEP 4 – Client Groups
@@ -533,36 +566,72 @@ class Command(BaseCommand):
     # STEP 6 – Savings
     # ══════════════════════════════════════════════════════════════════════════
 
+    # Map old Savings.type → (product_key, account_number_suffix, name_prefix)
+    _SAVINGS_TYPE_MAP = {
+        "N": ("N",  "REG", "Savings"),                   # Normal → SAV-REG
+        "D": ("D",  "DC",  "Daily Contribution Savings"), # Daily Contribution → SAV-DC
+    }
+
     def _import_savings(self, savings_data, SavingsAccount, Account, products, client_map, gl, ctx):
         """
-        Create one SavingsAccount + child SAVINGS Account per client.
+        Create one SavingsAccount + child SAVINGS Account per savings row.
+
+        Old system rules
+        ----------------
+        • Savings.type = 'N'  →  Regular Savings      (SAV-REG product)
+        • Savings.type = 'D'  →  Daily Contribution    (SAV-DC  product)
+        • unique_together = ("client", "type") so each client has at most
+          ONE Normal row and ONE DC row = maximum two SavingsAccounts per client.
+
+        NO MERGING — every source row produces exactly one SavingsAccount.
+        The only legitimate skip is an orphaned client_id.
+
+        Idempotency
+        -----------
+        account_number is globally unique:
+          SAV-<client_id>-REG   (type N)
+          SAV-<client_id>-DC    (type D)
+        Re-running the import will skip any account_number that already exists.
 
         Sub-ledger code format: 2140-NNNNN
           2140 = Customer Savings and Deposits (LIABILITY — MFB owes depositors)
         """
         created_count = 0
-        skipped = 0
-        sav_product = products["savings"]
-        parent_acct = gl["SAVINGS"]   # code 2140
+        skipped_existing = 0
+        orphan_count = 0    # rows whose client_id isn't in client_map
+        orphan_ids = []
+        sav_products = products["savings"]   # dict: {"N": Product, "D": Product}
+        parent_acct = gl["SAVINGS"]          # code 2140
 
         for rec in savings_data:
             balance = _d(rec.get("balance"))
-            client = client_map.get(rec["client_id"])
+            client_id = rec.get("client_id", "?")
+            client = client_map.get(client_id)
+
             if not client:
-                skipped += 1
+                orphan_count += 1
+                orphan_ids.append(client_id)
                 continue
 
-            # Idempotency: skip if already has a savings account
-            if SavingsAccount.objects.filter(client=client, tenant=ctx["tenant"]).exists():
-                skipped += 1
+            # Determine product and account identifiers from the old savings type
+            sav_type = rec.get("type", "N")   # 'N' or 'D'
+            type_info = self._SAVINGS_TYPE_MAP.get(sav_type, self._SAVINGS_TYPE_MAP["N"])
+            product_key, acct_suffix, name_prefix = type_info
+
+            product = sav_products.get(product_key, sav_products["N"])
+            account_number = f"SAV-{client_id}-{acct_suffix}"
+
+            # Idempotency: account_number is globally unique — skip if already imported
+            if SavingsAccount.objects.filter(account_number=account_number).exists():
+                skipped_existing += 1
                 continue
 
-            # Generate sub-ledger code PPPP-NNNNN (thread-safe via next_seq helper)
+            # Generate sub-ledger code PPPP-NNNNN under parent 2140
             child_code = self._next_subledger_code(Account, parent_acct)
 
             child_acct = Account.objects.create(
                 code=child_code,
-                name=f"Savings – {client.full_name}",
+                name=f"{name_prefix} – {client.full_name}",
                 account_type=Account.SAVINGS,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
@@ -577,8 +646,8 @@ class Command(BaseCommand):
             SavingsAccount.objects.create(
                 client=client,
                 account=child_acct,
-                product=sav_product,
-                account_number=f"SAV-{rec['client_id']}",
+                product=product,
+                account_number=account_number,
                 opened_on=_date(rec.get("created_at")),
                 status="active" if balance > 0 else "dormant",
                 interest_rate=Decimal("0.00"),
@@ -590,7 +659,15 @@ class Command(BaseCommand):
             )
             created_count += 1
 
-        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+        self.stdout.write(
+            f"    {created_count} created, "
+            f"{skipped_existing} already existed, "
+            f"{orphan_count} orphaned (client not found)"
+        )
+        if orphan_ids:
+            self.stdout.write(
+                self.style.WARNING(f"    ORPHANED savings client_ids: {orphan_ids}")
+            )
 
     # ══════════════════════════════════════════════════════════════════════════
     # STEP 7 – Loans
@@ -712,29 +789,65 @@ class Command(BaseCommand):
 
     def _import_banks(self, banks_data, Account, gl, ctx):
         """
-        Create a child ASSET Account (4-digit code) for each bank/cash record.
-        Codes start at 1101 upward under parent 1100.
+        Create a child ASSET Account (4-digit code) for EVERY bank/cash record.
+
+        NO MERGING — each source row produces exactly one GL child account.
+
+        Duplicate names (same bank across multiple financial years)
+        -----------------------------------------------------------
+        The old system has one Bank row per financial year.  If "GTBank"
+        already exists when a second "GTBank" row is processed we append a
+        numeric suffix:
+
+            GTBank          (first occurrence)
+            GTBank-1        (second occurrence)
+            GTBank-2        (third occurrence)   … etc.
+
+        Idempotency
+        -----------
+        Each source row has a unique integer `id` from the export.  We store
+        it as "[legacy_id:<id>]" in the Account.description field.  Re-running
+        the import skips any bank whose legacy_id is already recorded.
+
+        Codes start at 1101 upward under parent 1100 (Cash and Cash Equivalents).
         """
         parent_acct = gl["ASSET"]
         code_counter = self._next_available_code(Account, 1101, ctx)
         created_count = 0
-        skipped = 0
+        skipped_existing = 0
 
         for rec in banks_data:
-            name = rec["name"]
+            legacy_tag = f"[legacy_id:{rec['id']}]"
+
+            # Idempotency: skip if this bank row was already imported
             if Account.objects.filter(
-                name=name,
+                description__contains=legacy_tag,
                 parent=parent_acct,
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
                 is_deleted=False,
             ).exists():
-                skipped += 1
+                skipped_existing += 1
                 continue
+
+            # Build a unique display name — add suffix if the base name is taken
+            base_name = rec["name"]
+            candidate = base_name
+            suffix_n = 0
+            while Account.objects.filter(
+                name=candidate,
+                parent=parent_acct,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            ).exists():
+                suffix_n += 1
+                candidate = f"{base_name}-{suffix_n}"
 
             Account.objects.create(
                 code=str(code_counter),
-                name=name,
+                name=candidate,
+                description=legacy_tag,
                 account_type=Account.ASSET,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
@@ -748,7 +861,9 @@ class Command(BaseCommand):
             code_counter += 1
             created_count += 1
 
-        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+        self.stdout.write(
+            f"    {created_count} created, {skipped_existing} already existed"
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # STEP 9 – Income accounts

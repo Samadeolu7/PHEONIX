@@ -421,23 +421,31 @@ def create_standard_accounts(tenant, force=False, owner=None, branch=None):
 
                 # ----- No active account with this code exists: create it -----
                 if account_level == "PARENT":
-                    # Nudge code if taken by a different account_type (edge case).
+                    # Widen the conflict check to ANY existing account at this code
+                    # (could be a CHILD placed here by a bulk import).
                     conflict = Account.all_objects.filter(
                         tenant=tenant, branch=branch,
-                        code=code, account_level="PARENT", is_deleted=False,
-                    ).exclude(account_type=account_type).first()
+                        code=code, is_deleted=False,
+                    ).exclude(account_level="PARENT", account_type=account_type).first()
                     if conflict:
                         code = _find_nearest_parent_code(code)
 
-                    Account.objects.create(
-                        tenant=tenant, owner=owner, branch=branch, code=code,
-                        name=name, account_type=account_type,
-                        account_level="PARENT",
-                        allow_manual_entries=allow_manual,
-                        is_system_account=True,
-                        balance=Decimal("0.00"),
+                    _, was_created = Account.objects.get_or_create(
+                        tenant=tenant, branch=branch, code=code,
+                        defaults=dict(
+                            owner=owner,
+                            name=name,
+                            account_type=account_type,
+                            account_level="PARENT",
+                            allow_manual_entries=allow_manual,
+                            is_system_account=True,
+                            balance=Decimal("0.00"),
+                        ),
                     )
-                    created_count += 1
+                    if was_created:
+                        created_count += 1
+                    else:
+                        skipped_count += 1
 
                 else:  # CHILD
                     parent_account = Account.all_objects.filter(
@@ -451,12 +459,17 @@ def create_standard_accounts(tenant, force=False, owner=None, branch=None):
                             None
                         )
                         parent_name_fallback = parent_row[1] if parent_row else name
-                        parent_account = Account.objects.create(
-                            tenant=tenant, owner=owner, branch=branch,
-                            code=parent_code, name=parent_name_fallback,
-                            account_type=account_type, account_level="PARENT",
-                            allow_manual_entries=False, is_system_account=True,
-                            balance=Decimal("0.00"),
+                        parent_account, _ = Account.objects.get_or_create(
+                            tenant=tenant, branch=branch, code=parent_code,
+                            defaults=dict(
+                                owner=owner,
+                                name=parent_name_fallback,
+                                account_type=account_type,
+                                account_level="PARENT",
+                                allow_manual_entries=False,
+                                is_system_account=True,
+                                balance=Decimal("0.00"),
+                            ),
                         )
 
                     child_conflict = Account.all_objects.filter(
@@ -465,15 +478,23 @@ def create_standard_accounts(tenant, force=False, owner=None, branch=None):
                     if child_conflict:
                         code = _find_available_child_code(code)
 
-                    Account.objects.create(
-                        tenant=tenant, owner=owner, branch=branch, code=code,
-                        name=name, account_type=account_type,
-                        account_level="CHILD", parent=parent_account,
-                        allow_manual_entries=allow_manual,
-                        is_system_account=True,
-                        balance=Decimal("0.00"),
+                    _, was_created = Account.objects.get_or_create(
+                        tenant=tenant, branch=branch, code=code,
+                        defaults=dict(
+                            owner=owner,
+                            name=name,
+                            account_type=account_type,
+                            account_level="CHILD",
+                            parent=parent_account,
+                            allow_manual_entries=allow_manual,
+                            is_system_account=True,
+                            balance=Decimal("0.00"),
+                        ),
                     )
-                    created_count += 1
+                    if was_created:
+                        created_count += 1
+                    else:
+                        skipped_count += 1
     finally:
         _thread_locals.skip_account_components = False
 
