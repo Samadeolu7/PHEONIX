@@ -80,7 +80,16 @@ export default function SavingsAccountsPage() {
       const params: { cycle?: ContributionCycle } = {};
       if (cycleFilter) params.cycle = cycleFilter as ContributionCycle;
       const data = await getSavingsAccounts(params);
-      setAccounts(data);
+      const accountList = Array.isArray(data)
+        ? data
+        : (data as { results?: SavingsAccount[]; data?: SavingsAccount[]; items?: SavingsAccount[] })
+            .results ??
+          (data as { results?: SavingsAccount[]; data?: SavingsAccount[]; items?: SavingsAccount[] })
+            .data ??
+          (data as { results?: SavingsAccount[]; data?: SavingsAccount[]; items?: SavingsAccount[] })
+            .items ??
+          [];
+      setAccounts(accountList);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setError(err?.detail ?? err?.message ?? 'Failed to load savings accounts.');
