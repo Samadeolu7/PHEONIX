@@ -417,12 +417,15 @@ class Command(BaseCommand):
         group_map = {}
         created_count = 0
         for g in groups_data:
+            # Derive a short unique code from the old group id: GRP-<id>
+            code = f"GRP-{g['id']}"
             grp, created = ClientGroup.objects.get_or_create(
-                name=g["name"],
-                tenant=ctx["tenant"],
-                branch=ctx["branch"],
+                owner=ctx["owner"],
+                code=code,
                 defaults={
-                    "owner": ctx["owner"],
+                    "name": g["name"],
+                    "tenant": ctx["tenant"],
+                    "branch": ctx["branch"],
                     "created_by": ctx["owner"],
                     "description": g.get("description") or "",
                     "meeting_day": g.get("meeting_day"),
