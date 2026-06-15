@@ -156,6 +156,7 @@ class Command(BaseCommand):
         clients_data   = _load(data_dir, "clients.json")
         savings_data   = _load(data_dir, "savings.json")
         loans_data     = _load(data_dir, "loans.json")
+        schedules_data = _load(data_dir, "loan_schedules.json")
         banks_data     = _load(data_dir, "banks.json")
         income_data    = _load(data_dir, "income_accounts.json")
         expense_data   = _load(data_dir, "expense_accounts.json")
@@ -166,6 +167,7 @@ class Command(BaseCommand):
                 f"\nLoaded from {data_dir}/\n"
                 f"  clients={len(clients_data)}, groups={len(groups_data)}, "
                 f"savings={len(savings_data)}, loans={len(loans_data)}, "
+                f"schedules={len(schedules_data)}, "
                 f"banks={len(banks_data)}, income={len(income_data)}, "
                 f"expenses={len(expense_data)}, liabilities={len(liability_data)}\n"
             )
@@ -218,7 +220,7 @@ class Command(BaseCommand):
 
                 # ── STEP 7: Loans ─────────────────────────────────────────────
                 self.stdout.write("Step 7/11  Loan accounts …")
-                self._import_loans(loans_data, LoanAccount, Account, products, client_map, gl, ctx)
+                self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx)
 
                 # ── STEP 8: Banks / Cash ──────────────────────────────────────
                 self.stdout.write("Step 8/11  Bank / cash accounts …")
@@ -695,17 +697,52 @@ class Command(BaseCommand):
         "Closed":               "paid_off",
     }
 
-    def _import_loans(self, loans_data, LoanAccount, Account, products, client_map, gl, ctx):
+    def _import_loans(self, loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx):
         """
-        Create one LoanAccount + child LOAN Account per loan.
+        Create one LoanAccount + child LOAN Account per loan, then rebuild
+        every repayment schedule installment from the exported schedule rows.
+
+        Why we import schedules
+        -----------------------
+        Phoenix tracks defaulters through LoanRepaymentSchedule rows whose
+        status is 'overdue' and through the LoanAccount.days_in_arrears /
+        arrears_amount fields.  Without the schedule Phoenix has no way to
+        know which clients have missed payments.
+
+        Schedule mapping
+        ----------------
+        Old system row          → Phoenix LoanRepaymentSchedule
+        is_paid=True            → status='paid'
+        is_paid=False, overdue  → status='overdue'   (due_date < today)
+        is_paid=False, future   → status='pending'   (due_date >= today)
+
+        Arrears + risk classification
+        -----------------------------
+        After creating all schedules we compute arrears directly from the
+        overdue rows and set risk_classification per CBN PAR bands:
+          0 days         → performing
+          1-30 days      → watch
+          31-90 days     → substandard
+          91-180 days    → doubtful
+          > 180 days     → loss
 
         Sub-ledger code format: 1150-NNNNN
           1150 = Customer Loan Portfolio (ASSET — MFB is the creditor)
         """
+        from loans.models import LoanRepaymentSchedule
+
+        today = date.today()
+
         created_count = 0
+        sched_created = 0
         skipped = 0
         loan_products = products["loans"]
         parent_acct = gl["LOAN"]   # code 1150
+
+        # Pre-index schedules by old loan_id for O(1) lookup
+        schedules_by_loan: dict = {}
+        for s in schedules_data:
+            schedules_by_loan.setdefault(s["loan_id"], []).append(s)
 
         for rec in loans_data:
             client = client_map.get(rec["client_id"])
@@ -715,16 +752,17 @@ class Command(BaseCommand):
 
             loan_number = f"LN-{rec['id']}"
 
-            # Idempotency
+            # Idempotency — skip if already imported
             if LoanAccount.objects.filter(loan_number=loan_number).exists():
                 skipped += 1
                 continue
 
-            balance = _d(rec.get("balance"))
-            amount  = _d(rec.get("amount", rec.get("balance")))
+            balance       = _d(rec.get("balance"))
+            amount        = _d(rec.get("amount", rec.get("balance")))
             interest_rate = _d(rec.get("interest"))
+            emi           = _d(rec.get("emi"))
 
-            # Map loan type to product
+            # Map loan type → product key
             raw_type = rec.get("loan_type", "Monthly")
             product_key = self._LOAN_TYPE_MAP.get(raw_type, "monthly")
             loan_product = loan_products.get(product_key, loan_products["monthly"])
@@ -735,17 +773,14 @@ class Command(BaseCommand):
             months_diff = (end.year - start.year) * 12 + (end.month - start.month)
             term_months = max(1, months_diff)
 
-            # Map repayment_frequency
             freq_map = {"daily": "daily", "weekly": "weekly", "monthly": "monthly"}
             repayment_freq = freq_map.get(product_key, "monthly")
 
-            # Map status
             old_status = rec.get("status", "Active")
             new_status = self._LOAN_STATUS_MAP.get(old_status, "active")
 
-            # Create child GL account with outstanding balance
+            # ── GL child account ─────────────────────────────────────────
             child_code = self._next_subledger_code(Account, parent_acct)
-
             child_acct = Account.objects.create(
                 code=child_code,
                 name=f"Loan – {client.full_name} ({loan_number})",
@@ -760,7 +795,43 @@ class Command(BaseCommand):
                 created_by=ctx["owner"],
             )
 
-            LoanAccount.objects.create(
+            # ── Compute arrears from schedule rows before creating the account
+            raw_schedules = schedules_by_loan.get(rec["id"], [])
+            overdue_rows = [
+                s for s in raw_schedules
+                if not s.get("is_paid") and s.get("status") != "Deleted"
+                and _date(s["due_date"]) < today
+            ]
+            arrears_amount = sum(_d(s["amount_due"]) for s in overdue_rows)
+            if overdue_rows:
+                earliest_overdue = min(_date(s["due_date"]) for s in overdue_rows)
+                days_in_arrears = (today - earliest_overdue).days
+            else:
+                days_in_arrears = 0
+
+            # CBN PAR-based risk classification
+            if days_in_arrears == 0:
+                risk = "performing"
+            elif days_in_arrears <= 30:
+                risk = "watch"
+            elif days_in_arrears <= 90:
+                risk = "substandard"
+            elif days_in_arrears <= 180:
+                risk = "doubtful"
+            else:
+                risk = "loss"
+
+            # Counts paid installments for the field
+            installments_paid = sum(
+                1 for s in raw_schedules
+                if s.get("is_paid") and s.get("status") != "Deleted"
+            )
+            num_installments = sum(
+                1 for s in raw_schedules
+                if s.get("status") != "Deleted"
+            )
+
+            loan_acct = LoanAccount.objects.create(
                 client=client,
                 product=loan_product,
                 account=child_acct,
@@ -776,7 +847,13 @@ class Command(BaseCommand):
                 status=new_status,
                 disbursement_date=start,
                 first_payment_date=start,
-                maturity_date=end,          # required by receivables signal → due_date
+                maturity_date=end,
+                installment_amount=emi,
+                number_of_installments=num_installments,
+                installments_paid=installments_paid,
+                days_in_arrears=days_in_arrears,
+                arrears_amount=arrears_amount,
+                risk_classification=risk,
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
@@ -784,7 +861,60 @@ class Command(BaseCommand):
             )
             created_count += 1
 
-        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+            # ── Repayment schedule rows ──────────────────────────────────
+            for i, s in enumerate(
+                sorted(
+                    (r for r in raw_schedules if r.get("status") != "Deleted"),
+                    key=lambda r: _date(r["due_date"]),
+                ),
+                start=1,
+            ):
+                due = _date(s["due_date"])
+                is_paid = bool(s.get("is_paid"))
+                penalty = _d(s.get("penalty_amount", 0))
+                amount_due = _d(s["amount_due"])
+
+                if is_paid:
+                    sched_status = "paid"
+                elif due < today:
+                    sched_status = "overdue"
+                else:
+                    sched_status = "pending"
+
+                # The old system stores a single amount_due with no
+                # principal/interest split.  We reconstruct a best-effort
+                # split: interest = penalty (already charged), remainder =
+                # principal.  Phoenix requires both fields.
+                interest_due = penalty   # any accrued penalty maps to interest
+                principal_due = max(Decimal("0.00"), amount_due - interest_due)
+
+                LoanRepaymentSchedule.objects.create(
+                    loan=loan_acct,
+                    installment_number=i,
+                    due_date=due,
+                    principal_due=principal_due,
+                    interest_due=interest_due,
+                    fees_due=Decimal("0.00"),
+                    penalty_due=penalty,
+                    total_due=amount_due,
+                    total_paid=amount_due if is_paid else Decimal("0.00"),
+                    principal_paid=principal_due if is_paid else Decimal("0.00"),
+                    interest_paid=interest_due if is_paid else Decimal("0.00"),
+                    status=sched_status,
+                    payment_date=_date(s.get("payment_date")) if s.get("payment_date") else None,
+                    days_late=(today - due).days if sched_status == "overdue" else 0,
+                    owner=ctx["owner"],
+                    tenant=ctx["tenant"],
+                    branch=ctx["branch"],
+                    created_by=ctx["owner"],
+                )
+                sched_created += 1
+
+        self.stdout.write(
+            f"    {created_count} loans created, "
+            f"{sched_created} schedule installments created, "
+            f"{skipped} skipped"
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # STEP 8 – Banks / Cash
