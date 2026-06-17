@@ -116,11 +116,11 @@ def apply_loan_fees(
     results = []
 
     series_code_map = {
-        'registration': 'LN-FEE-REG',
-        'approval':     'LN-FEE-APR',
-        'disbursement': 'LN-FEE-DIS',
+        'registration': 'LFREG',
+        'approval':     'LFAPR',
+        'disbursement': 'LFDIS',
     }
-    series_code = series_code_map.get(trigger, 'LN-FEE')
+    series_code = series_code_map.get(trigger, 'LFEE')
     series, _ = TransactionSeries.objects.get_or_create(
         code=series_code,
         defaults={'description': f'Loan Fees at {trigger.title()}'},
