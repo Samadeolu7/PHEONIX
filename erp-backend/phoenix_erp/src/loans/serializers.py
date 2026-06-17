@@ -163,7 +163,7 @@ class LoanAccountCreateSerializer(TenantModelSerializer):
     class Meta:
         model = LoanAccount
         fields = [
-            'client', 'product', 'account',
+            'client', 'product',
             'requested_amount', 'term_months', 'repayment_frequency',
             'application_date', 'application_notes',
             'metadata',
@@ -171,7 +171,6 @@ class LoanAccountCreateSerializer(TenantModelSerializer):
         extra_kwargs = {
             'client': {'required': True},
             'product': {'required': True},
-            'account': {'required': True},
             'requested_amount': {'required': True},
             'term_months': {'required': True},
         }

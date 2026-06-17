@@ -289,9 +289,9 @@ class LoanAccountViewSet(ScopedModelViewSet):
         """
         Before persisting a new loan:
         1. Enforce active savings requirements (hard-block).
-        2. Post all fee lines configured for posting_trigger='registration'.
-           Fees with other triggers (approval/disbursement) are posted later
-           in the lifecycle when those events occur.
+        2. Auto-create the child GL (LOAN) account under the product's parent_account.
+        3. Auto-generate a unique loan_number.
+        4. Post all fee lines configured for posting_trigger='registration'.
 
         fee_routing (optional, from request.data):
             {
@@ -302,14 +302,17 @@ class LoanAccountViewSet(ScopedModelViewSet):
             }
             Only consulted for fees with debit_destination='user_choice'.
         """
+        import json
+        import uuid
         from decimal import Decimal
         from django.db import transaction as db_transaction
+        from django.utils import timezone as tz
+        from accounts.models import Account as GlAccount
         from .services import check_savings_requirement, apply_loan_fees
-        import json
 
         validated = serializer.validated_data
         client = validated.get('client')
-        product = validated.get('product')
+        product = validated.get('product')  # LoanProduct instance
         requested_amount = Decimal(str(validated.get('requested_amount', '0') or '0'))
 
         if client and product:
@@ -328,8 +331,55 @@ class LoanAccountViewSet(ScopedModelViewSet):
         # Normalise keys to integers (JSON keys are always strings)
         fee_routing = {int(k): v for k, v in raw_routing.items() if str(k).isdigit()}
 
+        user = self.request.user
+        branch = getattr(user, 'branch', None)
+        tenant = getattr(user, 'tenant', None)
+
         with db_transaction.atomic():
-            loan = serializer.save()
+            # Generate a unique loan number
+            date_str = tz.localdate().strftime('%Y%m%d')
+            loan_number = f"LN-{date_str}-{uuid.uuid4().hex[:6].upper()}"
+
+            # Auto-create a child GL (LOAN) account under the product's parent account
+            parent = product.parent_account
+            if not parent:
+                raise DRFValidationError({'detail': 'Loan product has no parent GL account configured.'})
+
+            scope_filter = {}
+            if branch:
+                scope_filter['branch'] = branch
+            if tenant:
+                scope_filter['tenant'] = tenant
+
+            parent_int = int(parent.code)
+            candidate_code = None
+            for seq in range(1, 10000):
+                candidate = str(parent_int + seq)
+                if not GlAccount.objects.filter(**scope_filter, code=candidate).exists():
+                    candidate_code = candidate
+                    break
+            if not candidate_code:
+                raise DRFValidationError({'detail': 'No available GL account codes for this loan product.'})
+
+            gl_account = GlAccount.objects.create(
+                code=candidate_code,
+                name=f"{client.full_name} – {product.product.name}",
+                account_type=GlAccount.LOAN,
+                account_level=GlAccount.LEVEL_CHILD,
+                parent=parent,
+                allow_manual_entries=True,
+                is_system_account=True,
+                balance=Decimal('0.00'),
+                owner=user,
+                branch=branch,
+                tenant=tenant,
+            )
+
+            loan = serializer.save(
+                account=gl_account,
+                loan_number=loan_number,
+                interest_rate=product.default_interest_rate,
+            )
 
             # Only resolve cashier if at least one active registration fee
             # actually routes to the cashier.  Loans whose fees all go to
@@ -351,7 +401,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 apply_loan_fees(
                     loan,
                     trigger='registration',
-                    posted_by=self.request.user,
+                    posted_by=user,
                     cashier_account=cashier_account,
                     fee_routing=fee_routing,
                 )
