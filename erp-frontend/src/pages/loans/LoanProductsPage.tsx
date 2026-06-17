@@ -19,8 +19,10 @@ function fmt(v: string | number | null | undefined): string {
 }
 
 const METHOD_LABEL: Record<string, string> = {
-  flat: 'Flat Rate',
+  straight_line: 'Straight Line',
+  flat: 'Straight Line',        // legacy alias
   reducing_balance: 'Reducing Balance',
+  compound: 'Compound',
 };
 
 // ── Page ───────────────────────────────────────────────────────────────────

@@ -311,7 +311,11 @@ export default function LoanAccountFormPage() {
                 {' | '}N{fmt(selectedProduct.min_loan_amount)} - N{fmt(selectedProduct.max_loan_amount)}
                 {' | '}{selectedProduct.min_term_months}-{selectedProduct.max_term_months} months
                 {' | '}{selectedProduct.default_interest_rate}%
-                {' | '}{selectedProduct.interest_calculation_method === 'flat' ? 'Flat Rate' : 'Reducing Balance'}
+                {' | '}{
+                  selectedProduct.interest_calculation_method === 'reducing_balance'
+                    ? 'Reducing Balance'
+                    : 'Straight Line'
+                }
               </div>
             )}
             <div className="grid grid-cols-2 gap-4">

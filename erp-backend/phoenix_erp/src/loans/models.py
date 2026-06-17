@@ -91,14 +91,15 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     # Interest calculation
     INTEREST_CALCULATION_METHODS = [
-        ('flat', 'Flat Rate'),
+        ('straight_line', 'Straight Line'),      # primary — equal principal + flat interest each period
+        ('flat', 'Flat Rate'),                   # legacy alias for straight_line
         ('reducing_balance', 'Reducing Balance'),
         ('compound', 'Compound Interest'),
     ]
     interest_calculation_method = models.CharField(
         max_length=20,
         choices=INTEREST_CALCULATION_METHODS,
-        default='reducing_balance'
+        default='straight_line'
     )
     
     default_interest_rate = models.DecimalField(
@@ -657,7 +658,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         method = self.product.interest_calculation_method
         if method == 'reducing_balance':
             rows = self._reducing_balance_schedule(num_installments, periods_per_year)
-        else:  # flat or compound → flat
+        else:  # straight_line, flat, compound → straight-line (flat) calculation
             rows = self._flat_schedule(num_installments)
 
         self.installment_amount = rows[0]['total_due'] if rows else Decimal('0')

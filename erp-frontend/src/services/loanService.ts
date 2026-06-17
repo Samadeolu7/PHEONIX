@@ -20,7 +20,7 @@ export interface LoanProduct {
   min_term_months: number;
   max_term_months: number;
   default_interest_rate: string;
-  interest_calculation_method: 'flat' | 'reducing_balance';
+  interest_calculation_method: 'straight_line' | 'flat' | 'reducing_balance' | 'compound';
   allowed_repayment_frequencies: string[];
   processing_fee_amount: string;
   processing_fee_percentage: string;
