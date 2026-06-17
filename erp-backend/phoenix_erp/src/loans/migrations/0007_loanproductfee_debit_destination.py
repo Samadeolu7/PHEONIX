@@ -10,6 +10,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('loans', '0006_java_app_prep_bvn_bankfeed_loanwriteoff'),
+        ('loans', '0006b_create_loan_fee_tables'),   # tables must exist before AlterField/AddField
         ('products', '0001_initial'),
     ]
 
