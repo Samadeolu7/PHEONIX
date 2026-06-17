@@ -176,40 +176,49 @@ def create_or_update_receivable_for_entitlement(sender, instance, created, **kwa
 def create_or_update_receivable_for_loan(sender, instance, created, **kwargs):
     """Auto-create/update CustomerReceivable when LoanAccount is saved"""
     from loans.models import LoanAccount
-    
+
+    # Pending loans have no maturity_date yet; CustomerReceivable.due_date is NOT NULL.
+    # Skip until the loan is approved/disbursed and maturity_date is set.
+    if not instance.maturity_date:
+        return
+
     content_type = ContentType.objects.get_for_model(LoanAccount)
-    
+
     # Loans have interest, so set interest rate
     interest_rate = instance.interest_rate if hasattr(instance, 'interest_rate') else 0
-    
-    # Get or create receivable
-    receivable, rec_created = CustomerReceivable.objects.get_or_create(
-        content_type=content_type,
-        object_id=instance.id,
-        defaults={
-            'client': instance.client,
-            'receivable_type': 'loan',
-            'reference_number': instance.loan_number,
-            'original_amount': instance.approved_amount or instance.requested_amount,
-            'amount_paid': instance.total_paid if hasattr(instance, 'total_paid') else 0,
-            'balance': instance.outstanding_principal if hasattr(instance, 'outstanding_principal') else (instance.approved_amount or instance.requested_amount),
-            'due_date': instance.maturity_date,
-            'status': _map_loan_status(instance.status),
-            'overdue_interest_rate': interest_rate,
-            'owner': instance.owner,
-            'branch': instance.branch,
-            'created_by': instance.created_by,
-        }
-    )
-    
-    # Update if already exists - sync cached values from source
-    if not rec_created:
-        receivable.original_amount = instance.approved_amount or instance.requested_amount
-        receivable.amount_paid = instance.total_paid if hasattr(instance, 'total_paid') else 0
-        # Balance is automatically recomputed from original_amount - amount_paid in save()
-        receivable.status = _map_loan_status(instance.status)
-        receivable.save(update_fields=['original_amount', 'amount_paid', 'status'])  # Don't include 'balance' - it's computed
-        receivable.update_aging()
+
+    try:
+        # Get or create receivable
+        receivable, rec_created = CustomerReceivable.objects.get_or_create(
+            content_type=content_type,
+            object_id=instance.id,
+            defaults={
+                'client': instance.client,
+                'receivable_type': 'loan',
+                'reference_number': instance.loan_number,
+                'original_amount': instance.approved_amount or instance.requested_amount,
+                'amount_paid': instance.total_paid if hasattr(instance, 'total_paid') else 0,
+                'balance': instance.outstanding_principal if hasattr(instance, 'outstanding_principal') else (instance.approved_amount or instance.requested_amount),
+                'due_date': instance.maturity_date,
+                'status': _map_loan_status(instance.status),
+                'overdue_interest_rate': interest_rate,
+                'owner': instance.owner,
+                'branch': instance.branch,
+                'created_by': instance.created_by,
+            }
+        )
+
+        # Update if already exists - sync cached values from source
+        if not rec_created:
+            receivable.original_amount = instance.approved_amount or instance.requested_amount
+            receivable.amount_paid = instance.total_paid if hasattr(instance, 'total_paid') else 0
+            receivable.due_date = instance.maturity_date
+            # Balance is automatically recomputed from original_amount - amount_paid in save()
+            receivable.status = _map_loan_status(instance.status)
+            receivable.save(update_fields=['original_amount', 'amount_paid', 'due_date', 'status'])
+            receivable.update_aging()
+    except Exception as e:
+        logger.error(f"✗ Failed to create/update receivable for Loan {instance.loan_number}: {e}", exc_info=True)
 
 
 @receiver(post_delete, sender='incomes.Invoice')
