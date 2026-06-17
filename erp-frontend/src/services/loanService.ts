@@ -184,6 +184,9 @@ export interface CreateLoanAccountData {
   term_months: number;
   application_date: string;
   purpose?: string;
+  cashier_account_id?: number | null;
+  /** keyed by fee id (as string) */
+  fee_routing?: Record<string, FeeRouting>;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -378,7 +381,10 @@ export interface LoanProductFee {
   percentage: string;
   gl_income_account: number | null;
   gl_income_account_name?: string;
-  posting_trigger: 'approval' | 'disbursement';
+  posting_trigger: 'registration' | 'approval' | 'disbursement';
+  debit_destination: 'cashier' | 'savings' | 'user_choice';
+  default_savings_product: number | null;
+  default_savings_product_name?: string | null;
   is_active: boolean;
   order: number;
   created_at: string;
@@ -398,8 +404,18 @@ export interface LoanProductSavingsRequirement {
 }
 
 export interface FeePreviewItem {
+  id: number;
   name: string;
   fee_type: 'fixed' | 'percentage';
-  posting_trigger: 'approval' | 'disbursement';
+  posting_trigger: 'registration' | 'approval' | 'disbursement';
   calculated_amount: string;
+  debit_destination: 'cashier' | 'savings' | 'user_choice';
+  default_savings_product_id: number | null;
+  default_savings_product_name: string | null;
+}
+
+/** Per-fee routing choice submitted with the loan application. */
+export interface FeeRouting {
+  destination: 'cashier' | 'savings';
+  savings_account_id?: number | null;
 }

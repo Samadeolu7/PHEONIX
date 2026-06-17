@@ -8,6 +8,7 @@ from decimal import Decimal
 from django.db import transaction as db_transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from typing import Optional
 
 from .models import LoanAccount, LoanProductFee, LoanFeeApplication, LoanProductSavingsRequirement
 
@@ -66,46 +67,60 @@ def apply_loan_fees(
     trigger: str,
     posted_by=None,
     cashier_account=None,
+    fee_routing: Optional[dict] = None,
 ) -> list[LoanFeeApplication]:
     """
     Calculate and post all active fee lines for the given loan at the given trigger.
 
     Args:
-        loan_account: The LoanAccount being processed.
-        trigger:      'approval' or 'disbursement' — only fees with matching
-                      posting_trigger are processed.
-        posted_by:    The User performing the action (for the journal entry).
+        loan_account:   The LoanAccount being processed.
+        trigger:        'registration', 'approval', or 'disbursement'.
+        posted_by:      The User performing the action (journal entry created_by).
+        cashier_account: The GL Account used when debit_destination='cashier'.
+                         Required when any fee routes to cashier.
+        fee_routing:    Per-fee override dict keyed by fee PK:
+                        {
+                          <fee_id>: {
+                            'destination': 'cashier' | 'savings',
+                            'savings_account_id': <int> | None,  # only when destination=savings
+                          }
+                        }
+                        Used only for fees with debit_destination='user_choice'.
 
     Returns:
         List of LoanFeeApplication records that were created/updated.
 
-    GL Entry per fee (cash-collected model):
-        Dr. Cashier / Cash account               (ASSET)
-        Cr. Income Account                       (fee_config.gl_income_account)
+    GL Entries:
+        cashier mode:   Dr. Cashier/Cash account  /  Cr. Fee Income account
+        savings mode:   Dr. Client Savings GL     /  Cr. Fee Income account
     """
     from transactions.models import (
         Transaction as JournalEntry,
         TransactionEntry as JournalEntryLine,
         TransactionSeries,
     )
+    from savings.models import SavingsAccount
+
+    fee_routing = fee_routing or {}
 
     fee_lines = loan_account.product.fee_lines.filter(
         posting_trigger=trigger,
         is_active=True,
-    ).select_related('gl_income_account')
+    ).select_related('gl_income_account', 'default_savings_product')
 
     if not fee_lines.exists():
         return []
 
-    if cashier_account is None:
-        raise ValidationError(
-            'cashier_account is required to post loan fees in cash-collected mode.'
-        )
-
     loan_amount = loan_account.approved_amount or loan_account.requested_amount
+    client = loan_account.client
     results = []
 
-    series_code = 'LN-FEE-APR' if trigger == 'approval' else 'LN-FEE-DIS'
+    series_code_map = {
+        'registration': 'LN-FEE-REG',
+        'approval':     'LN-FEE-APR',
+        'disbursement': 'LN-FEE-DIS',
+    }
+    series_code = series_code_map.get(trigger, 'LN-FEE')
     series, _ = TransactionSeries.objects.get_or_create(
         code=series_code,
         defaults={'description': f'Loan Fees at {trigger.title()}'},
@@ -116,26 +131,92 @@ def apply_loan_fees(
         if amount <= Decimal('0.00'):
             continue
 
-        # Upsert the application record
+        # ── Resolve debit destination for this fee ───────────────────────
+        fee_route = fee_routing.get(fee.pk) or {}
+        destination = fee.debit_destination
+
+        if destination == 'user_choice':
+            # Take the user's explicit choice; default to cashier if not provided
+            destination = fee_route.get('destination', 'cashier')
+
+        # ── Resolve the debit account ────────────────────────────────────
+        debit_account = None
+        savings_record: Optional[SavingsAccount] = None
+
+        if destination == 'savings':
+            # Find the target savings account for this client
+            savings_account_id = fee_route.get('savings_account_id')
+            if savings_account_id:
+                savings_record = (
+                    SavingsAccount.objects
+                    .filter(pk=savings_account_id, client=client, status='active')
+                    .select_related('account')
+                    .first()
+                )
+            if not savings_record and fee.default_savings_product_id:
+                # Fall back to the configured default savings product
+                savings_record = (
+                    SavingsAccount.objects
+                    .filter(
+                        client=client,
+                        product=fee.default_savings_product,
+                        status='active',
+                    )
+                    .select_related('account')
+                    .first()
+                )
+            if not savings_record:
+                # Last resort: first active savings account for this client
+                savings_record = (
+                    SavingsAccount.objects
+                    .filter(client=client, status='active')
+                    .select_related('account')
+                    .order_by('opened_on')
+                    .first()
+                )
+            if not savings_record:
+                raise ValidationError(
+                    f"Fee '{fee.name}' is configured to debit savings, but client "
+                    f"{client.full_name} has no active savings account."
+                )
+            available = savings_record.available_balance
+            if available < amount:
+                raise ValidationError(
+                    f"Insufficient savings balance for fee '{fee.name}': "
+                    f"required ₦{amount:,.2f}, available ₦{available:,.2f} "
+                    f"in {savings_record.account_number}."
+                )
+            debit_account = savings_record.account
+        else:
+            # destination == 'cashier'
+            if cashier_account is None:
+                raise ValidationError(
+                    f"Fee '{fee.name}' requires a cashier account but none was provided."
+                )
+            debit_account = cashier_account
+
+        # ── Upsert the application record ────────────────────────────────
         app, created = LoanFeeApplication.objects.get_or_create(
             loan_account=loan_account,
             fee_config=fee,
             defaults={
                 'calculated_amount': amount,
+                'debit_destination_used': destination,
+                'savings_account_debited': savings_record,
                 'owner': loan_account.owner,
                 'branch': loan_account.branch,
             },
         )
         if not created and app.posted:
-            # Already posted — skip to avoid double-posting
             results.append(app)
             continue
-
         if not created:
             app.calculated_amount = amount
-            app.save(update_fields=['calculated_amount', 'updated_at'])
+            app.debit_destination_used = destination
+            app.savings_account_debited = savings_record
+            app.save(update_fields=['calculated_amount', 'debit_destination_used', 'savings_account_debited', 'updated_at'])
 
-        # Create GL journal entry
+        # ── GL journal entry ─────────────────────────────────────────────
         journal = JournalEntry.objects.create(
             series=series,
             date=timezone.now().date(),
@@ -148,16 +229,13 @@ def apply_loan_fees(
             created_by=posted_by,
         )
 
-        # Debit: Cashier / cash account (asset — cash received)
         JournalEntryLine.objects.create(
             transaction=journal,
-            account=cashier_account,
+            account=debit_account,
             side=JournalEntryLine.DEBIT,
             amount=amount,
-            description=f"{fee.name} cash collection",
+            description=f"{fee.name} — debit {'savings' if destination == 'savings' else 'cashier'}",
         )
-
-        # Credit: Income account
         JournalEntryLine.objects.create(
             transaction=journal,
             account=fee.gl_income_account,
@@ -171,7 +249,9 @@ def apply_loan_fees(
         app.posted = True
         app.posting_date = timezone.now().date()
         app.journal_entry = journal
-        app.save(update_fields=['posted', 'posting_date', 'journal_entry', 'updated_at'])
+        app.debit_destination_used = destination
+        app.savings_account_debited = savings_record
+        app.save(update_fields=['posted', 'posting_date', 'journal_entry', 'debit_destination_used', 'savings_account_debited', 'updated_at'])
 
         results.append(app)
 
@@ -184,14 +264,32 @@ def get_fee_preview(loan_product, loan_amount: Decimal) -> list[dict]:
     Does NOT write anything to the database.
 
     Returns:
-        [{'name': str, 'fee_type': str, 'amount': Decimal, 'posting_trigger': str}, ...]
+        [
+          {
+            'id': int,
+            'name': str,
+            'fee_type': str,
+            'calculated_amount': Decimal,
+            'posting_trigger': str,
+            'debit_destination': str,
+            'default_savings_product_id': int | None,
+            'default_savings_product_name': str | None,
+          },
+          ...
+        ]
     """
     return [
         {
+            'id': fee.pk,
             'name': fee.name,
             'fee_type': fee.fee_type,
-            'amount': fee.calculate(loan_amount),
+            'calculated_amount': fee.calculate(loan_amount),
             'posting_trigger': fee.posting_trigger,
+            'debit_destination': fee.debit_destination,
+            'default_savings_product_id': fee.default_savings_product_id,
+            'default_savings_product_name': (
+                fee.default_savings_product.name if fee.default_savings_product else None
+            ),
         }
         for fee in loan_product.fee_lines.filter(is_active=True).order_by('order', 'name')
     ]

@@ -184,6 +184,33 @@ class LoanAccountViewSet(ScopedModelViewSet):
         except ValidationError as exc:
             return Response({'detail': str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Post any fees configured to trigger at approval
+        from .services import apply_loan_fees
+        _needs_cashier = loan.product.fee_lines.filter(
+            posting_trigger='approval', is_active=True,
+            debit_destination__in=('cashier', 'user_choice'),
+        ).exists()
+        _cashier_acct = None
+        if _needs_cashier:
+            try:
+                _cashier_acct = self._resolve_cashier_account(
+                    loan,
+                    cashier_account_id=request.data.get('cashier_account_id'),
+                )
+            except DRFValidationError:
+                pass  # apply_loan_fees will raise its own error if cashier is missing
+        try:
+            apply_loan_fees(
+                loan, 'approval',
+                posted_by=request.user,
+                cashier_account=_cashier_acct,
+            )
+        except (ValidationError, Exception) as exc:
+            # Loan is already approved — don't reverse it, return a warning instead
+            response_data = LoanAccountDetailSerializer(loan, context={'request': request}).data
+            response_data['warnings'] = [f"Approval fees could not be posted: {exc}. Use the fee-apply endpoint to retry."]
+            return Response(response_data)
+
         return Response(LoanAccountDetailSerializer(loan, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
@@ -213,14 +240,67 @@ class LoanAccountViewSet(ScopedModelViewSet):
         loan.save(update_fields=['status', 'updated_at'])
         return Response({'detail': 'Loan rejected.'})
 
+    @action(detail=True, methods=['post'])
+    def write_off(self, request, pk=None):
+        """
+        Write off a defaulted / loss-classified loan and post the GL entry.
+
+        Required body param:
+          provision_account_id — PK of the GL account to debit
+          (typically a Loan Loss Provision or Bad Debt Expense account).
+
+        Optional:
+          notes — text appended to the journal entry description.
+        """
+        loan = self.get_object()
+        provision_account_id = request.data.get('provision_account_id')
+        if not provision_account_id:
+            return Response(
+                {'detail': 'provision_account_id is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        from accounts.models import Account
+        try:
+            provision_account = Account.objects.get(pk=provision_account_id)
+        except Account.DoesNotExist:
+            return Response(
+                {'detail': 'Provision account not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            loan.write_off(
+                written_off_by=request.user,
+                provision_account=provision_account,
+                notes=request.data.get('notes', ''),
+            )
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(LoanAccountDetailSerializer(loan, context={'request': request}).data)
+
     def perform_create(self, serializer):
         """
-        Before persisting a new loan, enforce any active savings requirements
-        configured on the loan product (hard-block check).
+        Before persisting a new loan:
+        1. Enforce active savings requirements (hard-block).
+        2. Post all fee lines configured for posting_trigger='registration'.
+           Fees with other triggers (approval/disbursement) are posted later
+           in the lifecycle when those events occur.
+
+        fee_routing (optional, from request.data):
+            {
+              "<fee_id>": {
+                "destination": "cashier" | "savings",
+                "savings_account_id": <int> | null
+              }
+            }
+            Only consulted for fees with debit_destination='user_choice'.
         """
         from decimal import Decimal
         from django.db import transaction as db_transaction
         from .services import check_savings_requirement, apply_loan_fees
+        import json
 
         validated = serializer.validated_data
         client = validated.get('client')
@@ -233,23 +313,43 @@ class LoanAccountViewSet(ScopedModelViewSet):
             except ValidationError as exc:
                 raise DRFValidationError({'savings_requirement': exc.messages})
 
+        # Parse fee_routing — may come in as a JSON string or already parsed dict
+        raw_routing = self.request.data.get('fee_routing') or {}
+        if isinstance(raw_routing, str):
+            try:
+                raw_routing = json.loads(raw_routing)
+            except Exception:
+                raw_routing = {}
+        # Normalise keys to integers (JSON keys are always strings)
+        fee_routing = {int(k): v for k, v in raw_routing.items() if str(k).isdigit()}
+
         with db_transaction.atomic():
             loan = serializer.save()
-            cashier_account = self._resolve_cashier_account(
-                loan,
-                cashier_account_id=self.request.data.get('cashier_account_id'),
-            )
 
-            # Registration-time collection: capture both approval/disbursement
-            # configured fees up front at loan creation.
+            # Only resolve cashier if at least one active registration fee
+            # actually routes to the cashier.  Loans whose fees all go to
+            # savings should not fail because no cashier account is configured.
+            _needs_cashier = loan.product.fee_lines.filter(
+                posting_trigger='registration',
+                is_active=True,
+                debit_destination__in=('cashier', 'user_choice'),
+            ).exists()
+            cashier_account = None
+            if _needs_cashier:
+                cashier_account = self._resolve_cashier_account(
+                    loan,
+                    cashier_account_id=self.request.data.get('cashier_account_id'),
+                )
+
+            # Post only fees configured for registration trigger
             try:
-                for trigger in ('approval', 'disbursement'):
-                    apply_loan_fees(
-                        loan,
-                        trigger=trigger,
-                        posted_by=self.request.user,
-                        cashier_account=cashier_account,
-                    )
+                apply_loan_fees(
+                    loan,
+                    trigger='registration',
+                    posted_by=self.request.user,
+                    cashier_account=cashier_account,
+                    fee_routing=fee_routing,
+                )
             except ValidationError as exc:
                 raise DRFValidationError({'detail': exc.messages if hasattr(exc, 'messages') else str(exc)})
 
@@ -477,7 +577,43 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
         except ValidationError as exc:
             return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(self.get_serializer(disbursement).data)
+        # Post any fees configured to trigger at disbursement
+        loan = disbursement.loan
+        _fee_warnings = []
+        if loan.product.fee_lines.filter(posting_trigger='disbursement', is_active=True).exists():
+            _needs_cashier = loan.product.fee_lines.filter(
+                posting_trigger='disbursement', is_active=True,
+                debit_destination__in=('cashier', 'user_choice'),
+            ).exists()
+            _cashier_acct = None
+            if _needs_cashier:
+                try:
+                    _cashier_acct = PaymentRoutingService.resolve_cashier_gl_account(
+                        request.user, owner=loan.owner, branch=loan.branch,
+                    )
+                except ValidationError as exc:
+                    _fee_warnings.append(
+                        f"Could not resolve cashier for disbursement fees: {exc}. "
+                        "Use the fee-apply endpoint to post them manually."
+                    )
+            if not _fee_warnings:
+                from .services import apply_loan_fees
+                try:
+                    apply_loan_fees(
+                        loan, 'disbursement',
+                        posted_by=request.user,
+                        cashier_account=_cashier_acct,
+                    )
+                except (ValidationError, Exception) as exc:
+                    _fee_warnings.append(
+                        f"Disbursement fees could not be posted: {exc}. "
+                        "Use the fee-apply endpoint to retry."
+                    )
+
+        response_data = self.get_serializer(disbursement).data
+        if _fee_warnings:
+            response_data['warnings'] = _fee_warnings
+        return Response(response_data)
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
@@ -591,13 +727,13 @@ class LoanFeeApplicationViewSet(ScopedModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='apply')
     def apply(self, request, loan_pk=None):
-        """Manually trigger fee posting for a given trigger (approval/disbursement)."""
+        """Manually trigger fee posting for a given trigger (registration/approval/disbursement)."""
         from .models import LoanAccount
         loan_pk = loan_pk or request.data.get('loan_account') or request.query_params.get('loan_account')
         loan = LoanAccount.objects.get(pk=loan_pk)
-        trigger = request.query_params.get('trigger', 'disbursement')
-        if trigger not in ('approval', 'disbursement'):
-            return Response({'detail': 'trigger must be approval or disbursement'}, status=400)
+        trigger = request.query_params.get('trigger', 'registration')
+        if trigger not in ('registration', 'approval', 'disbursement'):
+            return Response({'detail': 'trigger must be registration, approval or disbursement'}, status=400)
 
         cashier_account_id = request.data.get('cashier_account_id') or request.query_params.get('cashier_account_id')
         try:
@@ -610,12 +746,22 @@ class LoanFeeApplicationViewSet(ScopedModelViewSet):
         except ValidationError as exc:
             return Response({'detail': str(exc)}, status=400)
 
+        fee_routing = request.data.get('fee_routing') or {}
+        if isinstance(fee_routing, str):
+            import json
+            try:
+                fee_routing = json.loads(fee_routing)
+            except Exception:
+                fee_routing = {}
+        fee_routing = {int(k): v for k, v in fee_routing.items() if str(k).isdigit()}
+
         try:
             applications = apply_loan_fees(
                 loan,
                 trigger,
                 posted_by=request.user,
                 cashier_account=cashier_account,
+                fee_routing=fee_routing,
             )
         except Exception as exc:
             return Response({'detail': str(exc)}, status=400)

@@ -235,12 +235,21 @@ class LoanDisbursementSerializer(TenantModelSerializer):
 # ---------------------------------------------------------------------------
 
 class LoanProductFeeSerializer(TenantModelSerializer):
+    default_savings_product_name = serializers.CharField(
+        source='default_savings_product.name', read_only=True, default=None
+    )
+    gl_income_account_name = serializers.CharField(
+        source='gl_income_account.name', read_only=True, default=None
+    )
+
     class Meta:
         model = LoanProductFee
         fields = [
             'id', 'loan_product', 'name', 'fee_type',
-            'fixed_amount', 'percentage', 'gl_income_account',
-            'posting_trigger', 'is_active', 'order',
+            'fixed_amount', 'percentage', 'gl_income_account', 'gl_income_account_name',
+            'posting_trigger', 'debit_destination',
+            'default_savings_product', 'default_savings_product_name',
+            'is_active', 'order',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'owner', 'branch', 'created_at', 'updated_at']
@@ -280,7 +289,11 @@ class LoanFeeApplicationSerializer(TenantModelSerializer):
 
 class FeePreviewer(serializers.Serializer):
     """Read-only: preview fees for a given loan product and amount."""
+    id = serializers.IntegerField(read_only=True)
     name = serializers.CharField(read_only=True)
     fee_type = serializers.CharField(read_only=True)
-    amount = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
+    calculated_amount = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
     posting_trigger = serializers.CharField(read_only=True)
+    debit_destination = serializers.CharField(read_only=True)
+    default_savings_product_id = serializers.IntegerField(read_only=True, allow_null=True)
+    default_savings_product_name = serializers.CharField(read_only=True, allow_null=True)

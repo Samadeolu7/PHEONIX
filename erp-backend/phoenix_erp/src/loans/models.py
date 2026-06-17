@@ -525,14 +525,19 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         else:
             self.approved_amount = self.requested_amount
 
-        # Calculate processing fee
-        self.processing_fee = self.product.calculate_processing_fee(self.approved_amount)
-
-        # Calculate insurance premium
-        self.insurance_amount = self.product.calculate_insurance(self.approved_amount)
-
-        # Total upfront charges added to outstanding fees
-        self.outstanding_fees = self.processing_fee + self.insurance_amount
+        # Only use old-style product-level fee fields when no LoanProductFee rows
+        # are configured for this product.  If the new per-line fee system is in
+        # use, those rows post their own GL entries via apply_loan_fees() in the
+        # view, so computing processing_fee/insurance_amount here would double-count.
+        has_new_fee_lines = self.product.fee_lines.filter(is_active=True).exists()
+        if has_new_fee_lines:
+            self.processing_fee = Decimal('0.00')
+            self.insurance_amount = Decimal('0.00')
+            self.outstanding_fees = Decimal('0.00')
+        else:
+            self.processing_fee = self.product.calculate_processing_fee(self.approved_amount)
+            self.insurance_amount = self.product.calculate_insurance(self.approved_amount)
+            self.outstanding_fees = self.processing_fee + self.insurance_amount
 
         self.save()
     
@@ -627,95 +632,113 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.save()
     
     def _generate_repayment_schedule(self):
-        """Generate repayment schedule"""
-        # Calculate installment details
-        principal_per_installment, interest_per_installment, total_per_installment = \
-            self._calculate_installment_amounts()
-        
-        # Determine number of installments
-        if self.repayment_frequency == 'daily':
-            num_installments = self.term_months * 30
-            date_increment = relativedelta(days=1)
-        elif self.repayment_frequency == 'weekly':
-            num_installments = self.term_months * 4
-            date_increment = relativedelta(weeks=1)
-        elif self.repayment_frequency == 'biweekly':
-            num_installments = self.term_months * 2
-            date_increment = relativedelta(weeks=2)
-        elif self.repayment_frequency == 'monthly':
-            num_installments = self.term_months
-            date_increment = relativedelta(months=1)
-        elif self.repayment_frequency == 'quarterly':
-            num_installments = self.term_months // 3
-            date_increment = relativedelta(months=3)
-        
+        """
+        Generate the full amortization schedule.
+
+        IMPORTANT: installment count is determined FIRST so that the calculation
+        methods (_flat_schedule / _reducing_balance_schedule) can use
+        self.number_of_installments without a division-by-zero.
+        """
+        frequency_map = {
+            'daily':     (self.term_months * 30,           relativedelta(days=1),   Decimal('365')),
+            'weekly':    (self.term_months * 4,            relativedelta(weeks=1),  Decimal('52')),
+            'biweekly':  (self.term_months * 2,            relativedelta(weeks=2),  Decimal('26')),
+            'monthly':   (self.term_months,                relativedelta(months=1), Decimal('12')),
+            'quarterly': (max(self.term_months // 3, 1),  relativedelta(months=3), Decimal('4')),
+        }
+        num_installments, date_increment, periods_per_year = frequency_map.get(
+            self.repayment_frequency,
+            (self.term_months, relativedelta(months=1), Decimal('12')),
+        )
+
+        # Set installment count BEFORE computing amounts
         self.number_of_installments = num_installments
-        self.installment_amount = total_per_installment
+
+        method = self.product.interest_calculation_method
+        if method == 'reducing_balance':
+            rows = self._reducing_balance_schedule(num_installments, periods_per_year)
+        else:  # flat or compound → flat
+            rows = self._flat_schedule(num_installments)
+
+        self.installment_amount = rows[0]['total_due'] if rows else Decimal('0')
         self.save()
-        
-        # Create schedule entries
+
         current_date = self.disbursement_date
-        for i in range(1, num_installments + 1):
+        for i, row in enumerate(rows, start=1):
             current_date = current_date + date_increment
-            
             LoanRepaymentSchedule.objects.create(
                 loan=self,
                 installment_number=i,
                 due_date=current_date,
-                principal_due=principal_per_installment,
-                interest_due=interest_per_installment,
-                total_due=total_per_installment,
+                principal_due=row['principal_due'],
+                interest_due=row['interest_due'],
+                total_due=row['total_due'],
                 owner=self.owner,
                 branch=self.branch,
-                created_by=self.created_by
+                created_by=self.created_by,
             )
-    
-    def _calculate_installment_amounts(self) -> tuple:
-        """Calculate principal, interest, and total per installment"""
-        if self.product.interest_calculation_method == 'flat':
-            return self._calculate_flat_rate()
-        elif self.product.interest_calculation_method == 'reducing_balance':
-            return self._calculate_reducing_balance()
-        else:
-            return self._calculate_flat_rate()  # Default
-    
-    def _calculate_flat_rate(self) -> tuple:
-        """Calculate with flat interest rate"""
+
+    def _flat_schedule(self, num_installments: int) -> list:
+        """
+        Flat-rate schedule: interest is a one-time charge spread equally.
+        Each installment carries the same principal + interest.
+        """
+        rate = Decimal(str(self.interest_rate)) / Decimal('100')
         total_interest = (
-            self.disbursed_amount * 
-            (self.interest_rate / 100) * 
-            (self.term_months / 12)
-        )
-        
+            self.disbursed_amount * rate
+            * Decimal(str(self.term_months)) / Decimal('12')
+        ).quantize(Decimal('0.01'))
         total_repayable = self.disbursed_amount + total_interest
-        
-        principal_per = self.disbursed_amount / self.number_of_installments
-        interest_per = total_interest / self.number_of_installments
-        total_per = total_repayable / self.number_of_installments
-        
-        return (principal_per, interest_per, total_per)
-    
-    def _calculate_reducing_balance(self) -> tuple:
-        """Calculate with reducing balance (amortized)"""
-        monthly_rate = (self.interest_rate / 100) / 12
-        num_payments = self.number_of_installments
-        
-        # EMI formula
-        if monthly_rate > 0:
-            emi = (
-                self.disbursed_amount * 
-                monthly_rate * 
-                ((1 + monthly_rate) ** num_payments) / 
-                (((1 + monthly_rate) ** num_payments) - 1)
-            )
+
+        n = Decimal(str(num_installments))
+        base_principal = (self.disbursed_amount / n).quantize(Decimal('0.01'))
+        base_interest  = (total_interest / n).quantize(Decimal('0.01'))
+        base_total     = (total_repayable / n).quantize(Decimal('0.01'))
+
+        rows = [
+            {'principal_due': base_principal, 'interest_due': base_interest, 'total_due': base_total}
+            for _ in range(num_installments - 1)
+        ]
+        # Last installment absorbs rounding
+        rows.append({
+            'principal_due': self.disbursed_amount - base_principal * (num_installments - 1),
+            'interest_due':  total_interest        - base_interest  * (num_installments - 1),
+            'total_due':     total_repayable       - base_total     * (num_installments - 1),
+        })
+        return rows
+
+    def _reducing_balance_schedule(self, num_installments: int, periods_per_year: Decimal) -> list:
+        """
+        Proper reducing-balance (amortizing) schedule.
+        Each period's interest is computed on the outstanding principal, so
+        principal rises and interest falls with each installment.
+        """
+        annual_rate = Decimal(str(self.interest_rate)) / Decimal('100')
+        period_rate = annual_rate / periods_per_year
+        balance = self.disbursed_amount
+        n = num_installments
+
+        if period_rate > 0:
+            factor = (1 + period_rate) ** n
+            emi = (balance * period_rate * factor / (factor - 1)).quantize(Decimal('0.01'))
         else:
-            emi = self.disbursed_amount / num_payments
-        
-        # First installment breakdown (simplified - actual varies each installment)
-        interest_first = self.disbursed_amount * monthly_rate
-        principal_first = emi - interest_first
-        
-        return (principal_first, interest_first, emi)
+            emi = (balance / Decimal(str(n))).quantize(Decimal('0.01'))
+
+        rows = []
+        for i in range(n):
+            interest = (balance * period_rate).quantize(Decimal('0.01'))
+            if i == n - 1:
+                # Final installment: clear any residual balance from rounding
+                principal = balance
+                total = (balance + interest).quantize(Decimal('0.01'))
+            else:
+                principal = (emi - interest).quantize(Decimal('0.01'))
+                principal = max(Decimal('0'), min(principal, balance))
+                total = emi
+            rows.append({'principal_due': principal, 'interest_due': interest, 'total_due': total})
+            balance = (balance - principal).quantize(Decimal('0.01'))
+
+        return rows
     
     @transaction.atomic
     def record_payment(self, amount: Decimal, payment_date=None,
@@ -884,38 +907,75 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         self.save()
 
-        # Update schedule and arrears
-        self._update_schedule_with_payment(amount, payment_date)
+        # Update schedule and arrears — pass the per-component breakdown so each
+        # installment row records the correct principal/interest/fee/penalty split.
+        self._update_schedule_with_payment(
+            amount, payment_date,
+            penalty=penalty_payment,
+            interest=interest_payment,
+            fees=fee_payment,
+            principal=principal_payment,
+        )
         self._calculate_arrears()
 
         return journal_entry
-    
-    def _update_schedule_with_payment(self, amount: Decimal, payment_date):
-        """Update repayment schedule with payment"""
+
+    def _update_schedule_with_payment(
+        self, amount: Decimal, payment_date,
+        penalty: Decimal = Decimal('0'),
+        interest: Decimal = Decimal('0'),
+        fees: Decimal = Decimal('0'),
+        principal: Decimal = Decimal('0'),
+    ):
+        """
+        Apply a payment across schedule installments in due-date order.
+        Updates per-component paid fields (principal, interest, fees, penalty)
+        proportionally and records payment_date / days_late on fully settled rows.
+        """
         remaining = amount
-        
-        # Get unpaid or partially paid installments
+
         schedules = self.repayment_schedule.filter(
-            status__in=['pending', 'partial']
+            status__in=['pending', 'partial', 'overdue']
         ).order_by('due_date')
-        
+
         for schedule in schedules:
             if remaining <= 0:
                 break
-            
-            schedule_remaining = schedule.total_due - schedule.total_paid
-            payment_to_schedule = min(remaining, schedule_remaining)
-            
-            # Allocate payment
+
+            installment_remaining = schedule.total_due - schedule.total_paid
+            payment_to_schedule = min(remaining, installment_remaining)
+
+            # Proportional breakdown within this installment
+            if schedule.total_due > 0 and payment_to_schedule > 0:
+                ratio = payment_to_schedule / schedule.total_due
+                schedule.principal_paid = min(
+                    schedule.principal_due,
+                    (schedule.principal_paid + schedule.principal_due * ratio).quantize(Decimal('0.01')),
+                )
+                schedule.interest_paid = min(
+                    schedule.interest_due,
+                    (schedule.interest_paid + schedule.interest_due * ratio).quantize(Decimal('0.01')),
+                )
+                schedule.fees_paid = min(
+                    schedule.fees_due,
+                    (schedule.fees_paid + schedule.fees_due * ratio).quantize(Decimal('0.01')),
+                )
+                schedule.penalty_paid = min(
+                    schedule.penalty_due,
+                    (schedule.penalty_paid + schedule.penalty_due * ratio).quantize(Decimal('0.01')),
+                )
+
             schedule.total_paid += payment_to_schedule
-            
-            # Mark as paid if fully paid
+
             if schedule.total_paid >= schedule.total_due:
                 schedule.status = 'paid'
+                schedule.payment_date = payment_date
+                if payment_date and schedule.due_date and payment_date > schedule.due_date:
+                    schedule.days_late = (payment_date - schedule.due_date).days
                 self.installments_paid += 1
             else:
                 schedule.status = 'partial'
-            
+
             schedule.save()
             remaining -= payment_to_schedule
     
@@ -937,8 +997,103 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         else:
             self.arrears_amount = Decimal('0.00')
             self.days_in_arrears = 0
-        
+
         self.save()
+
+    @transaction.atomic
+    def write_off(
+        self,
+        written_off_by=None,
+        provision_account=None,
+        notes: str = '',
+    ):
+        """
+        Write off a defaulted or loss-classified loan and post the GL entry.
+
+        GL (LN-WO series):
+            Dr. Loan Loss Provision / Bad Debt Expense   (provision_account)
+            Cr. Loan Receivable                          (self.account)
+
+        Args:
+            written_off_by:    The User authorising the write-off.
+            provision_account: An Account (usually an EXPENSE type GL account)
+                               to debit.  Required.
+            notes:             Optional description appended to the journal entry.
+
+        Raises:
+            ValidationError: if the loan is not in a write-off-eligible status,
+                             if provision_account is not supplied, or if the
+                             outstanding principal is already zero.
+        """
+        if self.status not in ('active', 'defaulted', 'disbursed'):
+            raise ValidationError(
+                f"Cannot write off a loan with status '{self.status}'. "
+                "Only active, disbursed, or defaulted loans can be written off."
+            )
+        if not provision_account:
+            raise ValidationError(
+                "A provision/expense account is required for the write-off debit entry."
+            )
+        write_off_amount = self.outstanding_principal
+        if write_off_amount <= 0:
+            raise ValidationError(
+                "Nothing to write off — outstanding principal is already zero."
+            )
+
+        from transactions.models import (
+            Transaction as JournalEntry,
+            TransactionEntry as JournalEntryLine,
+            TransactionSeries,
+        )
+
+        series, _ = TransactionSeries.objects.get_or_create(
+            code='LN-WO',
+            defaults={'description': 'Loan Write-offs'},
+        )
+
+        description = f"Write-off: {self.loan_number} — {self.client.full_name}"
+        if notes:
+            description += f" | {notes}"
+
+        journal = JournalEntry.objects.create(
+            series=series,
+            date=timezone.now().date(),
+            description=description,
+            workflow_reference=f"WO-{self.loan_number}",
+            owner=self.owner,
+            branch=self.branch,
+            created_by=written_off_by,
+        )
+
+        # Dr. Loan Loss Provision / Expense — cost recognised
+        JournalEntryLine.objects.create(
+            transaction=journal,
+            account=provision_account,
+            side=JournalEntryLine.DEBIT,
+            amount=write_off_amount,
+            description=f"Loan write-off expense — {self.loan_number}",
+        )
+        # Cr. Loan Receivable — asset removed from the books
+        JournalEntryLine.objects.create(
+            transaction=journal,
+            account=self.account,
+            side=JournalEntryLine.CREDIT,
+            amount=write_off_amount,
+            description=f"Loan receivable cleared — {self.loan_number}",
+        )
+
+        journal.post()
+
+        # Zero out outstanding balances and move to written_off
+        self.status = 'written_off'
+        self.closed_date = timezone.now().date()
+        self.outstanding_principal = Decimal('0.00')
+        self.outstanding_interest  = Decimal('0.00')
+        self.outstanding_fees      = Decimal('0.00')
+        self.outstanding_penalties = Decimal('0.00')
+        self.save()
+
+        return journal
 
 
 class LoanRepaymentSchedule(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
@@ -1527,12 +1682,18 @@ class LoanProductFee(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
       - 'disbursement' → posted when the loan moves to 'disbursed' status
     """
     POSTING_TRIGGER_CHOICES = [
+        ('registration', 'At Loan Registration'),
         ('approval', 'At Loan Approval'),
         ('disbursement', 'At Disbursement'),
     ]
     FEE_TYPE_CHOICES = [
         ('fixed', 'Fixed Amount'),
         ('percentage', 'Percentage of Loan Amount'),
+    ]
+    DEBIT_DESTINATION_CHOICES = [
+        ('cashier', 'Cashier Account'),
+        ('savings', 'Client Savings Account'),
+        ('user_choice', 'User Chooses at Registration'),
     ]
 
     loan_product = models.ForeignKey(
@@ -1563,7 +1724,31 @@ class LoanProductFee(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     posting_trigger = models.CharField(
         max_length=20,
         choices=POSTING_TRIGGER_CHOICES,
-        default='disbursement',
+        default='registration',
+    )
+    debit_destination = models.CharField(
+        max_length=20,
+        choices=DEBIT_DESTINATION_CHOICES,
+        default='cashier',
+        help_text=(
+            'Where the debit (cash collected) side of the fee GL entry goes. '
+            'cashier = teller cash account; '
+            'savings = deducted from the client\'s savings account; '
+            'user_choice = staff decides at registration time.'
+        ),
+    )
+    default_savings_product = models.ForeignKey(
+        'products.Product',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        limit_choices_to={'product_type': 'SAVINGS'},
+        related_name='loan_fee_default_savings',
+        help_text=(
+            'Default savings product to debit when debit_destination=savings or '
+            'when the user picks savings and a specific product is pre-selected. '
+            'Leave blank to use the client\'s first active savings account.'
+        ),
     )
     is_active = models.BooleanField(default=True)
     order = models.PositiveIntegerField(
@@ -1674,6 +1859,18 @@ class LoanFeeApplication(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         null=True, blank=True,
         on_delete=models.SET_NULL,
         related_name='loan_fee_applications',
+    )
+    # Audit: record the actual destination and account used at posting time
+    debit_destination_used = models.CharField(
+        max_length=20, blank=True, default='',
+        help_text="Actual debit destination: 'cashier' or 'savings'.",
+    )
+    savings_account_debited = models.ForeignKey(
+        'savings.SavingsAccount',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='fee_debits',
+        help_text="The savings account debited when debit_destination_used='savings'.",
     )
 
     objects = OwnerBranchManager()

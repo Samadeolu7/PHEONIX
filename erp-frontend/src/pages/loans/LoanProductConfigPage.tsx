@@ -47,16 +47,19 @@ interface FeeFormProps {
   onSaved: (fee: LoanProductFee) => void;
   onCancel: () => void;
   incomeAccounts: Account[];
+  savingsProducts: { id: number; name: string }[];
 }
 
-function FeeLineForm({ productId, initial, onSaved, onCancel, incomeAccounts }: FeeFormProps) {
+function FeeLineForm({ productId, initial, onSaved, onCancel, incomeAccounts, savingsProducts }: FeeFormProps) {
   const isEdit = !!initial;
   const [name, setName] = useState(initial?.name ?? '');
   const [feeType, setFeeType] = useState<'fixed' | 'percentage'>(initial?.fee_type ?? 'fixed');
   const [fixedAmount, setFixedAmount] = useState(initial?.fixed_amount ?? '0');
   const [percentage, setPercentage] = useState(initial?.percentage ?? '0');
   const [glAccount, setGlAccount] = useState<string>(String(initial?.gl_income_account ?? ''));
-  const [trigger, setTrigger] = useState<'approval' | 'disbursement'>(initial?.posting_trigger ?? 'disbursement');
+  const [trigger, setTrigger] = useState<'registration' | 'approval' | 'disbursement'>(initial?.posting_trigger ?? 'registration');
+  const [debitDest, setDebitDest] = useState<'cashier' | 'savings' | 'user_choice'>(initial?.debit_destination ?? 'cashier');
+  const [defaultSavingsProduct, setDefaultSavingsProduct] = useState<string>(String(initial?.default_savings_product ?? ''));
   const [isActive, setIsActive] = useState(initial?.is_active ?? true);
   const [order, setOrder] = useState(initial?.order ?? 1);
   const [saving, setSaving] = useState(false);
@@ -77,6 +80,8 @@ function FeeLineForm({ productId, initial, onSaved, onCancel, incomeAccounts }: 
         percentage: feeType === 'percentage' ? percentage : '0',
         gl_income_account: Number(glAccount),
         posting_trigger: trigger,
+        debit_destination: debitDest,
+        default_savings_product: (debitDest === 'savings' && defaultSavingsProduct) ? Number(defaultSavingsProduct) : null,
         is_active: isActive,
         order,
       };
@@ -189,14 +194,47 @@ function FeeLineForm({ productId, initial, onSaved, onCancel, incomeAccounts }: 
           <label className="block text-xs font-medium text-gray-600 mb-1">Post Fee At</label>
           <select
             value={trigger}
-            onChange={e => setTrigger(e.target.value as 'approval' | 'disbursement')}
+            onChange={e => setTrigger(e.target.value as 'registration' | 'approval' | 'disbursement')}
             aria-label="Posting trigger"
             className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           >
-            <option value="approval">Loan Approval</option>
-            <option value="disbursement">Disbursement</option>
+            <option value="registration">At Registration</option>
+            <option value="approval">At Approval</option>
+            <option value="disbursement">At Disbursement</option>
           </select>
         </div>
+        {/* Debit Destination */}
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Debit To</label>
+          <select
+            value={debitDest}
+            onChange={e => setDebitDest(e.target.value as 'cashier' | 'savings' | 'user_choice')}
+            aria-label="Debit destination"
+            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            <option value="cashier">Cashier Account</option>
+            <option value="savings">Client Savings Account</option>
+            <option value="user_choice">User Chooses at Registration</option>
+          </select>
+        </div>
+        {/* Default Savings Product (shown when destination = savings) */}
+        {debitDest === 'savings' && (
+          <div className="col-span-2 sm:col-span-1">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Default Savings Product</label>
+            <select
+              value={defaultSavingsProduct}
+              onChange={e => setDefaultSavingsProduct(e.target.value)}
+              aria-label="Default savings product"
+              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            >
+              <option value="">— Any active savings account —</option>
+              {savingsProducts.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">If blank, the first active savings account will be used.</p>
+          </div>
+        )}
         {/* Active toggle */}
         <div className="col-span-2 flex items-center gap-2">
           <input
@@ -576,6 +614,7 @@ export default function LoanProductConfigPage() {
               <FeeLineForm
                 productId={productId}
                 incomeAccounts={incomeAccounts}
+                savingsProducts={savingsProducts}
                 onSaved={handleFeeSaved}
                 onCancel={() => setShowFeeForm(false)}
               />
@@ -602,6 +641,7 @@ export default function LoanProductConfigPage() {
                       <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Amount / %</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">GL Account</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Post At</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Debit To</th>
                       <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Active</th>
                       <th className="px-4 py-3" />
                     </tr>
@@ -630,7 +670,22 @@ export default function LoanProductConfigPage() {
                             {fee.gl_income_account_name ?? `Account #${fee.gl_income_account}`}
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-600">
-                            {fee.posting_trigger === 'approval' ? 'On Approval' : 'On Disbursement'}
+                            {fee.posting_trigger === 'registration' ? 'At Registration'
+                              : fee.posting_trigger === 'approval' ? 'At Approval'
+                              : 'At Disbursement'}
+                          </td>
+                          <td className="px-4 py-3 text-xs">
+                            {fee.debit_destination === 'cashier' && (
+                              <span className="bg-gray-100 text-gray-600 rounded px-1.5 py-0.5">Cashier</span>
+                            )}
+                            {fee.debit_destination === 'savings' && (
+                              <span className="bg-indigo-100 text-indigo-700 rounded px-1.5 py-0.5">
+                                Savings{fee.default_savings_product_name ? ` (${fee.default_savings_product_name})` : ''}
+                              </span>
+                            )}
+                            {fee.debit_destination === 'user_choice' && (
+                              <span className="bg-amber-100 text-amber-700 rounded px-1.5 py-0.5">User Chooses</span>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span className={`inline-block w-2 h-2 rounded-full ${fee.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
@@ -659,11 +714,12 @@ export default function LoanProductConfigPage() {
                         </tr>
                         {editingFee?.id === fee.id && (
                           <tr>
-                            <td colSpan={8} className="px-4 py-2">
+                            <td colSpan={9} className="px-4 py-2">
                               <FeeLineForm
                                 productId={productId}
                                 initial={editingFee}
                                 incomeAccounts={incomeAccounts}
+                                savingsProducts={savingsProducts}
                                 onSaved={handleFeeSaved}
                                 onCancel={() => setEditingFee(null)}
                               />
