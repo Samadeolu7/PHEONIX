@@ -55,22 +55,17 @@ class ProductViewSet(ScopedModelViewSet):
     
     def get_queryset(self):
         """
-        Filter products based on user's branch access
+        Filter products based on user's branch access.
+        Branch/tenant scoping is handled by ScopedModelViewSet.get_queryset().
+        We only add the account-count annotation on top.
         """
         queryset = super().get_queryset()
-        user = self.request.user
-        
-        # Filter by branches user has access to
-        if not user.is_superuser:
-            # Get branches where user is owner or member
-            accessible_branches = user.owned_branches.all() | user.branches.all()
-            queryset = queryset.filter(branch__in=accessible_branches)
-        
-        # Annotate with account count (SavingsAccount.status not is_active)
+
+        # Annotate with active savings account count for this product
         queryset = queryset.annotate(
             total_accounts=Count('savings_accounts', filter=Q(savings_accounts__status='active'))
         )
-        
+
         return queryset
     
     def get_serializer_class(self):
