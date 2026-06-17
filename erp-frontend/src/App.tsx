@@ -3849,12 +3849,12 @@ function App() {
                                   }
                                 />
 
-                                {/* Savings Products (managed via /products?type=SAVINGS) */}
+                                {/* Savings Products (filtered to SAVINGS type) */}
                                 <Route
                                   path="/savings/products"
                                   element={
                                     <ProtectedRoute requiredPermission="product-list">
-                                      <ProductManagementPage />
+                                      <ProductManagementPage filterType="SAVINGS" />
                                     </ProtectedRoute>
                                   }
                                 />

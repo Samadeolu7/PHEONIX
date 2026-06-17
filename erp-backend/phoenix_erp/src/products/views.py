@@ -66,9 +66,9 @@ class ProductViewSet(ScopedModelViewSet):
             accessible_branches = user.owned_branches.all() | user.branches.all()
             queryset = queryset.filter(branch__in=accessible_branches)
         
-        # Annotate with account count (savings_accounts is the correct reverse relation)
+        # Annotate with account count (SavingsAccount.status not is_active)
         queryset = queryset.annotate(
-            total_accounts=Count('savings_accounts', filter=Q(savings_accounts__is_active=True))
+            total_accounts=Count('savings_accounts', filter=Q(savings_accounts__status='active'))
         )
         
         return queryset

@@ -65,8 +65,11 @@ class ProductSerializer(serializers.ModelSerializer):
         ]
         
     def get_account_count(self, obj):
-        """Count accounts using this product"""
-        return obj.accounts.filter(is_active=True).count() if hasattr(obj, 'accounts') else 0
+        """Count savings accounts using this product"""
+        try:
+            return obj.savings_accounts.filter(status='active').count()
+        except Exception:
+            return 0
     
     def validate_code(self, value):
         """Validate product code format"""
@@ -165,8 +168,11 @@ class ProductListSerializer(serializers.ModelSerializer):
         read_only_fields = fields
     
     def get_account_count(self, obj):
-        """Count accounts using this product"""
-        return obj.accounts.filter(is_active=True).count() if hasattr(obj, 'accounts') else 0
+        """Count savings accounts using this product"""
+        try:
+            return obj.savings_accounts.filter(status='active').count()
+        except Exception:
+            return 0
 
 
 class ProductSummarySerializer(serializers.ModelSerializer):

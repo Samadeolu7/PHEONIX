@@ -136,7 +136,11 @@ const CRON_PRESETS = {
   weekly: { label: 'Weekly (Mon)', value: '0 0 * * 1', description: 'Every Monday at midnight' },
 };
 
-const ProductManagementPage: React.FC = () => {
+interface ProductManagementPageProps {
+  filterType?: 'SAVINGS' | 'LOAN' | 'EXPENSE' | 'INVESTMENT' | 'INSURANCE';
+}
+
+const ProductManagementPage: React.FC<ProductManagementPageProps> = ({ filterType }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -149,7 +153,7 @@ const ProductManagementPage: React.FC = () => {
   const [formData, setFormData] = useState<Product>({
     name: '',
     code: '',
-    product_type: 'SAVINGS',
+    product_type: filterType ?? 'SAVINGS',
     description: '',
     is_active: true,
     branch: 1, // TODO: Get from context
@@ -172,7 +176,10 @@ const ProductManagementPage: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-      const response = await fetch('/api/products/products/', {
+      const url = filterType
+        ? `/api/products/products/?product_type=${filterType}`
+        : '/api/products/products/';
+      const response = await fetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -274,7 +281,7 @@ const ProductManagementPage: React.FC = () => {
     setFormData({
       name: '',
       code: '',
-      product_type: 'SAVINGS',
+      product_type: filterType ?? 'SAVINGS',
       description: '',
       is_active: true,
       branch: 1,
@@ -361,8 +368,8 @@ const ProductManagementPage: React.FC = () => {
           Choose product type and provide basic details
         </p>
 
-        {/* Product Type Selection */}
-        <div style={{ marginBottom: '24px' }}>
+        {/* Product Type Selection — hidden when a filterType is locked */}
+        {!filterType && <div style={{ marginBottom: '24px' }}>
           <label
             style={{ display: 'block', fontWeight: 600, marginBottom: '12px', color: '#374151' }}
           >
@@ -417,7 +424,7 @@ const ProductManagementPage: React.FC = () => {
             <Info size={16} color={config.color} style={{ flexShrink: 0, marginTop: '2px' }} />
             <span>{config.description}</span>
           </div>
-        </div>
+        </div>}
 
         {/* Product Name */}
         <div style={{ marginBottom: '20px' }}>
@@ -1339,10 +1346,12 @@ const ProductManagementPage: React.FC = () => {
           >
             <div>
               <h1 style={{ fontSize: '32px', fontWeight: 'bold', color: '#111827', margin: 0 }}>
-                Product Management
+                {filterType ? `${filterType.charAt(0) + filterType.slice(1).toLowerCase()} Products` : 'Product Management'}
               </h1>
               <p style={{ color: '#6b7280', marginTop: '8px' }}>
-                Configure financial products with limits, interest rates, and automated workflows
+                {filterType
+                  ? `Configure ${filterType.toLowerCase()} products with interest rates and workflows`
+                  : 'Configure financial products with limits, interest rates, and automated workflows'}
               </p>
             </div>
             <button
