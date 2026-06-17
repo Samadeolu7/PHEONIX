@@ -12,9 +12,10 @@ import { PaginatedResponse } from '../types/inventory';
 
 export interface LoanProduct {
   id: number;
-  name: string;
-  code: string;
-  description: string;
+  product: number;          // FK to Product
+  name: string;             // from product.name
+  code: string;             // from product.code
+  description: string;      // from product.description
   min_loan_amount: string;
   max_loan_amount: string;
   min_term_months: number;
@@ -22,10 +23,19 @@ export interface LoanProduct {
   default_interest_rate: string;
   interest_calculation_method: 'straight_line' | 'flat' | 'reducing_balance' | 'compound';
   allowed_repayment_frequencies: string[];
+  processing_fee_type: 'fixed' | 'percentage';
   processing_fee_amount: string;
   processing_fee_percentage: string;
   insurance_rate: string;
   insurance_income_account: number | null;
+  late_payment_penalty_type: 'fixed' | 'percentage';
+  late_payment_penalty: string;
+  grace_period_days: number;
+  requires_collateral: boolean;
+  collateral_percentage: string;
+  requires_guarantor: boolean;
+  min_guarantors: number;
+  requires_approval: boolean;
   is_active: boolean;
   created_at: string;
   updated_at: string;

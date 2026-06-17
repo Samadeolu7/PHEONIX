@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   BadgeDollarSign,
   ShieldCheck,
+  Settings2,
 } from 'lucide-react';
 import { api as apiClient } from '../../api';
 import {
@@ -398,7 +399,7 @@ function SavingsRequirementForm({ productId, initial, onSaved, onCancel, savings
 
 // ── Main page ────────────────────────────────────────────────────────────────
 
-type Tab = 'fees' | 'savings_requirements';
+type Tab = 'settings' | 'fees' | 'savings_requirements';
 
 export default function LoanProductConfigPage() {
   const { id } = useParams<{ id: string }>();
@@ -406,7 +407,13 @@ export default function LoanProductConfigPage() {
   const navigate = useNavigate();
 
   const [product, setProduct] = useState<LoanProduct | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>('fees');
+  const [activeTab, setActiveTab] = useState<Tab>('settings');
+
+  // ── Settings tab state ───────────────────────────────────────────────────
+  const [settingsForm, setSettingsForm] = useState<Partial<LoanProduct>>({});
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsSaved, setSettingsSaved] = useState(false);
 
   // Fee lines state
   const [fees, setFees] = useState<LoanProductFee[]>([]);
@@ -430,7 +437,30 @@ export default function LoanProductConfigPage() {
 
   // Load product
   useEffect(() => {
-    loanService.getProduct(productId).then(setProduct).catch(() => {});
+    loanService.getProduct(productId).then(p => {
+      setProduct(p);
+      setSettingsForm({
+        default_interest_rate: p.default_interest_rate,
+        interest_calculation_method: p.interest_calculation_method,
+        min_loan_amount: p.min_loan_amount,
+        max_loan_amount: p.max_loan_amount,
+        min_term_months: p.min_term_months,
+        max_term_months: p.max_term_months,
+        allowed_repayment_frequencies: p.allowed_repayment_frequencies,
+        processing_fee_type: p.processing_fee_type,
+        processing_fee_amount: p.processing_fee_amount,
+        processing_fee_percentage: p.processing_fee_percentage,
+        insurance_rate: p.insurance_rate,
+        late_payment_penalty_type: p.late_payment_penalty_type,
+        late_payment_penalty: p.late_payment_penalty,
+        grace_period_days: p.grace_period_days,
+        requires_collateral: p.requires_collateral,
+        collateral_percentage: p.collateral_percentage,
+        requires_guarantor: p.requires_guarantor,
+        min_guarantors: p.min_guarantors,
+        requires_approval: p.requires_approval,
+      });
+    }).catch(() => {});
   }, [productId]);
 
   // Load income GL accounts
@@ -479,7 +509,42 @@ export default function LoanProductConfigPage() {
   useEffect(() => { loadFees(); }, [loadFees]);
   useEffect(() => { loadRequirements(); }, [loadRequirements]);
 
-  // Fee handlers
+  // ── Settings save handler ────────────────────────────────────────────────
+  const handleSettingsSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSettingsSaving(true);
+    setSettingsError(null);
+    setSettingsSaved(false);
+    try {
+      const updated = await loanService.updateProduct(productId, settingsForm);
+      setProduct(updated);
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 3000);
+    } catch (err: any) {
+      setSettingsError(
+        err?.detail ?? err?.message ?? 'Failed to save settings.'
+      );
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const FREQ_OPTIONS = [
+    { value: 'daily', label: 'Daily' },
+    { value: 'weekly', label: 'Weekly' },
+    { value: 'biweekly', label: 'Bi-weekly' },
+    { value: 'monthly', label: 'Monthly' },
+    { value: 'quarterly', label: 'Quarterly' },
+  ];
+  const toggleFreq = (val: string) => {
+    const current = (settingsForm.allowed_repayment_frequencies ?? []) as string[];
+    setSettingsForm(prev => ({
+      ...prev,
+      allowed_repayment_frequencies: current.includes(val)
+        ? current.filter(f => f !== val)
+        : [...current, val],
+    }));
+  };
   const handleFeeSaved = (fee: LoanProductFee) => {
     setFees(prev => {
       const idx = prev.findIndex(f => f.id === fee.id);
@@ -550,6 +615,17 @@ export default function LoanProductConfigPage() {
         {/* Tab bar */}
         <div className="flex gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit">
           <button
+            onClick={() => setActiveTab('settings')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'settings'
+                ? 'bg-gray-800 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            <Settings2 className="w-4 h-4" />
+            Product Settings
+          </button>
+          <button
             onClick={() => setActiveTab('fees')}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               activeTab === 'fees'
@@ -582,6 +658,261 @@ export default function LoanProductConfigPage() {
             )}
           </button>
         </div>
+
+        {/* ── TAB: PRODUCT SETTINGS ── */}
+        {activeTab === 'settings' && (
+          <form onSubmit={handleSettingsSave} className="space-y-5">
+            {settingsError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-2 text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {settingsError}
+              </div>
+            )}
+            {settingsSaved && (
+              <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
+                Settings saved successfully.
+              </div>
+            )}
+
+            {/* Interest */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-800 mb-4">Interest &amp; Calculation</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Annual Interest Rate (%)</label>
+                  <input
+                    type="number" min={0} max={100} step="0.01"
+                    value={settingsForm.default_interest_rate ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, default_interest_rate: e.target.value }))}
+                    placeholder="15.00"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Calculation Method</label>
+                  <select
+                    value={settingsForm.interest_calculation_method ?? 'straight_line'}
+                    onChange={e => setSettingsForm(p => ({ ...p, interest_calculation_method: e.target.value as LoanProduct['interest_calculation_method'] }))}
+                    aria-label="Interest calculation method"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  >
+                    <option value="straight_line">Straight Line</option>
+                    <option value="reducing_balance">Reducing Balance</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Loan Limits */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-800 mb-4">Loan Amount &amp; Term Limits</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Min Loan Amount (₦)</label>
+                  <input type="number" min={0} step="0.01"
+                    value={settingsForm.min_loan_amount ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, min_loan_amount: e.target.value }))}
+                    placeholder="1000.00"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Max Loan Amount (₦)</label>
+                  <input type="number" min={0} step="0.01"
+                    value={settingsForm.max_loan_amount ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, max_loan_amount: e.target.value }))}
+                    placeholder="10000000.00"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Min Term (months)</label>
+                  <input type="number" min={1}
+                    value={settingsForm.min_term_months ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, min_term_months: Number(e.target.value) }))}
+                    placeholder="1"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Max Term (months)</label>
+                  <input type="number" min={1}
+                    value={settingsForm.max_term_months ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, max_term_months: Number(e.target.value) }))}
+                    placeholder="120"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Repayment Frequencies */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-800 mb-2">Allowed Repayment Frequencies</h3>
+              <p className="text-xs text-gray-400 mb-3">Select all schedules this product supports.</p>
+              <div className="flex flex-wrap gap-3">
+                {FREQ_OPTIONS.map(f => {
+                  const checked = ((settingsForm.allowed_repayment_frequencies ?? []) as string[]).includes(f.value);
+                  return (
+                    <label key={f.value} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${
+                      checked ? 'bg-blue-50 border-blue-400 text-blue-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                    }`}>
+                      <input type="checkbox" className="hidden" checked={checked} onChange={() => toggleFreq(f.value)} />
+                      {checked ? '✓' : ''} {f.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Fees */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-800 mb-4">Legacy Processing Fee (Product-Level)</h3>
+              <p className="text-xs text-gray-400 mb-3">Use the Fee Lines tab for the new per-fee GL system. This field is for legacy compatibility.</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Fee Type</label>
+                  <select
+                    value={settingsForm.processing_fee_type ?? 'percentage'}
+                    onChange={e => setSettingsForm(p => ({ ...p, processing_fee_type: e.target.value as 'fixed' | 'percentage' }))}
+                    aria-label="Processing fee type"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  >
+                    <option value="percentage">Percentage</option>
+                    <option value="fixed">Fixed Amount</option>
+                  </select>
+                </div>
+                {settingsForm.processing_fee_type === 'fixed' ? (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Amount (₦)</label>
+                    <input type="number" min={0} step="0.01"
+                      value={settingsForm.processing_fee_amount ?? '0'}
+                      onChange={e => setSettingsForm(p => ({ ...p, processing_fee_amount: e.target.value }))}
+                      placeholder="0.00"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Percentage (%)</label>
+                    <input type="number" min={0} max={100} step="0.01"
+                      value={settingsForm.processing_fee_percentage ?? '0'}
+                      onChange={e => setSettingsForm(p => ({ ...p, processing_fee_percentage: e.target.value }))}
+                      placeholder="0.00"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Insurance Rate (%)</label>
+                  <input type="number" min={0} max={100} step="0.01"
+                    value={settingsForm.insurance_rate ?? '0'}
+                    onChange={e => setSettingsForm(p => ({ ...p, insurance_rate: e.target.value }))}
+                    placeholder="0.00"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Penalties */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-800 mb-4">Late Payment Penalty</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Penalty Type</label>
+                  <select
+                    value={settingsForm.late_payment_penalty_type ?? 'percentage'}
+                    onChange={e => setSettingsForm(p => ({ ...p, late_payment_penalty_type: e.target.value as 'fixed' | 'percentage' }))}
+                    aria-label="Penalty type"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  >
+                    <option value="percentage">Percentage of Outstanding</option>
+                    <option value="fixed">Fixed Amount</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    {settingsForm.late_payment_penalty_type === 'fixed' ? 'Penalty Amount (₦)' : 'Penalty Rate (%)'}
+                  </label>
+                  <input type="number" min={0} step="0.01"
+                    value={settingsForm.late_payment_penalty ?? '0'}
+                    onChange={e => setSettingsForm(p => ({ ...p, late_payment_penalty: e.target.value }))}
+                    placeholder="0.00"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Grace Period (days)</label>
+                  <input type="number" min={0}
+                    value={settingsForm.grace_period_days ?? 0}
+                    onChange={e => setSettingsForm(p => ({ ...p, grace_period_days: Number(e.target.value) }))}
+                    placeholder="0"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Requirements */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-800 mb-4">Approval Requirements</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input type="checkbox" className="rounded border-gray-300"
+                    checked={settingsForm.requires_approval ?? true}
+                    onChange={e => setSettingsForm(p => ({ ...p, requires_approval: e.target.checked }))}
+                  />
+                  Requires approval before disbursement
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input type="checkbox" className="rounded border-gray-300"
+                    checked={settingsForm.requires_collateral ?? false}
+                    onChange={e => setSettingsForm(p => ({ ...p, requires_collateral: e.target.checked }))}
+                  />
+                  Requires collateral
+                </label>
+                {settingsForm.requires_collateral && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Collateral % of Loan</label>
+                    <input type="number" min={0} max={200} step="0.01"
+                      value={settingsForm.collateral_percentage ?? '0'}
+                      onChange={e => setSettingsForm(p => ({ ...p, collateral_percentage: e.target.value }))}
+                      placeholder="100"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    />
+                  </div>
+                )}
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input type="checkbox" className="rounded border-gray-300"
+                    checked={settingsForm.requires_guarantor ?? false}
+                    onChange={e => setSettingsForm(p => ({ ...p, requires_guarantor: e.target.checked }))}
+                  />
+                  Requires guarantor
+                </label>
+                {settingsForm.requires_guarantor && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Minimum Guarantors</label>
+                    <input type="number" min={1}
+                      value={settingsForm.min_guarantors ?? 1}
+                      onChange={e => setSettingsForm(p => ({ ...p, min_guarantors: Number(e.target.value) }))}
+                      placeholder="1"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button type="submit" disabled={settingsSaving}
+                className="flex items-center gap-2 bg-gray-800 hover:bg-gray-900 text-white rounded-lg px-5 py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {settingsSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save Settings
+              </button>
+            </div>
+          </form>
+        )}
 
         {/* ── TAB: FEE LINES ── */}
         {activeTab === 'fees' && (

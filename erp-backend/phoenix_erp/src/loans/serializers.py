@@ -10,12 +10,18 @@ from .models import (
 
 
 class LoanProductSerializer(TenantModelSerializer):
+    # Expose name/code/description from the linked Product object (read-only here;
+    # to change name/code use the Products endpoint directly).
+    name = serializers.CharField(source='product.name', read_only=True)
+    code = serializers.CharField(source='product.code', read_only=True)
+    description = serializers.CharField(source='product.description', read_only=True, default='')
     is_active = serializers.BooleanField(source='product.is_active', read_only=True)
 
     class Meta:
         model = LoanProduct
         fields = [
             'id', 'product',
+            'name', 'code', 'description',
             'min_loan_amount', 'max_loan_amount',
             'min_term_months', 'max_term_months',
             'default_interest_rate', 'interest_calculation_method',
@@ -23,11 +29,16 @@ class LoanProductSerializer(TenantModelSerializer):
             'processing_fee_type', 'processing_fee_amount', 'processing_fee_percentage',
             'insurance_rate', 'insurance_income_account',
             'late_payment_penalty_type', 'late_payment_penalty', 'grace_period_days',
-            'requires_collateral', 'requires_guarantor',
+            'requires_collateral', 'collateral_percentage',
+            'requires_guarantor', 'min_guarantors',
+            'requires_approval',
             'is_active',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'owner', 'branch', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'name', 'code', 'description', 'is_active',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
 
 
 class LoanRepaymentScheduleSerializer(TenantModelSerializer):

@@ -29,7 +29,7 @@ from cash_management.services.payment_routing import PaymentRoutingService
 
 class LoanProductViewSet(ScopedModelViewSet):
     """CRUD for loan products (DC, Weekly, Monthly, etc.)."""
-    queryset = LoanProduct.objects.all()
+    queryset = LoanProduct.objects.select_related('product').all()
     serializer_class = LoanProductSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
 
@@ -42,6 +42,11 @@ class LoanProductViewSet(ScopedModelViewSet):
         if freq:
             qs = qs.filter(allowed_repayment_frequencies__contains=[freq])
         return qs
+
+    def partial_update(self, request, *args, **kwargs):
+        """PATCH — update loan product settings (rates, terms, penalties, etc.)."""
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
 
 
 class LoanAccountViewSet(ScopedModelViewSet):
