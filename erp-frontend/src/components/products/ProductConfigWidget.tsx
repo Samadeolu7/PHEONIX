@@ -46,7 +46,7 @@ export const ProductConfigWidget: React.FC<ProductConfigWidgetProps> = ({
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/products/?product_type=${productType}&is_active=true`);
+      const response = await fetch(`/api/products/products/?product_type=${productType}&is_active=true`);
       if (!response.ok) throw new Error('Failed to fetch products');
       const data = await response.json();
       setProducts(data.results || data);

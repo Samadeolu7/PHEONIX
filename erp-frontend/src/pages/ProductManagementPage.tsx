@@ -172,7 +172,7 @@ const ProductManagementPage: React.FC = () => {
     try {
       setLoading(true);
       const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-      const response = await fetch('/api/products/', {
+      const response = await fetch('/api/products/products/', {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
@@ -202,7 +202,7 @@ const ProductManagementPage: React.FC = () => {
             : CRON_PRESETS[cronPreset]?.value,
       };
 
-      const url = editingProduct ? `/api/products/${editingProduct.id}/` : '/api/products/';
+      const url = editingProduct ? `/api/products/products/${editingProduct.id}/` : '/api/products/products/';
       const method = editingProduct ? 'PUT' : 'POST';
       const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
 
@@ -239,7 +239,7 @@ const ProductManagementPage: React.FC = () => {
 
     try {
       const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-      const response = await fetch(`/api/products/${id}/`, {
+      const response = await fetch(`/api/products/products/${id}/`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`,

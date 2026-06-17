@@ -472,7 +472,7 @@ export default function LoanProductConfigPage() {
 
   // Load savings products list (product_type=SAVINGS via products endpoint)
   useEffect(() => {
-    apiClient.get('/products/', { params: { product_type: 'SAVINGS', is_active: true } })
+    apiClient.get('/products/products/', { params: { product_type: 'SAVINGS', is_active: true } })
       .then((data: any) => {
         const list = Array.isArray(data) ? data : (data?.results ?? []);
         setSavingsProducts(list.map((p: any) => ({ id: p.id, name: p.name })));

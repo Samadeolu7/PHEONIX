@@ -72,7 +72,7 @@ export default function SavingsAccountFormPage() {
   // Load savings products
   useEffect(() => {
     import('../../services/api').then(({ default: api }) => {
-      api.get('/products/', { params: { product_type: 'SAVINGS' } })
+      api.get('/products/products/', { params: { product_type: 'SAVINGS' } })
         .then((data: unknown) => {
           const items = Array.isArray(data) ? data : (data as { results?: SavingsProductOption[] })?.results ?? [];
           setProducts(items as SavingsProductOption[]);

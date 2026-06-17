@@ -215,7 +215,7 @@ const UnifiedAccountCreationPage: React.FC = () => {
   const fetchProducts = async (type: string) => {
     try {
       const productType = type === 'SAVINGS' ? 'SAVINGS' : type === 'LOAN' ? 'LOAN' : 'EXPENSE';
-      const data = await api.get('/products/', {
+      const data = await api.get('/products/products/', {
         product_type: productType,
         is_active: true,
       });
