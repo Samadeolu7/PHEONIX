@@ -193,7 +193,7 @@ export default function SavingsProductConfigPage() {
 
   // Load product name
   useEffect(() => {
-    apiClient.get(`/products/${productId}/`).then((p: any) => {
+    apiClient.get(`/products/products/${productId}/`).then((p: any) => {
       setProductName(p?.name ?? '');
     }).catch(() => {});
   }, [productId]);
