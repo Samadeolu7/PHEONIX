@@ -594,7 +594,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         )
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code='LN-DISB',
+            code='LNDIS',
             defaults={'description': 'Loan Disbursements'},
         )
 
@@ -827,7 +827,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         )
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code='LN-PMT',
+            code='LNPMT',
             defaults={'description': 'Loan Repayments'},
         )
 
@@ -1886,4 +1886,74 @@ class LoanFeeApplication(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         return (
             f"{self.fee_config.name} on {self.loan_account.loan_number} "
             f"— ₦{self.calculated_amount} ({status})"
+        )
+
+
+class LoanRepaymentRequest(TimeStampedModel, BranchScopedModel):
+    """
+    Savings-debit loan repayment request pending director approval.
+
+    Workflow:
+      1. Officer submits request (status='pending') — no GL movement yet.
+      2. Director approves: GL posts (savings.withdraw + loan.record_payment), status='posted'.
+      3. Director rejects: status='rejected', no GL movement.
+    """
+
+    STATUS_PENDING  = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_POSTED   = 'posted'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING,  'Pending Approval'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+        (STATUS_POSTED,   'Posted'),
+    ]
+
+    loan = models.ForeignKey(
+        LoanAccount,
+        on_delete=models.CASCADE,
+        related_name='repayment_requests',
+    )
+    savings_account = models.ForeignKey(
+        'savings.SavingsAccount',
+        on_delete=models.PROTECT,
+        related_name='loan_repayment_requests',
+    )
+    amount = models.DecimalField(max_digits=18, decimal_places=2)
+    payment_date = models.DateField()
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='submitted_loan_repayment_requests',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='reviewed_loan_repayment_requests',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+    journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_repayment_request_journals',
+    )
+    notes = models.TextField(blank=True)
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager()
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return (
+            f"RepayRequest #{self.pk} — {self.loan.loan_number} "
+            f"₦{self.amount} ({self.status})"
         )

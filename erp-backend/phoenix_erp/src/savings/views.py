@@ -226,6 +226,113 @@ class SavingsAccountViewSet(ScopedModelViewSet):
             )
         return Response(SmartSavingsAccountSerializer(smart).data)
 
+    @action(detail=True, methods=['post'], url_path='deposit')
+    @transaction.atomic
+    def deposit(self, request, pk=None):
+        """
+        Record a direct deposit to a savings account.
+        Body: {amount, description, payment_date (optional), cashier_account_id (optional)}
+        """
+        from decimal import Decimal
+        account = self.get_object()
+        if account.status != 'active':
+            return Response({'detail': 'Account is not active.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        amount_raw = request.data.get('amount')
+        if not amount_raw:
+            return Response({'detail': 'amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount = Decimal(str(amount_raw))
+        except Exception:
+            return Response({'detail': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= 0:
+            return Response({'detail': 'Amount must be positive.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cashier_account_id = request.data.get('cashier_account_id')
+        from cash_management.services.payment_routing import PaymentRoutingService
+        from django.core.exceptions import ValidationError
+        try:
+            cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
+                request.user,
+                owner=account.owner,
+                branch=account.branch,
+                cashier_account_id=cashier_account_id,
+            )
+        except ValidationError as exc:
+            return Response(
+                {'detail': str(exc.message if hasattr(exc, 'message') else exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        description = request.data.get('description', 'Deposit')
+        try:
+            account.deposit(
+                amount=amount,
+                description=description,
+                cashier_account=cashier_account,
+                transacted_by=request.user,
+            )
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        account.refresh_from_db()
+        return Response(SavingsAccountSerializer(account).data)
+
+    @action(detail=True, methods=['get'], url_path='transactions')
+    def transactions(self, request, pk=None):
+        """
+        Return posted GL journal entry lines for this savings account.
+        Supports ?page=N&page_size=M for pagination.
+        """
+        from transactions.models import TransactionEntry, Transaction
+        account = self.get_object()
+        gl_account = account.account
+
+        qs = (
+            TransactionEntry.objects
+            .filter(account=gl_account, transaction__status=Transaction.POSTED)
+            .select_related('transaction')
+            .order_by('-transaction__date', '-id')
+        )
+
+        try:
+            page_size = min(int(request.query_params.get('page_size', 50)), 200)
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (TypeError, ValueError):
+            page_size, page = 50, 1
+
+        total = qs.count()
+        offset = (page - 1) * page_size
+        entries = qs[offset: offset + page_size]
+
+        running_balance = Decimal('0.00')
+        rows = []
+        for entry in reversed(list(entries)):
+            if entry.side == TransactionEntry.DEBIT:
+                running_balance -= entry.amount
+            else:
+                running_balance += entry.amount
+            rows.append({
+                'id': entry.id,
+                'date': entry.transaction.date,
+                'reference': entry.transaction.reference_number,
+                'description': entry.description or entry.transaction.description,
+                'debit': str(entry.amount) if entry.side == TransactionEntry.DEBIT else None,
+                'credit': str(entry.amount) if entry.side == TransactionEntry.CREDIT else None,
+                'balance': str(running_balance),
+            })
+        rows.reverse()
+
+        return Response({
+            'count': total,
+            'page': page,
+            'page_size': page_size,
+            'results': rows,
+        })
+
 
 class ContributionScheduleViewSet(ScopedModelViewSet):
     """

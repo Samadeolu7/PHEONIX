@@ -5,6 +5,7 @@ from .views import (
     LoanVerificationRequestViewSet, LoanDisbursementViewSet,
     LoanProductFeeViewSet, LoanProductSavingsRequirementViewSet,
     LoanFeeApplicationViewSet, FeesPreviewView,
+    LoanRepaymentRequestViewSet,
 )
 
 router = DefaultRouter()
@@ -19,6 +20,7 @@ router.register(r'product-fees', LoanProductFeeViewSet, basename='loanproduct-fe
 router.register(r'product-savings-requirements', LoanProductSavingsRequirementViewSet, basename='loanproduct-savingsreqs')
 router.register(r'fee-applications', LoanFeeApplicationViewSet, basename='loanaccount-feeapps')
 router.register(r'fees-preview', FeesPreviewView, basename='loanproduct-fees-preview')
+router.register(r'repayment-requests', LoanRepaymentRequestViewSet, basename='loanrepaymentrequest')
 
 app_name = 'loans'
 

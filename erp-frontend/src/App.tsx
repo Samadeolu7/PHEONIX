@@ -535,6 +535,9 @@ const SavingsCollectionPage = lazy(() => import('./pages/savings/SavingsCollecti
 // Savings Accounts list page
 const SavingsAccountsPage = lazy(() => import('./pages/savings/SavingsAccountsPage'));
 
+// Savings Account detail page
+const SavingsAccountDetailPage = lazy(() => import('./pages/savings/SavingsAccountDetailPage'));
+
 // Savings new account form & policy
 const SavingsAccountFormPage = lazy(() => import('./pages/savings/SavingsAccountFormPage'));
 const SavingsPolicyPage = lazy(() => import('./pages/savings/SavingsPolicyPage'));
@@ -543,6 +546,15 @@ const SavingsWithdrawalsPage = lazy(() => import('./pages/savings/SavingsWithdra
 
 // Loan Accounts list page
 const LoanAccountsPage = lazy(() => import('./pages/loans/LoanAccountsPage'));
+
+// Loan Account detail page
+const LoanAccountDetailPage = lazy(() => import('./pages/loans/LoanAccountDetailPage'));
+
+// Loan Collection page
+const LoanCollectionPage = lazy(() => import('./pages/loans/LoanCollectionPage'));
+
+// Loan repayment approvals (director inbox)
+const LoanRepaymentApprovalsPage = lazy(() => import('./pages/loans/LoanRepaymentApprovalsPage'));
 
 // Loan new application form & products
 const LoanAccountFormPage = lazy(() => import('./pages/loans/LoanAccountFormPage'));
@@ -3829,6 +3841,16 @@ function App() {
                                   }
                                 />
 
+                                {/* Savings — Account detail */}
+                                <Route
+                                  path="/savings/accounts/:id"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-list">
+                                      <SavingsAccountDetailPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
                                 {/* Savings — Compulsory Policy */}
                                 <Route
                                   path="/savings/policy"
@@ -3885,6 +3907,36 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="loan-create">
                                       <LoanAccountFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Account detail */}
+                                <Route
+                                  path="/loans/accounts/:id"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-list">
+                                      <LoanAccountDetailPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Collection (repayment entry) */}
+                                <Route
+                                  path="/loans/collection"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-list">
+                                      <LoanCollectionPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Repayment approvals (director inbox) */}
+                                <Route
+                                  path="/loans/repayment-approvals"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-list">
+                                      <LoanRepaymentApprovalsPage />
                                     </ProtectedRoute>
                                   }
                                 />

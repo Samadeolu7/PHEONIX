@@ -1,11 +1,112 @@
 ﻿// src/pages/modules/LoansModulePage.tsx
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePermission } from '../../hooks/usePermissions';
 import { useAuth } from '../../contexts/AuthContext';
 import { getFeaturesGroupedByCategory } from '../../config/featureRegistry';
 import { ArrowLeft, CreditCard, ChevronRight } from 'lucide-react';
 import { BRAND } from '../../constants/brand';
+import { loanService } from '../../services/loanService';
+
+interface StageCounts {
+  pending: number;
+  approved: number;
+  disbursed: number;
+  active: number;
+  overdue: number;
+  closed: number;
+  written_off: number;
+}
+
+const PIPELINE_STAGES: { key: keyof StageCounts; label: string; color: string; queryStatus: string }[] = [
+  { key: 'pending',    label: 'Pending',    color: '#f59e0b', queryStatus: 'pending'    },
+  { key: 'approved',   label: 'Approved',   color: '#3b82f6', queryStatus: 'approved'   },
+  { key: 'disbursed',  label: 'Disbursed',  color: '#6366f1', queryStatus: 'disbursed'  },
+  { key: 'active',     label: 'Active',     color: '#22c55e', queryStatus: 'active'     },
+  { key: 'overdue',    label: 'Overdue',    color: '#ef4444', queryStatus: 'active'     },
+  { key: 'closed',     label: 'Paid Off',   color: '#6b7280', queryStatus: 'closed'     },
+  { key: 'written_off',label: 'Written Off',color: '#991b1b', queryStatus: 'written_off'},
+];
+
+function LoanPipeline() {
+  const [counts, setCounts] = useState<Partial<StageCounts>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchCounts() {
+      try {
+        const results = await Promise.allSettled([
+          loanService.listLoans({ status: 'pending' }),
+          loanService.listLoans({ status: 'approved' }),
+          loanService.listLoans({ status: 'disbursed' }),
+          loanService.listLoans({ status: 'active' }),
+          loanService.listLoans({ status: 'closed' }),
+          loanService.listLoans({ status: 'written_off' }),
+        ]);
+        if (cancelled) return;
+        const [pendingRes, approvedRes, disbursedRes, activeRes, closedRes, writtenOffRes] = results;
+        const getCount = (r: PromiseSettledResult<any>) =>
+          r.status === 'fulfilled' ? (r.value?.count ?? (Array.isArray(r.value) ? r.value.length : 0)) : 0;
+        const activeCount = getCount(activeRes);
+        const activeOverdue = activeRes.status === 'fulfilled'
+          ? ((activeRes.value?.results ?? (Array.isArray(activeRes.value) ? activeRes.value : [])) as any[]).filter(
+              (l: any) => l.days_in_arrears > 0
+            ).length
+          : 0;
+        setCounts({
+          pending:    getCount(pendingRes),
+          approved:   getCount(approvedRes),
+          disbursed:  getCount(disbursedRes),
+          active:     activeCount,
+          overdue:    activeOverdue,
+          closed:     getCount(closedRes),
+          written_off: getCount(writtenOffRes),
+        });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    fetchCounts();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div className="mb-8">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-1 h-5 rounded-full flex-shrink-0" style={{ background: BRAND.colors.gold }} />
+        <h2 className="text-xs font-bold uppercase tracking-widest" style={{ color: BRAND.colors.navyPrimary }}>
+          Loan Pipeline
+        </h2>
+        <div className="flex-1 h-px" style={{ background: '#e0d8cc' }} />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        {PIPELINE_STAGES.map((stage) => (
+          <Link
+            key={stage.key}
+            to={`/loans/accounts?status=${stage.queryStatus}`}
+            className="group rounded-xl border bg-white p-4 text-center hover:shadow-md transition-all duration-150"
+            style={{ borderColor: '#e8e0d0' }}
+          >
+            <div
+              className="text-2xl font-bold tabular-nums mb-1 transition-opacity group-hover:opacity-80"
+              style={{ color: stage.color }}
+            >
+              {loading ? '—' : (counts[stage.key] ?? 0)}
+            </div>
+            <div className="text-xs font-medium" style={{ color: BRAND.colors.textSecondary }}>
+              {stage.label}
+            </div>
+            <div
+              className="mt-2 h-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ background: stage.color }}
+            />
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export const LoansModulePage: React.FC = () => {
   const { hasPermission } = usePermission();
@@ -40,6 +141,7 @@ export const LoansModulePage: React.FC = () => {
         </div>
       </div>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <LoanPipeline />
         {totalFeatures === 0 && (
           <div className="bg-white rounded-2xl border p-12 text-center" style={{ borderColor: BRAND.colors.border }}>
             <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(183,151,88,0.1)' }}>

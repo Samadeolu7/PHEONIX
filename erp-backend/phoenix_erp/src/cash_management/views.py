@@ -837,7 +837,7 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
         with db_transaction.atomic():
             # Create journal entry
             series, _ = TransactionSeries.objects.get_or_create(
-                code='PC-SETUP',
+                code='PCSET',
                 defaults={'description': 'Petty Cash Fund Setup'}
             )
             

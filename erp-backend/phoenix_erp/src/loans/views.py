@@ -15,13 +15,14 @@ from common.views import ScopedModelViewSet
 
 from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
-    LoanVerificationRequest, LoanDisbursement,
+    LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest,
 )
 from .serializers import (
     LoanProductSerializer,
     LoanAccountListSerializer, LoanAccountDetailSerializer, LoanAccountCreateSerializer,
     LoanRepaymentScheduleSerializer, LoanCollateralSerializer, LoanGuarantorSerializer,
     LoanVerificationRequestSerializer, LoanDisbursementSerializer,
+    LoanRepaymentRequestSerializer,
 )
 from .utils import LoanVerifier
 from cash_management.services.payment_routing import PaymentRoutingService
@@ -284,6 +285,454 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(LoanAccountDetailSerializer(loan, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def repay(self, request, pk=None):
+        """
+        Record a loan repayment.
+
+        Body:
+          amount           (Decimal, required)
+          payment_date     (date string YYYY-MM-DD, optional — defaults to today)
+          payment_mode     ('cash' | 'bank_transfer', default 'cash')
+          bank_reference   (str, required when payment_mode='bank_transfer')
+          cashier_account_id (int, optional — for cash mode auto-resolves if omitted)
+          bank_account_id  (int, optional — for bank_transfer mode, company bank GL account)
+
+        On success returns: {loan: <detail>, schedule: [...], overpayment_credited: <amount>}
+        """
+        from decimal import Decimal
+        from django.utils import timezone
+        from accounts.models import Account as GlAccount
+
+        loan = self.get_object()
+
+        if loan.status not in ('active', 'disbursed'):
+            return Response(
+                {'detail': f"Cannot record repayment on a '{loan.status}' loan."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── Parse / validate input ────────────────────────────────────────
+        amount_raw = request.data.get('amount')
+        if not amount_raw:
+            return Response({'detail': 'amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount = Decimal(str(amount_raw))
+        except Exception:
+            return Response({'detail': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= 0:
+            return Response({'detail': 'Amount must be positive.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        payment_date_raw = request.data.get('payment_date')
+        if payment_date_raw:
+            from datetime import date
+            try:
+                payment_date = date.fromisoformat(payment_date_raw)
+            except ValueError:
+                return Response({'detail': 'Invalid payment_date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            payment_date = timezone.localdate()
+
+        payment_mode = request.data.get('payment_mode', 'cash')
+        if payment_mode not in ('cash', 'bank_transfer'):
+            return Response({'detail': "payment_mode must be 'cash' or 'bank_transfer'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        bank_reference = request.data.get('bank_reference', '').strip()
+        if payment_mode == 'bank_transfer' and not bank_reference:
+            return Response(
+                {'detail': 'bank_reference is required for bank_transfer payments.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── Resolve payment GL account ────────────────────────────────────
+        if payment_mode == 'cash':
+            cashier_account_id = request.data.get('cashier_account_id')
+            try:
+                payment_account = PaymentRoutingService.resolve_cashier_gl_account(
+                    request.user,
+                    owner=loan.owner,
+                    branch=loan.branch,
+                    cashier_account_id=cashier_account_id,
+                )
+            except ValidationError as exc:
+                return Response(
+                    {'detail': str(exc.message if hasattr(exc, 'message') else exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            bank_account_id = request.data.get('bank_account_id')
+            if not bank_account_id:
+                return Response(
+                    {'detail': 'bank_account_id is required for bank_transfer payments.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                payment_account = GlAccount.objects.get(pk=bank_account_id)
+            except GlAccount.DoesNotExist:
+                return Response({'detail': 'Bank account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # ── Detect overpayment (cap payment at total outstanding) ─────────
+        from decimal import ROUND_HALF_UP
+        total_outstanding = loan.total_outstanding
+        try:
+            total_outstanding = Decimal(str(total_outstanding))
+        except Exception:
+            total_outstanding = Decimal('0.00')
+
+        overpayment_credited = Decimal('0.00')
+        payment_amount = amount
+        excess = Decimal('0.00')
+
+        if total_outstanding > Decimal('0.00') and amount > total_outstanding:
+            excess = (amount - total_outstanding).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            payment_amount = total_outstanding
+
+        # ── Post the repayment ────────────────────────────────────────────
+        description = f"Loan repayment — {loan.loan_number}"
+        if bank_reference:
+            description += f" | Ref: {bank_reference}"
+
+        try:
+            from django.db import transaction as db_transaction
+            with db_transaction.atomic():
+                loan.record_payment(
+                    amount=payment_amount,
+                    payment_date=payment_date,
+                    payment_account=payment_account,
+                    received_by=request.user,
+                )
+
+                if excess > Decimal('0.00'):
+                    from savings.models import SavingsAccount as SavAcct
+                    primary_savings = (
+                        SavAcct.objects
+                        .filter(client=loan.client, status='active')
+                        .order_by('opened_on')
+                        .first()
+                    )
+                    if primary_savings:
+                        primary_savings.deposit(
+                            amount=excess,
+                            description=f"Overpayment credit from loan {loan.loan_number}",
+                            cashier_account=payment_account,
+                            transacted_by=request.user,
+                        )
+                        overpayment_credited = excess
+
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:
+            logger.exception('loan.repay failed for loan pk=%s: %s', pk, exc)
+            return Response(
+                {'detail': f'Repayment failed: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        loan.refresh_from_db()
+        schedule_qs = loan.repayment_schedule.all().order_by('installment_number')
+
+        return Response({
+            'loan': LoanAccountDetailSerializer(loan, context={'request': request}).data,
+            'schedule': LoanRepaymentScheduleSerializer(schedule_qs, many=True).data,
+            'overpayment_credited': str(overpayment_credited),
+        })
+
+    @action(detail=False, methods=['get'], url_path='group-collection')
+    def group_collection(self, request):
+        """
+        Return next outstanding installment per active loan for each member of a group.
+
+        Query params:
+          group_id (int, required)
+          date     (YYYY-MM-DD, optional — defaults to today)
+
+        Returns a list of:
+          {client_id, client_name, loan_account_id, loan_number,
+           next_due_date, total_due, total_paid, remaining,
+           principal_due, interest_due, fees_due, status}
+        """
+        from django.utils import timezone
+        from clients.models import ClientGroup
+        from datetime import date as dt_date
+
+        group_id = request.query_params.get('group_id')
+        if not group_id:
+            return Response({'detail': 'group_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            group = ClientGroup.objects.get(pk=group_id)
+        except ClientGroup.DoesNotExist:
+            return Response({'detail': 'Group not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        date_str = request.query_params.get('date')
+        if date_str:
+            try:
+                collection_date = dt_date.fromisoformat(date_str)
+            except ValueError:
+                return Response({'detail': 'Invalid date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            collection_date = timezone.localdate()
+
+        # Get all active/disbursed loans for group members
+        member_client_ids = list(
+            group.members.filter(is_active=True).values_list('id', flat=True)
+        )
+        loans_qs = (
+            self.get_queryset()
+            .filter(client_id__in=member_client_ids, status__in=('active', 'disbursed'))
+            .select_related('client')
+        )
+
+        rows = []
+        for loan in loans_qs:
+            schedule_item = (
+                loan.repayment_schedule
+                .filter(
+                    status__in=('pending', 'partial', 'overdue'),
+                    due_date__lte=collection_date,
+                )
+                .order_by('due_date', 'installment_number')
+                .first()
+            )
+            if not schedule_item:
+                # Take earliest future pending installment if no overdue/due today
+                schedule_item = (
+                    loan.repayment_schedule
+                    .filter(status__in=('pending', 'partial'))
+                    .order_by('installment_number')
+                    .first()
+                )
+            if not schedule_item:
+                continue
+
+            from decimal import Decimal
+            remaining = Decimal(str(schedule_item.total_due)) - Decimal(str(schedule_item.total_paid))
+            rows.append({
+                'client_id': loan.client_id,
+                'client_name': loan.client.full_name,
+                'loan_account_id': loan.id,
+                'loan_number': loan.loan_number,
+                'next_due_date': str(schedule_item.due_date),
+                'total_due': str(schedule_item.total_due),
+                'total_paid': str(schedule_item.total_paid),
+                'remaining': str(remaining),
+                'principal_due': str(schedule_item.principal_due),
+                'interest_due': str(schedule_item.interest_due),
+                'fees_due': str(schedule_item.fees_due),
+                'status': schedule_item.status,
+            })
+
+        rows.sort(key=lambda r: r['client_name'])
+        return Response(rows)
+
+    @action(detail=False, methods=['post'], url_path='bulk-repay')
+    def bulk_repay(self, request):
+        """
+        Bulk post repayments for multiple loans in a single atomic transaction.
+
+        Body: {
+          payments: [
+            {loan_account_id, amount, payment_date (optional)},
+            ...
+          ],
+          payment_mode: 'cash' | 'bank_transfer',
+          bank_reference: str (required if payment_mode='bank_transfer')
+        }
+
+        Returns: {succeeded: int, failed: [{loan_account_id, error}]}
+        """
+        from decimal import Decimal, ROUND_HALF_UP
+        from django.utils import timezone
+        from datetime import date as dt_date
+        from django.db import transaction as db_transaction
+
+        payments = request.data.get('payments', [])
+        if not payments:
+            return Response({'detail': 'payments list is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        payment_mode = request.data.get('payment_mode', 'cash')
+        bank_reference = request.data.get('bank_reference', '').strip()
+
+        if payment_mode == 'bank_transfer' and not bank_reference:
+            return Response(
+                {'detail': 'bank_reference is required for bank_transfer payments.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        succeeded = 0
+        failed = []
+
+        for item in payments:
+            loan_id = item.get('loan_account_id')
+            amount_raw = item.get('amount')
+            if not loan_id or not amount_raw:
+                failed.append({'loan_account_id': loan_id, 'error': 'loan_account_id and amount are required.'})
+                continue
+
+            try:
+                amount = Decimal(str(amount_raw))
+            except Exception:
+                failed.append({'loan_account_id': loan_id, 'error': 'Invalid amount.'})
+                continue
+
+            if amount <= 0:
+                failed.append({'loan_account_id': loan_id, 'error': 'Amount must be positive.'})
+                continue
+
+            date_raw = item.get('payment_date')
+            if date_raw:
+                try:
+                    payment_date = dt_date.fromisoformat(date_raw)
+                except ValueError:
+                    payment_date = timezone.localdate()
+            else:
+                payment_date = timezone.localdate()
+
+            try:
+                loan = self.get_queryset().get(pk=loan_id)
+            except Exception:
+                failed.append({'loan_account_id': loan_id, 'error': 'Loan not found.'})
+                continue
+
+            # Resolve cashier account
+            if payment_mode == 'cash':
+                try:
+                    payment_account = PaymentRoutingService.resolve_cashier_gl_account(
+                        request.user,
+                        owner=loan.owner,
+                        branch=loan.branch,
+                    )
+                except ValidationError as exc:
+                    failed.append({'loan_account_id': loan_id, 'error': str(exc)})
+                    continue
+            else:
+                from accounts.models import Account as GlAccount
+                bank_account_id = request.data.get('bank_account_id')
+                if not bank_account_id:
+                    failed.append({'loan_account_id': loan_id, 'error': 'bank_account_id required.'})
+                    continue
+                try:
+                    payment_account = GlAccount.objects.get(pk=bank_account_id)
+                except GlAccount.DoesNotExist:
+                    failed.append({'loan_account_id': loan_id, 'error': 'Bank account not found.'})
+                    continue
+
+            try:
+                with db_transaction.atomic():
+                    total_outstanding = Decimal(str(loan.total_outstanding))
+                    payment_amount = min(amount, total_outstanding)
+                    excess = amount - payment_amount
+
+                    description = f"Group repayment — {loan.loan_number}"
+                    if bank_reference:
+                        description += f" | Ref: {bank_reference}"
+
+                    loan.record_payment(
+                        amount=payment_amount,
+                        payment_date=payment_date,
+                        payment_account=payment_account,
+                        received_by=request.user,
+                    )
+
+                    if excess > Decimal('0.005'):
+                        from savings.models import SavingsAccount as SavAcct
+                        primary_savings = (
+                            SavAcct.objects
+                            .filter(client=loan.client, status='active')
+                            .order_by('opened_on')
+                            .first()
+                        )
+                        if primary_savings:
+                            primary_savings.deposit(
+                                amount=excess.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                                description=f"Overpayment from {loan.loan_number}",
+                                cashier_account=payment_account,
+                                transacted_by=request.user,
+                            )
+
+                    succeeded += 1
+            except Exception as exc:
+                failed.append({'loan_account_id': loan_id, 'error': str(exc)})
+
+        return Response({'succeeded': succeeded, 'failed': failed})
+
+    @action(detail=True, methods=['post'], url_path='request-savings-repayment')
+    def request_savings_repayment(self, request, pk=None):
+        """
+        Submit a savings-debit repayment request for director approval.
+
+        Body: {amount, savings_account_id, payment_date (optional), notes (optional)}
+        """
+        from decimal import Decimal
+        from django.utils import timezone
+        from savings.models import SavingsAccount as SavAcct
+        from .models import LoanRepaymentRequest
+
+        loan = self.get_object()
+        if loan.status not in ('active', 'disbursed'):
+            return Response(
+                {'detail': f"Cannot request repayment on a '{loan.status}' loan."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        amount_raw = request.data.get('amount')
+        if not amount_raw:
+            return Response({'detail': 'amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            amount = Decimal(str(amount_raw))
+        except Exception:
+            return Response({'detail': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= 0:
+            return Response({'detail': 'Amount must be positive.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        savings_account_id = request.data.get('savings_account_id')
+        if not savings_account_id:
+            return Response({'detail': 'savings_account_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            savings_account = SavAcct.objects.get(pk=savings_account_id)
+        except SavAcct.DoesNotExist:
+            return Response({'detail': 'Savings account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if savings_account.client != loan.client:
+            return Response(
+                {'detail': 'Savings account does not belong to the loan client.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if amount > savings_account.available_balance:
+            return Response(
+                {'detail': f'Insufficient savings balance: available ₦{savings_account.available_balance}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        date_raw = request.data.get('payment_date')
+        if date_raw:
+            from datetime import date as dt_date
+            try:
+                payment_date = dt_date.fromisoformat(date_raw)
+            except ValueError:
+                payment_date = timezone.localdate()
+        else:
+            payment_date = timezone.localdate()
+
+        repay_request = LoanRepaymentRequest.objects.create(
+            loan=loan,
+            savings_account=savings_account,
+            amount=amount,
+            payment_date=payment_date,
+            requested_by=request.user,
+            notes=request.data.get('notes', ''),
+            owner=loan.owner,
+            branch=loan.branch,
+        )
+
+        return Response(
+            LoanRepaymentRequestSerializer(repay_request, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     def perform_create(self, serializer):
         """
@@ -848,3 +1297,123 @@ class FeesPreviewView(ScopedModelViewSet):
         loan_product = LoanProduct.objects.get(pk=product_pk)
         preview = get_fee_preview(loan_product, amount)
         return Response(FeePreviewer(preview, many=True).data)
+
+
+class LoanRepaymentRequestViewSet(ScopedModelViewSet):
+    """
+    Director's inbox for pending savings-debit repayment requests.
+
+    GET  /api/loans/repayment-requests/              — list (pending by default)
+    POST /api/loans/repayment-requests/:id/approve/  — director posts GL
+    POST /api/loans/repayment-requests/:id/reject/   — director rejects
+    """
+    queryset = LoanRepaymentRequest.objects.select_related(
+        'loan', 'loan__client', 'savings_account', 'requested_by', 'reviewed_by',
+    ).all()
+    serializer_class = LoanRepaymentRequestSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status_filter = self.request.query_params.get('status', 'pending')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """
+        Director approves the request: posts the savings debit + loan repayment
+        as a single atomic operation. Uses the savings account's GL account as
+        the payment_account so no cash changes hands.
+        """
+        from decimal import Decimal
+        from django.db import transaction as db_transaction
+        from django.utils import timezone
+        from .models import LoanRepaymentRequest
+
+        req = self.get_object()
+
+        if req.status != LoanRepaymentRequest.STATUS_PENDING:
+            return Response(
+                {'detail': f"Request is already '{req.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        loan = req.loan
+        savings_account = req.savings_account
+        amount = req.amount
+
+        if loan.status not in ('active', 'disbursed'):
+            return Response(
+                {'detail': f"Loan is '{loan.status}' — cannot record repayment."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if amount > savings_account.available_balance:
+            return Response(
+                {
+                    'detail': (
+                        f'Insufficient savings balance: '
+                        f'available ₦{savings_account.available_balance}, '
+                        f'requested ₦{amount}.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Cap at total outstanding to avoid overpayment error
+        total_outstanding = loan.total_outstanding
+        payment_amount = min(amount, total_outstanding)
+
+        try:
+            with db_transaction.atomic():
+                # Use savings GL account as payment source — DR: Savings (liability ↓), CR: Loan accounts
+                journal = loan.record_payment(
+                    amount=payment_amount,
+                    payment_date=req.payment_date,
+                    payment_account=savings_account.account,
+                    received_by=request.user,
+                )
+
+                req.status = LoanRepaymentRequest.STATUS_POSTED
+                req.reviewed_by = request.user
+                req.reviewed_at = timezone.now()
+                req.journal_entry = journal
+                req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'journal_entry'])
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            LoanRepaymentRequestSerializer(req, context={'request': request}).data,
+        )
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        from django.utils import timezone
+        from .models import LoanRepaymentRequest
+
+        req = self.get_object()
+
+        if req.status != LoanRepaymentRequest.STATUS_PENDING:
+            return Response(
+                {'detail': f"Request is already '{req.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        rejection_reason = request.data.get('rejection_reason', '').strip()
+        if not rejection_reason:
+            return Response(
+                {'detail': 'rejection_reason is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        req.status = LoanRepaymentRequest.STATUS_REJECTED
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.rejection_reason = rejection_reason
+        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+
+        return Response(
+            LoanRepaymentRequestSerializer(req, context={'request': request}).data,
+        )

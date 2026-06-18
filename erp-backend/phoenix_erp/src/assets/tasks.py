@@ -186,7 +186,7 @@ def post_monthly_depreciation(self):  # noqa: ARG002
 def _get_or_create_depreciation_series():
     from transactions.models import TransactionSeries
     return TransactionSeries.objects.get_or_create(
-        code='DEP-MONTHLY',
+        code='DEPMN',
         defaults={'description': 'Monthly Asset Depreciation'},
     )
 

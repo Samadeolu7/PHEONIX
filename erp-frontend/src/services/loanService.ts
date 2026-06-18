@@ -186,6 +186,47 @@ export interface LoanAccountFilters {
   page?: number;
 }
 
+export interface RepayLoanPayload {
+  amount: string;
+  payment_date?: string;
+  payment_mode?: 'cash' | 'bank_transfer';
+  bank_reference?: string;
+  cashier_account_id?: number;
+  bank_account_id?: number;
+}
+
+export interface RepayLoanResult {
+  loan: LoanAccount;
+  schedule: LoanRepaymentSchedule[];
+  overpayment_credited?: string;
+}
+
+export interface GroupCollectionRow {
+  client_id: number;
+  client_name: string;
+  loan_account_id: number;
+  loan_number: string;
+  next_due_date: string;
+  total_due: string;
+  total_paid: string;
+  remaining: string;
+  principal_due: string;
+  interest_due: string;
+  fees_due: string;
+  status: 'pending' | 'partial' | 'overdue';
+}
+
+export interface BulkRepayPayment {
+  loan_account_id: number;
+  amount: string;
+  payment_date?: string;
+}
+
+export interface BulkRepayResult {
+  succeeded: number;
+  failed: { loan_account_id: number; error: string }[];
+}
+
 export interface CreateLoanAccountData {
   client: number;
   product: number;
@@ -253,6 +294,48 @@ export const loanService = {
 
   async rejectLoan(id: number, reason: string): Promise<LoanAccount> {
     return api.post(`${BASE}/accounts/${id}/reject/`, { reason });
+  },
+
+  async repayLoan(id: number, data: RepayLoanPayload): Promise<RepayLoanResult> {
+    return api.post(`${BASE}/accounts/${id}/repay/`, data);
+  },
+
+  async getGroupCollection(groupId: number, date?: string): Promise<GroupCollectionRow[]> {
+    const params: Record<string, string | number> = { group_id: groupId };
+    if (date) params.date = date;
+    const res = await api.get(`${BASE}/accounts/group-collection/`, { params });
+    return Array.isArray(res) ? res : [];
+  },
+
+  async bulkRepay(data: {
+    payments: BulkRepayPayment[];
+    payment_mode?: 'cash' | 'bank_transfer';
+    bank_reference?: string;
+    bank_account_id?: number;
+  }): Promise<BulkRepayResult> {
+    return api.post(`${BASE}/accounts/bulk-repay/`, data);
+  },
+
+  async requestSavingsRepayment(
+    loanId: number,
+    data: { amount: string; savings_account_id: number; payment_date?: string; notes?: string }
+  ): Promise<LoanRepaymentRequest> {
+    return api.post(`${BASE}/accounts/${loanId}/request-savings-repayment/`, data);
+  },
+
+  // ===== REPAYMENT REQUESTS (director approval) =====
+
+  async listRepaymentRequests(params?: { status?: string }): Promise<LoanRepaymentRequest[]> {
+    const res = await api.get(`${BASE}/repayment-requests/`, { params });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  async approveRepaymentRequest(id: number): Promise<LoanRepaymentRequest> {
+    return api.post(`${BASE}/repayment-requests/${id}/approve/`);
+  },
+
+  async rejectRepaymentRequest(id: number, rejection_reason: string): Promise<LoanRepaymentRequest> {
+    return api.post(`${BASE}/repayment-requests/${id}/reject/`, { rejection_reason });
   },
 
   // ===== COLLATERAL =====
@@ -428,4 +511,28 @@ export interface FeePreviewItem {
 export interface FeeRouting {
   destination: 'cashier' | 'savings';
   savings_account_id?: number | null;
+}
+
+export interface LoanRepaymentRequest {
+  id: number;
+  loan: number;
+  loan_number: string;
+  client_name: string;
+  savings_account: number;
+  savings_account_number: string;
+  amount: string;
+  payment_date: string;
+  notes: string;
+  requested_by: number;
+  requested_by_name: string;
+  status: 'pending' | 'approved' | 'rejected' | 'posted';
+  reviewed_by: number | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string;
+  journal_entry: number | null;
+  owner: number;
+  branch: number;
+  created_at: string;
+  updated_at: string;
 }

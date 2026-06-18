@@ -136,7 +136,7 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         )
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code='SAV-DEP',
+            code='SVDEP',
             defaults={'description': 'Savings Deposits'},
         )
 
@@ -214,7 +214,7 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         )
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code='SAV-WDR',
+            code='SVWDR',
             defaults={'description': 'Savings Withdrawals'},
         )
 

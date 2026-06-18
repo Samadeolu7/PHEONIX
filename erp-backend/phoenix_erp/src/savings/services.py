@@ -79,7 +79,7 @@ def handle_first_deposit_income(
     )
 
     series, _ = TransactionSeries.objects.get_or_create(
-        code='SAV-1STINC',
+        code='SV1ST',
         defaults={'description': 'First Deposit Income (Daily Contribution)'},
     )
 
@@ -165,7 +165,7 @@ def apply_cycle_interest(savings_account: SavingsAccount, transacted_by) -> obje
     )
 
     series, _ = TransactionSeries.objects.get_or_create(
-        code='SAV-CYCINT',
+        code='SVCYI',
         defaults={'description': 'Savings Cycle Interest'},
     )
 
@@ -262,7 +262,7 @@ def apply_cycle_break_penalty(
     )
 
     series, _ = TransactionSeries.objects.get_or_create(
-        code='SAV-CYCPEN',
+        code='SVCYP',
         defaults={'description': 'Savings Cycle Break Penalty'},
     )
 

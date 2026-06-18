@@ -755,7 +755,7 @@ class CashTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         from transactions.models import Transaction, TransactionEntry, TransactionSeries
         
         series, _ = TransactionSeries.objects.get_or_create(
-            code='CASH-TRF',
+            code='CSHTR',
             defaults={'description': 'Cash Transfers'}
         )
         
@@ -1481,7 +1481,7 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         
         # Get or create PC-SETUP series
         series, _ = TransactionSeries.objects.get_or_create(
-            code='PC-SETUP',
+            code='PCSET',
             defaults={'description': 'Petty Cash Fund Establishment'}
         )
         
@@ -2618,7 +2618,7 @@ class DailyCollectionSheet(TimeStampedModel, BranchScopedModel, SoftDeleteModel)
                     TransactionSeries,
                 )
                 series, _ = TransactionSeries.objects.get_or_create(
-                    code='CASH-BANK',
+                    code='CSHBK',
                     defaults={'description': 'Daily Cash-to-Bank Sweep'},
                 )
                 journal_entry = JournalEntry.objects.create(
@@ -3037,7 +3037,7 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             )
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code='LN-FEE',
+            code='LNFEE',
             defaults={'description': 'Loan Administrative Fee'},
         )
         je = JournalEntry.objects.create(

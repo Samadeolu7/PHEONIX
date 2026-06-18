@@ -335,3 +335,31 @@ export const approveWithdrawalStep = (
 
 export const cancelWithdrawal = (id: number): Promise<SavingsWithdrawalRequest> =>
   api.post(`${BASE_WITHDRAWALS}/${id}/cancel/`, {});
+
+// ── Savings Account Transaction Ledger ─────────────────────────────────────
+
+export interface SavingsTransactionRow {
+  id: number;
+  date: string;
+  reference: string;
+  description: string;
+  debit: string | null;
+  credit: string | null;
+  balance: string;
+}
+
+export interface SavingsTransactionPage {
+  count: number;
+  page: number;
+  page_size: number;
+  results: SavingsTransactionRow[];
+}
+
+export const getSavingsTransactions = (
+  accountId: number,
+  page = 1,
+  pageSize = 50,
+): Promise<SavingsTransactionPage> =>
+  api.get(`${BASE_ACCOUNTS}/${accountId}/transactions/`, {
+    params: { page, page_size: pageSize },
+  });

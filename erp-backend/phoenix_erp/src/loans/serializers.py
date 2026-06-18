@@ -6,6 +6,7 @@ from .models import (
     LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement,
     LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
+    LoanRepaymentRequest,
 )
 
 
@@ -307,3 +308,38 @@ class FeePreviewer(serializers.Serializer):
     debit_destination = serializers.CharField(read_only=True)
     default_savings_product_id = serializers.IntegerField(read_only=True, allow_null=True)
     default_savings_product_name = serializers.CharField(read_only=True, allow_null=True)
+
+
+
+class LoanRepaymentRequestSerializer(TenantModelSerializer):
+    loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
+    client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
+    savings_account_number = serializers.CharField(source='savings_account.account_number', read_only=True)
+    requested_by_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
+
+    def get_requested_by_name(self, obj):
+        return obj.requested_by.get_full_name() if obj.requested_by else None
+
+    def get_reviewed_by_name(self, obj):
+        return obj.reviewed_by.get_full_name() if obj.reviewed_by else None
+
+    class Meta:
+        model = LoanRepaymentRequest
+        fields = [
+            'id', 'loan', 'loan_number', 'client_name',
+            'savings_account', 'savings_account_number',
+            'amount', 'payment_date', 'notes',
+            'requested_by', 'requested_by_name',
+            'status', 'reviewed_by', 'reviewed_by_name',
+            'reviewed_at', 'rejection_reason', 'journal_entry',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'loan_number', 'client_name', 'savings_account_number',
+            'requested_by', 'requested_by_name',
+            'status', 'reviewed_by', 'reviewed_by_name',
+            'reviewed_at', 'rejection_reason', 'journal_entry',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+

@@ -397,7 +397,7 @@ class BulkLoanAccrualView(APIView):
 
         # Fetch the LN-ACCR series once outside the loop
         accrual_series, _ = TransactionSeries.objects.get_or_create(
-            code='LN-ACCR',
+            code='LNACC',
             defaults={'description': 'Loan Interest Accruals (Batch)'},
         )
 

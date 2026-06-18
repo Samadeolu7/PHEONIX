@@ -338,7 +338,7 @@ def post_monthly_savings_interest(self):  # noqa: ARG002
                     continue
 
                 series, _ = TransactionSeries.objects.get_or_create(
-                    code='SSI-MONTHLY',
+                    code='SSIMN',
                     defaults={'description': 'Monthly Savings Interest'},
                 )
 
