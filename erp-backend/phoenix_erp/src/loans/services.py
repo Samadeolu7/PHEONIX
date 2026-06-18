@@ -234,14 +234,12 @@ def apply_loan_fees(
             account=debit_account,
             side=JournalEntryLine.DEBIT,
             amount=amount,
-            description=f"{fee.name} — debit {'savings' if destination == 'savings' else 'cashier'}",
         )
         JournalEntryLine.objects.create(
             transaction=journal,
             account=fee.gl_income_account,
             side=JournalEntryLine.CREDIT,
             amount=amount,
-            description=f"{fee.name} income",
         )
 
         journal.post()
