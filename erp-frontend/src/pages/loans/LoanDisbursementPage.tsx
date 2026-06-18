@@ -13,6 +13,7 @@ import {
   LoanDisbursement,
   DisbursementStatus,
 } from '../../services/loanService';
+import { bankService } from '../../services/bankService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
 import {
@@ -25,7 +26,7 @@ import {
   Send,
 } from 'lucide-react';
 
-interface BankAccount { id: number; account_number: string; bank_name: string; }
+import type { BankAccount } from '../../types/banks';
 
 const STATUS_LABELS: Record<DisbursementStatus, string> = {
   pending_approval: 'Pending Approval',
@@ -65,14 +66,12 @@ const LoanDisbursementPage: React.FC = () => {
   const loadData = useCallback(async () => {
     if (!loanId) return;
     try {
-      const [disbList, baRes] = await Promise.all([
+      const [disbList, bankAccRes] = await Promise.all([
         loanService.listDisbursements({ loan: Number(loanId) }),
-        fetch('/api/banks/bank-accounts/?is_active=true', {
-          headers: { Authorization: `Token ${localStorage.getItem('auth_token')}` },
-        }).then((r) => r.json()),
+        bankService.listBankAccounts({ is_active: true }),
       ]);
       if (disbList.length > 0) setDisbursement(disbList[0]);
-      setBankAccounts(baRes?.results ?? baRes ?? []);
+      setBankAccounts(bankAccRes);
     } catch {
       showError('Failed to load disbursement data');
     } finally {

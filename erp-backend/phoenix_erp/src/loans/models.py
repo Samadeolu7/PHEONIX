@@ -980,15 +980,31 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             schedule.save()
             remaining -= payment_to_schedule
     
-    def _calculate_arrears(self):
-        """Calculate arrears"""
+    def mark_overdue_installments(self):
+        """
+        Bulk-update past-due pending/partial installments to 'overdue'.
+        Safe to call multiple times — idempotent.
+        """
         today = timezone.now().date()
-        
+        self.repayment_schedule.filter(
+            due_date__lt=today,
+            status__in=['pending', 'partial'],
+        ).update(status='overdue')
+
+    def _calculate_arrears(self):
+        """
+        Mark overdue installments then recalculate days_in_arrears and arrears_amount.
+        Calls mark_overdue_installments() first so the status filter always includes
+        newly-late items even if no payment has been recorded since they fell due.
+        """
+        self.mark_overdue_installments()
+
+        today = timezone.now().date()
         overdue = self.repayment_schedule.filter(
             due_date__lt=today,
-            status__in=['pending', 'partial']
+            status__in=['pending', 'partial', 'overdue'],
         )
-        
+
         if overdue.exists():
             self.arrears_amount = sum(
                 s.total_due - s.total_paid for s in overdue
@@ -999,7 +1015,10 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             self.arrears_amount = Decimal('0.00')
             self.days_in_arrears = 0
 
-        self.save()
+        self.last_batch_processed_at = timezone.now()
+        self.save(update_fields=[
+            'arrears_amount', 'days_in_arrears', 'last_batch_processed_at', 'updated_at',
+        ])
 
     @transaction.atomic
     def write_off(

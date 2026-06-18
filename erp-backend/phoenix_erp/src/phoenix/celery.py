@@ -42,10 +42,17 @@ app.conf.beat_schedule = {
         'args': ()
     },
 
-    # Loan penalty — 5% daily on overdue monthly loans at 01:00 WAT (00:00 UTC)
+    # Loan arrears refresh — mark overdue installments, recalculate days_in_arrears
+    # Runs at 00:05 UTC (01:05 WAT) so it finishes before the penalty task below.
+    'update-all-loan-arrears': {
+        'task': 'loans.tasks.update_all_loan_arrears',
+        'schedule': crontab(hour=0, minute=5),
+    },
+
+    # Loan penalty — apply daily penalty charge AFTER arrears are refreshed
     'apply-daily-loan-penalties': {
         'task': 'loans.tasks.apply_daily_loan_penalties',
-        'schedule': crontab(hour=0, minute=0),  # 00:00 UTC = 01:00 WAT (Africa/Lagos UTC+1)
+        'schedule': crontab(hour=0, minute=10),  # 00:10 UTC = 01:10 WAT (Africa/Lagos UTC+1)
     },
 
     # Daily collection workflow — 10 AM WAT grace-period notification
