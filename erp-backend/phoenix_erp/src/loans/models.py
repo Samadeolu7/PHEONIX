@@ -1946,8 +1946,7 @@ class LoanRepaymentRequest(TimeStampedModel, BranchScopedModel):
     )
     notes = models.TextField(blank=True)
 
-    objects = OwnerBranchManager()
-    all_objects = OwnerBranchManager()
+    objects = OwnerBranchManager(include_deleted=True)
 
     class Meta:
         ordering = ['-created_at']
