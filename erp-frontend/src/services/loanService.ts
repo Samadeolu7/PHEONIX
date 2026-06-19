@@ -316,6 +316,10 @@ export const loanService = {
     return api.post(`${BASE}/accounts/bulk-repay/`, data);
   },
 
+  async requestDisbursement(loanId: number, notes?: string): Promise<LoanDisbursement> {
+    return api.post(`${BASE}/accounts/${loanId}/request-disbursement/`, { notes: notes ?? '' });
+  },
+
   async requestSavingsRepayment(
     loanId: number,
     data: { amount: string; savings_account_id: number; payment_date?: string; notes?: string }

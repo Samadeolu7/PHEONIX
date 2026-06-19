@@ -660,6 +660,46 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         return Response({'succeeded': succeeded, 'failed': failed})
 
+    @action(detail=True, methods=['post'], url_path='request-disbursement')
+    def request_disbursement(self, request, pk=None):
+        """
+        Create a disbursement request for an approved loan.
+
+        If an active request already exists (pending_approval or approved) it is
+        returned as-is so the UI can navigate to it without creating duplicates.
+        """
+        from .models import LoanDisbursement
+
+        loan = self.get_object()
+        if loan.status != 'approved':
+            return Response(
+                {'detail': f"Only approved loans can request disbursement (loan is '{loan.status}')."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Return existing active request to avoid duplicates (OneToOneField)
+        try:
+            existing = loan.disbursement_request
+            if existing.status in ('pending_approval', 'approved'):
+                return Response(
+                    LoanDisbursementSerializer(existing, context={'request': request}).data,
+                    status=status.HTTP_200_OK,
+                )
+        except LoanDisbursement.DoesNotExist:
+            pass
+
+        disbursement = LoanDisbursement.objects.create(
+            loan=loan,
+            requested_by=request.user,
+            notes=request.data.get('notes', ''),
+            owner=loan.owner,
+            branch=loan.branch,
+        )
+        return Response(
+            LoanDisbursementSerializer(disbursement, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
     @action(detail=True, methods=['post'], url_path='request-savings-repayment')
     def request_savings_repayment(self, request, pk=None):
         """

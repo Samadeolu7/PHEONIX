@@ -308,6 +308,20 @@ export default function LoanAccountDetailPage() {
     }
   }
 
+  async function handleRequestDisbursement() {
+    if (!loan) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await loanService.requestDisbursement(loan.id);
+      navigate(`/loans/disbursements/${loan.id}`);
+    } catch (e: unknown) {
+      const err = e as { detail?: string; message?: string };
+      setActionError(err?.detail ?? err?.message ?? 'Could not create disbursement request.');
+      setActionLoading(false);
+    }
+  }
+
   const nextInstallment = schedule
     .filter((s) => s.status === 'pending' || s.status === 'partial' || s.status === 'overdue')
     .sort((a, b) => a.installment_number - b.installment_number)[0] ?? null;
@@ -394,12 +408,15 @@ export default function LoanAccountDetailPage() {
             )}
 
             {loan.status === 'approved' && (
-              <Link
-                to={`/loans/disbursements/${loan.id}`}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+              <button
+                type="button"
+                onClick={handleRequestDisbursement}
+                disabled={actionLoading}
+                className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
+                {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                 Request Disbursement
-              </Link>
+              </button>
             )}
 
             {/* For loans that have a verification but need approval */}

@@ -27,6 +27,8 @@ import {
   Tag,
   Sliders,
   RotateCcw,
+  Landmark,
+  PiggyBank,
 } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
 import { expenseService } from '../services/expenseService';
@@ -41,6 +43,8 @@ import { incomeFeeStructureService } from '../services/incomeFeeStructureService
 import { discountService } from '../services/discountService';
 import { assetAcquisitionService } from '../services/assetsService';
 import { invoiceService } from '../services/invoiceService';
+import { loanService } from '../services/loanService';
+import { getPendingMyApproval, approveWithdrawalStep } from '../services/savingsService';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -484,6 +488,24 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
         queryFn: () => hrService.getStaffIOUs({ status: 'PENDING' }),
         staleTime: 30_000,
       },
+      // 19 – Loan Disbursement Requests pending approval
+      {
+        queryKey: ['pending-approvals-loan-disbursements'],
+        queryFn: () => loanService.listDisbursements({ status: 'pending_approval' }),
+        staleTime: 30_000,
+      },
+      // 20 – Savings Withdrawal Requests pending my approval step
+      {
+        queryKey: ['pending-approvals-savings-withdrawals'],
+        queryFn: () => getPendingMyApproval(),
+        staleTime: 30_000,
+      },
+      // 21 – Loan Repayment Requests (savings debit) pending approval
+      {
+        queryKey: ['pending-approvals-loan-repayment-requests'],
+        queryFn: () => loanService.listRepaymentRequests({ status: 'pending' }),
+        staleTime: 30_000,
+      },
     ],
   });
 
@@ -507,6 +529,9 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
     assetAcquisitionsQ,
     paymentReversalRequestsQ,
     staffIOUsQ,
+    loanDisbursementsQ,
+    savingsWithdrawalsQ,
+    loanRepaymentRequestsQ,
   ] = results;
 
   // Invalidate helper – re-run all queries
@@ -831,6 +856,48 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
     })
   );
 
+  const loanDisbursementItems: ApprovalItem[] = (
+    Array.isArray(loanDisbursementsQ.data) ? loanDisbursementsQ.data : []
+  ).map((d: any) => ({
+    id: d.id,
+    title: d.loan_number || `Disbursement #${d.id}`,
+    subtitle: d.requested_by_name || '',
+    amount: null,
+    date: fmtDate(d.created_at),
+    viewPath: `/loans/disbursements/${d.loan}`,
+    onApprove: act((_: string) => loanService.approveDisbursement(d.id).then(() => {})),
+    onReject: act((reason: string) => loanService.rejectDisbursement(d.id, reason).then(() => {})),
+  }));
+
+  const savingsWithdrawalItems: ApprovalItem[] = (
+    Array.isArray(savingsWithdrawalsQ.data) ? savingsWithdrawalsQ.data : []
+  ).map((w: any) => ({
+    id: w.id,
+    title: w.account_number || `Withdrawal #${w.id}`,
+    subtitle: w.client_name || w.description || '',
+    amount: fmt(w.amount),
+    date: fmtDate(w.created_at),
+    viewPath: `/savings/withdrawals`,
+    onApprove: act((notes: string) =>
+      approveWithdrawalStep(w.id, { approved: true, comment: notes }).then(() => {})
+    ),
+  }));
+
+  const loanRepaymentRequestItems: ApprovalItem[] = (
+    Array.isArray(loanRepaymentRequestsQ.data) ? loanRepaymentRequestsQ.data : []
+  ).map((r: any) => ({
+    id: r.id,
+    title: r.loan_number || `Repayment Request #${r.id}`,
+    subtitle: `${r.client_name || ''} — savings ${r.savings_account_number || ''}`.replace(/^— |— $/, ''),
+    amount: fmt(r.amount),
+    date: fmtDate(r.created_at),
+    viewPath: `/loans/repayment-approvals`,
+    onApprove: act((_: string) => loanService.approveRepaymentRequest(r.id).then(() => {})),
+    onReject: act((reason: string) =>
+      loanService.rejectRepaymentRequest(r.id, reason).then(() => {})
+    ),
+  }));
+
   // ── Build sections ─────────────────────────────────────────────────────────
 
   const sections: ApprovalSection[] = [
@@ -1004,6 +1071,33 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       items: staffIOUItems,
       isLoading: staffIOUsQ.isLoading,
       isError: staffIOUsQ.isError,
+    },
+    {
+      id: 'loan-disbursements',
+      label: 'Loan Disbursements',
+      icon: <Landmark className="w-4 h-4" />,
+      color: 'bg-blue-700',
+      items: loanDisbursementItems,
+      isLoading: loanDisbursementsQ.isLoading,
+      isError: loanDisbursementsQ.isError,
+    },
+    {
+      id: 'savings-withdrawals',
+      label: 'Savings Withdrawals',
+      icon: <Wallet className="w-4 h-4" />,
+      color: 'bg-emerald-700',
+      items: savingsWithdrawalItems,
+      isLoading: savingsWithdrawalsQ.isLoading,
+      isError: savingsWithdrawalsQ.isError,
+    },
+    {
+      id: 'loan-repayment-requests',
+      label: 'Savings-Debit Repayments',
+      icon: <PiggyBank className="w-4 h-4" />,
+      color: 'bg-violet-700',
+      items: loanRepaymentRequestItems,
+      isLoading: loanRepaymentRequestsQ.isLoading,
+      isError: loanRepaymentRequestsQ.isError,
     },
   ];
 
