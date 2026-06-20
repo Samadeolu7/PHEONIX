@@ -491,7 +491,7 @@ class FinancialStatementService:
             return result
 
         # CHILD: use stored balance fields as the authoritative source
-        is_debit_normal = account.account_type in [Account.ASSET, Account.EXPENSE]
+        is_debit_normal = account.account_type in [Account.ASSET, Account.EXPENSE, Account.LOAN]
 
         if start_date:
             # Date-range view: balance brought forward + posted period entries.
