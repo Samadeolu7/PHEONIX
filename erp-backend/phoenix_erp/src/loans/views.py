@@ -677,16 +677,41 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Return existing active request to avoid duplicates (OneToOneField)
+        # Handle existing record — OneToOneField means only one row can exist per loan.
         try:
             existing = loan.disbursement_request
+        except LoanDisbursement.DoesNotExist:
+            existing = None
+
+        if existing is not None:
             if existing.status in ('pending_approval', 'approved'):
+                # Already has an active request — return it as-is.
                 return Response(
                     LoanDisbursementSerializer(existing, context={'request': request}).data,
                     status=status.HTTP_200_OK,
                 )
-        except LoanDisbursement.DoesNotExist:
-            pass
+
+            if existing.status == 'disbursed':
+                return Response(
+                    {'detail': 'This loan has already been disbursed.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Rejected or cancelled — re-open it so the officer can try again.
+            existing.status = 'pending_approval'
+            existing.requested_by = request.user
+            existing.rejection_reason = ''
+            existing.approved_by = None
+            existing.approved_at = None
+            existing.notes = request.data.get('notes', existing.notes)
+            existing.save(update_fields=[
+                'status', 'requested_by', 'rejection_reason',
+                'approved_by', 'approved_at', 'notes', 'updated_at',
+            ])
+            return Response(
+                LoanDisbursementSerializer(existing, context={'request': request}).data,
+                status=status.HTTP_200_OK,
+            )
 
         disbursement = LoanDisbursement.objects.create(
             loan=loan,
