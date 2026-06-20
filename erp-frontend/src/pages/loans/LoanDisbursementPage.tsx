@@ -70,10 +70,20 @@ const LoanDisbursementPage: React.FC = () => {
         loanService.listDisbursements({ loan: Number(loanId) }),
         bankService.listBankAccounts({ is_active: true }),
       ]);
-      if (disbList.length > 0) setDisbursement(disbList[0]);
       setBankAccounts(bankAccRes);
-    } catch {
-      showError('Failed to load disbursement data');
+
+      if (disbList.length > 0) {
+        setDisbursement(disbList[0]);
+      } else {
+        // No disbursement record yet — create one automatically.
+        // This handles the case where the user navigated here directly
+        // before the "Request Disbursement" button had a chance to create it.
+        const created = await loanService.requestDisbursement(Number(loanId));
+        setDisbursement(created);
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail ?? err?.message ?? 'Failed to load disbursement data';
+      showError(msg);
     } finally {
       setLoading(false);
     }
@@ -145,9 +155,9 @@ const LoanDisbursementPage: React.FC = () => {
   if (!disbursement) {
     return (
       <div className="max-w-2xl mx-auto p-6">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-center gap-3">
-          <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0" />
-          <p className="text-yellow-800">No disbursement request found for this loan.</p>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0" />
+          <p className="text-red-800">Could not create or load a disbursement request. Please ensure the loan is in Approved status and try again.</p>
         </div>
       </div>
     );
