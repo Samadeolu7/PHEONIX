@@ -439,108 +439,128 @@ class FinancialStatementService:
         include_children: bool = False
     ) -> Dict:
         """
-        Calculate account balance from transaction entries
-        
-        For PARENT accounts: Aggregates balances from all child accounts
-        For CHILD accounts: Calculates from transaction entries
-        
-        Returns:
-            {
-                'code': str,
-                'name': str,
-                'account_type': str,
-                'level': str,
-                'debit': Decimal,
-                'credit': Decimal,
-                'balance': Decimal,
-                'children': [...]  # if include_children and has children
-            }
+        Calculate account balance.
+
+        For PARENT accounts: aggregates from child accounts.
+        For CHILD accounts:
+          - No start_date: uses Account.balance (stored field) directly. This
+            surfaces balances even when TransactionEntry records are not yet
+            marked posted, and lets the caller spot discrepancies between the
+            stored balance and what entries alone would compute.
+          - With start_date: uses Account.balance_bf (balance brought forward)
+            as the opening figure, then adds posted period entries on top.
+            Closing balance = balance_bf ± net period movement.
+
+        Returns dict with keys: code, name, account_type, level, balance_bf,
+        debit, credit, balance, [children].
         """
-        # For parent accounts, aggregate child balances
+        # PARENT: aggregate children recursively
         if account.account_level == Account.LEVEL_PARENT:
             children = account.children.filter(is_deleted=False)
-            
-            # Calculate totals by aggregating children
+
             total_debit = Decimal('0.00')
             total_credit = Decimal('0.00')
             total_balance = Decimal('0.00')
+            total_balance_bf = Decimal('0.00')
             children_data = []
-            
+
             for child in children.order_by('code'):
-                child_balance = self._calculate_account_balance(
-                    child,
-                    start_date,
-                    end_date,
-                    include_children=False
+                child_data = self._calculate_account_balance(
+                    child, start_date, end_date, include_children=False
                 )
-                total_debit += Decimal(child_balance['debit'])
-                total_credit += Decimal(child_balance['credit'])
-                total_balance += Decimal(child_balance['balance'])
-                
+                total_debit += Decimal(child_data['debit'])
+                total_credit += Decimal(child_data['credit'])
+                total_balance += Decimal(child_data['balance'])
+                total_balance_bf += Decimal(child_data['balance_bf'])
+
                 if include_children:
-                    children_data.append(child_balance)
-            
+                    children_data.append(child_data)
+
             result = {
                 'code': account.code,
                 'name': account.name,
                 'account_type': account.account_type,
                 'level': account.account_level,
+                'balance_bf': str(total_balance_bf),
                 'debit': str(total_debit),
                 'credit': str(total_credit),
-                'balance': str(total_balance)
+                'balance': str(total_balance),
             }
-            
             if include_children and children_data:
                 result['children'] = children_data
-            
             return result
-        
-        # For child accounts, calculate from transaction entries
-        # Scope by branch/tenant, NOT by owner
-        entries = TransactionEntry.objects.filter(
-            account=account,
-            transaction__is_deleted=False,
-            posted=True
-        )
-        
-        if self.branch:
-            entries = entries.filter(transaction__branch=self.branch)
-        elif hasattr(self.owner, 'tenant') and self.owner.tenant:
-            entries = entries.filter(transaction__tenant=self.owner.tenant)
-        
+
+        # CHILD: use stored balance fields as the authoritative source
+        is_debit_normal = account.account_type in [Account.ASSET, Account.EXPENSE]
+
         if start_date:
-            entries = entries.filter(transaction__date__gte=start_date)
-        if end_date:
-            entries = entries.filter(transaction__date__lte=end_date)
-        
-        # Calculate debit and credit totals
-        debit_total = entries.filter(side=TransactionEntry.DEBIT).aggregate(
-            total=Sum('amount')
-        )['total'] or Decimal('0.00')
-        
-        credit_total = entries.filter(side=TransactionEntry.CREDIT).aggregate(
-            total=Sum('amount')
-        )['total'] or Decimal('0.00')
-        
-        # Calculate balance based on account type
-        # Assets, Expenses: Debit increases, Credit decreases
-        # Liabilities, Equity, Income: Credit increases, Debit decreases
-        if account.account_type in [Account.ASSET, Account.EXPENSE]:
-            balance = debit_total - credit_total
+            # Date-range view: balance brought forward + posted period entries.
+            # balance_bf is the pre-period opening balance set during period close.
+            bbf = account.balance_bf
+
+            # Posted entries in the requested period
+            entries = TransactionEntry.objects.filter(
+                account=account,
+                transaction__is_deleted=False,
+                posted=True,
+                transaction__date__gte=start_date,
+                transaction__date__lte=end_date,
+            )
+            if self.branch:
+                entries = entries.filter(transaction__branch=self.branch)
+            elif hasattr(self.owner, 'tenant') and self.owner.tenant:
+                entries = entries.filter(transaction__tenant=self.owner.tenant)
+
+            period_debit = entries.filter(side=TransactionEntry.DEBIT).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+            period_credit = entries.filter(side=TransactionEntry.CREDIT).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+
+            # Split BBF into its debit/credit component based on account type
+            if is_debit_normal:
+                bbf_debit = max(bbf, Decimal('0.00'))
+                bbf_credit = max(-bbf, Decimal('0.00'))
+            else:
+                bbf_credit = max(bbf, Decimal('0.00'))
+                bbf_debit = max(-bbf, Decimal('0.00'))
+
+            total_debit = bbf_debit + Decimal(str(period_debit))
+            total_credit = bbf_credit + Decimal(str(period_credit))
+
+            if is_debit_normal:
+                balance = total_debit - total_credit
+            else:
+                balance = total_credit - total_debit
+
         else:
-            balance = credit_total - debit_total
-        
-        result = {
+            # No date range: use Account.balance (the stored running total).
+            # This works regardless of whether entries carry posted=True, and
+            # any mismatch between this value and what entries would compute
+            # is itself a signal of a data-integrity issue.
+            stored_balance = account.balance
+            bbf = Decimal('0.00')
+
+            if is_debit_normal:
+                total_debit = max(stored_balance, Decimal('0.00'))
+                total_credit = max(-stored_balance, Decimal('0.00'))
+            else:
+                total_credit = max(stored_balance, Decimal('0.00'))
+                total_debit = max(-stored_balance, Decimal('0.00'))
+
+            balance = stored_balance
+
+        return {
             'code': account.code,
             'name': account.name,
             'account_type': account.account_type,
             'level': account.account_level,
-            'debit': str(debit_total),
-            'credit': str(credit_total),
-            'balance': str(balance)
+            'balance_bf': str(bbf),
+            'debit': str(total_debit),
+            'credit': str(total_credit),
+            'balance': str(balance),
         }
-        
-        return result
     
     def _is_current_account(self, account_data: Dict) -> bool:
         """

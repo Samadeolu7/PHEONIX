@@ -215,28 +215,37 @@ class Command(BaseCommand):
                 client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
 
                 # ── STEP 6: Savings ───────────────────────────────────────────
-                self.stdout.write("Step 6/11  Savings accounts …")
-                self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx)
+                # ob_entries: (account, balance, balance_bf, "DR"|"CR") for
+                # every child account with a non-zero imported balance.
+                # Step 12 posts these as a single balanced GL transaction.
+                ob_entries: list = []
+
+                self.stdout.write("Step 6/12  Savings accounts …")
+                self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 7: Loans ─────────────────────────────────────────────
-                self.stdout.write("Step 7/11  Loan accounts …")
-                self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx)
+                self.stdout.write("Step 7/12  Loan accounts …")
+                self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 8: Banks / Cash ──────────────────────────────────────
-                self.stdout.write("Step 8/11  Bank / cash accounts …")
-                self._import_banks(banks_data, Account, gl, ctx)
+                self.stdout.write("Step 8/12  Bank / cash accounts …")
+                self._import_banks(banks_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 9: Income ────────────────────────────────────────────
-                self.stdout.write("Step 9/11  Income accounts …")
-                self._import_income(income_data, Account, gl, ctx)
+                self.stdout.write("Step 9/12  Income accounts …")
+                self._import_income(income_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 10: Expenses ─────────────────────────────────────────
-                self.stdout.write("Step 10/11 Expense accounts …")
-                self._import_expenses(expense_data, Account, gl, ctx)
+                self.stdout.write("Step 10/12 Expense accounts …")
+                self._import_expenses(expense_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 11: Liabilities ──────────────────────────────────────
-                self.stdout.write("Step 11/11 Liability accounts …")
-                self._import_liabilities(liability_data, Account, gl, ctx)
+                self.stdout.write("Step 11/12 Liability accounts …")
+                self._import_liabilities(liability_data, Account, gl, ctx, ob_entries)
+
+                # ── STEP 12: Opening balance transaction ──
+                self.stdout.write("Step 12/12 Opening balance transaction …")
+                self._create_opening_balance_transaction(ob_entries, Account, ctx)
 
         finally:
             _thread_locals.skip_account_components = False
@@ -577,7 +586,7 @@ class Command(BaseCommand):
         "D": ("D",  "DC",  "Daily Contribution Savings"), # Daily Contribution → SAV-DC
     }
 
-    def _import_savings(self, savings_data, SavingsAccount, Account, products, client_map, gl, ctx):
+    def _import_savings(self, savings_data, SavingsAccount, Account, products, client_map, gl, ctx, ob_entries):
         """
         Create one SavingsAccount + child SAVINGS Account per savings row.
 
@@ -640,13 +649,13 @@ class Command(BaseCommand):
                 account_type=Account.SAVINGS,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
-                balance=balance,
-                balance_bf=balance,
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
+            if balance:
+                ob_entries.append((child_acct, balance, balance, 'CR'))
 
             SavingsAccount.objects.create(
                 client=client,
@@ -697,7 +706,7 @@ class Command(BaseCommand):
         "Closed":               "paid_off",
     }
 
-    def _import_loans(self, loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx):
+    def _import_loans(self, loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries):
         """
         Create one LoanAccount + child LOAN Account per loan, then rebuild
         every repayment schedule installment from the exported schedule rows.
@@ -787,13 +796,13 @@ class Command(BaseCommand):
                 account_type=Account.LOAN,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
-                balance=balance,
-                balance_bf=balance,
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
+            if balance:
+                ob_entries.append((child_acct, balance, balance, 'DR'))
 
             # ── Compute arrears from schedule rows before creating the account
             raw_schedules = schedules_by_loan.get(rec["id"], [])
@@ -920,7 +929,7 @@ class Command(BaseCommand):
     # STEP 8 – Banks / Cash
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _import_banks(self, banks_data, Account, gl, ctx):
+    def _import_banks(self, banks_data, Account, gl, ctx, ob_entries):
         """
         Create a child ASSET Account (4-digit code) for EVERY bank/cash record.
 
@@ -975,19 +984,21 @@ class Command(BaseCommand):
                 skipped_existing += 1
                 continue
 
-            Account.objects.create(
+            bal    = _d(rec.get("balance"))
+            bal_bf = _d(rec.get("balance_bf"))
+            acct = Account.objects.create(
                 code=str(code_counter),
                 name=account_name,
                 account_type=Account.ASSET,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
-                balance=_d(rec.get("balance")),
-                balance_bf=_d(rec.get("balance_bf")),
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
+            if bal:
+                ob_entries.append((acct, bal, bal_bf, 'DR'))
             code_counter += 1
             created_count += 1
 
@@ -999,7 +1010,7 @@ class Command(BaseCommand):
     # STEP 9 – Income accounts
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _import_income(self, income_data, Account, gl, ctx):
+    def _import_income(self, income_data, Account, gl, ctx, ob_entries):
         """
         Create child INCOME accounts (4-digit codes) under parent 4200.
         Codes start at 4201 upward.
@@ -1018,19 +1029,21 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            Account.objects.create(
+            bal    = _d(rec.get("balance"))
+            bal_bf = _d(rec.get("balance_bf"))
+            acct = Account.objects.create(
                 code=str(code_counter),
                 name=name,
                 account_type=Account.INCOME,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
-                balance=_d(rec.get("balance")),
-                balance_bf=_d(rec.get("balance_bf")),
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
+            if bal:
+                ob_entries.append((acct, bal, bal_bf, 'CR'))
             code_counter += 1
             created_count += 1
 
@@ -1040,7 +1053,7 @@ class Command(BaseCommand):
     # STEP 10 – Expense accounts
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _import_expenses(self, expense_data, Account, gl, ctx):
+    def _import_expenses(self, expense_data, Account, gl, ctx, ob_entries):
         """
         Create child EXPENSE accounts (4-digit codes) under parent 5300.
         Codes start at 5301 upward.
@@ -1059,19 +1072,21 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            Account.objects.create(
+            bal    = _d(rec.get("balance"))
+            bal_bf = _d(rec.get("balance_bf"))
+            acct = Account.objects.create(
                 code=str(code_counter),
                 name=name,
                 account_type=Account.EXPENSE,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
-                balance=_d(rec.get("balance")),
-                balance_bf=_d(rec.get("balance_bf")),
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
+            if bal:
+                ob_entries.append((acct, bal, bal_bf, 'DR'))
             code_counter += 1
             created_count += 1
 
@@ -1081,7 +1096,7 @@ class Command(BaseCommand):
     # STEP 11 – Liability accounts
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _import_liabilities(self, liability_data, Account, gl, ctx):
+    def _import_liabilities(self, liability_data, Account, gl, ctx, ob_entries):
         """
         Create child LIABILITY accounts (4-digit codes) under parent 2100.
         Codes start at 2101 upward.
@@ -1100,23 +1115,144 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            Account.objects.create(
+            bal    = _d(rec.get("balance"))
+            bal_bf = _d(rec.get("balance_bf"))
+            acct = Account.objects.create(
                 code=str(code_counter),
                 name=name,
                 account_type=Account.LIABILITY,
                 account_level=Account.LEVEL_CHILD,
                 parent=parent_acct,
-                balance=_d(rec.get("balance")),
-                balance_bf=_d(rec.get("balance_bf")),
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
+            if bal:
+                ob_entries.append((acct, bal, bal_bf, 'CR'))
             code_counter += 1
             created_count += 1
 
         self.stdout.write(f"    {created_count} created, {skipped} skipped")
+
+
+    def _create_opening_balance_transaction(self, ob_entries, Account, ctx):
+        """
+        Post a single opening-balance journal entry for all imported accounts.
+
+        DR-normal: ASSET, LOAN, EXPENSE  -> positive balance -> DEBIT entry
+        CR-normal: LIABILITY, SAVINGS, INCOME -> positive balance -> CREDIT entry
+
+        Any imbalance in the imported books is absorbed by an "Opening Balance
+        Equity" (OBE) account so the mandatory debits == credits invariant is
+        never violated.
+
+        After posting, balance_bf is synced to the imported value for every
+        child account, and parent GL accounts have balance_bf set from their
+        now-correct balance field.
+        """
+        from transactions.models import Transaction, TransactionEntry, TransactionSeries
+
+        non_zero = [(a, amt, bbf, side) for (a, amt, bbf, side) in ob_entries if amt]
+        if not non_zero:
+            self.stdout.write("    No non-zero opening balances — skipping transaction.")
+            return
+
+        # Idempotency: skip if the migration transaction already exists
+        if Transaction.objects.filter(
+            workflow_reference="OB-MIGRATION",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+        ).exists():
+            self.stdout.write("    Opening balance transaction already exists — skipping.")
+            return
+
+        series, _ = TransactionSeries.objects.get_or_create(
+            code="OBMIG",
+            defaults={"description": "Opening Balance Migration"},
+        )
+
+        txn = Transaction.objects.create(
+            series=series,
+            date=date.today(),
+            description="Opening Balances – System Migration",
+            workflow_reference="OB-MIGRATION",
+            owner=ctx["owner"],
+            branch=ctx["branch"],
+            tenant=ctx["tenant"],
+            created_by=ctx["owner"],
+        )
+
+        total_dr = Decimal("0.00")
+        total_cr = Decimal("0.00")
+
+        for account, amount, _bbf, side in non_zero:
+            entry_side = TransactionEntry.DEBIT if side == "DR" else TransactionEntry.CREDIT
+            TransactionEntry.objects.create(
+                transaction=txn,
+                account=account,
+                side=entry_side,
+                amount=abs(amount),
+            )
+            if side == "DR":
+                total_dr += abs(amount)
+            else:
+                total_cr += abs(amount)
+
+        # Absorb any imbalance via an Opening Balance Equity account
+        diff = total_dr - total_cr
+        if abs(diff) > Decimal("0.01"):
+            obe_acct, _ = Account.objects.get_or_create(
+                code="OBE",
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                defaults={
+                    "name": "Opening Balance Equity",
+                    "account_type": Account.EQUITY,
+                    "account_level": Account.LEVEL_CHILD,
+                    "owner": ctx["owner"],
+                    "created_by": ctx["owner"],
+                    "is_system_account": True,
+                },
+            )
+            if diff > 0:
+                TransactionEntry.objects.create(
+                    transaction=txn, account=obe_acct,
+                    side=TransactionEntry.CREDIT, amount=diff,
+                )
+                total_cr += diff
+            else:
+                TransactionEntry.objects.create(
+                    transaction=txn, account=obe_acct,
+                    side=TransactionEntry.DEBIT, amount=abs(diff),
+                )
+                total_dr += abs(diff)
+
+        txn.post()  # validates balance, marks posted=True, updates Account.balance
+
+        imbalance_note = (
+            f" (imbalance {diff} absorbed by OBE)" if abs(diff) > Decimal("0.01") else ""
+        )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"    Posted opening balance: DR={total_dr}, CR={total_cr}{imbalance_note}"
+            )
+        )
+
+        # Sync balance_bf on every imported child account to its source value
+        for account, _amount, bbf_value, _side in non_zero:
+            Account.objects.filter(pk=account.pk).update(balance_bf=bbf_value)
+
+        # Propagate balance_bf to parent GL accounts (balance is correct after post)
+        parent_pks = {a.parent_id for a, _, _, _ in non_zero if a.parent_id}
+        for pk in parent_pks:
+            parent_bal = Account.objects.get(pk=pk).balance
+            Account.objects.filter(pk=pk).update(balance_bf=parent_bal)
+
+        self.stdout.write(
+            f"    balance_bf set for {len(non_zero)} accounts "
+            f"and {len(parent_pks)} parent accounts."
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Utility
