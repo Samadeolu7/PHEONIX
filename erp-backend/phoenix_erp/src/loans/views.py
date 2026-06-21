@@ -1054,7 +1054,14 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
     permission_page = 'loan-disbursements'
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        # Disbursement approvals are a cross-branch workflow — scope by tenant
+        # only so directors can see (and approve) records from any branch.
+        qs = LoanDisbursement.objects.select_related(
+            'loan', 'requested_by', 'approved_by'
+        ).all()
+        user = getattr(self.request, 'user', None)
+        if user and getattr(user, 'tenant', None):
+            qs = qs.filter(tenant=user.tenant)
         loan_id = self.request.query_params.get('loan')
         if loan_id:
             qs = qs.filter(loan_id=loan_id)

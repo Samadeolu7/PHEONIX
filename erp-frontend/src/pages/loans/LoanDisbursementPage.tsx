@@ -60,8 +60,11 @@ const LoanDisbursementPage: React.FC = () => {
   const [executeNotes, setExecuteNotes] = useState('');
   const [showExecuteForm, setShowExecuteForm] = useState(false);
 
-  const canApprove = selectedRole && ['Director', 'Principal', 'Administrator'].includes(selectedRole);
-  const canExecute = selectedRole && ['Director', 'Principal', 'Administrator'].includes(selectedRole);
+  const isApprover = selectedRole ? ['Director', 'Principal', 'Administrator'].includes(selectedRole) : false;
+  // Maker-checker: requester cannot approve their own request
+  const isRequester = disbursement ? disbursement.requested_by === user?.id : false;
+  const canApprove = isApprover && !isRequester;
+  const canExecute = selectedRole ? ['Director', 'Principal', 'Administrator'].includes(selectedRole) : false;
 
   const loadData = useCallback(async () => {
     if (!loanId) return;
