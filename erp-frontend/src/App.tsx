@@ -504,6 +504,7 @@ const BankStatementUploadPage = lazy(() => import('./pages/banks/BankStatementUp
 
 // Bank Management pages
 const BankListPage = lazy(() => import('./pages/banks/BankListPage'));
+const BankFormPage = lazy(() => import('./pages/banks/BankFormPage'));
 const BankAccountListPage = lazy(() => import('./pages/banks/BankAccountListPage'));
 const BankAccountFormPage = lazy(() => import('./pages/banks/BankAccountFormPage'));
 const BankAccountDetailPage = lazy(() => import('./pages/banks/BankAccountDetailPage'));
@@ -3677,6 +3678,30 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="bank-list">
                                       <BankListPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/new"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-create">
+                                      <BankFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/:id/edit"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-edit">
+                                      <BankFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/:id"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-list">
+                                      <BankFormPage />
                                     </ProtectedRoute>
                                   }
                                 />
