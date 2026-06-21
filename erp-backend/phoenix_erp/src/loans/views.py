@@ -28,6 +28,48 @@ from .utils import LoanVerifier
 from cash_management.services.payment_routing import PaymentRoutingService
 
 
+def _resolve_scope(user, fallback_obj=None):
+    """
+    Return (tenant, branch) for direct objects.create() calls inside action
+    methods that bypass ScopedModelViewSet.perform_create().
+
+    Priority: request.user → fallback_obj (e.g. a related LoanAccount).
+    """
+    tenant = getattr(user, 'tenant', None) or getattr(fallback_obj, 'tenant', None)
+    branch = getattr(user, 'branch', None) or getattr(fallback_obj, 'branch', None)
+    return tenant, branch
+
+
+def _build_scoped_qs(qs, user):
+    """
+    Apply tenant + branch scoping to an already-constructed QuerySet.
+    Mirrors OwnerBranchManager.for_user() but also includes null-tenant /
+    null-branch records so data created before the scope fix remains visible.
+
+    Directors, admins, and tenant owners always bypass the branch filter.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return qs.none()
+
+    tenant = getattr(user, 'tenant', None)
+    if tenant:
+        qs = qs.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
+
+    is_owner = callable(getattr(user, 'is_owner', None)) and user.is_owner()
+    staff_role = None
+    try:
+        staff_role = user.staff_profile.role_level
+    except Exception:
+        pass
+    is_unrestricted = is_owner or staff_role in ('director', 'admin')
+    if not is_unrestricted:
+        branch = getattr(user, 'branch', None)
+        if branch:
+            qs = qs.filter(Q(branch=branch) | Q(branch__isnull=True))
+
+    return qs
+
+
 class LoanProductViewSet(ScopedModelViewSet):
     """CRUD for loan products (DC, Weekly, Monthly, etc.)."""
     queryset = LoanProduct.objects.select_related('product').all()
@@ -698,27 +740,36 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 )
 
             # Rejected or cancelled — re-open it so the officer can try again.
+            tenant, branch = _resolve_scope(request.user, loan)
             existing.status = 'pending_approval'
             existing.requested_by = request.user
             existing.rejection_reason = ''
             existing.approved_by = None
             existing.approved_at = None
             existing.notes = request.data.get('notes', existing.notes)
-            existing.save(update_fields=[
+            # Back-fill tenant/branch if they were missing
+            if existing.tenant is None and tenant:
+                existing.tenant = tenant
+            if existing.branch is None and branch:
+                existing.branch = branch
+            update_fields = [
                 'status', 'requested_by', 'rejection_reason',
-                'approved_by', 'approved_at', 'notes', 'updated_at',
-            ])
+                'approved_by', 'approved_at', 'notes', 'tenant', 'branch', 'updated_at',
+            ]
+            existing.save(update_fields=update_fields)
             return Response(
                 LoanDisbursementSerializer(existing, context={'request': request}).data,
                 status=status.HTTP_200_OK,
             )
 
+        tenant, branch = _resolve_scope(request.user, loan)
         disbursement = LoanDisbursement.objects.create(
             loan=loan,
             requested_by=request.user,
             notes=request.data.get('notes', ''),
-            owner=loan.owner,
-            branch=loan.branch,
+            owner=request.user,
+            branch=branch,
+            tenant=tenant,
         )
         return Response(
             LoanDisbursementSerializer(disbursement, context={'request': request}).data,
@@ -783,6 +834,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
         else:
             payment_date = timezone.localdate()
 
+        tenant, branch = _resolve_scope(request.user, loan)
         repay_request = LoanRepaymentRequest.objects.create(
             loan=loan,
             savings_account=savings_account,
@@ -790,8 +842,9 @@ class LoanAccountViewSet(ScopedModelViewSet):
             payment_date=payment_date,
             requested_by=request.user,
             notes=request.data.get('notes', ''),
-            owner=loan.owner,
-            branch=loan.branch,
+            owner=request.user,
+            branch=branch,
+            tenant=tenant,
         )
 
         return Response(
@@ -1054,14 +1107,10 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
     permission_page = 'loan-disbursements'
 
     def get_queryset(self):
-        # Disbursement approvals are a cross-branch workflow — scope by tenant
-        # only so directors can see (and approve) records from any branch.
-        qs = LoanDisbursement.objects.select_related(
+        qs = LoanDisbursement.all_objects.select_related(
             'loan', 'requested_by', 'approved_by'
-        ).all()
-        user = getattr(self.request, 'user', None)
-        if user and getattr(user, 'tenant', None):
-            qs = qs.filter(tenant=user.tenant)
+        ).filter(is_deleted=False)
+        qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
         loan_id = self.request.query_params.get('loan')
         if loan_id:
             qs = qs.filter(loan_id=loan_id)
@@ -1386,8 +1435,11 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        status_filter = self.request.query_params.get('status', 'pending')
+        qs = LoanRepaymentRequest.objects.select_related(
+            'loan', 'loan__client', 'savings_account', 'requested_by', 'reviewed_by',
+        ).all()
+        qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
+        status_filter = self.request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
         return qs

@@ -133,9 +133,16 @@ class OwnerBranchManager(SoftDeleteManager):
         if tenant:
             qs = qs.filter(tenant=tenant)
 
-        # Tenant owner bypass – owners see all data within their tenant without
-        # branch restriction (directors / account owners expect full visibility).
-        if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+        # Bypass branch filter for tenant owners, directors, and admins —
+        # these roles must have cross-branch visibility within the tenant.
+        is_owner = callable(getattr(user, 'is_owner', None)) and user.is_owner()
+        staff_role = None
+        try:
+            staff_role = user.staff_profile.role_level
+        except Exception:
+            pass
+        is_unrestricted = is_owner or staff_role in ('director', 'admin')
+        if is_unrestricted:
             return qs
 
         # Scope by branch if available on user.
