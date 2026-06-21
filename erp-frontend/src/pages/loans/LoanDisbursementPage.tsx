@@ -60,8 +60,8 @@ const LoanDisbursementPage: React.FC = () => {
   const [executeNotes, setExecuteNotes] = useState('');
   const [showExecuteForm, setShowExecuteForm] = useState(false);
 
-  const canApprove = selectedRole && ['branch_manager', 'supervisor', 'director', 'admin'].includes(selectedRole);
-  const canExecute = selectedRole && ['branch_manager', 'director', 'admin', 'operations'].includes(selectedRole);
+  const canApprove = selectedRole && ['Director', 'Principal', 'Administrator'].includes(selectedRole);
+  const canExecute = selectedRole && ['Director', 'Principal', 'Administrator'].includes(selectedRole);
 
   const loadData = useCallback(async () => {
     if (!loanId) return;
@@ -233,7 +233,7 @@ const LoanDisbursementPage: React.FC = () => {
       {d.status === 'pending_approval' && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2 text-sm text-blue-700">
           <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>Four-eyes principle: the person who created this loan cannot approve the disbursement.</span>
+          <span>Note: the person who requested this disbursement cannot approve it (maker-checker).</span>
         </div>
       )}
 

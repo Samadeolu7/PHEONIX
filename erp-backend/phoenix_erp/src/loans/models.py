@@ -1415,12 +1415,6 @@ class LoanDisbursement(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 "The person who requested disbursement cannot approve it "
                 "(maker-checker violation)."
             )
-        # Also must not be the same person who approved the loan
-        if self.loan.approved_by_id and approving_user.pk == self.loan.approved_by_id:
-            raise ValidationError(
-                "The person who approved the loan application cannot also approve disbursement "
-                "(maker-checker violation)."
-            )
         from django.utils import timezone as tz
         self.status = 'approved'
         self.approved_by = approving_user

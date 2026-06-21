@@ -214,12 +214,20 @@ class LoanVerificationRequestSerializer(TenantModelSerializer):
 
 class LoanDisbursementSerializer(TenantModelSerializer):
     loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
-    requested_by_name = serializers.CharField(
-        source='requested_by.get_full_name', read_only=True
-    )
-    approved_by_name = serializers.CharField(
-        source='approved_by.get_full_name', read_only=True
-    )
+    requested_by_name = serializers.SerializerMethodField()
+    approved_by_name = serializers.SerializerMethodField()
+
+    def get_requested_by_name(self, obj):
+        u = obj.requested_by
+        if not u:
+            return ''
+        return u.get_full_name() or u.username
+
+    def get_approved_by_name(self, obj):
+        u = obj.approved_by
+        if not u:
+            return ''
+        return u.get_full_name() or u.username
 
     class Meta:
         model = LoanDisbursement
