@@ -57,7 +57,7 @@ export interface LoanAccountList {
   processing_fee: string;
   insurance_amount: string;
   repayment_frequency: 'daily' | 'weekly' | 'monthly';
-  status: 'pending' | 'approved' | 'disbursed' | 'active' | 'closed' | 'written_off' | 'rejected';
+  status: 'pending' | 'approved' | 'disbursed' | 'active' | 'defaulted' | 'paid_off' | 'written_off' | 'rejected' | 'cancelled';
   risk_classification: 'performing' | 'watch' | 'substandard' | 'doubtful' | 'loss';
   days_in_arrears: number;
   arrears_amount: string;
@@ -76,19 +76,36 @@ export interface ChargesSummary {
 
 export interface LoanAccount extends LoanAccountList {
   interest_rate: string;
-  interest_method: 'flat' | 'reducing_balance';
+  interest_method: string;
   term_months: number;
+  term_unit: TermUnit;
+  requested_amount: string;
+  approved_amount: string;
+  outstanding_interest: string;
+  outstanding_fees: string;
+  outstanding_penalties: string;
   total_outstanding: string;
-  accrued_interest: string;
-  total_repaid: string;
+  total_paid: string;
+  total_repaid: string;  // alias for total_paid
+  principal_paid: string;
+  interest_paid: string;
+  fees_paid: string;
+  penalties_paid: string;
+  installments_paid: number;
+  number_of_installments: number;
+  installment_amount: string;
   total_charges: string;
   charges_summary: ChargesSummary;
   next_due_date: string | null;
   last_payment_date: string | null;
+  application_notes: string;
+  approval_date: string | null;
   approved_by: number | null;
-  approved_at: string | null;
+  first_payment_date: string | null;
+  closed_date: string | null;
   last_batch_processed_at: string | null;
   batch_accrual_posted: boolean;
+  repayment_schedule: LoanRepaymentSchedule[];
   collaterals: LoanCollateral[];
   guarantors: LoanGuarantor[];
 }
@@ -107,7 +124,8 @@ export interface LoanRepaymentSchedule {
   fees_paid: string;
   total_paid: string;
   status: 'pending' | 'paid' | 'partial' | 'overdue';
-  paid_date: string | null;
+  payment_date: string | null;
+  days_late: number;
 }
 
 export interface LoanCollateral {

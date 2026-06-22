@@ -721,7 +721,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             ValidationError: if the loan is not active/disbursed, if no
                 payment_account is provided, or if amount exceeds total outstanding.
         """
-        if self.status not in ['active', 'disbursed']:
+        if self.status not in ['active', 'disbursed', 'defaulted']:
             raise ValidationError("Cannot record payment for inactive loan")
 
         if not payment_account:
@@ -763,6 +763,10 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         remaining -= principal_payment
 
         self.total_paid += amount
+
+        # Restore defaulted loan to active if still has outstanding balance
+        if self.status == 'defaulted' and self.total_outstanding > 0:
+            self.status = 'active'
 
         # Check if fully paid
         if self.outstanding_principal == 0 and self.total_outstanding == 0:

@@ -349,7 +349,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         loan = self.get_object()
 
-        if loan.status not in ('active', 'disbursed'):
+        if loan.status not in ('active', 'disbursed', 'defaulted'):
             return Response(
                 {'detail': f"Cannot record repayment on a '{loan.status}' loan."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -525,7 +525,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
         )
         loans_qs = (
             self.get_queryset()
-            .filter(client_id__in=member_client_ids, status__in=('active', 'disbursed'))
+            .filter(client_id__in=member_client_ids, status__in=('active', 'disbursed', 'defaulted'))
             .select_related('client')
         )
 
@@ -789,7 +789,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
         from .models import LoanRepaymentRequest
 
         loan = self.get_object()
-        if loan.status not in ('active', 'disbursed'):
+        if loan.status not in ('active', 'disbursed', 'defaulted'):
             return Response(
                 {'detail': f"Cannot request repayment on a '{loan.status}' loan."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1452,7 +1452,7 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
         savings_account = req.savings_account
         amount = req.amount
 
-        if loan.status not in ('active', 'disbursed'):
+        if loan.status not in ('active', 'disbursed', 'defaulted'):
             return Response(
                 {'detail': f"Loan is '{loan.status}' — cannot record repayment."},
                 status=status.HTTP_400_BAD_REQUEST,

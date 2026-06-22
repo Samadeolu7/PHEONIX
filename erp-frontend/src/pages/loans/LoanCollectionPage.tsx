@@ -84,12 +84,15 @@ function NormalCollectionPanel() {
     setSchedule([]);
     setSubmitSuccess(null);
     try {
-      const res = await loanService.listLoans({ search: search.trim(), status: 'active' });
-      const items = Array.isArray(res) ? res : (res?.results ?? []);
-      // Also search disbursed
-      const res2 = await loanService.listLoans({ search: search.trim(), status: 'disbursed' });
+      const [res, res2, res3] = await Promise.all([
+        loanService.listLoans({ search: search.trim(), status: 'active' }),
+        loanService.listLoans({ search: search.trim(), status: 'disbursed' }),
+        loanService.listLoans({ search: search.trim(), status: 'defaulted' }),
+      ]);
+      const items  = Array.isArray(res)  ? res  : (res?.results  ?? []);
       const items2 = Array.isArray(res2) ? res2 : (res2?.results ?? []);
-      setResults([...items, ...items2]);
+      const items3 = Array.isArray(res3) ? res3 : (res3?.results ?? []);
+      setResults([...items, ...items2, ...items3]);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setSearchError(err?.detail ?? err?.message ?? 'Search failed.');
@@ -721,13 +724,15 @@ function SavingsDebitPanel() {
     setSearching(true);
     setError(null);
     try {
-      const [r1, r2] = await Promise.all([
+      const [r1, r2, r3] = await Promise.all([
         loanService.listLoans({ search: search.trim(), status: 'active' }),
         loanService.listLoans({ search: search.trim(), status: 'disbursed' }),
+        loanService.listLoans({ search: search.trim(), status: 'defaulted' }),
       ]);
       const items1 = Array.isArray(r1) ? r1 : (r1?.results ?? []);
       const items2 = Array.isArray(r2) ? r2 : (r2?.results ?? []);
-      setResults([...items1, ...items2]);
+      const items3 = Array.isArray(r3) ? r3 : (r3?.results ?? []);
+      setResults([...items1, ...items2, ...items3]);
     } catch {
       setError('Could not load loans.');
     } finally {

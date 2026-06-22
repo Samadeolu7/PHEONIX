@@ -45,9 +45,11 @@ const STATUS_BADGE: Record<string, string> = {
   approved:   'bg-blue-100 text-blue-700',
   disbursed:  'bg-indigo-100 text-indigo-700',
   active:     'bg-green-100 text-green-700',
-  closed:     'bg-gray-100 text-gray-600',
+  defaulted:  'bg-orange-100 text-orange-700',
+  paid_off:   'bg-gray-100 text-gray-600',
   written_off:'bg-red-100 text-red-700',
   rejected:   'bg-red-100 text-red-700',
+  cancelled:  'bg-gray-100 text-gray-500',
 };
 
 const SCHEDULE_STATUS_BADGE: Record<string, string> = {
@@ -114,6 +116,8 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
         <button
+          type="button"
+          aria-label="Close"
           onClick={onClose}
           className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
         >
@@ -174,6 +178,7 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
               </label>
               <input
                 type="date"
+                title="Payment date"
                 value={paymentDate}
                 onChange={(e) => setPaymentDate(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -367,6 +372,8 @@ export default function LoanAccountDetailPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
+              type="button"
+              aria-label="Go back"
               onClick={() => navigate(-1)}
               className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
             >
@@ -478,7 +485,7 @@ export default function LoanAccountDetailPage() {
               </div>
               <div>
                 <p className="text-gray-500">Term</p>
-                <p className="font-medium text-gray-900">{loan.term_months} months</p>
+                <p className="font-medium text-gray-900">{loan.term_months} {loan.term_unit ?? 'months'}</p>
               </div>
               <div>
                 <p className="text-gray-500">Frequency</p>

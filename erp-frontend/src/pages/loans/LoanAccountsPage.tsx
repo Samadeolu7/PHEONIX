@@ -30,9 +30,11 @@ const STATUS_BADGE: Record<string, string> = {
   approved:   'bg-blue-100 text-blue-700',
   disbursed:  'bg-indigo-100 text-indigo-700',
   active:     'bg-green-100 text-green-700',
-  closed:     'bg-gray-100 text-gray-600',
+  defaulted:  'bg-orange-100 text-orange-700',
+  paid_off:   'bg-gray-100 text-gray-600',
   written_off:'bg-red-100 text-red-700',
   rejected:   'bg-red-100 text-red-700',
+  cancelled:  'bg-gray-100 text-gray-500',
 };
 
 const RISK_BADGE: Record<string, string> = {
@@ -49,9 +51,11 @@ const LOAN_STATUSES = [
   { value: 'approved', label: 'Approved' },
   { value: 'disbursed', label: 'Disbursed' },
   { value: 'active', label: 'Active' },
-  { value: 'closed', label: 'Closed' },
+  { value: 'defaulted', label: 'Defaulted' },
+  { value: 'paid_off', label: 'Paid Off' },
   { value: 'written_off', label: 'Written Off' },
   { value: 'rejected', label: 'Rejected' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
 
 const RISK_LEVELS = [

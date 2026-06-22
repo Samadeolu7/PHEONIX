@@ -618,7 +618,7 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
 
-// ==========================================================================
+  // ==========================================================================
   // ADMINISTRATION MODULE
   // ==========================================================================
 
@@ -836,7 +836,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'staff-iou-list',
     title: 'Staff IOU',
-    description: 'Manage staff cash advances recovered via fixed monthly payroll deductions (Dr Payroll Clearance / Cr Staff IOU Receivable)',
+    description:
+      'Manage staff cash advances recovered via fixed monthly payroll deductions (Dr Payroll Clearance / Cr Staff IOU Receivable)',
     path: '/hr/ious',
     icon: Banknote,
     requiredPermission: 'staff-iou-list',
@@ -858,7 +859,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'staff-iou-bulk-debit',
     title: 'Bulk Staff Debit',
-    description: 'Charge a cost across multiple staff members in one operation — Dr Staff IOU Receivable (per staff) / Cr any account (e.g. Asset Disposal)',
+    description:
+      'Charge a cost across multiple staff members in one operation — Dr Staff IOU Receivable (per staff) / Cr any account (e.g. Asset Disposal)',
     path: '/hr/ious/bulk-debit',
     icon: ArrowRightLeft,
     requiredPermission: 'staff-iou-create',
@@ -954,7 +956,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-account-new',
     title: '➕ New Savings Account',
-    description: 'Open a new savings account for a member with product selection and initial deposit',
+    description:
+      'Open a new savings account for a member with product selection and initial deposit',
     path: '/savings/accounts/create',
     icon: Plus,
     requiredPermission: 'savings-create',
@@ -965,7 +968,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-collection',
     title: '📋 Savings Collection',
-    description: 'Record bulk savings deposits from group collection sheets and individual transactions',
+    description:
+      'Record bulk savings deposits from group collection sheets and individual transactions',
     path: '/savings/collection',
     icon: ClipboardList,
     requiredPermission: 'savings-collection',
@@ -987,7 +991,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-policy',
     title: '📜 Compulsory Savings Policy',
-    description: 'Configure compulsory savings requirements, minimum balance rules, and policy settings',
+    description:
+      'Configure compulsory savings requirements, minimum balance rules, and policy settings',
     path: '/savings/policy',
     icon: Shield,
     requiredPermission: 'savings-policy',
@@ -998,7 +1003,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-product-config',
     title: '⚙️ Savings Product Config',
-    description: 'Configure cycle savings, first-deposit income rules, and tiered withdrawal controls per product',
+    description:
+      'Configure cycle savings, first-deposit income rules, and tiered withdrawal controls per product',
     path: '/savings/products',
     icon: Settings,
     requiredPermission: 'savings-products',
@@ -1009,7 +1015,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-withdrawals',
     title: '💸 Withdrawal Approvals',
-    description: 'Review and approve member withdrawal requests. Configure tiered multi-approver rules.',
+    description:
+      'Review and approve member withdrawal requests. Configure tiered multi-approver rules.',
     path: '/savings/withdrawals',
     icon: Banknote,
     requiredPermission: 'savings-list',
@@ -1024,7 +1031,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'loan-accounts-list',
     title: '💳 Loan Accounts',
-    description: 'View all active and historical loan accounts with repayment status and balance tracking',
+    description:
+      'View all active and historical loan accounts with repayment status and balance tracking',
     path: '/loans/accounts',
     icon: CreditCard,
     requiredPermission: 'loans-list',
@@ -1035,7 +1043,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'loan-application-new',
     title: '📝 New Loan Application',
-    description: 'Submit a new loan application for a member with loan product selection and repayment schedule',
+    description:
+      'Submit a new loan application for a member with loan product selection and repayment schedule',
     path: '/loans/accounts/create',
     icon: Plus,
     requiredPermission: 'loans-create',
@@ -1067,11 +1076,24 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   },
   {
     id: 'daily-collection-sheet',
-    title: '📅 Daily Collection Sheet',
-    description: 'Field officer daily loan repayment collection sheets grouped by group or route',
-    path: '/cash-management/daily-collection',
+    title: '📅 Loan Collection',
+    description:
+      'Individual, group, and savings-debit loan repayment collection with cash and bank transfer modes',
+    path: '/loans/collection',
     icon: Calendar,
-    requiredPermission: 'collections-view',
+    requiredPermission: 'loans-collect',
+    moduleId: 'client-services',
+    category: 'Loans',
+    isNew: true,
+  },
+  {
+    id: 'loan-repayment-approvals',
+    title: '✅ Repayment Approvals',
+    description:
+      'Director inbox for pending savings-debit loan repayment requests requiring approval before GL posting',
+    path: '/loans/repayment-approvals',
+    icon: ClipboardList,
+    requiredPermission: 'loans-repayment-approve',
     moduleId: 'client-services',
     category: 'Loans',
     isNew: true,
@@ -1087,22 +1109,12 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     category: 'Loans',
     isNew: true,
   },
-  {
-    id: 'loan-product-config',
-    title: '⚙️ Loan Product Fee Config',
-    description: 'Configure dynamic fee lines (admin, registration, risk premium) and savings requirements per loan product',
-    path: '/loans/products',
-    icon: Settings,
-    requiredPermission: 'loan-products-list',
-    moduleId: 'client-services',
-    category: 'Loans',
-    isNew: true,
-  },
   // ==========================================================================
   {
     id: 'inventory-items-list',
     title: '📦 Item Catalog',
-    description: 'Browse and manage all inventory items, categories, units of measure, and reorder levels',
+    description:
+      'Browse and manage all inventory items, categories, units of measure, and reorder levels',
     path: '/inventory/items',
     icon: Package,
     requiredPermission: 'item-list',
@@ -1113,7 +1125,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'inventory-item-new',
     title: '➕ New Item',
-    description: 'Create a new inventory item with specifications, pricing, and category assignment',
+    description:
+      'Create a new inventory item with specifications, pricing, and category assignment',
     path: '/inventory/items/create',
     icon: Plus,
     requiredPermission: 'item-create',
@@ -1143,7 +1156,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'inventory-movements',
     title: '🔄 Stock Movements',
-    description: 'Full audit trail of all stock movements — receipts, issues, returns, and transfers',
+    description:
+      'Full audit trail of all stock movements — receipts, issues, returns, and transfers',
     path: '/inventory/movements',
     icon: ArrowRightLeft,
     requiredPermission: 'item-list',
@@ -1153,7 +1167,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'inventory-adjustments',
     title: '✏️ Stock Adjustments',
-    description: 'Record and review quantity or value adjustments with reason codes and approval workflow',
+    description:
+      'Record and review quantity or value adjustments with reason codes and approval workflow',
     path: '/inventory/adjustments',
     icon: Edit,
     requiredPermission: 'item-adjust',
@@ -1175,7 +1190,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'inventory-transfers',
     title: '🚚 Stock Transfers',
-    description: 'Transfer inventory between locations or departments with picking and confirmation workflow',
+    description:
+      'Transfer inventory between locations or departments with picking and confirmation workflow',
     path: '/inventory/transfers',
     icon: Truck,
     requiredPermission: 'item-list',
@@ -1241,7 +1257,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'inventory-valuation-report',
     title: '📊 Stock Valuation Report',
-    description: 'Current stock value by location, category, and cost method with export capabilities',
+    description:
+      'Current stock value by location, category, and cost method with export capabilities',
     path: '/inventory/reports/valuation',
     icon: BarChart3,
     requiredPermission: 'item-list',
@@ -1256,7 +1273,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'procurement-suppliers',
     title: '🤝 Suppliers',
-    description: 'Manage approved supplier register, contact details, payment terms, and performance ratings',
+    description:
+      'Manage approved supplier register, contact details, payment terms, and performance ratings',
     path: '/procurement/suppliers',
     icon: Building,
     requiredPermission: 'supplier-list',
@@ -1266,7 +1284,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'procurement-supplier-new',
     title: '➕ Add Supplier',
-    description: 'Register a new supplier with bank details, credit terms, and category classification',
+    description:
+      'Register a new supplier with bank details, credit terms, and category classification',
     path: '/procurement/suppliers/create',
     icon: Plus,
     requiredPermission: 'supplier-create',
@@ -1286,7 +1305,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'procurement-requisitions',
     title: '📋 Purchase Requisitions',
-    description: 'View all internal purchase requests from departments awaiting procurement processing',
+    description:
+      'View all internal purchase requests from departments awaiting procurement processing',
     path: '/procurement/requisitions',
     icon: ClipboardList,
     requiredPermission: 'pr-list',
@@ -1316,7 +1336,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'procurement-order-new',
     title: '➕ New Purchase Order',
-    description: 'Raise a new purchase order against an approved requisition or directly to a supplier',
+    description:
+      'Raise a new purchase order against an approved requisition or directly to a supplier',
     path: '/procurement/orders/new',
     icon: Plus,
     requiredPermission: 'po-create',
@@ -1326,7 +1347,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'procurement-grn',
     title: '📥 Goods Received Notes',
-    description: 'Capture and confirm goods receipts, match to purchase orders, and flag discrepancies',
+    description:
+      'Capture and confirm goods receipts, match to purchase orders, and flag discrepancies',
     path: '/procurement/grns',
     icon: Boxes,
     requiredPermission: 'grn-list',
@@ -1363,7 +1385,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'asset-register',
     title: '📋 Asset Register',
-    description: 'Complete register of all fixed assets with current book value, location, and status',
+    description:
+      'Complete register of all fixed assets with current book value, location, and status',
     path: '/assets',
     icon: Home,
     requiredPermission: 'asset-list',
@@ -1415,7 +1438,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'asset-acquisitions',
     title: '🛒 Asset Acquisitions',
-    description: 'Bulk asset acquisition records — link to purchase orders and activate asset shells',
+    description:
+      'Bulk asset acquisition records — link to purchase orders and activate asset shells',
     path: '/assets/acquisitions',
     icon: ShoppingCart,
     requiredPermission: 'asset-list',
@@ -1560,7 +1584,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-mod-account-new',
     title: '➕ New Savings Account',
-    description: 'Open a new savings account for a member with product selection and initial deposit',
+    description:
+      'Open a new savings account for a member with product selection and initial deposit',
     path: '/savings/accounts/create',
     icon: Plus,
     requiredPermission: 'savings-create',
@@ -1571,7 +1596,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-mod-collection',
     title: '📋 Savings Collection',
-    description: 'Record bulk savings deposits from group collection sheets and individual transactions',
+    description:
+      'Record bulk savings deposits from group collection sheets and individual transactions',
     path: '/savings/collection',
     icon: ClipboardList,
     requiredPermission: 'savings-collection',
@@ -1593,7 +1619,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-mod-policy',
     title: '📜 Compulsory Savings Policy',
-    description: 'Configure compulsory savings requirements, minimum balance rules, and policy settings',
+    description:
+      'Configure compulsory savings requirements, minimum balance rules, and policy settings',
     path: '/savings/policy',
     icon: Shield,
     requiredPermission: 'savings-policy',
@@ -1604,7 +1631,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-mod-product-config',
     title: '⚙️ Savings Product Config',
-    description: 'Configure cycle savings, first-deposit income rules, and tiered withdrawal controls per product',
+    description:
+      'Configure cycle savings, first-deposit income rules, and tiered withdrawal controls per product',
     path: '/savings/products',
     icon: Settings,
     requiredPermission: 'savings-products',
@@ -1615,7 +1643,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'savings-mod-withdrawals',
     title: '💸 Withdrawal Approvals',
-    description: 'Review and approve member withdrawal requests. Configure tiered multi-approver rules.',
+    description:
+      'Review and approve member withdrawal requests. Configure tiered multi-approver rules.',
     path: '/savings/withdrawals',
     icon: Banknote,
     requiredPermission: 'savings-list',
@@ -1630,7 +1659,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'loans-mod-accounts',
     title: '💳 Loan Accounts',
-    description: 'View all active and historical loan accounts with repayment status and balance tracking',
+    description:
+      'View all active and historical loan accounts with repayment status and balance tracking',
     path: '/loans/accounts',
     icon: CreditCard,
     requiredPermission: 'loans-list',
@@ -1641,7 +1671,8 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   {
     id: 'loans-mod-new',
     title: '📝 New Loan Application',
-    description: 'Submit a new loan application for a member with product selection and repayment schedule',
+    description:
+      'Submit a new loan application for a member with product selection and repayment schedule',
     path: '/loans/accounts/create',
     icon: Plus,
     requiredPermission: 'loans-create',
@@ -1673,13 +1704,26 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
   },
   {
     id: 'loans-mod-collection',
-    title: '📅 Daily Collection Sheet',
-    description: 'Field officer daily loan repayment collection sheets grouped by group or route',
-    path: '/cash-management/daily-collection',
+    title: '📅 Loan Collection',
+    description:
+      'Individual, group, and savings-debit repayment collection with cash and bank transfer modes',
+    path: '/loans/collection',
     icon: Calendar,
-    requiredPermission: 'collections-view',
+    requiredPermission: 'loans-collect',
     moduleId: 'loans',
-    category: 'Workflow',
+    category: 'Collection',
+    isNew: true,
+  },
+  {
+    id: 'loans-mod-repayment-approvals',
+    title: '✅ Repayment Approvals',
+    description:
+      'Director inbox for pending savings-debit loan repayment requests requiring approval',
+    path: '/loans/repayment-approvals',
+    icon: ClipboardList,
+    requiredPermission: 'loans-repayment-approve',
+    moduleId: 'loans',
+    category: 'Collection',
     isNew: true,
   },
   {
@@ -1688,17 +1732,6 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     description: 'Manage loan product types, interest rates, terms, fees, and eligibility criteria',
     path: '/loans/products',
     icon: Layers,
-    requiredPermission: 'loan-products-list',
-    moduleId: 'loans',
-    category: 'Configuration',
-    isNew: true,
-  },
-  {
-    id: 'loans-mod-product-config',
-    title: '⚙️ Loan Product Fee Config',
-    description: 'Configure dynamic fee lines (admin, registration, risk premium) and savings requirements per loan product',
-    path: '/loans/products',
-    icon: Settings,
     requiredPermission: 'loan-products-list',
     moduleId: 'loans',
     category: 'Configuration',

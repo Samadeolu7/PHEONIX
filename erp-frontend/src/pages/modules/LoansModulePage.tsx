@@ -14,7 +14,8 @@ interface StageCounts {
   disbursed: number;
   active: number;
   overdue: number;
-  closed: number;
+  defaulted: number;
+  paid_off: number;
   written_off: number;
 }
 
@@ -24,7 +25,8 @@ const PIPELINE_STAGES: { key: keyof StageCounts; label: string; color: string; q
   { key: 'disbursed',  label: 'Disbursed',  color: '#6366f1', queryStatus: 'disbursed'  },
   { key: 'active',     label: 'Active',     color: '#22c55e', queryStatus: 'active'     },
   { key: 'overdue',    label: 'Overdue',    color: '#ef4444', queryStatus: 'active'     },
-  { key: 'closed',     label: 'Paid Off',   color: '#6b7280', queryStatus: 'closed'     },
+  { key: 'defaulted',  label: 'Defaulted',  color: '#f97316', queryStatus: 'defaulted'  },
+  { key: 'paid_off',   label: 'Paid Off',   color: '#6b7280', queryStatus: 'paid_off'   },
   { key: 'written_off',label: 'Written Off',color: '#991b1b', queryStatus: 'written_off'},
 ];
 
@@ -41,11 +43,12 @@ function LoanPipeline() {
           loanService.listLoans({ status: 'approved' }),
           loanService.listLoans({ status: 'disbursed' }),
           loanService.listLoans({ status: 'active' }),
-          loanService.listLoans({ status: 'closed' }),
+          loanService.listLoans({ status: 'defaulted' }),
+          loanService.listLoans({ status: 'paid_off' }),
           loanService.listLoans({ status: 'written_off' }),
         ]);
         if (cancelled) return;
-        const [pendingRes, approvedRes, disbursedRes, activeRes, closedRes, writtenOffRes] = results;
+        const [pendingRes, approvedRes, disbursedRes, activeRes, defaultedRes, paidOffRes, writtenOffRes] = results;
         const getCount = (r: PromiseSettledResult<any>) =>
           r.status === 'fulfilled' ? (r.value?.count ?? (Array.isArray(r.value) ? r.value.length : 0)) : 0;
         const activeCount = getCount(activeRes);
@@ -60,7 +63,8 @@ function LoanPipeline() {
           disbursed:  getCount(disbursedRes),
           active:     activeCount,
           overdue:    activeOverdue,
-          closed:     getCount(closedRes),
+          defaulted:  getCount(defaultedRes),
+          paid_off:   getCount(paidOffRes),
           written_off: getCount(writtenOffRes),
         });
       } finally {

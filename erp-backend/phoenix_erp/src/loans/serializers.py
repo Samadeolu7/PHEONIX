@@ -114,6 +114,12 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
     collaterals = LoanCollateralSerializer(source='collateral', many=True, read_only=True)
     guarantors = LoanGuarantorSerializer(many=True, read_only=True)
 
+    # Computed / aliased convenience fields
+    total_repaid = serializers.DecimalField(source='total_paid', max_digits=18, decimal_places=2, read_only=True)
+    interest_method = serializers.CharField(source='product.interest_calculation_method', read_only=True)
+    next_due_date = serializers.SerializerMethodField()
+    last_payment_date = serializers.SerializerMethodField()
+
     class Meta:
         model = LoanAccount
         fields = [
@@ -122,7 +128,8 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'product', 'product_name',
             # Amounts
             'requested_amount', 'approved_amount', 'disbursed_amount',
-            'interest_rate', 'processing_fee', 'insurance_amount',
+            'interest_rate', 'interest_method',
+            'processing_fee', 'insurance_amount',
             'total_charges', 'charges_summary',
             'term_months', 'term_unit',
             'repayment_frequency', 'installment_amount', 'number_of_installments',
@@ -134,8 +141,11 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'outstanding_principal', 'outstanding_interest',
             'outstanding_fees', 'outstanding_penalties', 'total_outstanding',
             # Payments
-            'total_paid', 'principal_paid', 'interest_paid', 'fees_paid', 'penalties_paid',
+            'total_paid', 'total_repaid',
+            'principal_paid', 'interest_paid', 'fees_paid', 'penalties_paid',
             'installments_paid',
+            # Computed schedule helpers
+            'next_due_date', 'last_payment_date',
             # Arrears & risk
             'days_in_arrears', 'arrears_amount', 'risk_classification',
             # Java App 1 hooks
@@ -148,6 +158,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
         read_only_fields = [
             'id', 'loan_number', 'client_name', 'product_name',
             'total_outstanding', 'total_charges', 'charges_summary',
+            'total_repaid', 'interest_method', 'next_due_date', 'last_payment_date',
             'repayment_schedule', 'collaterals', 'guarantors',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
@@ -158,6 +169,26 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'insurance_amount': str(obj.insurance_amount),
             'total_charges': str(obj.total_charges),
         }
+
+    def get_next_due_date(self, obj):
+        item = (
+            obj.repayment_schedule
+            .filter(status__in=('pending', 'partial', 'overdue'))
+            .order_by('due_date', 'installment_number')
+            .values_list('due_date', flat=True)
+            .first()
+        )
+        return str(item) if item else None
+
+    def get_last_payment_date(self, obj):
+        item = (
+            obj.repayment_schedule
+            .filter(payment_date__isnull=False)
+            .order_by('-payment_date')
+            .values_list('payment_date', flat=True)
+            .first()
+        )
+        return str(item) if item else None
 
 
 class LoanAccountCreateSerializer(TenantModelSerializer):
