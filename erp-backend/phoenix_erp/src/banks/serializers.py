@@ -52,17 +52,21 @@ class BankAccountSerializer(TenantModelSerializer):
     """Serializer for BankAccount model"""
     
     bank_name = serializers.CharField(write_only=True, required=False, help_text="Bank name - will auto-create or find bank")
+    new_bank_code = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text="Bank code for newly created bank")
+    new_bank_branch = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text="Branch name for newly created bank")
     bank_display_name = serializers.CharField(source='bank.bank_name', read_only=True)
     bank_branch = serializers.CharField(source='bank.branch_name', read_only=True)
+    bank_code_display = serializers.CharField(source='bank.bank_code', read_only=True)
     account_manager_name = serializers.SerializerMethodField()
     gl_account_code = serializers.SerializerMethodField()
     gl_account_name = serializers.SerializerMethodField()
     available_balance = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = BankAccount
         fields = [
-            'id', 'bank', 'bank_name', 'bank_display_name', 'bank_branch',
+            'id', 'bank', 'bank_name', 'new_bank_code', 'new_bank_branch',
+            'bank_display_name', 'bank_branch', 'bank_code_display',
             'account_number', 'account_name', 'account_type', 'currency',
             'gl_account', 'gl_account_code', 'gl_account_name',
             'account_manager', 'account_manager_name',
@@ -75,8 +79,9 @@ class BankAccountSerializer(TenantModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at', 'current_balance']
         extra_kwargs = {
-            'bank': {'required': False},  # Make bank optional if bank_name is provided
-            'gl_account': {'required': False, 'allow_null': True},  # Auto-created in model.save()
+            'bank': {'required': False},
+            'gl_account': {'required': False, 'allow_null': True},
+            'account_manager': {'required': False},
         }
     
     def get_account_manager_name(self, obj):
@@ -125,42 +130,50 @@ class BankAccountSerializer(TenantModelSerializer):
     
     def validate(self, data):
         """Validate bank account data"""
-        # Auto-create or find bank if bank_name provided but no bank ID
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+
+        # Auto-create or find bank if bank_name provided but no bank FK
         if 'bank_name' in data and not data.get('bank'):
             bank_name = data.pop('bank_name')
-            # Get tenant and branch from context (set by TenantModelSerializer)
-            request = self.context.get('request')
-            if request and hasattr(request, 'user'):
-                user = request.user
+            new_bank_code = data.pop('new_bank_code', '')
+            new_bank_branch = data.pop('new_bank_branch', '')
+            if user:
                 tenant = getattr(user, 'tenant', None)
                 branch = getattr(user, 'branch', None)
-                
                 if tenant and branch:
-                    # Try to find existing bank with this name in same branch
-                    bank, created = Bank.objects.get_or_create(
+                    bank, _ = Bank.objects.get_or_create(
                         bank_name=bank_name,
                         branch=branch,
                         tenant=tenant,
                         defaults={
                             'owner': user,
                             'created_by': user,
-                            'is_active': True
+                            'is_active': True,
+                            'bank_code': new_bank_code or '',
+                            'branch_name': new_bank_branch or '',
                         }
                     )
                     data['bank'] = bank
-        
-        # Ensure bank is provided
+        else:
+            # Remove these even when a bank FK is provided to keep the model clean
+            data.pop('new_bank_code', None)
+            data.pop('new_bank_branch', None)
+
         if not data.get('bank'):
             raise serializers.ValidationError({
-                'bank': 'Either bank ID or bank_name must be provided.'
+                'bank': 'Either a bank ID or bank_name must be provided.'
             })
-        
-        # Validate dual approval settings
+
+        # Default account_manager to the requesting user if not supplied
+        if not data.get('account_manager') and user and getattr(user, 'is_authenticated', False):
+            data['account_manager'] = user
+
         if data.get('requires_dual_approval') and not data.get('dual_approval_threshold'):
             raise serializers.ValidationError({
                 'dual_approval_threshold': 'Dual approval threshold is required when dual approval is enabled.'
             })
-        
+
         return data
 
 

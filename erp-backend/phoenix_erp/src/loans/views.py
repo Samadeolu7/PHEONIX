@@ -1196,8 +1196,7 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
         try:
             disbursement.execute_disbursement(
                 disbursed_by_user=request.user,
-                disbursement_bank_account=bank_account,
-                notes=notes,
+                disbursement_account=bank_account,
             )
         except ValidationError as exc:
             return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)

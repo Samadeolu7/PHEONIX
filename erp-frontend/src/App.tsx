@@ -505,6 +505,7 @@ const BankStatementUploadPage = lazy(() => import('./pages/banks/BankStatementUp
 // Bank Management pages
 const BankListPage = lazy(() => import('./pages/banks/BankListPage'));
 const BankFormPage = lazy(() => import('./pages/banks/BankFormPage'));
+const BankSetupPage = lazy(() => import('./pages/banks/BankSetupPage'));
 const BankAccountListPage = lazy(() => import('./pages/banks/BankAccountListPage'));
 const BankAccountFormPage = lazy(() => import('./pages/banks/BankAccountFormPage'));
 const BankAccountDetailPage = lazy(() => import('./pages/banks/BankAccountDetailPage'));
@@ -3717,7 +3718,7 @@ function App() {
                                   path="/banks/accounts/new"
                                   element={
                                     <ProtectedRoute requiredPermission="bank-create">
-                                      <BankAccountFormPage />
+                                      <BankSetupPage />
                                     </ProtectedRoute>
                                   }
                                 />
@@ -3725,7 +3726,7 @@ function App() {
                                   path="/banks/accounts/:id/edit"
                                   element={
                                     <ProtectedRoute requiredPermission="bank-edit">
-                                      <BankAccountFormPage />
+                                      <BankSetupPage />
                                     </ProtectedRoute>
                                   }
                                 />

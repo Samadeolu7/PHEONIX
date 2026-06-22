@@ -311,7 +311,7 @@ const BankFormPage: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => navigate('/banks/accounts/new')}
+              onClick={() => navigate(`/banks/accounts/new?bank=${id}`)}
               className="rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 border border-blue-200"
             >
               + Add Account
