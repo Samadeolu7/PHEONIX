@@ -1099,7 +1099,10 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
       execute  — Finance/teller executes the actual cash/bank disbursement
       reject   — Reject the disbursement request
     """
-    queryset = LoanDisbursement.objects.select_related('loan', 'requested_by', 'approved_by').all()
+    queryset = LoanDisbursement.objects.select_related(
+        'loan', 'loan__client', 'requested_by', 'approved_by',
+        'disbursement_account', 'disbursement_account__bank',
+    ).all()
     serializer_class = LoanDisbursementSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     http_method_names = ['get', 'head', 'options', 'post', 'patch']
@@ -1108,7 +1111,8 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
 
     def get_queryset(self):
         qs = LoanDisbursement.all_objects.select_related(
-            'loan', 'requested_by', 'approved_by'
+            'loan', 'loan__client', 'requested_by', 'approved_by',
+            'disbursement_account', 'disbursement_account__bank',
         ).filter(is_deleted=False)
         qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
         loan_id = self.request.query_params.get('loan')

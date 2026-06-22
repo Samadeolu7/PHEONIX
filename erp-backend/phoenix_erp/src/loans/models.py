@@ -614,7 +614,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=self.account,
             side=JournalEntryLine.DEBIT,
             amount=self.disbursed_amount,
-            description=f"Loan issued to {self.client.full_name} – {self.loan_number}",
         )
 
         # Credit: Cash / Bank account (ASSET type) — balance DECREASES
@@ -623,7 +622,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=cash_account,
             side=JournalEntryLine.CREDIT,
             amount=self.disbursed_amount,
-            description=f"Cash disbursed for loan {self.loan_number}",
         )
 
         journal_entry.post()

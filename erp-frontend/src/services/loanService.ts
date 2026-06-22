@@ -161,6 +161,9 @@ export interface LoanDisbursement {
   id: number;
   loan: number;
   loan_number: string;
+  client_name: string;
+  client_phone: string;
+  loan_amount: string;
   requested_by: number;
   requested_by_name: string;
   status: DisbursementStatus;
@@ -169,6 +172,9 @@ export interface LoanDisbursement {
   approved_at: string | null;
   rejection_reason: string;
   disbursement_account: number | null;
+  disbursement_account_name: string | null;
+  disbursement_account_number: string | null;
+  disbursement_bank_name: string | null;
   disbursement_date: string | null;
   disbursed_by: number | null;
   notes: string;

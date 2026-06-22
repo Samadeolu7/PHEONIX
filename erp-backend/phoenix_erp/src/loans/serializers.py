@@ -214,6 +214,14 @@ class LoanVerificationRequestSerializer(TenantModelSerializer):
 
 class LoanDisbursementSerializer(TenantModelSerializer):
     loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
+    client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
+    client_phone = serializers.CharField(source='loan.client.phone_primary', read_only=True)
+    loan_amount = serializers.DecimalField(
+        source='loan.approved_amount', max_digits=18, decimal_places=2, read_only=True
+    )
+    disbursement_account_name = serializers.SerializerMethodField()
+    disbursement_account_number = serializers.SerializerMethodField()
+    disbursement_bank_name = serializers.SerializerMethodField()
     requested_by_name = serializers.SerializerMethodField()
     approved_by_name = serializers.SerializerMethodField()
 
@@ -229,15 +237,29 @@ class LoanDisbursementSerializer(TenantModelSerializer):
             return ''
         return u.get_full_name() or u.username
 
+    def get_disbursement_account_name(self, obj):
+        return obj.disbursement_account.account_name if obj.disbursement_account_id else None
+
+    def get_disbursement_account_number(self, obj):
+        return obj.disbursement_account.account_number if obj.disbursement_account_id else None
+
+    def get_disbursement_bank_name(self, obj):
+        if obj.disbursement_account_id and obj.disbursement_account.bank_id:
+            return str(obj.disbursement_account.bank)
+        return None
+
     class Meta:
         model = LoanDisbursement
         fields = [
             'id', 'loan', 'loan_number',
+            'client_name', 'client_phone', 'loan_amount',
             'requested_by', 'requested_by_name',
             'status', 'requested_at',
             'approved_by', 'approved_by_name', 'approved_at',
             'rejection_reason',
-            'disbursement_account', 'disbursement_date', 'disbursed_by',
+            'disbursement_account', 'disbursement_account_name',
+            'disbursement_account_number', 'disbursement_bank_name',
+            'disbursement_date', 'disbursed_by',
             'notes',
             'owner', 'branch', 'created_at', 'updated_at',
         ]

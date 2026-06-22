@@ -192,8 +192,36 @@ const LoanDisbursementPage: React.FC = () => {
         </span>
       </div>
 
-      {/* Details */}
+      {/* Customer & Loan Summary */}
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Loan Details</h3>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p className="text-gray-500">Client</p>
+            <p className="font-medium text-gray-900">{d.client_name || '—'}</p>
+          </div>
+          <div>
+            <p className="text-gray-500">Phone</p>
+            <p className="font-medium text-gray-900">{d.client_phone || '—'}</p>
+          </div>
+          <div>
+            <p className="text-gray-500">Loan Amount</p>
+            <p className="font-semibold text-gray-900 text-base">
+              {d.loan_amount
+                ? `₦${parseFloat(d.loan_amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`
+                : '—'}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500">Loan Number</p>
+            <p className="font-medium text-gray-900">{d.loan_number}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Workflow Details */}
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-3">
+        <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Workflow</h3>
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
             <p className="text-gray-500">Requested by</p>
@@ -215,6 +243,21 @@ const LoanDisbursementPage: React.FC = () => {
             <div>
               <p className="text-gray-500">Disbursement date</p>
               <p className="font-medium text-gray-900">{new Date(d.disbursement_date).toLocaleDateString()}</p>
+            </div>
+          )}
+          {d.disbursement_bank_name && (
+            <div>
+              <p className="text-gray-500">Bank</p>
+              <p className="font-medium text-gray-900">{d.disbursement_bank_name}</p>
+            </div>
+          )}
+          {d.disbursement_account_name && (
+            <div>
+              <p className="text-gray-500">Account</p>
+              <p className="font-medium text-gray-900">
+                {d.disbursement_account_name}
+                {d.disbursement_account_number ? ` (${d.disbursement_account_number})` : ''}
+              </p>
             </div>
           )}
           {d.rejection_reason && (
@@ -246,6 +289,7 @@ const LoanDisbursementPage: React.FC = () => {
           <h3 className="font-semibold text-gray-800">Approve or Reject</h3>
           <div className="flex gap-3">
             <button
+              type="button"
               onClick={handleApprove}
               disabled={submitting}
               className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
@@ -254,6 +298,7 @@ const LoanDisbursementPage: React.FC = () => {
               Approve
             </button>
             <button
+              type="button"
               onClick={() => setShowRejectForm((v) => !v)}
               className="flex items-center gap-2 px-5 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg transition-colors"
             >
@@ -264,6 +309,7 @@ const LoanDisbursementPage: React.FC = () => {
           {showRejectForm && (
             <div className="space-y-2 pt-2">
               <textarea
+                title="Rejection reason"
                 className="w-full border border-gray-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
                 rows={3}
                 placeholder="Rejection reason (required)…"
@@ -271,6 +317,7 @@ const LoanDisbursementPage: React.FC = () => {
                 onChange={(e) => setRejectReason(e.target.value)}
               />
               <button
+                type="button"
                 onClick={handleReject}
                 disabled={submitting || !rejectReason.trim()}
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
@@ -287,6 +334,7 @@ const LoanDisbursementPage: React.FC = () => {
           <h3 className="font-semibold text-gray-800">Execute Disbursement</h3>
           {!showExecuteForm ? (
             <button
+              type="button"
               onClick={() => setShowExecuteForm(true)}
               className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
             >
@@ -308,7 +356,7 @@ const LoanDisbursementPage: React.FC = () => {
                   <option value="">— Select bank account —</option>
                   {bankAccounts.map((ba) => (
                     <option key={ba.id} value={ba.id}>
-                      {ba.bank_name} — {ba.account_number}
+                      {ba.bank_display_name || ba.bank_name} — {ba.account_number} ({ba.account_name})
                     </option>
                   ))}
                 </select>
@@ -316,6 +364,7 @@ const LoanDisbursementPage: React.FC = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
                 <textarea
+                  title="Notes"
                   className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500"
                   rows={2}
                   placeholder="Optional notes…"
@@ -325,6 +374,7 @@ const LoanDisbursementPage: React.FC = () => {
               </div>
               <div className="flex gap-2">
                 <button
+                  type="button"
                   onClick={handleExecute}
                   disabled={submitting || !selectedBankAccount}
                   className="px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
@@ -333,6 +383,7 @@ const LoanDisbursementPage: React.FC = () => {
                   Execute Disbursement
                 </button>
                 <button
+                  type="button"
                   onClick={() => setShowExecuteForm(false)}
                   className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors"
                 >

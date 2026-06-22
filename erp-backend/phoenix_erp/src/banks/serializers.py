@@ -39,12 +39,14 @@ class BankSerializer(TenantModelSerializer):
         return obj.accounts.filter(is_active=True, is_deleted=False).count()
     
     def get_total_balance(self, obj):
-        """Get total balance across all accounts at this bank"""
+        """Sum GL account balances for all active accounts at this bank."""
         from django.db.models import Sum
-        total = obj.accounts.filter(
-            is_active=True,
-            is_deleted=False
-        ).aggregate(total=Sum('current_balance'))['total']
+        from accounts.models import Account
+        total = Account.objects.filter(
+            bank_account__bank=obj,
+            bank_account__is_active=True,
+            bank_account__is_deleted=False,
+        ).aggregate(total=Sum('balance'))['total']
         return float(total) if total else 0.0
 
 
@@ -61,6 +63,7 @@ class BankAccountSerializer(TenantModelSerializer):
     gl_account_code = serializers.SerializerMethodField()
     gl_account_name = serializers.SerializerMethodField()
     available_balance = serializers.SerializerMethodField()
+    current_balance = serializers.SerializerMethodField()
 
     class Meta:
         model = BankAccount
@@ -77,11 +80,12 @@ class BankAccountSerializer(TenantModelSerializer):
             'iban', 'swift_code', 'date_opened', 'notes',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_at', 'updated_at', 'current_balance']
+        read_only_fields = ['created_at', 'updated_at']
         extra_kwargs = {
             'bank': {'required': False},
             'gl_account': {'required': False, 'allow_null': True},
             'account_manager': {'required': False},
+            'current_balance': {'read_only': True},
         }
     
     def get_account_manager_name(self, obj):
@@ -94,12 +98,28 @@ class BankAccountSerializer(TenantModelSerializer):
         """Get available balance after pending transactions"""
         return float(obj.get_available_balance())
     
+    def get_current_balance(self, obj):
+        """Always read live balance from the linked GL account."""
+        if obj.gl_account_id:
+            try:
+                return float(obj.gl_account.balance)
+            except Exception:
+                pass
+        return float(obj.current_balance)
+
+    def get_available_balance(self, obj):
+        """Available = GL balance minus pending outgoing transfers."""
+        from django.db.models import Sum
+        gl_balance = float(obj.gl_account.balance) if obj.gl_account_id else float(obj.current_balance)
+        pending_out = obj.outgoing_transfers.filter(
+            status__in=['pending', 'approved']
+        ).aggregate(total=Sum('amount'))['total'] or 0
+        return gl_balance - float(pending_out)
+
     def get_gl_account_code(self, obj):
-        """Return GL account code, or None if not yet created"""
         return obj.gl_account.code if obj.gl_account_id else None
 
     def get_gl_account_name(self, obj):
-        """Return GL account name, or None if not yet created"""
         return obj.gl_account.name if obj.gl_account_id else None
 
     def validate_gl_account(self, value):

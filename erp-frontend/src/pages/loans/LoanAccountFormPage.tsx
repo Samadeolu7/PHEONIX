@@ -210,6 +210,11 @@ export default function LoanAccountFormPage() {
     );
   }
 
+  const selectedClient = clientId ? (clients.find(c => String(c.id) === clientId) ?? null) : null;
+  const isWeeklyClient = selectedClient
+    ? (selectedClient.client_id?.startsWith('WL') || repaymentFreq === 'weekly')
+    : false;
+
   const registrationFees = feePreviews.filter(f => f.posting_trigger === 'registration');
   const otherFees = feePreviews.filter(f => f.posting_trigger !== 'registration');
   const totalRegistrationFees = registrationFees.reduce((sum, f) => sum + parseFloat(f.calculated_amount), 0);
@@ -301,6 +306,85 @@ export default function LoanAccountFormPage() {
               </div>
             </div>
           </div>
+
+          {/* Client Details — shown once a client is selected */}
+          {selectedClient && (
+            <div className="bg-blue-50 rounded-xl border border-blue-200 p-4 space-y-3">
+              <h2 className="text-xs font-semibold text-blue-800 uppercase tracking-wide">Client Information</h2>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                <div>
+                  <span className="text-blue-600 text-xs">Full Name</span>
+                  <p className="font-medium text-gray-900">{selectedClient.full_name}</p>
+                </div>
+                <div>
+                  <span className="text-blue-600 text-xs">Client ID</span>
+                  <p className="font-medium text-gray-900">{selectedClient.client_id}</p>
+                </div>
+                {selectedClient.phone_primary && (
+                  <div>
+                    <span className="text-blue-600 text-xs">Phone</span>
+                    <p className="font-medium text-gray-900">{selectedClient.phone_primary}</p>
+                  </div>
+                )}
+                {selectedClient.phone_secondary && (
+                  <div>
+                    <span className="text-blue-600 text-xs">Phone 2</span>
+                    <p className="font-medium text-gray-900">{selectedClient.phone_secondary}</p>
+                  </div>
+                )}
+                {(selectedClient.address_street || selectedClient.address_city) && (
+                  <div className="col-span-2">
+                    <span className="text-blue-600 text-xs">Address</span>
+                    <p className="font-medium text-gray-900">
+                      {[
+                        selectedClient.address_street,
+                        selectedClient.address_city,
+                        selectedClient.address_state,
+                      ].filter(Boolean).join(', ')}
+                    </p>
+                  </div>
+                )}
+                {isWeeklyClient && selectedClient.metadata?.group_name && (
+                  <div className="col-span-2">
+                    <span className="text-blue-600 text-xs">Group</span>
+                    <p className="font-medium text-gray-900">{selectedClient.metadata.group_name}</p>
+                  </div>
+                )}
+              </div>
+              {(selectedClient.next_of_kin_name || selectedClient.next_of_kin_phone) && (
+                <div className="border-t border-blue-200 pt-2 mt-2">
+                  <p className="text-xs font-semibold text-blue-700 mb-1">
+                    {isWeeklyClient ? 'Guarantor / Next of Kin' : 'Next of Kin'}
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                    {selectedClient.next_of_kin_name && (
+                      <div>
+                        <span className="text-blue-600 text-xs">Name</span>
+                        <p className="font-medium text-gray-900">
+                          {selectedClient.next_of_kin_name}
+                          {selectedClient.next_of_kin_relationship
+                            ? ` (${selectedClient.next_of_kin_relationship})`
+                            : ''}
+                        </p>
+                      </div>
+                    )}
+                    {selectedClient.next_of_kin_phone && (
+                      <div>
+                        <span className="text-blue-600 text-xs">Phone</span>
+                        <p className="font-medium text-gray-900">{selectedClient.next_of_kin_phone}</p>
+                      </div>
+                    )}
+                    {selectedClient.next_of_kin_address && (
+                      <div className="col-span-2">
+                        <span className="text-blue-600 text-xs">Address</span>
+                        <p className="font-medium text-gray-900">{selectedClient.next_of_kin_address}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Loan Terms */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
