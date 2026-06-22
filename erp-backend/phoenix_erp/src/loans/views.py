@@ -521,7 +521,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         # Get all active/disbursed loans for group members
         member_client_ids = list(
-            group.members.filter(is_active=True).values_list('id', flat=True)
+            group.members.filter(status='active').values_list('id', flat=True)
         )
         loans_qs = (
             self.get_queryset()
