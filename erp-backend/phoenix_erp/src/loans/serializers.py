@@ -238,15 +238,28 @@ class LoanDisbursementSerializer(TenantModelSerializer):
         return u.get_full_name() or u.username
 
     def get_disbursement_account_name(self, obj):
-        return obj.disbursement_account.account_name if obj.disbursement_account_id else None
+        if not obj.disbursement_account_id:
+            return None
+        try:
+            return obj.disbursement_account.bank_account.account_name
+        except Exception:
+            return obj.disbursement_account.name
 
     def get_disbursement_account_number(self, obj):
-        return obj.disbursement_account.account_number if obj.disbursement_account_id else None
+        if not obj.disbursement_account_id:
+            return None
+        try:
+            return obj.disbursement_account.bank_account.account_number
+        except Exception:
+            return obj.disbursement_account.code
 
     def get_disbursement_bank_name(self, obj):
-        if obj.disbursement_account_id and obj.disbursement_account.bank_id:
-            return str(obj.disbursement_account.bank)
-        return None
+        if not obj.disbursement_account_id:
+            return None
+        try:
+            return str(obj.disbursement_account.bank_account.bank)
+        except Exception:
+            return None
 
     class Meta:
         model = LoanDisbursement

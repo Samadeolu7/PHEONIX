@@ -1429,10 +1429,14 @@ class LoanDisbursement(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             disbursed_by=disbursed_by_user,
         )
         from django.utils import timezone as tz
+        # Resolve to the GL Account FK so the record stores which account was used.
+        # acct may be a BankAccount (has .gl_account) or already a GL Account.
+        gl_acct = getattr(acct, 'gl_account', acct)
         self.status = 'disbursed'
         self.disbursed_by = disbursed_by_user
+        self.disbursement_account = gl_acct
         self.disbursement_date = disbursement_date or tz.now().date()
-        self.save(update_fields=['status', 'disbursed_by', 'disbursement_date'])
+        self.save(update_fields=['status', 'disbursed_by', 'disbursement_account', 'disbursement_date'])
 
 
 # ── Loan Write-Off ────────────────────────────────────────────────────────────
