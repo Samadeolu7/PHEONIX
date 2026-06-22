@@ -256,6 +256,102 @@ def apply_loan_fees(
     return results
 
 
+class DisbursementService:
+    """Encapsulates the disbursement approval/rejection/execution workflow."""
+
+    @staticmethod
+    @db_transaction.atomic
+    def approve(disbursement, approved_by_user):
+        """
+        Approve a pending disbursement request.
+
+        Raises ValidationError if the disbursement is not in pending_approval state
+        or if the approver is the same user who requested it (maker-checker).
+        """
+        if disbursement.status != 'pending_approval':
+            raise ValidationError("Only pending disbursements can be approved.")
+        if disbursement.requested_by_id == approved_by_user.pk:
+            raise ValidationError("The requester cannot approve their own disbursement.")
+
+        disbursement.status = 'approved'
+        disbursement.approved_by = approved_by_user
+        from django.utils import timezone as tz
+        disbursement.approved_at = tz.now()
+        disbursement.save(update_fields=['status', 'approved_by', 'approved_at'])
+        return disbursement
+
+    @staticmethod
+    @db_transaction.atomic
+    def reject(disbursement, rejected_by_user, reason: str):
+        """Reject a pending disbursement request with a mandatory reason."""
+        if disbursement.status != 'pending_approval':
+            raise ValidationError("Only pending disbursements can be rejected.")
+        if not reason or not reason.strip():
+            raise ValidationError("A rejection reason is required.")
+
+        disbursement.status = 'rejected'
+        disbursement.approved_by = rejected_by_user
+        disbursement.rejection_reason = reason.strip()
+        from django.utils import timezone as tz
+        disbursement.approved_at = tz.now()
+        disbursement.save(update_fields=['status', 'approved_by', 'approved_at', 'rejection_reason'])
+        return disbursement
+
+    @staticmethod
+    @db_transaction.atomic
+    def execute(disbursement, bank_account_id: int, disbursed_by_user, notes: str = ''):
+        """
+        Execute an approved disbursement.
+
+        Resolves the BankAccount → GL Account, updates the disbursement notes,
+        and delegates the actual disbursal + GL posting to
+        LoanDisbursement.execute_disbursement().
+
+        Args:
+            disbursement:     LoanDisbursement instance (must be in 'approved' status).
+            bank_account_id:  PK of the BankAccount to disburse from.
+            disbursed_by_user: The User executing the disbursement.
+            notes:            Optional free-text notes to attach to the record.
+
+        Returns:
+            The updated LoanDisbursement instance.
+
+        Raises:
+            ValidationError: if status is wrong, bank account is missing, or has
+                             no linked GL account.
+        """
+        if disbursement.status != 'approved':
+            raise ValidationError("Only approved disbursements can be executed.")
+
+        from banks.models import BankAccount
+        try:
+            bank_account = BankAccount.objects.select_related('gl_account').get(
+                pk=bank_account_id
+            )
+        except BankAccount.DoesNotExist:
+            raise ValidationError("Bank account not found.")
+
+        if not bank_account.gl_account_id:
+            raise ValidationError(
+                f"Bank account '{bank_account}' has no linked GL account. "
+                "Please link a GL account to this bank account first."
+            )
+
+        gl_account = bank_account.gl_account
+
+        if notes:
+            disbursement.notes = notes
+            disbursement.save(update_fields=['notes'])
+
+        # execute_disbursement now receives the GL Account directly; disburse()
+        # also has a fallback isinstance check as defence-in-depth.
+        disbursement.execute_disbursement(
+            disbursed_by_user=disbursed_by_user,
+            disbursement_account=gl_account,
+        )
+        return disbursement
+
+
 def get_fee_preview(loan_product, loan_amount: Decimal) -> list[dict]:
     """
     Return a list of fee line previews for display in the loan application form.

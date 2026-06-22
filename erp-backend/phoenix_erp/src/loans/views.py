@@ -1141,19 +1141,20 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
         except Exception:
             pass  # Fail-open during rollout
 
+        from .services import DisbursementService
         disbursement = self.get_object()
         try:
-            disbursement.approve_disbursement(request.user)
+            DisbursementService.approve(disbursement, request.user)
         except ValidationError as exc:
-            return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+            msg = exc.message if hasattr(exc, 'message') else str(exc)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(disbursement).data)
 
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
-        """Execute the disbursement — posts the GL entries and disburses the loan."""
+        """Execute the disbursement — resolves GL account, posts entries, disburses the loan."""
         try:
             from permissions.services import PermissionResolver
-            from decimal import Decimal
             effective = PermissionResolver.resolve(
                 request.user, module='loans', page='loan-disbursements', action='approve',
             )
@@ -1167,23 +1168,6 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
 
         disbursement = self.get_object()
 
-        # Approval limit check against disbursement amount
-        try:
-            from permissions.services import PermissionResolver
-            from decimal import Decimal
-            effective = PermissionResolver.resolve(
-                request.user, module='loans', page='loan-disbursements', action='approve',
-            )
-            if effective.approval_limit is not None:
-                amount = getattr(disbursement, 'amount', None) or getattr(disbursement, 'disbursement_amount', None) or 0
-                if Decimal(str(amount)) > Decimal(str(effective.approval_limit)):
-                    return Response(
-                        {'detail': f'Disbursement amount {amount} exceeds your approval limit of {effective.approval_limit}.'},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
-        except Exception:
-            pass
-
         disbursement_account_id = request.data.get('disbursement_account')
         notes = request.data.get('notes', '')
 
@@ -1193,21 +1177,19 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from banks.models import BankAccount
+        from .services import DisbursementService, apply_loan_fees
         try:
-            bank_account = BankAccount.objects.get(pk=disbursement_account_id)
-        except BankAccount.DoesNotExist:
-            return Response({'detail': 'Bank account not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            disbursement.execute_disbursement(
+            DisbursementService.execute(
+                disbursement=disbursement,
+                bank_account_id=disbursement_account_id,
                 disbursed_by_user=request.user,
-                disbursement_account=bank_account,
+                notes=notes,
             )
         except ValidationError as exc:
-            return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
+            msg = exc.message if hasattr(exc, 'message') else str(exc)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Post any fees configured to trigger at disbursement
+        # Post any disbursement-trigger fees (non-fatal — warn on failure)
         loan = disbursement.loan
         _fee_warnings = []
         if loan.product.fee_lines.filter(posting_trigger='disbursement', is_active=True).exists():
@@ -1227,7 +1209,6 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
                         "Use the fee-apply endpoint to post them manually."
                     )
             if not _fee_warnings:
-                from .services import apply_loan_fees
                 try:
                     apply_loan_fees(
                         loan, 'disbursement',
@@ -1261,16 +1242,14 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
         except Exception:
             pass  # Fail-open during rollout
 
+        from .services import DisbursementService
         disbursement = self.get_object()
-        if disbursement.status not in ('pending_approval',):
-            return Response(
-                {'detail': 'Only pending disbursements can be rejected.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         reason = request.data.get('reason', '')
-        disbursement.status = 'rejected'
-        disbursement.rejection_reason = reason
-        disbursement.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+        try:
+            DisbursementService.reject(disbursement, request.user, reason)
+        except ValidationError as exc:
+            msg = exc.message if hasattr(exc, 'message') else str(exc)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(disbursement).data)
 
 

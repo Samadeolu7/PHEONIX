@@ -569,6 +569,21 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 "configure disbursement_account on the Loan Product."
             )
 
+        # Accept a BankAccount instance — unwrap to its linked GL Account.
+        from banks.models import BankAccount as _BankAccount
+        if isinstance(cash_account, _BankAccount):
+            try:
+                cash_account = cash_account.gl_account
+            except Exception:
+                raise ValidationError(
+                    "The selected bank account has no linked GL account. "
+                    "Please link a GL account to the bank account first."
+                )
+        if not cash_account:
+            raise ValidationError(
+                "The selected bank account has no linked GL account."
+            )
+
         self.status = 'disbursed'
         self.disbursement_date = disbursement_date or timezone.now().date()
         self.disbursed_amount = self.approved_amount
