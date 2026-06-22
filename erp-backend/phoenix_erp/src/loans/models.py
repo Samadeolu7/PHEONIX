@@ -846,7 +846,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=payment_account,
             side=JournalEntryLine.DEBIT,
             amount=amount,
-            description=f"Payment received for loan {self.loan_number}",
         )
 
         # ── Credit entries (must collectively equal the debit) ────────────
@@ -872,7 +871,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 account=self.account,
                 side=JournalEntryLine.CREDIT,
                 amount=loan_account_credit,
-                description=f"Principal (and unrouted income) repaid – {self.loan_number}",
             )
 
         if interest_account and interest_payment > 0:
@@ -881,7 +879,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 account=interest_account,
                 side=JournalEntryLine.CREDIT,
                 amount=interest_payment,
-                description=f"Interest income – {self.loan_number}",
             )
 
         if fee_account and fee_payment > 0:
@@ -890,7 +887,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 account=fee_account,
                 side=JournalEntryLine.CREDIT,
                 amount=fee_payment,
-                description=f"Fee income – {self.loan_number}",
             )
 
         if penalty_account and penalty_payment > 0:
@@ -899,7 +895,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 account=penalty_account,
                 side=JournalEntryLine.CREDIT,
                 amount=penalty_payment,
-                description=f"Penalty income – {self.loan_number}",
             )
 
         journal_entry.post()
@@ -1089,7 +1084,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=provision_account,
             side=JournalEntryLine.DEBIT,
             amount=write_off_amount,
-            description=f"Loan write-off expense — {self.loan_number}",
         )
         # Cr. Loan Receivable — asset removed from the books
         JournalEntryLine.objects.create(
@@ -1097,7 +1091,6 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=self.account,
             side=JournalEntryLine.CREDIT,
             amount=write_off_amount,
-            description=f"Loan receivable cleared — {self.loan_number}",
         )
 
         journal.post()
@@ -1627,7 +1620,6 @@ class LoanWriteOff(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=provision_account,
             side=JournalEntryLine.DEBIT,
             amount=self.total_write_off_amount,
-            description=f"Write-off provision reduction — {loan.loan_number}",
         )
 
         # Cr. Loan Receivable (removes the asset from the balance sheet)
@@ -1636,7 +1628,6 @@ class LoanWriteOff(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=loan.account,
             side=JournalEntryLine.CREDIT,
             amount=self.total_write_off_amount,
-            description=f"Loan receivable written off — {loan.loan_number}",
         )
 
         journal.post()
