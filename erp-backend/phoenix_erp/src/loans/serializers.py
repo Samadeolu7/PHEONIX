@@ -49,7 +49,7 @@ class LoanRepaymentScheduleSerializer(TenantModelSerializer):
             'id', 'loan', 'installment_number', 'due_date',
             'principal_due', 'interest_due', 'fees_due', 'total_due',
             'principal_paid', 'interest_paid', 'fees_paid', 'total_paid',
-            'status', 'paid_date',
+            'status', 'payment_date', 'days_late',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'loan', 'created_at', 'updated_at']
