@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import {
   loanService, LoanProduct, CreateLoanAccountData,
-  LoanAccount, FeePreviewItem, FeeRouting,
+  LoanAccount, FeePreviewItem, FeeRouting, TermUnit,
 } from '../../services/loanService';
 import { clientService, Client } from '../../services/clientService';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
@@ -53,6 +53,7 @@ export default function LoanAccountFormPage() {
   const [productId, setProductId] = useState('');
   const [requestedAmount, setRequestedAmount] = useState('');
   const [termMonths, setTermMonths] = useState('');
+  const [termUnit, setTermUnit] = useState<TermUnit>('months');
   const [repaymentFreq, setRepaymentFreq] = useState('monthly');
   const [applicationDate, setApplicationDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [purpose, setPurpose] = useState('');
@@ -131,6 +132,7 @@ export default function LoanAccountFormPage() {
     if (p) {
       if (!requestedAmount) setRequestedAmount(p.min_loan_amount);
       if (!termMonths) setTermMonths(String(p.min_term_months));
+      setTermUnit(p.term_unit ?? 'months');
       if (p.allowed_repayment_frequencies?.length) setRepaymentFreq(p.allowed_repayment_frequencies[0]);
     }
   }
@@ -153,18 +155,23 @@ export default function LoanAccountFormPage() {
     const cId = parseInt(clientId);
     const pId = parseInt(productId);
     const amount = parseFloat(requestedAmount);
-    const months = parseInt(termMonths);
-    if (!cId || isNaN(cId))     { setError('Please select a valid client.'); return; }
-    if (!pId || isNaN(pId))     { setError('Please select a loan product.'); return; }
-    if (!amount || amount <= 0) { setError('Requested amount must be greater than zero.'); return; }
-    if (!months || months <= 0) { setError('Term must be at least 1 month.'); return; }
+    const termVal = parseInt(termMonths);
+    const unitLabel = termUnit === 'days' ? 'days' : termUnit === 'weeks' ? 'weeks' : 'months';
+    if (!cId || isNaN(cId))       { setError('Please select a valid client.'); return; }
+    if (!pId || isNaN(pId))       { setError('Please select a loan product.'); return; }
+    if (!amount || amount <= 0)   { setError('Requested amount must be greater than zero.'); return; }
+    if (!termVal || termVal <= 0) { setError(`Term must be at least 1 ${unitLabel}.`); return; }
     if (selectedProduct) {
       const min = parseFloat(selectedProduct.min_loan_amount);
       const max = parseFloat(selectedProduct.max_loan_amount);
-      if (amount < min) { setError(`Minimum loan amount is N${min.toLocaleString()}.`); return; }
-      if (amount > max) { setError(`Maximum loan amount is N${max.toLocaleString()}.`); return; }
-      if (months < selectedProduct.min_term_months) { setError(`Minimum term is ${selectedProduct.min_term_months} months.`); return; }
-      if (months > selectedProduct.max_term_months) { setError(`Maximum term is ${selectedProduct.max_term_months} months.`); return; }
+      if (amount < min) { setError(`Minimum loan amount is ₦${min.toLocaleString()}.`); return; }
+      if (amount > max) { setError(`Maximum loan amount is ₦${max.toLocaleString()}.`); return; }
+      if (termVal < selectedProduct.min_term_months) {
+        setError(`Minimum term is ${selectedProduct.min_term_months} ${unitLabel}.`); return;
+      }
+      if (termVal > selectedProduct.max_term_months) {
+        setError(`Maximum term is ${selectedProduct.max_term_months} ${unitLabel}.`); return;
+      }
     }
     for (const fee of feePreviews) {
       if (fee.debit_destination === 'user_choice') {
@@ -179,7 +186,7 @@ export default function LoanAccountFormPage() {
     Object.entries(feeRouting).forEach(([k, v]) => { feeRoutingPayload[k] = v; });
     const payload: CreateLoanAccountData = {
       client: cId, product: pId, requested_amount: requestedAmount,
-      repayment_frequency: repaymentFreq, term_months: months,
+      repayment_frequency: repaymentFreq, term_months: termVal, term_unit: termUnit,
       application_date: applicationDate, purpose: purpose.trim() || undefined,
       fee_routing: Object.keys(feeRoutingPayload).length ? feeRoutingPayload : undefined,
       cashier_account_id: cashierAccountId ? parseInt(cashierAccountId) : undefined,
@@ -390,16 +397,19 @@ export default function LoanAccountFormPage() {
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <h2 className="text-sm font-semibold text-gray-800 mb-4">Loan Terms</h2>
             {selectedProduct && (
-              <div className="bg-blue-50 rounded-lg p-3 mb-4 text-xs text-blue-700">
-                <span className="font-medium">{selectedProduct.name}</span>
-                {' | '}N{fmt(selectedProduct.min_loan_amount)} - N{fmt(selectedProduct.max_loan_amount)}
-                {' | '}{selectedProduct.min_term_months}-{selectedProduct.max_term_months} months
-                {' | '}{selectedProduct.default_interest_rate}%
-                {' | '}{
-                  selectedProduct.interest_calculation_method === 'reducing_balance'
-                    ? 'Reducing Balance'
-                    : 'Straight Line'
-                }
+              <div className="bg-blue-50 rounded-lg p-3 mb-4 text-xs text-blue-700 space-y-1">
+                <div>
+                  <span className="font-medium">{selectedProduct.name}</span>
+                  {' | '}₦{fmt(selectedProduct.min_loan_amount)} – ₦{fmt(selectedProduct.max_loan_amount)}
+                  {' | '}{selectedProduct.min_term_months}–{selectedProduct.max_term_months} {selectedProduct.term_unit ?? 'months'}
+                  {' | '}{selectedProduct.default_interest_rate}% p.a.
+                  {' | '}{selectedProduct.interest_calculation_method === 'reducing_balance' ? 'Reducing Balance' : 'Straight Line'}
+                </div>
+                {(selectedProduct.first_repayment_buffer_days ?? 0) > 0 && (
+                  <div className="text-blue-600">
+                    First repayment starts at least {selectedProduct.first_repayment_buffer_days} days after disbursement.
+                  </div>
+                )}
               </div>
             )}
             <div className="grid grid-cols-2 gap-4">
@@ -420,9 +430,30 @@ export default function LoanAccountFormPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Term (months) <span className="text-red-500">*</span></label>
-                <input type="number" required min="1" value={termMonths} onChange={e => setTermMonths(e.target.value)} placeholder="e.g. 12"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                <label className="block text-xs font-medium text-gray-600 mb-1">Loan Term <span className="text-red-500">*</span></label>
+                <div className="flex gap-2">
+                  <input
+                    type="number" required min="1"
+                    value={termMonths} onChange={e => setTermMonths(e.target.value)}
+                    placeholder="e.g. 23"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                  <select
+                    value={termUnit}
+                    onChange={e => setTermUnit(e.target.value as TermUnit)}
+                    aria-label="Term unit"
+                    className="w-28 border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="days">Days</option>
+                    <option value="weeks">Weeks</option>
+                    <option value="months">Months</option>
+                  </select>
+                </div>
+                {selectedProduct && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Range: {selectedProduct.min_term_months}–{selectedProduct.max_term_months} {selectedProduct.term_unit ?? 'months'}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Loan Purpose</label>

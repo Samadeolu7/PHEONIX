@@ -9,7 +9,6 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models import Sum, Q
 from decimal import Decimal
-from dateutil.relativedelta import relativedelta
 
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
@@ -109,8 +108,32 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     )
     
     # Term configuration
-    min_term_months = models.PositiveIntegerField(default=1)
-    max_term_months = models.PositiveIntegerField(default=60)
+    TERM_UNIT_CHOICES = [
+        ('days',   'Days'),
+        ('weeks',  'Weeks'),
+        ('months', 'Months'),
+    ]
+    term_unit = models.CharField(
+        max_length=10,
+        choices=TERM_UNIT_CHOICES,
+        default='months',
+        help_text="Unit in which min/max terms and loan terms are expressed.",
+    )
+    min_term_months = models.PositiveIntegerField(
+        default=1,
+        help_text="Minimum term value (in the product's term_unit).",
+    )
+    max_term_months = models.PositiveIntegerField(
+        default=60,
+        help_text="Maximum term value (in the product's term_unit).",
+    )
+    first_repayment_buffer_days = models.PositiveIntegerField(
+        default=0,
+        help_text=(
+            "Minimum calendar days from disbursement before the first repayment is due. "
+            "0 = follows normal cadence. E.g. 14 means first weekly repayment won't be before day 14."
+        ),
+    )
     
     # Amount limits
     min_loan_amount = models.DecimalField(max_digits=18, decimal_places=2)
@@ -302,7 +325,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     )
 
     # Term
-    term_months = models.PositiveIntegerField(help_text="Loan term in months")
+    term_months = models.PositiveIntegerField(
+        help_text="Term value — interpret using term_unit (e.g. 23 weeks, 6 months, 50 days)."
+    )
+    term_unit = models.CharField(
+        max_length=10,
+        choices=LoanProduct.TERM_UNIT_CHOICES,
+        default='months',
+        help_text="Unit in which term_months is expressed.",
+    )
     repayment_frequency = models.CharField(
         max_length=20,
         choices=LoanProduct.REPAYMENT_FREQUENCIES,
@@ -493,11 +524,21 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             if self.approved_amount < self.product.min_loan_amount:
                 raise ValidationError('Approved amount below product minimum')
         
-        if self.term_months:
-            if self.term_months > self.product.max_term_months:
-                raise ValidationError('Term exceeds product maximum')
-            if self.term_months < self.product.min_term_months:
-                raise ValidationError('Term below product minimum')
+        if self.term_months and self.product_id:
+            # Both the loan and the product express their term in the same unit
+            # (product.term_unit). Validate the raw value directly.
+            prod_term_unit = getattr(self.product, 'term_unit', 'months')
+            loan_term_unit = getattr(self, 'term_unit', 'months')
+            if loan_term_unit == prod_term_unit:
+                if self.term_months > self.product.max_term_months:
+                    raise ValidationError(
+                        f'Term exceeds product maximum ({self.product.max_term_months} {prod_term_unit})'
+                    )
+                if self.term_months < self.product.min_term_months:
+                    raise ValidationError(
+                        f'Term is below product minimum ({self.product.min_term_months} {prod_term_unit})'
+                    )
+            # If units differ, skip validation (uncommon — product admin misconfiguration)
     
     @transaction.atomic
     def approve(self, user, approved_amount: Decimal = None):
@@ -646,113 +687,9 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.save()
     
     def _generate_repayment_schedule(self):
-        """
-        Generate the full amortization schedule.
-
-        IMPORTANT: installment count is determined FIRST so that the calculation
-        methods (_flat_schedule / _reducing_balance_schedule) can use
-        self.number_of_installments without a division-by-zero.
-        """
-        frequency_map = {
-            'daily':     (self.term_months * 30,           relativedelta(days=1),   Decimal('365')),
-            'weekly':    (self.term_months * 4,            relativedelta(weeks=1),  Decimal('52')),
-            'biweekly':  (self.term_months * 2,            relativedelta(weeks=2),  Decimal('26')),
-            'monthly':   (self.term_months,                relativedelta(months=1), Decimal('12')),
-            'quarterly': (max(self.term_months // 3, 1),  relativedelta(months=3), Decimal('4')),
-        }
-        num_installments, date_increment, periods_per_year = frequency_map.get(
-            self.repayment_frequency,
-            (self.term_months, relativedelta(months=1), Decimal('12')),
-        )
-
-        # Set installment count BEFORE computing amounts
-        self.number_of_installments = num_installments
-
-        method = self.product.interest_calculation_method
-        if method == 'reducing_balance':
-            rows = self._reducing_balance_schedule(num_installments, periods_per_year)
-        else:  # straight_line, flat, compound → straight-line (flat) calculation
-            rows = self._flat_schedule(num_installments)
-
-        self.installment_amount = rows[0]['total_due'] if rows else Decimal('0')
-        self.save()
-
-        current_date = self.disbursement_date
-        for i, row in enumerate(rows, start=1):
-            current_date = current_date + date_increment
-            LoanRepaymentSchedule.objects.create(
-                loan=self,
-                installment_number=i,
-                due_date=current_date,
-                principal_due=row['principal_due'],
-                interest_due=row['interest_due'],
-                total_due=row['total_due'],
-                owner=self.owner,
-                branch=self.branch,
-                created_by=self.created_by,
-            )
-
-    def _flat_schedule(self, num_installments: int) -> list:
-        """
-        Flat-rate schedule: interest is a one-time charge spread equally.
-        Each installment carries the same principal + interest.
-        """
-        rate = Decimal(str(self.interest_rate)) / Decimal('100')
-        total_interest = (
-            self.disbursed_amount * rate
-            * Decimal(str(self.term_months)) / Decimal('12')
-        ).quantize(Decimal('0.01'))
-        total_repayable = self.disbursed_amount + total_interest
-
-        n = Decimal(str(num_installments))
-        base_principal = (self.disbursed_amount / n).quantize(Decimal('0.01'))
-        base_interest  = (total_interest / n).quantize(Decimal('0.01'))
-        base_total     = (total_repayable / n).quantize(Decimal('0.01'))
-
-        rows = [
-            {'principal_due': base_principal, 'interest_due': base_interest, 'total_due': base_total}
-            for _ in range(num_installments - 1)
-        ]
-        # Last installment absorbs rounding
-        rows.append({
-            'principal_due': self.disbursed_amount - base_principal * (num_installments - 1),
-            'interest_due':  total_interest        - base_interest  * (num_installments - 1),
-            'total_due':     total_repayable       - base_total     * (num_installments - 1),
-        })
-        return rows
-
-    def _reducing_balance_schedule(self, num_installments: int, periods_per_year: Decimal) -> list:
-        """
-        Proper reducing-balance (amortizing) schedule.
-        Each period's interest is computed on the outstanding principal, so
-        principal rises and interest falls with each installment.
-        """
-        annual_rate = Decimal(str(self.interest_rate)) / Decimal('100')
-        period_rate = annual_rate / periods_per_year
-        balance = self.disbursed_amount
-        n = num_installments
-
-        if period_rate > 0:
-            factor = (1 + period_rate) ** n
-            emi = (balance * period_rate * factor / (factor - 1)).quantize(Decimal('0.01'))
-        else:
-            emi = (balance / Decimal(str(n))).quantize(Decimal('0.01'))
-
-        rows = []
-        for i in range(n):
-            interest = (balance * period_rate).quantize(Decimal('0.01'))
-            if i == n - 1:
-                # Final installment: clear any residual balance from rounding
-                principal = balance
-                total = (balance + interest).quantize(Decimal('0.01'))
-            else:
-                principal = (emi - interest).quantize(Decimal('0.01'))
-                principal = max(Decimal('0'), min(principal, balance))
-                total = emi
-            rows.append({'principal_due': principal, 'interest_due': interest, 'total_due': total})
-            balance = (balance - principal).quantize(Decimal('0.01'))
-
-        return rows
+        """Delegate schedule generation to RepaymentScheduleService."""
+        from .schedule_service import RepaymentScheduleService
+        RepaymentScheduleService.generate(self)
     
     @transaction.atomic
     def record_payment(self, amount: Decimal, payment_date=None,

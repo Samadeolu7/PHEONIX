@@ -10,6 +10,8 @@ import { PaginatedResponse } from '../types/inventory';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export type TermUnit = 'days' | 'weeks' | 'months';
+
 export interface LoanProduct {
   id: number;
   product: number;          // FK to Product
@@ -18,8 +20,10 @@ export interface LoanProduct {
   description: string;      // from product.description
   min_loan_amount: string;
   max_loan_amount: string;
-  min_term_months: number;
-  max_term_months: number;
+  term_unit: TermUnit;
+  min_term_months: number;  // min term in term_unit
+  max_term_months: number;  // max term in term_unit
+  first_repayment_buffer_days: number;
   default_interest_rate: string;
   interest_calculation_method: 'straight_line' | 'flat' | 'reducing_balance' | 'compound';
   allowed_repayment_frequencies: string[];
@@ -239,6 +243,7 @@ export interface CreateLoanAccountData {
   requested_amount: string;
   repayment_frequency: string;
   term_months: number;
+  term_unit?: TermUnit;
   application_date: string;
   purpose?: string;
   cashier_account_id?: number | null;

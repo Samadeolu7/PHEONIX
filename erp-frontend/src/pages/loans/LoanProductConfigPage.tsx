@@ -444,8 +444,10 @@ export default function LoanProductConfigPage() {
         interest_calculation_method: p.interest_calculation_method,
         min_loan_amount: p.min_loan_amount,
         max_loan_amount: p.max_loan_amount,
+        term_unit: p.term_unit ?? 'months',
         min_term_months: p.min_term_months,
         max_term_months: p.max_term_months,
+        first_repayment_buffer_days: p.first_repayment_buffer_days ?? 0,
         allowed_repayment_frequencies: p.allowed_repayment_frequencies,
         processing_fee_type: p.processing_fee_type,
         processing_fee_amount: p.processing_fee_amount,
@@ -725,8 +727,37 @@ export default function LoanProductConfigPage() {
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
                   />
                 </div>
+
+                {/* Term Unit — determines what min/max term values mean */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Term Unit</label>
+                  <div className="flex gap-3">
+                    {(['days', 'weeks', 'months'] as const).map(u => (
+                      <label key={u} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg border text-sm cursor-pointer transition-colors capitalize ${
+                        settingsForm.term_unit === u
+                          ? 'bg-blue-50 border-blue-400 text-blue-700 font-medium'
+                          : 'border-gray-300 text-gray-600 hover:bg-gray-50'
+                      }`}>
+                        <input
+                          type="radio"
+                          name="term_unit"
+                          className="hidden"
+                          checked={settingsForm.term_unit === u}
+                          onChange={() => setSettingsForm(p => ({ ...p, term_unit: u }))}
+                        />
+                        {u.charAt(0).toUpperCase() + u.slice(1)}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Min/Max term values below are expressed in this unit. Loan officers will enter the term in {settingsForm.term_unit ?? 'months'} when applying.
+                  </p>
+                </div>
+
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Min Term (months)</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Min Term ({settingsForm.term_unit ?? 'months'})
+                  </label>
                   <input type="number" min={1}
                     value={settingsForm.min_term_months ?? ''}
                     onChange={e => setSettingsForm(p => ({ ...p, min_term_months: Number(e.target.value) }))}
@@ -735,13 +766,33 @@ export default function LoanProductConfigPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Max Term (months)</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Max Term ({settingsForm.term_unit ?? 'months'})
+                  </label>
                   <input type="number" min={1}
                     value={settingsForm.max_term_months ?? ''}
                     onChange={e => setSettingsForm(p => ({ ...p, max_term_months: Number(e.target.value) }))}
                     placeholder="120"
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
                   />
+                </div>
+
+                {/* First-repayment buffer */}
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    First Repayment Buffer (days)
+                  </label>
+                  <input type="number" min={0}
+                    value={settingsForm.first_repayment_buffer_days ?? 0}
+                    onChange={e => setSettingsForm(p => ({ ...p, first_repayment_buffer_days: Number(e.target.value) }))}
+                    placeholder="0"
+                    className="w-48 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Minimum calendar days from disbursement before the first installment is due.
+                    0 = first repayment follows normal cadence. E.g. 14 means the first weekly
+                    repayment won't fall before day 14.
+                  </p>
                 </div>
               </div>
             </div>

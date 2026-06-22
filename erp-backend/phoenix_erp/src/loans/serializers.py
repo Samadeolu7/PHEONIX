@@ -24,7 +24,8 @@ class LoanProductSerializer(TenantModelSerializer):
             'id', 'product',
             'name', 'code', 'description',
             'min_loan_amount', 'max_loan_amount',
-            'min_term_months', 'max_term_months',
+            'term_unit', 'min_term_months', 'max_term_months',
+            'first_repayment_buffer_days',
             'default_interest_rate', 'interest_calculation_method',
             'allowed_repayment_frequencies',
             'processing_fee_type', 'processing_fee_amount', 'processing_fee_percentage',
@@ -89,6 +90,7 @@ class LoanAccountListSerializer(TenantModelSerializer):
             'product', 'product_name',
             'disbursed_amount', 'outstanding_principal',
             'processing_fee', 'insurance_amount',
+            'term_months', 'term_unit',
             'repayment_frequency', 'status', 'risk_classification',
             'days_in_arrears', 'arrears_amount',
             'application_date', 'disbursement_date', 'maturity_date',
@@ -122,7 +124,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'requested_amount', 'approved_amount', 'disbursed_amount',
             'interest_rate', 'processing_fee', 'insurance_amount',
             'total_charges', 'charges_summary',
-            'term_months',
+            'term_months', 'term_unit',
             'repayment_frequency', 'installment_amount', 'number_of_installments',
             # Status & dates
             'status', 'application_date', 'application_notes',
@@ -165,7 +167,7 @@ class LoanAccountCreateSerializer(TenantModelSerializer):
         model = LoanAccount
         fields = [
             'client', 'product',
-            'requested_amount', 'term_months', 'repayment_frequency',
+            'requested_amount', 'term_months', 'term_unit', 'repayment_frequency',
             'application_date', 'application_notes',
             'metadata',
         ]
@@ -174,6 +176,7 @@ class LoanAccountCreateSerializer(TenantModelSerializer):
             'product': {'required': True},
             'requested_amount': {'required': True},
             'term_months': {'required': True},
+            'term_unit': {'required': False},
         }
 
     def validate(self, attrs):
