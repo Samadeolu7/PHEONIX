@@ -602,6 +602,218 @@ def health_check(request):
     return Response({'status': 'ok'})
 
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def migration_diagnostics(request):
+    """
+    Public diagnostic endpoint — no authentication required.
+
+    Returns a snapshot of Phoenix's current GL state for migration debugging
+    and RAG ingestion.  Covers:
+      - GL account balances by account type
+      - Transaction counts and totals per migration series
+      - Loan portfolio, savings, bank, and liability positions
+      - Suspense and OBE account balances (key migration health signals)
+
+    Query params:
+        tenant_id (int) — restrict to a specific tenant (default: first tenant)
+    """
+    from decimal import Decimal
+    from django.db.models import Sum, Count, Case, When, F, DecimalField
+    from django.utils import timezone
+    from django.apps import apps
+
+    Account          = apps.get_model("accounts",     "Account")
+    LoanAccount      = apps.get_model("loans",        "LoanAccount")
+    SavingsAccount   = apps.get_model("savings",      "SavingsAccount")
+    Transaction      = apps.get_model("transactions", "Transaction")
+    TransactionEntry = apps.get_model("transactions", "TransactionEntry")
+    TransactionSeries = apps.get_model("transactions", "TransactionSeries")
+    Tenant           = apps.get_model("accounts",     "Tenant")
+
+    # Tenant scoping
+    tenant_id = request.GET.get("tenant_id")
+    if tenant_id:
+        tenant = Tenant.objects.filter(pk=tenant_id).first()
+    else:
+        tenant = Tenant.objects.order_by("pk").first()
+
+    if not tenant:
+        return Response({"error": "No tenant found."}, status=404)
+
+    acct_filter = dict(tenant=tenant, is_deleted=False)
+
+    # ── GL balance summary by account type ────────────────────────────────────
+    gl_by_type = {}
+    for at in [Account.ASSET, Account.LOAN, Account.SAVINGS,
+               Account.LIABILITY, Account.INCOME, Account.EXPENSE, Account.EQUITY]:
+        agg = Account.objects.filter(account_type=at, **acct_filter).aggregate(
+            count=Count("id"),
+            total_balance=Sum("balance"),
+            total_balance_bf=Sum("balance_bf"),
+        )
+        gl_by_type[at] = {
+            "account_count":   agg["count"],
+            "total_balance":   str(agg["total_balance"]    or 0),
+            "total_balance_bf": str(agg["total_balance_bf"] or 0),
+        }
+
+    # ── Transaction series health ─────────────────────────────────────────────
+    MIGRATION_SERIES = {
+        "OBMIG":  "Opening Balance Migration",
+        "SVMIG":  "Savings Payment History",
+        "LNDSB": "Loan Disbursement History",
+        "LNMIG":  "Loan Payment History",
+        "INMIG":  "Income Payment History",
+        "EXMIG":  "Expense Payment History",
+        "LBMIG":  "Liability Payment History",
+    }
+    series_stats = {}
+    for code, label in MIGRATION_SERIES.items():
+        txn_qs = Transaction.objects.filter(
+            series__code=code, tenant=tenant
+        )
+        txn_count = txn_qs.count()
+
+        entry_agg = TransactionEntry.objects.filter(
+            transaction__series__code=code,
+            transaction__tenant=tenant,
+        ).aggregate(
+            total_dr=Sum(
+                Case(When(side=TransactionEntry.DEBIT,  then=F("amount")), output_field=DecimalField())
+            ),
+            total_cr=Sum(
+                Case(When(side=TransactionEntry.CREDIT, then=F("amount")), output_field=DecimalField())
+            ),
+        )
+        series_stats[code] = {
+            "label":      label,
+            "txn_count":  txn_count,
+            "total_dr":   str(entry_agg["total_dr"] or 0),
+            "total_cr":   str(entry_agg["total_cr"] or 0),
+        }
+
+    # ── Loan portfolio detail ─────────────────────────────────────────────────
+    loan_entries = TransactionEntry.objects.filter(
+        account__account_type=Account.LOAN,
+        account__tenant=tenant,
+        account__is_deleted=False,
+    ).aggregate(
+        total_dr=Sum(
+            Case(When(side=TransactionEntry.DEBIT,  then=F("amount")), output_field=DecimalField())
+        ),
+        total_cr=Sum(
+            Case(When(side=TransactionEntry.CREDIT, then=F("amount")), output_field=DecimalField())
+        ),
+    )
+
+    # ── OBE and Suspense accounts ─────────────────────────────────────────────
+    obe_acct = Account.objects.filter(code="OBE", tenant=tenant).first()
+    sus_acct = Account.objects.filter(code="MIGS", tenant=tenant).first()
+
+    # ── Bank accounts detail ──────────────────────────────────────────────────
+    bank_entries = TransactionEntry.objects.filter(
+        account__account_type=Account.ASSET,
+        account__parent__code="1100",
+        account__tenant=tenant,
+        account__is_deleted=False,
+    ).aggregate(
+        total_dr=Sum(
+            Case(When(side=TransactionEntry.DEBIT,  then=F("amount")), output_field=DecimalField())
+        ),
+        total_cr=Sum(
+            Case(When(side=TransactionEntry.CREDIT, then=F("amount")), output_field=DecimalField())
+        ),
+    )
+
+    # ── Savings accounts detail ───────────────────────────────────────────────
+    sav_entries = TransactionEntry.objects.filter(
+        account__account_type=Account.SAVINGS,
+        account__tenant=tenant,
+        account__is_deleted=False,
+    ).aggregate(
+        total_dr=Sum(
+            Case(When(side=TransactionEntry.DEBIT,  then=F("amount")), output_field=DecimalField())
+        ),
+        total_cr=Sum(
+            Case(When(side=TransactionEntry.CREDIT, then=F("amount")), output_field=DecimalField())
+        ),
+    )
+
+    # ── Account-level counts ──────────────────────────────────────────────────
+    loan_acct_count = LoanAccount.objects.filter(tenant=tenant).count()
+    sav_acct_count  = SavingsAccount.objects.filter(tenant=tenant).count()
+    bank_acct_count = Account.objects.filter(
+        account_type=Account.ASSET, parent__code="1100", **acct_filter
+    ).count()
+
+    # ── Individual bank balances (for per-account visibility) ─────────────────
+    bank_breakdown = list(
+        Account.objects.filter(
+            account_type=Account.ASSET, parent__code="1100", **acct_filter
+        ).order_by("code").values("code", "name", "balance", "balance_bf")
+    )
+    for b in bank_breakdown:
+        b["balance"]    = str(b["balance"])
+        b["balance_bf"] = str(b["balance_bf"])
+
+    loan_net = (loan_entries["total_dr"] or Decimal("0")) - (loan_entries["total_cr"] or Decimal("0"))
+    bank_net = (bank_entries["total_dr"] or Decimal("0")) - (bank_entries["total_cr"] or Decimal("0"))
+    sav_net  = (sav_entries["total_cr"] or Decimal("0")) - (sav_entries["total_dr"] or Decimal("0"))
+
+    return Response({
+        "as_of":  timezone.now().isoformat(),
+        "tenant": {"id": tenant.pk, "name": str(tenant)},
+        "gl_by_account_type": gl_by_type,
+        "loan_portfolio": {
+            "account_count":       loan_acct_count,
+            "total_dr_entries":    str(loan_entries["total_dr"] or 0),
+            "total_cr_entries":    str(loan_entries["total_cr"] or 0),
+            "net_balance":         str(loan_net),
+            "expected_sign":       "POSITIVE (outstanding loans = asset)",
+        },
+        "banks": {
+            "account_count":    bank_acct_count,
+            "total_dr_entries": str(bank_entries["total_dr"] or 0),
+            "total_cr_entries": str(bank_entries["total_cr"] or 0),
+            "net_balance":      str(bank_net),
+            "breakdown":        bank_breakdown,
+        },
+        "savings": {
+            "account_count":    sav_acct_count,
+            "total_dr_entries": str(sav_entries["total_dr"] or 0),
+            "total_cr_entries": str(sav_entries["total_cr"] or 0),
+            "net_liability":    str(sav_net),
+            "expected_sign":    "POSITIVE (savings owed to members)",
+        },
+        "migration_series": series_stats,
+        "special_accounts": {
+            "opening_balance_equity": {
+                "balance": str(obe_acct.balance) if obe_acct else None,
+                "balance_bf": str(obe_acct.balance_bf) if obe_acct else None,
+                "_note": "Should be near-zero after a clean migration",
+            },
+            "migration_payment_suspense": {
+                "balance": str(sus_acct.balance) if sus_acct else None,
+                "_note": "Non-zero = payments whose bank could not be identified; investigate and reclassify",
+            },
+        },
+        "balance_check": {
+            "total_dr_all_entries": str(
+                TransactionEntry.objects.filter(
+                    transaction__tenant=tenant, side=TransactionEntry.DEBIT
+                ).aggregate(t=Sum("amount"))["t"] or 0
+            ),
+            "total_cr_all_entries": str(
+                TransactionEntry.objects.filter(
+                    transaction__tenant=tenant, side=TransactionEntry.CREDIT
+                ).aggregate(t=Sum("amount"))["t"] or 0
+            ),
+            "_note": "These MUST be equal — any difference indicates a posting bug",
+        },
+    })
+
+
 # ---------------------------------------------------------------------------
 # BusinessDay viewset
 # ---------------------------------------------------------------------------

@@ -1532,7 +1532,7 @@ class Command(BaseCommand):
 
         Idempotency
         -----------
-        Guarded by TransactionSeries code "LNDMIG".
+        Guarded by TransactionSeries code "LNDSB".
         """
         from transactions.models import Transaction, TransactionEntry, TransactionSeries
 
@@ -1541,7 +1541,7 @@ class Command(BaseCommand):
             return
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code="LNDMIG",
+            code="LNDSB",
             defaults={"description": "Loan Disbursement History Migration"},
         )
         if Transaction.objects.filter(
