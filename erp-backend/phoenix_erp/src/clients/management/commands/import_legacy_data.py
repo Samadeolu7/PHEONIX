@@ -162,6 +162,7 @@ class Command(BaseCommand):
         expense_data        = _load(data_dir, "expense_accounts.json")
         liability_data      = _load(data_dir, "liability_accounts.json")
         savings_pmts_data   = _load(data_dir, "savings_payments.json")
+        loan_disb_data      = _load(data_dir, "loan_disbursements.json")
         loan_pmts_data      = _load(data_dir, "loan_payments.json")
         income_pmts_data    = _load(data_dir, "income_payments.json")
         expense_pmts_data   = _load(data_dir, "expense_payments.json")
@@ -176,6 +177,7 @@ class Command(BaseCommand):
                 f"banks={len(banks_data)}, income={len(income_data)}, "
                 f"expenses={len(expense_data)}, liabilities={len(liability_data)}, "
                 f"savings_payments={len(savings_pmts_data)}, "
+                f"loan_disbursements={len(loan_disb_data)}, "
                 f"loan_payments={len(loan_pmts_data)}, "
                 f"income_payments={len(income_pmts_data)}, "
                 f"expense_payments={len(expense_pmts_data)}, "
@@ -196,7 +198,7 @@ class Command(BaseCommand):
         try:
             with transaction.atomic():
                 # ── STEP 1: Bootstrap  ───────────────────────────────────────
-                self.stdout.write("Step 1/17  Bootstrap (Tenant → User → Branch) …")
+                self.stdout.write("Step 1/18  Bootstrap (Tenant → User → Branch) …")
                 owner, tenant, branch = self._bootstrap(
                     options, Tenant, Branch
                 )
@@ -209,19 +211,19 @@ class Command(BaseCommand):
                 )
 
                 # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────
-                self.stdout.write("Step 2/17  Chart of accounts …")
+                self.stdout.write("Step 2/18  Chart of accounts …")
                 gl = self._setup_chart_of_accounts(Account, ctx)
 
                 # ── STEP 3: Financial Products ────────────────────────────────
-                self.stdout.write("Step 3/17  Financial products …")
+                self.stdout.write("Step 3/18  Financial products …")
                 products = self._setup_products(Product, LoanProduct, gl, ctx)
 
                 # ── STEP 4: Client Groups ─────────────────────────────────────
-                self.stdout.write("Step 4/17  Client groups …")
+                self.stdout.write("Step 4/18  Client groups …")
                 group_map = self._import_groups(groups_data, ClientGroup, ctx)
 
                 # ── STEP 5: Clients ───────────────────────────────────────────
-                self.stdout.write("Step 5/17  Clients …")
+                self.stdout.write("Step 5/18  Clients …")
                 client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
 
                 # ── STEP 6: Savings ───────────────────────────────────────────
@@ -230,59 +232,69 @@ class Command(BaseCommand):
                 # Step 12 posts these as a single balanced GL transaction.
                 ob_entries: list = []
 
-                self.stdout.write("Step 6/17  Savings accounts …")
+                self.stdout.write("Step 6/18  Savings accounts …")
                 self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 7: Loans ─────────────────────────────────────────────
-                self.stdout.write("Step 7/17  Loan accounts …")
+                self.stdout.write("Step 7/18  Loan accounts …")
                 self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 8: Banks / Cash ──────────────────────────────────────
-                self.stdout.write("Step 8/17  Bank / cash accounts …")
+                self.stdout.write("Step 8/18  Bank / cash accounts …")
                 self._import_banks(banks_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 9: Income ────────────────────────────────────────────
-                self.stdout.write("Step 9/17  Income accounts …")
+                self.stdout.write("Step 9/18  Income accounts …")
                 self._import_income(income_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 10: Expenses ─────────────────────────────────────────
-                self.stdout.write("Step 10/17 Expense accounts …")
+                self.stdout.write("Step 10/18 Expense accounts …")
                 self._import_expenses(expense_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 11: Liabilities ──────────────────────────────────────
-                self.stdout.write("Step 11/17 Liability accounts …")
+                self.stdout.write("Step 11/18 Liability accounts …")
                 self._import_liabilities(liability_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 12: Opening balance transaction ──────────────────────
-                self.stdout.write("Step 12/17 Opening balance transaction …")
+                self.stdout.write("Step 12/18 Opening balance transaction …")
                 self._create_opening_balance_transaction(ob_entries, Account, ctx)
 
                 # ── STEP 13: Savings payment history ──────────────────────────
-                self.stdout.write("Step 13/17 Savings payment history …")
+                self.stdout.write("Step 13/18 Savings payment history …")
                 self._import_savings_payments(
                     savings_pmts_data, banks_data, SavingsAccount, Account, gl, ctx
                 )
 
-                # ── STEP 14: Loan payment history ─────────────────────────────
-                self.stdout.write("Step 14/17 Loan payment history …")
+                # ── STEP 14: Loan disbursement history (new loans issued this year) ───
+                # Posts: Dr. Loan child account, Cr. Bank (money going out to borrowers).
+                # Required because 2026-disbursed loans have opening_balance=0 and would
+                # otherwise only accumulate repayment credits (Step 15), driving the
+                # loan portfolio negative.
+                self.stdout.write("Step 14/18 Loan disbursements …")
+                self._import_loan_disbursements(
+                    loan_disb_data, banks_data, LoanAccount, Account, gl, ctx
+                )
+
+                # ── STEP 15: Loan payment history (repayments) ────────────────
+                self.stdout.write("Step 15/18 Loan payment history …")
                 self._import_loan_payments(
                     loan_pmts_data, banks_data, LoanAccount, Account, gl, ctx
                 )
 
-                # ── STEP 15: Income payment history ───────────────────────────
-                self.stdout.write("Step 15/17 Income payment history …")
+                # ── STEP 16: Income payment history ───────────────────────────
+                self.stdout.write("Step 16/18 Income payment history …")
                 self._import_income_payments(
                     income_pmts_data, banks_data, Account, gl, ctx
                 )
 
-                # ── STEP 16: Expense payment history ──────────────────────────
-                self.stdout.write("Step 16/17 Expense payment history …")
+                # ── STEP 17: Expense payment history ──────────────────────────
+                self.stdout.write("Step 17/18 Expense payment history …")
                 self._import_expense_payments(
                     expense_pmts_data, banks_data, Account, gl, ctx
                 )
 
-                # ── STEP 17: Liability payment history ────────────────────────
-                self.stdout.write("Step 17/17 Liability payment history …")
+                # ── STEP 18: Liability payment history ────────────────────────
+                self.stdout.write("Step 18/18 Liability payment history …")
                 self._import_liability_payments(
                     liability_pmts_data, banks_data, Account, gl, ctx
                 )
@@ -1260,13 +1272,21 @@ class Command(BaseCommand):
             return
 
         # ── Pre-flight reconciliation ─────────────────────────────────────────
-        # Group entries by account type so you can spot which category is
-        # causing any OBE gap before the transaction is posted.
+        # Negative amounts flip the effective posting side:
+        #   e.g. a bank in overdraft has opening_balance < 0  (asset with credit
+        #   balance).  The ob_entry says side='DR' but amount=-626K.  Correct
+        #   posting is CR 626K, not DR 626K.
+        def _effective_side(side, amt):
+            if amt < 0:
+                return 'CR' if side == 'DR' else 'DR'
+            return side
+
         type_dr: dict = {}
         type_cr: dict = {}
         for acct, amt, _, side in non_zero:
             at = acct.account_type
-            if side == 'DR':
+            eff = _effective_side(side, amt)
+            if eff == 'DR':
                 type_dr[at] = type_dr.get(at, Decimal("0")) + abs(amt)
             else:
                 type_cr[at] = type_cr.get(at, Decimal("0")) + abs(amt)
@@ -1276,11 +1296,11 @@ class Command(BaseCommand):
         diff     = total_dr - total_cr
 
         self.stdout.write("\n    ┌─── Opening Balance Reconciliation ────────────────────────┐")
-        self.stdout.write(    "    │  DEBIT (assets)                                           │")
+        self.stdout.write(    "    │  DEBIT (assets / DR-normal)                              │")
         for at, amt in sorted(type_dr.items()):
             self.stdout.write(f"    │    {at:<20} {amt:>14,.2f}                        │")
         self.stdout.write(f"    │    {'TOTAL DR':<20} {total_dr:>14,.2f}                        │")
-        self.stdout.write(    "    │  CREDIT (liabilities / equity)                           │")
+        self.stdout.write(    "    │  CREDIT (liabilities / equity / overdrafts)              │")
         for at, amt in sorted(type_cr.items()):
             self.stdout.write(f"    │    {at:<20} {amt:>14,.2f}                        │")
         self.stdout.write(f"    │    {'TOTAL CR':<20} {total_cr:>14,.2f}                        │")
@@ -1316,14 +1336,15 @@ class Command(BaseCommand):
         total_cr = Decimal("0.00")
 
         for account, amount, _bbf, side in non_zero:
-            entry_side = TransactionEntry.DEBIT if side == "DR" else TransactionEntry.CREDIT
+            eff_side = _effective_side(side, amount)
+            entry_side = TransactionEntry.DEBIT if eff_side == "DR" else TransactionEntry.CREDIT
             TransactionEntry.objects.create(
                 transaction=txn,
                 account=account,
                 side=entry_side,
                 amount=abs(amount),
             )
-            if side == "DR":
+            if eff_side == "DR":
                 total_dr += abs(amount)
             else:
                 total_cr += abs(amount)
@@ -1493,7 +1514,102 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 14 – Loan payment history
+    # STEP 14 – Loan disbursement history
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_loan_disbursements(self, loan_disb_data, banks_data, LoanAccount, Account, gl, ctx):
+        """
+        Post each 2026 loan disbursement as a balanced GL journal entry.
+
+        Accounting treatment
+        --------------------
+        Disbursement:  Dr. Loan Account  |  Cr. Bank/Cash
+        (Dr. increases the outstanding loan asset; Cr. reflects cash going out.)
+
+        This is the counterpart to opening_balance=0 for 2026-disbursed loans.
+        Without it, Step 15 repayment credits accumulate with no matching debit,
+        making the entire loan portfolio go deeply negative.
+
+        Idempotency
+        -----------
+        Guarded by TransactionSeries code "LNDMIG".
+        """
+        from transactions.models import Transaction, TransactionEntry, TransactionSeries
+
+        if not loan_disb_data:
+            self.stdout.write("    No loan disbursements to post — skipping.")
+            return
+
+        series, _ = TransactionSeries.objects.get_or_create(
+            code="LNDMIG",
+            defaults={"description": "Loan Disbursement History Migration"},
+        )
+        if Transaction.objects.filter(
+            series=series, tenant=ctx["tenant"], branch=ctx["branch"]
+        ).exists():
+            self.stdout.write("    Loan disbursement history already imported — skipping.")
+            return
+
+        bank_acct_map = self._build_bank_account_map(banks_data, Account, gl, ctx)
+        suspense = self._get_suspense_account(Account, gl, ctx)
+
+        created = 0
+        skipped = 0
+
+        for rec in loan_disb_data:
+            loan_id = rec.get("loan_id")
+            if not loan_id:
+                skipped += 1
+                continue
+
+            loan_number = f"LN-{loan_id}"
+            try:
+                loan_acct = LoanAccount.objects.get(loan_number=loan_number)
+            except LoanAccount.DoesNotExist:
+                skipped += 1
+                continue
+
+            gl_loan_acct = loan_acct.account
+            bank_id  = rec.get("bank_id")
+            cash_acct = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
+            amount   = _d(rec.get("amount"))
+
+            if amount <= Decimal("0"):
+                skipped += 1
+                continue
+
+            disb_date   = _date(rec.get("disbursement_date"))
+            description = f"Loan Disbursement – {loan_number}"
+
+            txn = Transaction.objects.create(
+                series=series,
+                date=disb_date,
+                description=description,
+                owner=ctx["owner"],
+                branch=ctx["branch"],
+                tenant=ctx["tenant"],
+                created_by=ctx["owner"],
+            )
+
+            # Disbursement: Dr. Loan (asset increases), Cr. Bank (cash goes out)
+            TransactionEntry.objects.create(
+                transaction=txn, account=gl_loan_acct,
+                side=TransactionEntry.DEBIT, amount=amount,
+            )
+            TransactionEntry.objects.create(
+                transaction=txn, account=cash_acct,
+                side=TransactionEntry.CREDIT, amount=amount,
+            )
+            txn.post()
+            created += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"    {created} loan disbursement transactions posted, {skipped} skipped"
+            )
+        )
+
+    # STEP 15 – Loan payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_loan_payments(self, loan_pmts_data, banks_data, LoanAccount, Account, gl, ctx):
@@ -1590,7 +1706,7 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 15 – Income payment history
+    # STEP 16 – Income payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_income_payments(self, income_pmts_data, banks_data, Account, gl, ctx):
@@ -1674,7 +1790,7 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 16 – Expense payment history
+    # STEP 17 – Expense payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_expense_payments(self, expense_pmts_data, banks_data, Account, gl, ctx):
@@ -1758,7 +1874,7 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 17 – Liability payment history
+    # STEP 18 – Liability payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_liability_payments(self, liability_pmts_data, banks_data, Account, gl, ctx):
