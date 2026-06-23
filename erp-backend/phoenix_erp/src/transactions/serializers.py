@@ -48,10 +48,14 @@ class TransactionSerializer(serializers.ModelSerializer):
         source='reversed_by.get_full_name',
         read_only=True
     )
+    created_by_name = serializers.CharField(
+        source='created_by.get_full_name',
+        read_only=True
+    )
     entry_count = serializers.SerializerMethodField()
     total_debits = serializers.SerializerMethodField()
     total_credits = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Transaction
         fields = [
@@ -59,8 +63,9 @@ class TransactionSerializer(serializers.ModelSerializer):
             'workflow_reference', 'description', 'approved',
             'approved_by_name', 'approved_at', 'is_reversed',
             'reversed_at', 'reversed_by_name', 'reversal_reason',
-            'is_reversal', 'entry_count', 'total_debits', 
-            'total_credits', 'created_at', 'updated_at'
+            'is_reversal', 'entry_count', 'total_debits',
+            'total_credits', 'created_by', 'created_by_name',
+            'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'reference_number', 'approved_at', 

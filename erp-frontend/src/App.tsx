@@ -563,6 +563,41 @@ const LoanAccountFormPage = lazy(() => import('./pages/loans/LoanAccountFormPage
 const LoanProductsPage = lazy(() => import('./pages/loans/LoanProductsPage'));
 const LoanProductConfigPage = lazy(() => import('./pages/loans/LoanProductConfigPage'));
 
+// Client management additions
+const ClientGroupsPage = lazy(() => import('./pages/clients/ClientGroupsPage'));
+const ProspectListPage = lazy(() => import('./pages/clients/ProspectListPage'));
+const ReactivateClientPage = lazy(() => import('./pages/clients/ReactivateClientPage'));
+
+// Savings — Combined Receipt & Thrift
+const CombinedReceiptPage = lazy(() => import('./pages/savings/CombinedReceiptPage'));
+const GroupCombinedReceiptPage = lazy(() => import('./pages/savings/GroupCombinedReceiptPage'));
+const ThriftSetupPage = lazy(() => import('./pages/savings/thrift/ThriftSetupPage'));
+const ThriftMonthlyPage = lazy(() => import('./pages/savings/thrift/ThriftMonthlyPage'));
+const ThriftSmartPage = lazy(() => import('./pages/savings/thrift/ThriftSmartPage'));
+const ThriftCollectionPage = lazy(() => import('./pages/savings/thrift/ThriftCollectionPage'));
+const ThriftSpreadsheetPage = lazy(() => import('./pages/savings/thrift/ThriftSpreadsheetPage'));
+const ThriftMultiDayPage = lazy(() => import('./pages/savings/thrift/ThriftMultiDayPage'));
+
+// Loan & Savings reports
+const DebtorsReportPage = lazy(() => import('./pages/reports/loans/DebtorsReportPage'));
+const DefaultersReportPage = lazy(() => import('./pages/reports/loans/DefaultersReportPage'));
+const PARReportPage = lazy(() => import('./pages/reports/loans/PARReportPage'));
+const RemittanceReportPage = lazy(() => import('./pages/reports/loans/RemittanceReportPage'));
+const DailySummaryReportPage = lazy(() => import('./pages/reports/DailySummaryReportPage'));
+const GroupReportPage = lazy(() => import('./pages/reports/GroupReportPage'));
+const ThriftReportPage = lazy(() => import('./pages/reports/ThriftReportPage'));
+const DailyContributionReportPage = lazy(() => import('./pages/reports/DailyContributionReportPage'));
+const DCSpreadsheetReportPage = lazy(() => import('./pages/reports/DCSpreadsheetReportPage'));
+const ReportSummaryPage = lazy(() => import('./pages/reports/ReportSummaryPage'));
+
+// Admin operations
+const TransactionReversalPage = lazy(() => import('./pages/admin/TransactionReversalPage'));
+const ReviewWeekPage = lazy(() => import('./pages/admin/ReviewWeekPage'));
+const CloseYearPage = lazy(() => import('./pages/admin/CloseYearPage'));
+
+// Profile
+const ChangePasswordPage = lazy(() => import('./pages/profile/ChangePasswordPage'));
+
 // Liabilities / Accounts Payable pages
 const PayablesListPage = lazy(() => import('./pages/liabilities/PayablesListPage'));
 const PayableDetailPage = lazy(() => import('./pages/liabilities/PayableDetailPage'));
@@ -4006,6 +4041,42 @@ function App() {
                                     </ProtectedRoute>
                                   }
                                 />
+
+                                {/* ── Client Management additions ─────────────────── */}
+                                <Route path="/clients/groups" element={<ProtectedRoute requiredPermission="client-groups"><ClientGroupsPage /></ProtectedRoute>} />
+                                <Route path="/prospects" element={<ProtectedRoute requiredPermission="client-list"><ProspectListPage /></ProtectedRoute>} />
+                                <Route path="/clients/reactivate" element={<ProtectedRoute requiredPermission="client-list"><ReactivateClientPage /></ProtectedRoute>} />
+
+                                {/* ── Savings — Combined Receipt & Thrift ──────────── */}
+                                <Route path="/savings/combined-receipt" element={<ProtectedRoute requiredPermission="savings-list"><CombinedReceiptPage /></ProtectedRoute>} />
+                                <Route path="/savings/group-combined-receipt" element={<ProtectedRoute requiredPermission="savings-list"><GroupCombinedReceiptPage /></ProtectedRoute>} />
+                                <Route path="/savings/thrift/setup" element={<ProtectedRoute requiredPermission="savings-create"><ThriftSetupPage /></ProtectedRoute>} />
+                                <Route path="/savings/thrift/monthly" element={<ProtectedRoute requiredPermission="savings-list"><ThriftMonthlyPage /></ProtectedRoute>} />
+                                <Route path="/savings/thrift/smart" element={<ProtectedRoute requiredPermission="savings-list"><ThriftSmartPage /></ProtectedRoute>} />
+                                <Route path="/savings/thrift/collection" element={<ProtectedRoute requiredPermission="savings-list"><ThriftCollectionPage /></ProtectedRoute>} />
+                                <Route path="/savings/thrift/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><ThriftSpreadsheetPage /></ProtectedRoute>} />
+                                <Route path="/savings/thrift/multi-day" element={<ProtectedRoute requiredPermission="savings-list"><ThriftMultiDayPage /></ProtectedRoute>} />
+
+                                {/* ── Loan & Operations Reports ────────────────────── */}
+                                <Route path="/reports/loans/debtors" element={<ProtectedRoute requiredPermission="loan-list"><DebtorsReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/loans/defaulters" element={<ProtectedRoute requiredPermission="loan-list"><DefaultersReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/loans/par" element={<ProtectedRoute requiredPermission="loan-list"><PARReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/daily-transactions" element={<ProtectedRoute requiredPermission="loan-list"><RemittanceReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/daily-summary" element={<ProtectedRoute requiredPermission="loan-list"><DailySummaryReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/clients/groups" element={<ProtectedRoute requiredPermission="client-list"><GroupReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/thrift" element={<ProtectedRoute requiredPermission="savings-list"><ThriftReportPage /></ProtectedRoute>} />
+                                <Route path="/savings/thrift/list" element={<ProtectedRoute requiredPermission="savings-list"><ThriftReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/contributions/daily" element={<ProtectedRoute requiredPermission="savings-list"><DailyContributionReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/contributions/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><DCSpreadsheetReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/summary" element={<ProtectedRoute requiredPermission="loan-list"><ReportSummaryPage /></ProtectedRoute>} />
+
+                                {/* ── Admin Operations ─────────────────────────────── */}
+                                <Route path="/admin/transaction-reversal" element={<ProtectedRoute requiredPermission="admin"><TransactionReversalPage /></ProtectedRoute>} />
+                                <Route path="/admin/review-week" element={<ProtectedRoute requiredPermission="admin"><ReviewWeekPage /></ProtectedRoute>} />
+                                <Route path="/admin/close-year" element={<ProtectedRoute requiredPermission="admin"><CloseYearPage /></ProtectedRoute>} />
+
+                                {/* ── Profile ──────────────────────────────────────── */}
+                                <Route path="/profile/change-password" element={<ProtectedRoute><ChangePasswordPage /></ProtectedRoute>} />
 
                                 {/* Dynamic module routes - This must be LAST to avoid conflicts */}
                                 <Route

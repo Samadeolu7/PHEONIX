@@ -8,6 +8,7 @@ Automatically handles:
 - Default leave types creation
 """
 
+from django.conf import settings
 from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -94,6 +95,46 @@ def auto_initialize_leave_balances(sender, instance, created, **kwargs):
         logger.error(
             f"Failed to auto-initialize leave balances for staff {instance.id}: {str(e)}",
             exc_info=True
+        )
+
+
+@receiver(post_save, sender=settings.AUTH_USER_MODEL)
+def auto_create_staff_profile(sender, instance, created, **kwargs):
+    """
+    Every user is also a staff member. Auto-create a stub Staff profile
+    the first time a user account is saved so the payroll / HR modules
+    can always find a linked record.
+
+    If a Staff already exists with this user linked (e.g. linked manually
+    in the admin before the signal fires) nothing is done.
+    """
+    if not created:
+        return
+
+    try:
+        from hr.models import Staff
+        if Staff.objects.filter(user=instance).exists():
+            return
+
+        branch = getattr(instance, 'branch', None)
+        owner = instance  # self-owned until an admin reassigns
+
+        Staff.objects.create(
+            user=instance,
+            first_name=instance.first_name or instance.username,
+            last_name=instance.last_name or '',
+            email=instance.email or '',
+            branch=branch,
+            owner=owner,
+        )
+        logger.info(
+            f"Auto-created Staff profile for user '{instance.username}' (id={instance.pk})"
+        )
+    except Exception as exc:
+        # Never block user creation because of a staff-profile failure
+        logger.error(
+            f"Failed to auto-create Staff profile for user '{instance.username}': {exc}",
+            exc_info=True,
         )
 
 

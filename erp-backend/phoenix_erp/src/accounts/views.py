@@ -1000,6 +1000,57 @@ class PeriodViewSet(ScopedModelViewSet):
         )
         return Response({'status': 'period reclosed'})
 
+    @action(detail=False, methods=['post'], url_path='close-year')
+    def close_year(self, request):
+        """
+        Close a full financial year by supplying { year: <int> }.
+
+        Finds or creates the YEAR period for the authenticated user's branch,
+        runs year_end_close(), and creates balance snapshots.  This is the
+        endpoint used by the CloseYearPage frontend component.
+        """
+        from django.db import IntegrityError
+
+        year_raw = request.data.get('year')
+        if not year_raw:
+            return Response({'detail': 'year is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            year = int(year_raw)
+        except (ValueError, TypeError):
+            return Response({'detail': 'year must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        branch = getattr(request.user, 'branch', None)
+
+        # Check if already closed
+        existing = Period.objects.filter(
+            owner=request.user,
+            branch=branch,
+            period_type=Period.YEAR,
+            year=year,
+            is_closed=True,
+        ).first()
+        if existing:
+            return Response(
+                {'detail': f'Financial year {year} is already closed for this branch.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            year_end_close(owner=request.user, branch=branch, year=year)
+            create_balance_snapshots(
+                owner=request.user,
+                branch=branch,
+                period_type=Period.YEAR,
+                year=year,
+                month=None,
+            )
+        except IntegrityError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'status': f'Financial year {year} closed successfully.'})
+
 
 @extend_schema_view(
     list=extend_schema(

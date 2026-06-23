@@ -2278,6 +2278,99 @@ class StaffIOUViewSet(ScopedModelViewSet):
             status=StaffIOU.PENDING,
         )
 
+    @action(detail=False, methods=['post'], url_path='from-reconciliation')
+    def from_reconciliation(self, request):
+        """
+        Create a salary-deduction StaffIOU directly from a CashReconciliation shortfall.
+
+        Body:
+          reconciliation_id  (int, required) — CashReconciliation with status 'variance' and negative variance
+          monthly_installment (Decimal, optional) — defaults to full shortfall in one deduction
+          start_month        (str YYYY-MM-DD, optional) — defaults to next month's 1st
+
+        The cashier on the CashierAccount must have a linked Staff profile (user → staff_profile).
+        The IOU is created with status=PENDING and deduction_type='reconciliation'.
+        It still goes through the normal approve → disburse lifecycle so a director can review it.
+        """
+        from decimal import Decimal
+        from datetime import date
+        from dateutil.relativedelta import relativedelta
+        from cash_management.models import CashReconciliation
+
+        reconciliation_id = request.data.get('reconciliation_id')
+        if not reconciliation_id:
+            return Response({'detail': 'reconciliation_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            recon = CashReconciliation.objects.select_related(
+                'cashier_account__cashier__staff_profile'
+            ).get(pk=reconciliation_id)
+        except CashReconciliation.DoesNotExist:
+            return Response({'detail': 'Reconciliation not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if recon.status != 'variance':
+            return Response(
+                {'detail': 'Only reconciliations with a variance can generate a deduction.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        shortfall = abs(recon.variance)
+        if shortfall <= 0:
+            return Response({'detail': 'No shortfall to deduct (variance is positive).'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Resolve the cashier user → staff profile
+        cashier_user = getattr(recon.cashier_account, 'cashier', None)
+        if not cashier_user:
+            return Response({'detail': 'Cashier account has no linked user.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            staff = cashier_user.staff_profile
+        except Exception:
+            return Response(
+                {'detail': f'User {cashier_user.get_full_name() or cashier_user.username} has no Staff profile. '
+                           'Link them to a staff record first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        monthly_installment = Decimal(str(request.data.get('monthly_installment', shortfall)))
+        if monthly_installment <= 0:
+            return Response({'detail': 'monthly_installment must be positive.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Default start_month = 1st of next month
+        if request.data.get('start_month'):
+            try:
+                start_month = date.fromisoformat(request.data['start_month'])
+            except (ValueError, TypeError):
+                return Response({'detail': 'start_month must be YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            today = date.today()
+            start_month = (today + relativedelta(months=1)).replace(day=1)
+
+        reason = (
+            f"Cashier reconciliation shortfall on {recon.reconciliation_date} "
+            f"(Recon #{recon.id}). Variance: ₦{shortfall}."
+        )
+
+        iou = StaffIOU.objects.create(
+            staff=staff,
+            total_amount=shortfall,
+            monthly_installment=monthly_installment,
+            balance_remaining=shortfall,
+            start_month=start_month,
+            reason=reason,
+            notes=request.data.get('notes', ''),
+            status=StaffIOU.PENDING,
+            cash_disbursed=False,
+            deduction_type=StaffIOU.DEDUCTION_RECONCILIATION,
+            cashier_reconciliation=recon,
+            created_by=request.user,
+            branch=staff.branch,
+            owner=staff.owner,
+        )
+
+        from hr.serializers import StaffIOUSerializer
+        return Response(StaffIOUSerializer(iou, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
     def update(self, request, *args, **kwargs):
         """Restrict PATCH/PUT to safe fields only — cannot alter financial figures."""
         instance = self.get_object()

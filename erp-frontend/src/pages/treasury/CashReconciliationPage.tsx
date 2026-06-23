@@ -4,7 +4,8 @@
  */
 
 import React, { useState } from 'react';
-import { CheckCircle, XCircle, AlertTriangle, Plus, RefreshCw, Calculator } from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, Plus, RefreshCw, Calculator, MinusCircle } from 'lucide-react';
+import { createReconciliationDeduction } from '../../services/paymentService';
 import {
   useCashReconciliations,
   useCreateCashReconciliation,
@@ -81,6 +82,15 @@ const CashReconciliationPage: React.FC = () => {
   });
   const [signoffNotes, setSignoffNotes] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Salary deduction modal state
+  const [deductionModal, setDeductionModal] = useState<{
+    open: boolean;
+    reconciliation: { id: number; variance: string; cashier_name?: string } | null;
+  }>({ open: false, reconciliation: null });
+  const [deductionForm, setDeductionForm] = useState({ monthly_installment: '', start_month: '', notes: '' });
+  const [deductionLoading, setDeductionLoading] = useState(false);
+  const [deductionSuccess, setDeductionSuccess] = useState('');
 
   // Queries / mutations
   const filters = statusFilter ? { status: statusFilter } : undefined;
@@ -186,6 +196,31 @@ const CashReconciliationPage: React.FC = () => {
     }
   };
 
+  const handleDeductionSubmit = async () => {
+    if (!deductionModal.reconciliation) return;
+    setDeductionLoading(true);
+    setActionError(null);
+    try {
+      const shortfall = Math.abs(parseFloat(deductionModal.reconciliation.variance));
+      const result = await createReconciliationDeduction({
+        reconciliation_id: deductionModal.reconciliation.id,
+        monthly_installment: deductionForm.monthly_installment || String(shortfall),
+        start_month: deductionForm.start_month || undefined,
+        notes: deductionForm.notes || undefined,
+      });
+      setDeductionSuccess(
+        `Salary deduction IOU #${result.reference_number} created for ${result.staff_name}. ` +
+        `Status: Pending Director Approval.`
+      );
+      setDeductionModal({ open: false, reconciliation: null });
+    } catch (err: unknown) {
+      const e = err as { details?: { detail?: string }; message?: string };
+      setActionError(e?.details?.detail || (err instanceof Error ? err.message : 'Failed to create deduction'));
+    } finally {
+      setDeductionLoading(false);
+    }
+  };
+
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
@@ -274,6 +309,17 @@ const CashReconciliationPage: React.FC = () => {
       {actionError && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
           {actionError}
+        </div>
+      )}
+
+      {/* Deduction Success Banner */}
+      {deductionSuccess && (
+        <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
+          <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div>
+            {deductionSuccess}
+            <button onClick={() => setDeductionSuccess('')} className="ml-2 underline text-xs">Dismiss</button>
+          </div>
         </div>
       )}
 
@@ -378,19 +424,35 @@ const CashReconciliationPage: React.FC = () => {
 
                       {/* Actions */}
                       <td className="px-4 py-3 text-right">
-                        {!rec.finance_officer_signoff && canUserApprove && (
-                          <button
-                            onClick={() => {
-                              setSignoffNotes('');
-                              setActionError(null);
-                              setSignoffModal({ open: true, reconciliationId: rec.id });
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100"
-                          >
-                            <CheckCircle className="h-3 w-3" />
-                            Sign Off
-                          </button>
-                        )}
+                        <div className="flex items-center justify-end gap-2 flex-wrap">
+                          {!rec.finance_officer_signoff && canUserApprove && (
+                            <button
+                              onClick={() => {
+                                setSignoffNotes('');
+                                setActionError(null);
+                                setSignoffModal({ open: true, reconciliationId: rec.id });
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100"
+                            >
+                              <CheckCircle className="h-3 w-3" />
+                              Sign Off
+                            </button>
+                          )}
+                          {rec.status === 'variance' && varianceAmt < 0 && (
+                            <button
+                              onClick={() => {
+                                setDeductionForm({ monthly_installment: '', start_month: '', notes: '' });
+                                setActionError(null);
+                                setDeductionModal({ open: true, reconciliation: { id: rec.id, variance: rec.variance, cashier_name: rec.cashier_name } });
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100"
+                              title="Deduct shortfall from cashier's salary"
+                            >
+                              <MinusCircle className="h-3 w-3" />
+                              Salary Deduction
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -567,6 +629,90 @@ const CashReconciliationPage: React.FC = () => {
                 className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
                 {createMutation.isPending ? 'Submitting…' : 'Submit Reconciliation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Salary Deduction Modal ───────────────────────────────────────────── */}
+      {deductionModal.open && deductionModal.reconciliation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-6 border-b">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Create Salary Deduction</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Cashier: {deductionModal.reconciliation.cashier_name ?? `Reconciliation #${deductionModal.reconciliation.id}`}
+                </p>
+              </div>
+              <button
+                aria-label="Close deduction modal"
+                onClick={() => setDeductionModal({ open: false, reconciliation: null })}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              {actionError && (
+                <div className="text-sm text-red-600 bg-red-50 rounded p-2">{actionError}</div>
+              )}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                <p className="font-semibold mb-1">Shortfall: {formatCurrency(Math.abs(parseFloat(deductionModal.reconciliation.variance)))}</p>
+                <p>This will create a pending salary deduction IOU on the cashier's staff profile. A director must approve it before deductions begin.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Monthly Installment (₦)
+                  <span className="text-gray-400 font-normal ml-1">— leave blank to deduct full shortfall at once</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder={String(Math.abs(parseFloat(deductionModal.reconciliation.variance)))}
+                  value={deductionForm.monthly_installment}
+                  onChange={e => setDeductionForm(f => ({ ...f, monthly_installment: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Start Month
+                  <span className="text-gray-400 font-normal ml-1">— defaults to next month</span>
+                </label>
+                <input
+                  type="date"
+                  value={deductionForm.start_month}
+                  onChange={e => setDeductionForm(f => ({ ...f, start_month: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional context for this deduction…"
+                  value={deductionForm.notes}
+                  onChange={e => setDeductionForm(f => ({ ...f, notes: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 p-6 border-t">
+              <button
+                onClick={() => setDeductionModal({ open: false, reconciliation: null })}
+                className="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeductionSubmit}
+                disabled={deductionLoading}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {deductionLoading ? 'Creating…' : 'Create Deduction IOU'}
               </button>
             </div>
           </div>

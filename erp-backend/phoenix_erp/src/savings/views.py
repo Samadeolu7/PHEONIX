@@ -399,22 +399,19 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
             )
 
         cashier_account_id = request.data.get('cashier_account_id')
-        if not cashier_account_id:
-            return Response(
-                {'detail': 'cashier_account_id is required.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        from accounts.models import Account
+        from cash_management.services.payment_routing import PaymentRoutingService
+        from django.core.exceptions import ValidationError as DjangoValidationError
         try:
-            cashier_account = Account.objects.get(
-                pk=cashier_account_id,
+            cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
+                request.user,
                 owner=schedule.savings_account.owner,
+                branch=schedule.savings_account.branch,
+                cashier_account_id=cashier_account_id,
             )
-        except Account.DoesNotExist:
+        except DjangoValidationError as exc:
             return Response(
-                {'detail': 'Cashier account not found.'},
-                status=status.HTTP_404_NOT_FOUND,
+                {'detail': str(exc.message if hasattr(exc, 'message') else exc)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         cycle_label = (

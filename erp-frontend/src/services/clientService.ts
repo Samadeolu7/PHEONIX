@@ -472,6 +472,14 @@ export const clientService = {
     return api.delete(`/clients/groups/${id}/`);
   },
 
+  async activateClient(id: number): Promise<{ success: boolean; status: string }> {
+    return api.post(`/clients/clients/${id}/activate/`, {});
+  },
+
+  async deactivateClient(id: number): Promise<{ success: boolean; status: string }> {
+    return api.post(`/clients/clients/${id}/deactivate/`, {});
+  },
+
   // ===== MICROFINANCE FEATURES =====
 
   // Feature #6 — NIN duplicate check across all branches

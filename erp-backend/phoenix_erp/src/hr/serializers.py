@@ -836,6 +836,7 @@ class StaffIOUSerializer(TenantModelSerializer):
             'total_amount', 'monthly_installment', 'balance_remaining',
             'start_month', 'reason', 'notes',
             'status', 'status_display', 'cash_disbursed',
+            'deduction_type', 'cashier_reconciliation',
             'created_by', 'created_by_name',
             'approved_by', 'approved_by_name', 'approved_at',
             'disbursement_journal',
@@ -876,6 +877,7 @@ class StaffIOUCreateSerializer(TenantModelSerializer):
         fields = [
             'staff', 'total_amount', 'monthly_installment',
             'start_month', 'reason', 'notes',
+            'deduction_type', 'cashier_reconciliation',
         ]
 
     def validate_total_amount(self, value):

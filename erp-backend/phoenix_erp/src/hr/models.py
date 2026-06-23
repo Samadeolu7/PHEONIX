@@ -1302,6 +1302,29 @@ class StaffIOU(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text='True if cash was disbursed; False if payroll-deduction only; None until decided'
     )
 
+    DEDUCTION_ADVANCE = 'advance'
+    DEDUCTION_RECONCILIATION = 'reconciliation'
+    DEDUCTION_TYPE_CHOICES = [
+        (DEDUCTION_ADVANCE, 'Cash Advance / IOU'),
+        (DEDUCTION_RECONCILIATION, 'Cashier Reconciliation Shortfall'),
+    ]
+    deduction_type = models.CharField(
+        max_length=20,
+        choices=DEDUCTION_TYPE_CHOICES,
+        default=DEDUCTION_ADVANCE,
+        db_index=True,
+        help_text='advance = normal cash advance; reconciliation = salary deduction for cashier shortfall'
+    )
+
+    # Optional link to the CashReconciliation that triggered this deduction
+    cashier_reconciliation = models.ForeignKey(
+        'cash_management.CashReconciliation',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='salary_deductions',
+        help_text='Reconciliation record that created this deduction (for shortfall type)'
+    )
+
     # Approval
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

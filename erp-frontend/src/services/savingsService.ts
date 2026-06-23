@@ -142,11 +142,8 @@ export const getSavingsCollectionSheet = (params: {
 
 export const markContributionPaid = (
   scheduleId: number,
-  cashierAccountId: number
 ): Promise<ContributionScheduleItem> =>
-  api.post(`${BASE_COLLECTION}/${scheduleId}/mark-paid/`, {
-    cashier_account_id: cashierAccountId,
-  });
+  api.post(`${BASE_COLLECTION}/${scheduleId}/mark-paid/`, {});
 
 export const generateScheduleForMonth = (
   year?: number,
@@ -363,3 +360,30 @@ export const getSavingsTransactions = (
   api.get(`${BASE_ACCOUNTS}/${accountId}/transactions/`, {
     params: { page, page_size: pageSize },
   });
+
+// ── Deposit ────────────────────────────────────────────────────────────────
+
+export interface SavingsDepositPayload {
+  amount: string;
+  date: string;
+  description?: string;
+  payment_mode?: 'cash' | 'bank_transfer';
+  bank_reference?: string;
+}
+
+export interface SavingsDepositResult {
+  id: number;
+  savings_account: number;
+  account_number: string;
+  client_name: string;
+  amount: string;
+  date: string;
+  balance_after: string;
+  reference: string;
+}
+
+export const depositToSavings = (
+  accountId: number,
+  data: SavingsDepositPayload,
+): Promise<SavingsDepositResult> =>
+  api.post(`${BASE_ACCOUNTS}/${accountId}/deposit/`, data);
