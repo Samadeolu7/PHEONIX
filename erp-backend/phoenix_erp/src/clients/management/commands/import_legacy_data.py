@@ -677,6 +677,7 @@ class Command(BaseCommand):
         orphan_ids = []
         sav_products = products["savings"]   # dict: {"N": Product, "D": Product}
         parent_acct = gl["SAVINGS"]          # code 2140
+        sav_ob_total = Decimal("0.00")       # running total for reconciliation
 
         for rec in savings_data:
             balance = _d(rec.get("balance"))
@@ -715,11 +716,10 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            # Use opening_balance (pre-year state) so that re-posting the year's
-            # payment history arrives at the correct current balance.
             ob_amount = _d(rec.get("opening_balance", rec.get("balance")))
             if ob_amount:
                 ob_entries.append((child_acct, ob_amount, ob_amount, 'CR'))
+                sav_ob_total += ob_amount
 
             SavingsAccount.objects.create(
                 client=client,
@@ -740,7 +740,8 @@ class Command(BaseCommand):
         self.stdout.write(
             f"    {created_count} created, "
             f"{skipped_existing} already existed, "
-            f"{orphan_count} orphaned (client not found)"
+            f"{orphan_count} orphaned (client not found)\n"
+            f"    ► Total savings opening balance (CR)  : {sav_ob_total:>14,.2f}"
         )
         if orphan_ids:
             self.stdout.write(
@@ -809,6 +810,7 @@ class Command(BaseCommand):
         created_count = 0
         sched_created = 0
         skipped = 0
+        loan_ob_total = Decimal("0.00")   # running total for reconciliation
         loan_products = products["loans"]
         parent_acct = gl["LOAN"]   # code 1150
 
@@ -868,6 +870,7 @@ class Command(BaseCommand):
             ob_amount = _d(rec.get("opening_balance", rec.get("balance")))
             if ob_amount:
                 ob_entries.append((child_acct, ob_amount, ob_amount, 'DR'))
+                loan_ob_total += ob_amount
 
             # ── Compute arrears from schedule rows before creating the account
             raw_schedules = schedules_by_loan.get(rec["id"], [])
@@ -987,7 +990,8 @@ class Command(BaseCommand):
         self.stdout.write(
             f"    {created_count} loans created, "
             f"{sched_created} schedule installments created, "
-            f"{skipped} skipped"
+            f"{skipped} skipped\n"
+            f"    ► Total loan opening balance (DR)     : {loan_ob_total:>14,.2f}"
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1022,6 +1026,7 @@ class Command(BaseCommand):
         code_counter = self._next_available_code(Account, 1101, ctx)
         created_count = 0
         skipped_existing = 0
+        bank_ob_total = Decimal("0.00")   # running total for reconciliation
 
         # Tracks how many times each base name has been seen so far in this run.
         # Ensures occurrence 0 → "GTBank", occurrence 1 → "GTBank-1", etc.,
@@ -1068,11 +1073,16 @@ class Command(BaseCommand):
             )
             if ob_amount:
                 ob_entries.append((acct, ob_amount, bal_bf, 'DR'))
+                bank_ob_total += ob_amount
+                self.stdout.write(
+                    f"    {account_name:<40} ob={ob_amount:>12,.2f}  curr={_d(rec.get('balance')):>12,.2f}"
+                )
             code_counter += 1
             created_count += 1
 
         self.stdout.write(
-            f"    {created_count} created, {skipped_existing} already existed"
+            f"    {created_count} created, {skipped_existing} already existed\n"
+            f"    ► Total bank opening balance (DR)     : {bank_ob_total:>14,.2f}"
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1187,6 +1197,7 @@ class Command(BaseCommand):
         code_counter = self._next_available_code(Account, 2101, ctx)
         created_count = 0
         skipped = 0
+        liab_bf_total = Decimal("0.00")   # running total for reconciliation
 
         for rec in liability_data:
             name = f"{rec['name']} ({rec.get('year', 'YTD')})"
@@ -1197,7 +1208,8 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            bal_bf = _d(rec.get("balance_bf"))
+            bal_bf  = _d(rec.get("balance_bf"))
+            bal_cur = _d(rec.get("balance"))
             acct = Account.objects.create(
                 code=str(code_counter),
                 name=name,
@@ -1210,12 +1222,19 @@ class Command(BaseCommand):
                 created_by=ctx["owner"],
             )
             # balance_bf = outstanding liability balance at the start of the year.
+            self.stdout.write(
+                f"    {rec['name']:<40} bf={bal_bf:>12,.2f}  curr={bal_cur:>12,.2f}"
+            )
             if bal_bf:
                 ob_entries.append((acct, bal_bf, bal_bf, 'CR'))
+                liab_bf_total += bal_bf
             code_counter += 1
             created_count += 1
 
-        self.stdout.write(f"    {created_count} created, {skipped} skipped")
+        self.stdout.write(
+            f"    {created_count} created, {skipped} skipped\n"
+            f"    ► Total liability opening balance (CR): {liab_bf_total:>14,.2f}"
+        )
 
 
     def _create_opening_balance_transaction(self, ob_entries, Account, ctx):
@@ -1239,6 +1258,34 @@ class Command(BaseCommand):
         if not non_zero:
             self.stdout.write("    No non-zero opening balances — skipping transaction.")
             return
+
+        # ── Pre-flight reconciliation ─────────────────────────────────────────
+        # Group entries by account type so you can spot which category is
+        # causing any OBE gap before the transaction is posted.
+        type_dr: dict = {}
+        type_cr: dict = {}
+        for acct, amt, _, side in non_zero:
+            at = acct.account_type
+            if side == 'DR':
+                type_dr[at] = type_dr.get(at, Decimal("0")) + abs(amt)
+            else:
+                type_cr[at] = type_cr.get(at, Decimal("0")) + abs(amt)
+
+        total_dr = sum(type_dr.values())
+        total_cr = sum(type_cr.values())
+        diff     = total_dr - total_cr
+
+        self.stdout.write("\n    ┌─── Opening Balance Reconciliation ────────────────────────┐")
+        self.stdout.write(    "    │  DEBIT (assets)                                           │")
+        for at, amt in sorted(type_dr.items()):
+            self.stdout.write(f"    │    {at:<20} {amt:>14,.2f}                        │")
+        self.stdout.write(f"    │    {'TOTAL DR':<20} {total_dr:>14,.2f}                        │")
+        self.stdout.write(    "    │  CREDIT (liabilities / equity)                           │")
+        for at, amt in sorted(type_cr.items()):
+            self.stdout.write(f"    │    {at:<20} {amt:>14,.2f}                        │")
+        self.stdout.write(f"    │    {'TOTAL CR':<20} {total_cr:>14,.2f}                        │")
+        self.stdout.write(f"    │    {'GAP (OBE)':<20} {diff:>14,.2f}                        │")
+        self.stdout.write(    "    └───────────────────────────────────────────────────────────┘\n")
 
         # Idempotency: skip if the migration transaction already exists
         if Transaction.objects.filter(
