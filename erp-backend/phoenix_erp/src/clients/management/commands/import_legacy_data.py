@@ -1025,8 +1025,12 @@ class Command(BaseCommand):
                 skipped_existing += 1
                 continue
 
-            bal    = _d(rec.get("balance"))
-            bal_bf = _d(rec.get("balance_bf"))
+            # opening_balance = pre-year balance (before 2026 payment flows).
+            # After Steps 13/14 post savings/loan flows through this account
+            # the GL balance will arrive at the correct current balance.
+            # Falls back to full balance for old exports without opening_balance.
+            ob_amount = _d(rec.get("opening_balance", rec.get("balance")))
+            bal_bf    = _d(rec.get("balance_bf"))
             acct = Account.objects.create(
                 code=str(code_counter),
                 name=account_name,
@@ -1038,8 +1042,8 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            if bal:
-                ob_entries.append((acct, bal, bal_bf, 'DR'))
+            if ob_amount:
+                ob_entries.append((acct, ob_amount, bal_bf, 'DR'))
             code_counter += 1
             created_count += 1
 
