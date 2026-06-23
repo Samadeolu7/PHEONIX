@@ -177,9 +177,9 @@ class AccountingSignConventionTests(TestCase):
     
     def test_credit_decreases_asset_account(self):
         """Test that crediting an asset account decreases its balance"""
-        # Setup: Cash starts with 1000
-        self.cash.balance = Decimal('1000.00')
-        self.cash.save()
+        # Setup: Cash starts with 1000 (use queryset update to bypass ORM protection)
+        Account.objects.filter(pk=self.cash.pk).update(balance=Decimal('1000.00'))
+        self.cash.refresh_from_db()
         
         # Create transaction: Cr Cash 300 (payment)
         txn = Transaction.objects.create(
@@ -261,11 +261,11 @@ class AccountingSignConventionTests(TestCase):
     def test_debit_decreases_liability_account(self):
         """Test that debiting a liability account decreases its balance"""
         # Setup: AP has balance of -500 (we owe 500)
-        self.accounts_payable.balance = Decimal('-500.00')
-        self.accounts_payable.save()
-        
-        self.cash.balance = Decimal('1000.00')
-        self.cash.save()
+        Account.objects.filter(pk=self.accounts_payable.pk).update(balance=Decimal('-500.00'))
+        self.accounts_payable.refresh_from_db()
+
+        Account.objects.filter(pk=self.cash.pk).update(balance=Decimal('1000.00'))
+        self.cash.refresh_from_db()
         
         # Create transaction: pay off liability
         txn = Transaction.objects.create(

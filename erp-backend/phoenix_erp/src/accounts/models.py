@@ -459,6 +459,17 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if self.parent and self.parent.account_type != self.account_type:
             raise ValidationError("Child account type must match parent account type")
     
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        instance = super().from_db(db, field_names, values)
+        instance._original_balance = instance.balance
+        return instance
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not hasattr(self, '_original_balance'):
+            self._original_balance = self.balance
+
     def save(self, *args, **kwargs):
         # Ensure tenant is set from owner if missing (helps tests and direct creates)
         try:
@@ -470,41 +481,53 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             pass
 
         # ACCOUNTING INTEGRITY PROTECTION:
-        # Prevent direct balance writes outside of canonical posting mechanisms
-        if self.pk and 'balance' in kwargs.get('update_fields', []):
-            import inspect
-            import os
-            from django.conf import settings as django_settings
-            
-            # Allow bypass in tests or dev mode (use with extreme caution)
-            if getattr(django_settings, 'DISABLE_BALANCE_PROTECTION', False) or \
-                os.environ.get('DISABLE_BALANCE_PROTECTION') == 'true':
-                self.clean()
-                super().save(*args, **kwargs)
-                return
-            
-            # Get the calling function (2 levels up: save <- caller)
-            frame = inspect.currentframe()
-            try:
-                caller_frame = frame.f_back.f_back if frame and frame.f_back else None
-                caller_function = caller_frame.f_code.co_name if caller_frame else 'unknown'
-                caller_class = caller_frame.f_locals.get('self', None).__class__.__name__ if caller_frame and 'self' in caller_frame.f_locals else 'unknown'
-                
-                # Allow only from authorized posting mechanisms
-                allowed_functions = {'post', '_do_update', 'bulk_update', 'refresh_from_db', '_do_insert'}
-                allowed_classes = {'Account', 'TransactionEntry', 'QuerySet'}
-                
-                if caller_function not in allowed_functions and caller_class not in allowed_classes:
-                    raise PermissionError(
-                        f"Direct balance updates are prohibited. "
-                        f"Use TransactionEntry.post() to update account balances. "
-                        f"Called from: {caller_class}.{caller_function}"
+        # Prevent direct balance writes outside of canonical posting mechanisms.
+        # Three illegal patterns are blocked:
+        #   1. save(update_fields=['balance']) on an existing record
+        #   2. Full save() on an existing record where .balance was mutated
+        #   3. create() / save() of a NEW record with a non-zero balance
+        # The canonical path (TransactionEntry.post → queryset.update(balance=F+delta))
+        # bypasses save() entirely and is therefore always allowed.
+        import os
+        from django.conf import settings as django_settings
+
+        update_fields = kwargs.get('update_fields')
+        _original = getattr(self, '_original_balance', Decimal('0'))
+
+        is_balance_change = (
+            (update_fields is not None and 'balance' in update_fields and self.pk)
+            or (self.pk and update_fields is None and self.balance != _original)
+            or (not self.pk and self.balance != Decimal('0'))
+        )
+
+        if is_balance_change:
+            if not (getattr(django_settings, 'DISABLE_BALANCE_PROTECTION', False) or
+                    os.environ.get('DISABLE_BALANCE_PROTECTION') == 'true'):
+                import inspect
+                frame = inspect.currentframe()
+                try:
+                    caller_frame = frame.f_back.f_back if frame and frame.f_back else None
+                    caller_function = caller_frame.f_code.co_name if caller_frame else 'unknown'
+                    caller_class = (
+                        caller_frame.f_locals.get('self', None).__class__.__name__
+                        if caller_frame and 'self' in caller_frame.f_locals else 'unknown'
                     )
-            finally:
-                del frame
+
+                    allowed_functions = {'post', '_do_update', 'bulk_update', 'refresh_from_db', '_do_insert'}
+                    allowed_classes = {'Account', 'TransactionEntry', 'QuerySet'}
+
+                    if caller_function not in allowed_functions and caller_class not in allowed_classes:
+                        raise PermissionError(
+                            f"Direct balance updates are prohibited. "
+                            f"Use TransactionEntry.post() to update account balances. "
+                            f"Called from: {caller_class}.{caller_function}"
+                        )
+                finally:
+                    del frame
 
         self.clean()
         super().save(*args, **kwargs)
+        self._original_balance = self.balance
     
     # REMOVED: update_balance() method - SECURITY LEAK
     # All balance updates MUST go through TransactionEntry.post()

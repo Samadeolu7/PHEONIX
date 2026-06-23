@@ -1159,7 +1159,7 @@ class Command(BaseCommand):
                 "owner":         ctx["owner"],
                 "created_by":    ctx["owner"],
                 "balance_bf":    total_bf,
-                "balance":       total_bal,
+                "balance":       Decimal("0.00"),
             },
         )
 
@@ -1255,9 +1255,14 @@ class Command(BaseCommand):
             )
             created += 1
 
-        # ── 7. Register opening balance entry ─────────────────────────────────
-        if total_bf != Decimal("0"):
-            ob_entries.append((inv_gl, total_bf, total_bf, "DR"))
+        # ── 7. Register GL entry ───────────────────────────────────────────────
+        # Post the full current inventory value (total_bal) as a DR to the GL,
+        # absorbed by OBE.  balance_bf is set separately to total_bf so the
+        # period-start figure is correct.  Using total_bal (not total_bf) ensures
+        # the in-period acquisitions (items with balance_bf=0, balance>0) are
+        # also captured by a journal entry rather than a direct balance write.
+        if total_bal != Decimal("0"):
+            ob_entries.append((inv_gl, total_bal, total_bf, "DR"))
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -1265,7 +1270,10 @@ class Command(BaseCommand):
             )
         )
         self.stdout.write(
-            f"    ► Total inventory opening balance (DR)    : {total_bf:>15,.2f}"
+            f"    ► Inventory opening balance (balance_bf) : {total_bf:>15,.2f}"
+        )
+        self.stdout.write(
+            f"    ► Inventory current value (GL DR entry)  : {total_bal:>15,.2f}"
         )
 
     # ══════════════════════════════════════════════════════════════════════════

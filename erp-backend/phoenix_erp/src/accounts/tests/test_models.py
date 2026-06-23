@@ -520,10 +520,11 @@ class BalanceSheetSnapshotTest(TestCase):
             balance=Decimal('5000.00')
         )
         
-        # Change account balance
-        self.account.balance = Decimal('7000.00')
-        self.account.save()
-        
+        # Change account balance the way production does it (queryset update, no ORM save)
+        from accounts.models import Account as AccountModel
+        AccountModel.objects.filter(pk=self.account.pk).update(balance=Decimal('7000.00'))
+        self.account.refresh_from_db()
+
         # Snapshot should still have old balance
         snapshot.refresh_from_db()
         self.assertEqual(snapshot.balance, Decimal('5000.00'))
