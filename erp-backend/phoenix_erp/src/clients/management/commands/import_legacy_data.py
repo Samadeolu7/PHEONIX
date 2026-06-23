@@ -1083,6 +1083,10 @@ class Command(BaseCommand):
         """
         Create child INCOME accounts (4-digit codes) under parent 4200.
         Codes start at 4201 upward.
+
+        Opening balance uses balance_bf (typically 0 for annual income accounts).
+        Step 15 posts all 2026 income receipts from that starting point, so the
+        account reaches the correct current balance without double-counting.
         """
         parent_acct = gl["INCOME"]
         code_counter = self._next_available_code(Account, 4201, ctx)
@@ -1098,7 +1102,6 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            bal    = _d(rec.get("balance"))
             bal_bf = _d(rec.get("balance_bf"))
             acct = Account.objects.create(
                 code=str(code_counter),
@@ -1111,8 +1114,10 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            if bal:
-                ob_entries.append((acct, bal, bal_bf, 'CR'))
+            # Use balance_bf (= 0 for annual accounts) — Step 15 posts each
+            # 2026 payment and drives the balance to the current figure.
+            if bal_bf:
+                ob_entries.append((acct, bal_bf, bal_bf, 'CR'))
             code_counter += 1
             created_count += 1
 
@@ -1126,6 +1131,9 @@ class Command(BaseCommand):
         """
         Create child EXPENSE accounts (4-digit codes) under parent 5300.
         Codes start at 5301 upward.
+
+        Opening balance uses balance_bf (typically 0 for annual expense accounts).
+        Step 16 posts all 2026 expense payments from that starting point.
         """
         parent_acct = gl["EXPENSE"]
         code_counter = self._next_available_code(Account, 5301, ctx)
@@ -1141,7 +1149,6 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            bal    = _d(rec.get("balance"))
             bal_bf = _d(rec.get("balance_bf"))
             acct = Account.objects.create(
                 code=str(code_counter),
@@ -1154,8 +1161,8 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            if bal:
-                ob_entries.append((acct, bal, bal_bf, 'DR'))
+            if bal_bf:
+                ob_entries.append((acct, bal_bf, bal_bf, 'DR'))
             code_counter += 1
             created_count += 1
 
@@ -1169,6 +1176,12 @@ class Command(BaseCommand):
         """
         Create child LIABILITY accounts (4-digit codes) under parent 2100.
         Codes start at 2101 upward.
+
+        Opening balance uses balance_bf (the pre-year carry-forward balance).
+        Liabilities are balance-sheet items that roll over between years, so
+        balance_bf is non-zero whenever there was an outstanding liability at
+        the start of the year.  Step 17 posts all 2026 liability movements from
+        that starting point and drives the balance to the correct current figure.
         """
         parent_acct = gl["LIABILITY"]
         code_counter = self._next_available_code(Account, 2101, ctx)
@@ -1184,7 +1197,6 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            bal    = _d(rec.get("balance"))
             bal_bf = _d(rec.get("balance_bf"))
             acct = Account.objects.create(
                 code=str(code_counter),
@@ -1197,8 +1209,9 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            if bal:
-                ob_entries.append((acct, bal, bal_bf, 'CR'))
+            # balance_bf = outstanding liability balance at the start of the year.
+            if bal_bf:
+                ob_entries.append((acct, bal_bf, bal_bf, 'CR'))
             code_counter += 1
             created_count += 1
 
