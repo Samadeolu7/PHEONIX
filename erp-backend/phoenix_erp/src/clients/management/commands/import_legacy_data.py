@@ -319,6 +319,27 @@ class Command(BaseCommand):
             },
         )
 
+        # Fix the admin Staff profile created by the auto-signal before tenant
+        # was linked: patch tenant/branch onto it and retry leave balances.
+        try:
+            from hr.models import Staff
+            from hr.services.leave_service import LeaveService
+            import datetime as _dt
+            staff = Staff.objects.filter(user=owner).first()
+            if staff:
+                updates = []
+                if staff.tenant_id is None:
+                    staff.tenant = tenant
+                    updates.append("tenant")
+                if staff.branch_id is None:
+                    staff.branch = branch
+                    updates.append("branch")
+                if updates:
+                    staff.save(update_fields=updates)
+                LeaveService.initialize_leave_balances(staff, _dt.date.today().year)
+        except Exception as exc:
+            self.stdout.write(self.style.WARNING(f"    Admin leave balances: {exc}"))
+
         self.stdout.write(
             f"    tenant={tenant.slug}, branch={branch.name}, owner={owner.username}"
         )
@@ -1306,7 +1327,7 @@ class Command(BaseCommand):
             return
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code="SAVMIG",
+            code="SVMIG",
             defaults={"description": "Savings Payment History Migration"},
         )
         if Transaction.objects.filter(
