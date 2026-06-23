@@ -629,7 +629,7 @@ def migration_diagnostics(request):
     Transaction       = apps.get_model("transactions", "Transaction")
     TransactionEntry  = apps.get_model("transactions", "TransactionEntry")
     TransactionSeries = apps.get_model("transactions", "TransactionSeries")
-    Tenant            = apps.get_model("accounts",     "Tenant")
+    Tenant            = apps.get_model("users",        "Tenant")
     InventoryItem     = apps.get_model("inventory",    "InventoryItem")
     InventoryStock    = apps.get_model("inventory",    "InventoryStock")
 
