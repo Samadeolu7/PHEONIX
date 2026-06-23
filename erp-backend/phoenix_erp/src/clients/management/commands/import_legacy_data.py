@@ -163,6 +163,9 @@ class Command(BaseCommand):
         liability_data      = _load(data_dir, "liability_accounts.json")
         savings_pmts_data   = _load(data_dir, "savings_payments.json")
         loan_pmts_data      = _load(data_dir, "loan_payments.json")
+        income_pmts_data    = _load(data_dir, "income_payments.json")
+        expense_pmts_data   = _load(data_dir, "expense_payments.json")
+        liability_pmts_data = _load(data_dir, "liability_payments.json")
 
         self.stdout.write(
             self.style.MIGRATE_HEADING(
@@ -173,7 +176,10 @@ class Command(BaseCommand):
                 f"banks={len(banks_data)}, income={len(income_data)}, "
                 f"expenses={len(expense_data)}, liabilities={len(liability_data)}, "
                 f"savings_payments={len(savings_pmts_data)}, "
-                f"loan_payments={len(loan_pmts_data)}\n"
+                f"loan_payments={len(loan_pmts_data)}, "
+                f"income_payments={len(income_pmts_data)}, "
+                f"expense_payments={len(expense_pmts_data)}, "
+                f"liability_payments={len(liability_pmts_data)}\n"
             )
         )
 
@@ -190,7 +196,7 @@ class Command(BaseCommand):
         try:
             with transaction.atomic():
                 # ── STEP 1: Bootstrap  ───────────────────────────────────────
-                self.stdout.write("Step 1/14  Bootstrap (Tenant → User → Branch) …")
+                self.stdout.write("Step 1/17  Bootstrap (Tenant → User → Branch) …")
                 owner, tenant, branch = self._bootstrap(
                     options, Tenant, Branch
                 )
@@ -203,19 +209,19 @@ class Command(BaseCommand):
                 )
 
                 # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────
-                self.stdout.write("Step 2/14  Chart of accounts …")
+                self.stdout.write("Step 2/17  Chart of accounts …")
                 gl = self._setup_chart_of_accounts(Account, ctx)
 
                 # ── STEP 3: Financial Products ────────────────────────────────
-                self.stdout.write("Step 3/14  Financial products …")
+                self.stdout.write("Step 3/17  Financial products …")
                 products = self._setup_products(Product, LoanProduct, gl, ctx)
 
                 # ── STEP 4: Client Groups ─────────────────────────────────────
-                self.stdout.write("Step 4/14  Client groups …")
+                self.stdout.write("Step 4/17  Client groups …")
                 group_map = self._import_groups(groups_data, ClientGroup, ctx)
 
                 # ── STEP 5: Clients ───────────────────────────────────────────
-                self.stdout.write("Step 5/14  Clients …")
+                self.stdout.write("Step 5/17  Clients …")
                 client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
 
                 # ── STEP 6: Savings ───────────────────────────────────────────
@@ -224,43 +230,61 @@ class Command(BaseCommand):
                 # Step 12 posts these as a single balanced GL transaction.
                 ob_entries: list = []
 
-                self.stdout.write("Step 6/14  Savings accounts …")
+                self.stdout.write("Step 6/17  Savings accounts …")
                 self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 7: Loans ─────────────────────────────────────────────
-                self.stdout.write("Step 7/14  Loan accounts …")
+                self.stdout.write("Step 7/17  Loan accounts …")
                 self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 8: Banks / Cash ──────────────────────────────────────
-                self.stdout.write("Step 8/14  Bank / cash accounts …")
+                self.stdout.write("Step 8/17  Bank / cash accounts …")
                 self._import_banks(banks_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 9: Income ────────────────────────────────────────────
-                self.stdout.write("Step 9/14  Income accounts …")
+                self.stdout.write("Step 9/17  Income accounts …")
                 self._import_income(income_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 10: Expenses ─────────────────────────────────────────
-                self.stdout.write("Step 10/14 Expense accounts …")
+                self.stdout.write("Step 10/17 Expense accounts …")
                 self._import_expenses(expense_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 11: Liabilities ──────────────────────────────────────
-                self.stdout.write("Step 11/14 Liability accounts …")
+                self.stdout.write("Step 11/17 Liability accounts …")
                 self._import_liabilities(liability_data, Account, gl, ctx, ob_entries)
 
-                # ── STEP 12: Opening balance transaction ──
-                self.stdout.write("Step 12/14 Opening balance transaction …")
+                # ── STEP 12: Opening balance transaction ──────────────────────
+                self.stdout.write("Step 12/17 Opening balance transaction …")
                 self._create_opening_balance_transaction(ob_entries, Account, ctx)
 
                 # ── STEP 13: Savings payment history ──────────────────────────
-                self.stdout.write("Step 13/14 Savings payment history …")
+                self.stdout.write("Step 13/17 Savings payment history …")
                 self._import_savings_payments(
                     savings_pmts_data, banks_data, SavingsAccount, Account, gl, ctx
                 )
 
                 # ── STEP 14: Loan payment history ─────────────────────────────
-                self.stdout.write("Step 14/14 Loan payment history …")
+                self.stdout.write("Step 14/17 Loan payment history …")
                 self._import_loan_payments(
                     loan_pmts_data, banks_data, LoanAccount, Account, gl, ctx
+                )
+
+                # ── STEP 15: Income payment history ───────────────────────────
+                self.stdout.write("Step 15/17 Income payment history …")
+                self._import_income_payments(
+                    income_pmts_data, banks_data, Account, gl, ctx
+                )
+
+                # ── STEP 16: Expense payment history ──────────────────────────
+                self.stdout.write("Step 16/17 Expense payment history …")
+                self._import_expense_payments(
+                    expense_pmts_data, banks_data, Account, gl, ctx
+                )
+
+                # ── STEP 17: Liability payment history ────────────────────────
+                self.stdout.write("Step 17/17 Liability payment history …")
+                self._import_liability_payments(
+                    liability_pmts_data, banks_data, Account, gl, ctx
                 )
 
         finally:
@@ -1506,7 +1530,270 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Helpers for Steps 13 / 14
+    # STEP 15 – Income payment history
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_income_payments(self, income_pmts_data, banks_data, Account, gl, ctx):
+        """
+        Post each income receipt as: Dr. Bank/Cash, Cr. Income Account.
+
+        Income accounts were created in Step 9 with names of the form
+        "{income.name} ({income.year})".  We look them up by that same key.
+        """
+        from transactions.models import Transaction, TransactionEntry, TransactionSeries
+
+        if not income_pmts_data:
+            self.stdout.write("    No income payment history — skipping.")
+            return
+
+        series, _ = TransactionSeries.objects.get_or_create(
+            code="INMIG",
+            defaults={"description": "Income Payment History Migration"},
+        )
+        if Transaction.objects.filter(
+            series=series, tenant=ctx["tenant"], branch=ctx["branch"]
+        ).exists():
+            self.stdout.write("    Income payment history already imported — skipping.")
+            return
+
+        bank_acct_map = self._build_bank_account_map(banks_data, Account, gl, ctx)
+        suspense      = self._get_suspense_account(Account, gl, ctx)
+        income_parent = gl["INCOME"]
+
+        created = 0
+        skipped = 0
+
+        for rec in income_pmts_data:
+            income_name = rec.get("income_name")
+            income_year = rec.get("income_year", "YTD")
+            account_name = f"{income_name} ({income_year})"
+
+            try:
+                income_acct = Account.objects.get(
+                    name=account_name,
+                    parent=income_parent,
+                    tenant=ctx["tenant"],
+                    branch=ctx["branch"],
+                    is_deleted=False,
+                )
+            except Account.DoesNotExist:
+                skipped += 1
+                continue
+
+            amount   = _d(rec.get("amount"))
+            if amount <= Decimal("0"):
+                skipped += 1
+                continue
+
+            bank_id   = rec.get("bank_id")
+            cash_acct = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
+            pay_date  = _date(rec.get("payment_date"))
+            description = (rec.get("description") or "").strip() or f"Income: {income_name}"
+
+            txn = Transaction.objects.create(
+                series=series, date=pay_date, description=description,
+                owner=ctx["owner"], branch=ctx["branch"],
+                tenant=ctx["tenant"], created_by=ctx["owner"],
+            )
+            # Dr. Bank/Cash (+), Cr. Income (+)
+            TransactionEntry.objects.create(
+                transaction=txn, account=cash_acct,
+                side=TransactionEntry.DEBIT, amount=amount,
+            )
+            TransactionEntry.objects.create(
+                transaction=txn, account=income_acct,
+                side=TransactionEntry.CREDIT, amount=amount,
+            )
+            txn.post()
+            created += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"    {created} income payment transactions posted, {skipped} skipped"
+            )
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 16 – Expense payment history
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_expense_payments(self, expense_pmts_data, banks_data, Account, gl, ctx):
+        """
+        Post each approved expense as: Dr. Expense Account, Cr. Bank/Cash.
+
+        Expense accounts were created in Step 10 with names of the form
+        "{expense.name} ({expense.year})".
+        """
+        from transactions.models import Transaction, TransactionEntry, TransactionSeries
+
+        if not expense_pmts_data:
+            self.stdout.write("    No expense payment history — skipping.")
+            return
+
+        series, _ = TransactionSeries.objects.get_or_create(
+            code="EXMIG",
+            defaults={"description": "Expense Payment History Migration"},
+        )
+        if Transaction.objects.filter(
+            series=series, tenant=ctx["tenant"], branch=ctx["branch"]
+        ).exists():
+            self.stdout.write("    Expense payment history already imported — skipping.")
+            return
+
+        bank_acct_map  = self._build_bank_account_map(banks_data, Account, gl, ctx)
+        suspense       = self._get_suspense_account(Account, gl, ctx)
+        expense_parent = gl["EXPENSE"]
+
+        created = 0
+        skipped = 0
+
+        for rec in expense_pmts_data:
+            expense_name = rec.get("expense_name")
+            expense_year = rec.get("expense_year", "YTD")
+            account_name = f"{expense_name} ({expense_year})"
+
+            try:
+                expense_acct = Account.objects.get(
+                    name=account_name,
+                    parent=expense_parent,
+                    tenant=ctx["tenant"],
+                    branch=ctx["branch"],
+                    is_deleted=False,
+                )
+            except Account.DoesNotExist:
+                skipped += 1
+                continue
+
+            amount   = _d(rec.get("amount"))
+            if amount <= Decimal("0"):
+                skipped += 1
+                continue
+
+            bank_id   = rec.get("bank_id")
+            cash_acct = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
+            pay_date  = _date(rec.get("payment_date"))
+            description = (rec.get("description") or "").strip() or f"Expense: {expense_name}"
+
+            txn = Transaction.objects.create(
+                series=series, date=pay_date, description=description,
+                owner=ctx["owner"], branch=ctx["branch"],
+                tenant=ctx["tenant"], created_by=ctx["owner"],
+            )
+            # Dr. Expense (+), Cr. Bank/Cash (-)
+            TransactionEntry.objects.create(
+                transaction=txn, account=expense_acct,
+                side=TransactionEntry.DEBIT, amount=amount,
+            )
+            TransactionEntry.objects.create(
+                transaction=txn, account=cash_acct,
+                side=TransactionEntry.CREDIT, amount=amount,
+            )
+            txn.post()
+            created += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"    {created} expense payment transactions posted, {skipped} skipped"
+            )
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 17 – Liability payment history
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_liability_payments(self, liability_pmts_data, banks_data, Account, gl, ctx):
+        """
+        Post each liability movement:
+          - Positive amount (liability increases / money received):
+              Dr. Bank/Cash, Cr. Liability Account
+          - Negative amount (liability decreases / money paid back):
+              Dr. Liability Account, Cr. Bank/Cash
+
+        Liability accounts were created in Step 11 with names of the form
+        "{liability.name} ({liability.year})".
+        """
+        from transactions.models import Transaction, TransactionEntry, TransactionSeries
+
+        if not liability_pmts_data:
+            self.stdout.write("    No liability payment history — skipping.")
+            return
+
+        series, _ = TransactionSeries.objects.get_or_create(
+            code="LBMIG",
+            defaults={"description": "Liability Payment History Migration"},
+        )
+        if Transaction.objects.filter(
+            series=series, tenant=ctx["tenant"], branch=ctx["branch"]
+        ).exists():
+            self.stdout.write("    Liability payment history already imported — skipping.")
+            return
+
+        bank_acct_map     = self._build_bank_account_map(banks_data, Account, gl, ctx)
+        suspense          = self._get_suspense_account(Account, gl, ctx)
+        liability_parent  = gl["LIABILITY"]
+
+        created = 0
+        skipped = 0
+
+        for rec in liability_pmts_data:
+            liability_name = rec.get("liability_name")
+            liability_year = rec.get("liability_year", "YTD")
+            account_name   = f"{liability_name} ({liability_year})"
+
+            try:
+                liability_acct = Account.objects.get(
+                    name=account_name,
+                    parent=liability_parent,
+                    tenant=ctx["tenant"],
+                    branch=ctx["branch"],
+                    is_deleted=False,
+                )
+            except Account.DoesNotExist:
+                skipped += 1
+                continue
+
+            amount   = _d(rec.get("amount"))
+            if amount == Decimal("0"):
+                skipped += 1
+                continue
+
+            bank_id   = rec.get("bank_id")
+            cash_acct = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
+            pay_date  = _date(rec.get("payment_date"))
+            description = (rec.get("description") or "").strip() or f"Liability: {liability_name}"
+
+            txn = Transaction.objects.create(
+                series=series, date=pay_date, description=description,
+                owner=ctx["owner"], branch=ctx["branch"],
+                tenant=ctx["tenant"], created_by=ctx["owner"],
+            )
+            entry_amount = abs(amount)
+            if amount > Decimal("0"):
+                # Liability increases (money received) → Dr Bank, Cr Liability
+                dr_acct, cr_acct = cash_acct, liability_acct
+            else:
+                # Liability decreases (money paid back) → Dr Liability, Cr Bank
+                dr_acct, cr_acct = liability_acct, cash_acct
+
+            TransactionEntry.objects.create(
+                transaction=txn, account=dr_acct,
+                side=TransactionEntry.DEBIT, amount=entry_amount,
+            )
+            TransactionEntry.objects.create(
+                transaction=txn, account=cr_acct,
+                side=TransactionEntry.CREDIT, amount=entry_amount,
+            )
+            txn.post()
+            created += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"    {created} liability payment transactions posted, {skipped} skipped"
+            )
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Helpers for Steps 13–17
     # ══════════════════════════════════════════════════════════════════════════
 
     def _build_bank_account_map(self, banks_data, Account, gl, ctx) -> dict:
