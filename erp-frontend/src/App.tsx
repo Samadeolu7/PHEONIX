@@ -571,7 +571,7 @@ const ReactivateClientPage = lazy(() => import('./pages/clients/ReactivateClient
 // Savings — Combined Receipt & Contribution Collection
 const CombinedReceiptPage = lazy(() => import('./pages/savings/CombinedReceiptPage'));
 const GroupCombinedReceiptPage = lazy(() => import('./pages/savings/GroupCombinedReceiptPage'));
-const SavingsCollectionPage = lazy(() => import('./pages/savings/thrift/ThriftCollectionPage'));
+const AjoCollectionPage = lazy(() => import('./pages/savings/thrift/ThriftCollectionPage'));
 const CollectionSpreadsheetPage = lazy(() => import('./pages/savings/thrift/ThriftSpreadsheetPage'));
 const MultiDayDepositPage = lazy(() => import('./pages/savings/thrift/ThriftMultiDayPage'));
 
@@ -4046,7 +4046,7 @@ function App() {
                                 {/* ── Savings — Combined Receipt & Collection ──────── */}
                                 <Route path="/savings/combined-receipt" element={<ProtectedRoute requiredPermission="savings-list"><CombinedReceiptPage /></ProtectedRoute>} />
                                 <Route path="/savings/group-combined-receipt" element={<ProtectedRoute requiredPermission="savings-list"><GroupCombinedReceiptPage /></ProtectedRoute>} />
-                                <Route path="/savings/collection/sheet" element={<ProtectedRoute requiredPermission="savings-list"><SavingsCollectionPage /></ProtectedRoute>} />
+                                <Route path="/savings/collection/sheet" element={<ProtectedRoute requiredPermission="savings-list"><AjoCollectionPage /></ProtectedRoute>} />
                                 <Route path="/savings/collection/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><CollectionSpreadsheetPage /></ProtectedRoute>} />
                                 <Route path="/savings/collection/multi-day" element={<ProtectedRoute requiredPermission="savings-list"><MultiDayDepositPage /></ProtectedRoute>} />
 
