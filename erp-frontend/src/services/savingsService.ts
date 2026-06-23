@@ -92,6 +92,7 @@ const BASE_POLICY = '/savings/policy';
 export const getSavingsAccounts = (params?: {
   client?: number;
   cycle?: ContributionCycle;
+  product?: number;
 }): Promise<SavingsAccount[]> =>
   api.get(BASE_ACCOUNTS + '/', { params });
 
@@ -137,6 +138,7 @@ export const getSavingsCollectionSheet = (params: {
   status?: ContributionStatus;
   savings_account?: number;
   cycle?: ContributionCycle;
+  product?: number;
 }): Promise<ContributionScheduleItem[]> =>
   api.get(BASE_COLLECTION + '/', { params });
 

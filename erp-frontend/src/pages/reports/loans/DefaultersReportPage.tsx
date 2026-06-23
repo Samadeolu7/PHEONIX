@@ -118,8 +118,8 @@ export default function DefaultersReportPage() {
     try {
       // Fetch defaulted + active loans that have arrears
       const [defaultedRes, activeRes] = await Promise.all([
-        loanService.listLoans({ status: 'defaulted', page: 1 }),
-        loanService.listLoans({ status: 'active', page: 1 }),
+        loanService.listLoans({ status: 'defaulted', page: 1, page_size: 500 }),
+        loanService.listLoans({ status: 'active', page: 1, page_size: 500 }),
       ]);
 
       const defaultedArr: LoanAccountList[] = Array.isArray(defaultedRes)

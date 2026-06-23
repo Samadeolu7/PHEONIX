@@ -1,6 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Calendar, Download, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
-import { getSavingsCollectionSheet, ContributionScheduleItem } from '../../../services/savingsService';
+import { api } from '../../../services/api';
+import { getSavingsCollectionSheet, type ContributionScheduleItem } from '../../../services/savingsService';
+
+interface Product { id: number; name: string; code: string; }
+interface DayMap { [accountId: number]: Set<number> }
 
 function toISO(d: Date) { return d.toISOString().split('T')[0]; }
 
@@ -13,31 +17,43 @@ function fmt(v: string | number | null | undefined) {
   return isNaN(n) ? '0.00' : n.toLocaleString('en-NG', { minimumFractionDigits: 2 });
 }
 
-interface DayMap { [clientId: number]: Set<number> }
-
 export default function ThriftSpreadsheetPage() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
+  const [productId, setProductId] = useState<number | ''>('');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [clients, setClients] = useState<{ id: number; name: string; amount: string }[]>([]);
   const [dayMap, setDayMap] = useState<DayMap>({});
   const [generated, setGenerated] = useState(false);
 
+  useEffect(() => {
+    api.get('/products/products/', { params: { product_type: 'SAVINGS', is_active: true, page_size: 200 } })
+      .then((res: any) => {
+        const list: Product[] = Array.isArray(res) ? res : (res.results ?? []);
+        setProducts(list);
+        if (list.length === 1) setProductId(list[0].id);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingProducts(false));
+  }, []);
+
   async function generate() {
+    if (!productId) return;
     setLoading(true);
     setError('');
+    setGenerated(false);
     try {
       const days = getDaysInMonth(year, month);
       const allItems: (ContributionScheduleItem & { _day: number })[] = [];
       for (const day of days) {
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        const dayItems = await getSavingsCollectionSheet({ date: dateStr, cycle: 'daily' });
+        const dayItems = await getSavingsCollectionSheet({ date: dateStr, product: productId as number });
         for (const item of dayItems) {
-          if (item.status === 'paid') {
-            allItems.push({ ...item, _day: day });
-          }
+          if (item.status === 'paid') allItems.push({ ...item, _day: day });
         }
       }
 
@@ -45,11 +61,7 @@ export default function ThriftSpreadsheetPage() {
       const dm: DayMap = {};
       for (const item of allItems) {
         if (!clientMap[item.savings_account]) {
-          clientMap[item.savings_account] = {
-            id: item.savings_account,
-            name: item.client_name,
-            amount: item.expected_amount,
-          };
+          clientMap[item.savings_account] = { id: item.savings_account, name: item.client_name, amount: item.expected_amount };
           dm[item.savings_account] = new Set();
         }
         dm[item.savings_account].add(item._day);
@@ -65,17 +77,18 @@ export default function ThriftSpreadsheetPage() {
   }
 
   const days = getDaysInMonth(year, month);
+  const selectedProduct = products.find(p => p.id === productId);
 
   function exportCSV() {
     const header = ['Client', 'Daily Amount', ...days.map(d => String(d))].join(',');
     const rows = clients.map(c =>
-      [c.name, c.amount, ...days.map(d => (dayMap[c.id]?.has(d) ? '✓' : ''))].join(',')
+      [c.name, c.amount, ...days.map(d => (dayMap[c.id]?.has(d) ? '1' : ''))].join(',')
     );
     const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `thrift-spreadsheet-${year}-${String(month).padStart(2, '0')}.csv`;
+    a.download = `contributions-${selectedProduct?.code ?? 'all'}-${year}-${String(month).padStart(2, '0')}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -85,8 +98,8 @@ export default function ThriftSpreadsheetPage() {
       <div className="max-w-full mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Thrift Spreadsheet</h1>
-            <p className="text-sm text-gray-500 mt-1">Monthly view of daily contribution payments</p>
+            <h1 className="text-2xl font-bold text-gray-900">Contribution Spreadsheet</h1>
+            <p className="text-sm text-gray-500 mt-1">Monthly grid of paid contribution days per client, by product</p>
           </div>
           {generated && (
             <button
@@ -100,23 +113,41 @@ export default function ThriftSpreadsheetPage() {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4 flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[200px]">
+            <label htmlFor="sp-product" className="block text-xs font-medium text-gray-600 mb-1">Product</label>
+            {loadingProducts ? (
+              <div className="flex items-center gap-2 text-gray-400 text-sm py-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+              </div>
+            ) : (
+              <select
+                id="sp-product"
+                value={productId}
+                onChange={e => { setProductId(e.target.value ? Number(e.target.value) : ''); setGenerated(false); }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              >
+                <option value="">— Select a product —</option>
+                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            )}
+          </div>
           <div>
-            <label htmlFor="sheet-year" className="block text-xs font-medium text-gray-600 mb-1">Year</label>
+            <label htmlFor="sp-year" className="block text-xs font-medium text-gray-600 mb-1">Year</label>
             <input
-              id="sheet-year"
+              id="sp-year"
               type="number"
               value={year}
-              onChange={e => setYear(Number(e.target.value))}
+              onChange={e => { setYear(Number(e.target.value)); setGenerated(false); }}
               className="w-24 px-3 py-2 border border-gray-300 rounded-lg text-sm"
               min={2020} max={2030}
             />
           </div>
           <div>
-            <label htmlFor="sheet-month" className="block text-xs font-medium text-gray-600 mb-1">Month</label>
+            <label htmlFor="sp-month" className="block text-xs font-medium text-gray-600 mb-1">Month</label>
             <select
-              id="sheet-month"
+              id="sp-month"
               value={month}
-              onChange={e => setMonth(Number(e.target.value))}
+              onChange={e => { setMonth(Number(e.target.value)); setGenerated(false); }}
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
             >
               {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
@@ -127,19 +158,13 @@ export default function ThriftSpreadsheetPage() {
           <button
             type="button"
             onClick={generate}
-            disabled={loading}
+            disabled={loading || !productId}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />}
             Generate
           </button>
         </div>
-
-        {error && (
-          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm mb-4">
-            <AlertCircle className="w-4 h-4 shrink-0" />{error}
-          </div>
-        )}
 
         {loading && (
           <div className="flex flex-col items-center py-16 gap-3">
@@ -148,12 +173,18 @@ export default function ThriftSpreadsheetPage() {
           </div>
         )}
 
+        {error && (
+          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm mb-4">
+            <AlertCircle className="w-4 h-4 shrink-0" />{error}
+          </div>
+        )}
+
         {generated && !loading && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
             {clients.length === 0 ? (
               <div className="p-10 text-center text-gray-500">
                 <CheckCircle className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                <p>No paid contributions found for this month.</p>
+                <p>No paid contributions for {selectedProduct?.name} in {year}-{String(month).padStart(2, '0')}.</p>
               </div>
             ) : (
               <table className="text-xs whitespace-nowrap">
@@ -173,9 +204,7 @@ export default function ThriftSpreadsheetPage() {
                       <td className="px-3 py-2 text-right font-mono">₦{fmt(c.amount)}</td>
                       {days.map(d => (
                         <td key={d} className="px-2 py-2 text-center">
-                          {dayMap[c.id]?.has(d) && (
-                            <CheckCircle className="w-3.5 h-3.5 text-green-500 mx-auto" />
-                          )}
+                          {dayMap[c.id]?.has(d) && <CheckCircle className="w-3.5 h-3.5 text-green-500 mx-auto" />}
                         </td>
                       ))}
                     </tr>

@@ -337,7 +337,7 @@ export default function SavingsProductConfigPage() {
                 <Calendar className="w-4 h-4 text-blue-600" />
               </div>
               <div>
-                <h2 className="text-sm font-semibold text-gray-800">Daily Contribution (Ajo / Thrift)</h2>
+                <h2 className="text-sm font-semibold text-gray-800">Daily Contribution (Ajo)</h2>
                 <p className="text-xs text-gray-500">Configure daily deposit behaviour for this product</p>
               </div>
             </div>

@@ -49,7 +49,7 @@ export function depositToSavingsAccount(
   });
 }
 
-// ── Contribution (thrift / daily) mark paid ───────────────────────────────────
+// ── Contribution schedule — mark paid ─────────────────────────────────────────
 
 export interface MarkContributionPaidResult {
   id: number;

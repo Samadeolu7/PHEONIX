@@ -114,8 +114,8 @@ export default function DebtorsReportPage() {
       if (!statusFilter) {
         // Fetch active and disbursed separately and merge
         const [activeRes, disbursedRes] = await Promise.all([
-          loanService.listLoans({ status: 'active', page: 1 }),
-          loanService.listLoans({ status: 'disbursed', page: 1 }),
+          loanService.listLoans({ status: 'active', page: 1, page_size: 500 }),
+          loanService.listLoans({ status: 'disbursed', page: 1, page_size: 500 }),
         ]);
         const activeArr = Array.isArray(activeRes) ? activeRes : (activeRes?.results ?? []);
         const disbursedArr = Array.isArray(disbursedRes) ? disbursedRes : (disbursedRes?.results ?? []);
@@ -133,6 +133,7 @@ export default function DebtorsReportPage() {
           status: statusFilter,
           search: search || undefined,
           page: 1,
+          page_size: 500,
         });
         const arr = Array.isArray(res) ? res : (res?.results ?? []);
         setLoans(arr);

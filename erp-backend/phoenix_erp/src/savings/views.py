@@ -118,10 +118,13 @@ class SavingsAccountViewSet(ScopedModelViewSet):
         qs = super().get_queryset()
         client_id = self.request.query_params.get('client')
         cycle = self.request.query_params.get('cycle')
+        product_id = self.request.query_params.get('product')
         if client_id:
             qs = qs.filter(client_id=client_id)
         if cycle:
             qs = qs.filter(product__contribution_cycle=cycle)
+        if product_id:
+            qs = qs.filter(product_id=product_id)
         return qs
 
     @action(detail=True, methods=['post'], url_path='generate-schedule')
@@ -368,6 +371,9 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
             qs = qs.filter(savings_account_id=account_id)
         if cycle:
             qs = qs.filter(savings_account__product__contribution_cycle=cycle)
+        product_id = self.request.query_params.get('product')
+        if product_id:
+            qs = qs.filter(savings_account__product_id=product_id)
 
         return qs.order_by('expected_date', 'savings_account__client__last_name')
 

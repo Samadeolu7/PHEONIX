@@ -178,9 +178,9 @@ export default function PARReportPage() {
     try {
       // Fetch active and disbursed loans — the full portfolio
       const [activeRes, disbursedRes, defaultedRes] = await Promise.all([
-        loanService.listLoans({ status: 'active', page: 1 }),
-        loanService.listLoans({ status: 'disbursed', page: 1 }),
-        loanService.listLoans({ status: 'defaulted', page: 1 }),
+        loanService.listLoans({ status: 'active', page: 1, page_size: 500 }),
+        loanService.listLoans({ status: 'disbursed', page: 1, page_size: 500 }),
+        loanService.listLoans({ status: 'defaulted', page: 1, page_size: 500 }),
       ]);
 
       const toArr = (r: unknown): LoanAccountList[] => {

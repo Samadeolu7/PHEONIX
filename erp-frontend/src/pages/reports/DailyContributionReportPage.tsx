@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Calendar, Download, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
-import { getSavingsCollectionSheet, ContributionScheduleItem } from '../../services/savingsService';
+import { api } from '../../services/api';
+import { getSavingsCollectionSheet, type ContributionScheduleItem } from '../../services/savingsService';
+
+interface Product { id: number; name: string; code: string; }
 
 function toISO(d: Date) { return d.toISOString().split('T')[0]; }
 function fmt(v: string | number | null | undefined) {
@@ -11,16 +14,31 @@ function fmt(v: string | number | null | undefined) {
 export default function DailyContributionReportPage() {
   const today = toISO(new Date());
   const [date, setDate] = useState(today);
+  const [productId, setProductId] = useState<number | ''>('');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
   const [items, setItems] = useState<ContributionScheduleItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [generated, setGenerated] = useState(false);
 
+  useEffect(() => {
+    api.get('/products/products/', { params: { product_type: 'SAVINGS', is_active: true, page_size: 200 } })
+      .then((res: any) => {
+        const list: Product[] = Array.isArray(res) ? res : (res.results ?? []);
+        setProducts(list);
+        if (list.length === 1) setProductId(list[0].id);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingProducts(false));
+  }, []);
+
   async function generate() {
+    if (!productId) return;
     setLoading(true);
     setError('');
     try {
-      const data = await getSavingsCollectionSheet({ date, cycle: 'daily' });
+      const data = await getSavingsCollectionSheet({ date, product: productId as number });
       setItems(data);
       setGenerated(true);
     } catch {
@@ -30,10 +48,12 @@ export default function DailyContributionReportPage() {
     }
   }
 
-  const paid = items.filter(i => i.status === 'paid');
+  const selectedProduct = products.find(p => p.id === productId);
+  const paid    = items.filter(i => i.status === 'paid');
   const pending = items.filter(i => i.status === 'pending');
   const totalCollected = paid.reduce((s, i) => s + parseFloat(i.expected_amount || '0'), 0);
-  const totalExpected = items.reduce((s, i) => s + parseFloat(i.expected_amount || '0'), 0);
+  const totalExpected  = items.reduce((s, i) => s + parseFloat(i.expected_amount || '0'), 0);
+  const adherenceRate  = totalExpected > 0 ? Math.round((totalCollected / totalExpected) * 100) : 0;
 
   function exportCSV() {
     const header = 'Client,Account #,Expected Amount,Status';
@@ -44,7 +64,7 @@ export default function DailyContributionReportPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `daily-contribution-${date}.csv`;
+    a.download = `contributions-${selectedProduct?.code ?? 'all'}-${date}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -55,10 +75,13 @@ export default function DailyContributionReportPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Daily Contribution Report</h1>
-            <p className="text-sm text-gray-500 mt-1">View all thrift collections for a selected date</p>
+            <p className="text-sm text-gray-500 mt-1">
+              View contribution collections for a savings product on a selected date
+            </p>
           </div>
           {generated && (
             <button
+              type="button"
               onClick={exportCSV}
               className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700"
             >
@@ -67,22 +90,42 @@ export default function DailyContributionReportPage() {
           )}
         </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4 flex gap-4 items-end">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4 flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[200px]">
+            <label htmlFor="dcr-product" className="block text-xs font-medium text-gray-600 mb-1">Product</label>
+            {loadingProducts ? (
+              <div className="flex items-center gap-2 text-gray-400 text-sm py-2">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+              </div>
+            ) : (
+              <select
+                id="dcr-product"
+                value={productId}
+                onChange={e => { setProductId(e.target.value ? Number(e.target.value) : ''); setGenerated(false); }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              >
+                <option value="">— Select a product —</option>
+                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            )}
+          </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+            <label htmlFor="dcr-date" className="block text-xs font-medium text-gray-600 mb-1">Date</label>
             <div className="relative">
               <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
               <input
+                id="dcr-date"
                 type="date"
                 value={date}
-                onChange={e => setDate(e.target.value)}
+                onChange={e => { setDate(e.target.value); setGenerated(false); }}
                 className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm"
               />
             </div>
           </div>
           <button
+            type="button"
             onClick={generate}
-            disabled={loading}
+            disabled={loading || !productId}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Generate Report'}
@@ -97,7 +140,7 @@ export default function DailyContributionReportPage() {
 
         {generated && !loading && (
           <>
-            <div className="grid grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
                 <p className="text-xs text-gray-500 uppercase">Total Expected</p>
                 <p className="text-xl font-bold text-gray-900 mt-1">₦{fmt(totalExpected)}</p>
@@ -107,12 +150,14 @@ export default function DailyContributionReportPage() {
                 <p className="text-xl font-bold text-green-600 mt-1">₦{fmt(totalCollected)}</p>
               </div>
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                <p className="text-xs text-gray-500 uppercase">Paid</p>
-                <p className="text-xl font-bold text-blue-600 mt-1">{paid.length}</p>
+                <p className="text-xs text-gray-500 uppercase">Paid / Pending</p>
+                <p className="text-xl font-bold text-blue-600 mt-1">{paid.length} / {pending.length}</p>
               </div>
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                <p className="text-xs text-gray-500 uppercase">Pending</p>
-                <p className="text-xl font-bold text-orange-600 mt-1">{pending.length}</p>
+                <p className="text-xs text-gray-500 uppercase">Adherence Rate</p>
+                <p className={`text-xl font-bold mt-1 ${adherenceRate >= 80 ? 'text-green-600' : adherenceRate >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                  {adherenceRate}%
+                </p>
               </div>
             </div>
 
@@ -120,7 +165,7 @@ export default function DailyContributionReportPage() {
               {items.length === 0 ? (
                 <div className="p-10 text-center text-gray-500">
                   <CheckCircle className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                  <p>No contributions scheduled for {date}.</p>
+                  <p>No contributions scheduled for {selectedProduct?.name} on {date}.</p>
                 </div>
               ) : (
                 <table className="w-full text-sm">
@@ -153,7 +198,7 @@ export default function DailyContributionReportPage() {
                   <tfoot className="bg-gray-50 border-t-2 border-gray-200">
                     <tr>
                       <td colSpan={3} className="px-4 py-3 font-semibold text-gray-700">
-                        Total ({paid.length}/{items.length} paid)
+                        Total ({paid.length}/{items.length} paid · {adherenceRate}% adherence)
                       </td>
                       <td className="px-4 py-3 text-right font-semibold font-mono">₦{fmt(totalCollected)}</td>
                       <td />

@@ -568,15 +568,12 @@ const ClientGroupsPage = lazy(() => import('./pages/clients/ClientGroupsPage'));
 const ProspectListPage = lazy(() => import('./pages/clients/ProspectListPage'));
 const ReactivateClientPage = lazy(() => import('./pages/clients/ReactivateClientPage'));
 
-// Savings — Combined Receipt & Thrift
+// Savings — Combined Receipt & Contribution Collection
 const CombinedReceiptPage = lazy(() => import('./pages/savings/CombinedReceiptPage'));
 const GroupCombinedReceiptPage = lazy(() => import('./pages/savings/GroupCombinedReceiptPage'));
-const ThriftSetupPage = lazy(() => import('./pages/savings/thrift/ThriftSetupPage'));
-const ThriftMonthlyPage = lazy(() => import('./pages/savings/thrift/ThriftMonthlyPage'));
-const ThriftSmartPage = lazy(() => import('./pages/savings/thrift/ThriftSmartPage'));
-const ThriftCollectionPage = lazy(() => import('./pages/savings/thrift/ThriftCollectionPage'));
-const ThriftSpreadsheetPage = lazy(() => import('./pages/savings/thrift/ThriftSpreadsheetPage'));
-const ThriftMultiDayPage = lazy(() => import('./pages/savings/thrift/ThriftMultiDayPage'));
+const SavingsCollectionPage = lazy(() => import('./pages/savings/thrift/ThriftCollectionPage'));
+const CollectionSpreadsheetPage = lazy(() => import('./pages/savings/thrift/ThriftSpreadsheetPage'));
+const MultiDayDepositPage = lazy(() => import('./pages/savings/thrift/ThriftMultiDayPage'));
 
 // Loan & Savings reports
 const DebtorsReportPage = lazy(() => import('./pages/reports/loans/DebtorsReportPage'));
@@ -585,9 +582,8 @@ const PARReportPage = lazy(() => import('./pages/reports/loans/PARReportPage'));
 const RemittanceReportPage = lazy(() => import('./pages/reports/loans/RemittanceReportPage'));
 const DailySummaryReportPage = lazy(() => import('./pages/reports/DailySummaryReportPage'));
 const GroupReportPage = lazy(() => import('./pages/reports/GroupReportPage'));
-const ThriftReportPage = lazy(() => import('./pages/reports/ThriftReportPage'));
+const SavingsProductReportPage = lazy(() => import('./pages/reports/SavingsProductReportPage'));
 const DailyContributionReportPage = lazy(() => import('./pages/reports/DailyContributionReportPage'));
-const DCSpreadsheetReportPage = lazy(() => import('./pages/reports/DCSpreadsheetReportPage'));
 const ReportSummaryPage = lazy(() => import('./pages/reports/ReportSummaryPage'));
 
 // Admin operations
@@ -4047,15 +4043,12 @@ function App() {
                                 <Route path="/prospects" element={<ProtectedRoute requiredPermission="client-list"><ProspectListPage /></ProtectedRoute>} />
                                 <Route path="/clients/reactivate" element={<ProtectedRoute requiredPermission="client-list"><ReactivateClientPage /></ProtectedRoute>} />
 
-                                {/* ── Savings — Combined Receipt & Thrift ──────────── */}
+                                {/* ── Savings — Combined Receipt & Collection ──────── */}
                                 <Route path="/savings/combined-receipt" element={<ProtectedRoute requiredPermission="savings-list"><CombinedReceiptPage /></ProtectedRoute>} />
                                 <Route path="/savings/group-combined-receipt" element={<ProtectedRoute requiredPermission="savings-list"><GroupCombinedReceiptPage /></ProtectedRoute>} />
-                                <Route path="/savings/thrift/setup" element={<ProtectedRoute requiredPermission="savings-create"><ThriftSetupPage /></ProtectedRoute>} />
-                                <Route path="/savings/thrift/monthly" element={<ProtectedRoute requiredPermission="savings-list"><ThriftMonthlyPage /></ProtectedRoute>} />
-                                <Route path="/savings/thrift/smart" element={<ProtectedRoute requiredPermission="savings-list"><ThriftSmartPage /></ProtectedRoute>} />
-                                <Route path="/savings/thrift/collection" element={<ProtectedRoute requiredPermission="savings-list"><ThriftCollectionPage /></ProtectedRoute>} />
-                                <Route path="/savings/thrift/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><ThriftSpreadsheetPage /></ProtectedRoute>} />
-                                <Route path="/savings/thrift/multi-day" element={<ProtectedRoute requiredPermission="savings-list"><ThriftMultiDayPage /></ProtectedRoute>} />
+                                <Route path="/savings/collection/sheet" element={<ProtectedRoute requiredPermission="savings-list"><SavingsCollectionPage /></ProtectedRoute>} />
+                                <Route path="/savings/collection/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><CollectionSpreadsheetPage /></ProtectedRoute>} />
+                                <Route path="/savings/collection/multi-day" element={<ProtectedRoute requiredPermission="savings-list"><MultiDayDepositPage /></ProtectedRoute>} />
 
                                 {/* ── Loan & Operations Reports ────────────────────── */}
                                 <Route path="/reports/loans/debtors" element={<ProtectedRoute requiredPermission="loan-list"><DebtorsReportPage /></ProtectedRoute>} />
@@ -4064,10 +4057,9 @@ function App() {
                                 <Route path="/reports/daily-transactions" element={<ProtectedRoute requiredPermission="loan-list"><RemittanceReportPage /></ProtectedRoute>} />
                                 <Route path="/reports/daily-summary" element={<ProtectedRoute requiredPermission="loan-list"><DailySummaryReportPage /></ProtectedRoute>} />
                                 <Route path="/reports/clients/groups" element={<ProtectedRoute requiredPermission="client-list"><GroupReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/thrift" element={<ProtectedRoute requiredPermission="savings-list"><ThriftReportPage /></ProtectedRoute>} />
-                                <Route path="/savings/thrift/list" element={<ProtectedRoute requiredPermission="savings-list"><ThriftReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/savings-by-product" element={<ProtectedRoute requiredPermission="savings-list"><SavingsProductReportPage /></ProtectedRoute>} />
                                 <Route path="/reports/contributions/daily" element={<ProtectedRoute requiredPermission="savings-list"><DailyContributionReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/contributions/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><DCSpreadsheetReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/contributions/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><CollectionSpreadsheetPage /></ProtectedRoute>} />
                                 <Route path="/reports/summary" element={<ProtectedRoute requiredPermission="loan-list"><ReportSummaryPage /></ProtectedRoute>} />
 
                                 {/* ── Admin Operations ─────────────────────────────── */}

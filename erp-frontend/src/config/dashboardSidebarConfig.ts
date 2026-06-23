@@ -271,19 +271,15 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Receipt Combined', '/savings/combined-receipt'),
         leaf('Receipt Group Combined', '/savings/group-combined-receipt'),
       ]),
-      grp('btn-savings-thrift', 'THRIFT / DAILY CONTRIBUTION', 'file-text', [
-        leaf('Create Daily Contribution', '/savings/thrift/setup'),
-        leaf('Activate Monthly Contrib.', '/savings/thrift/monthly'),
-        leaf('Activate Smart Savings', '/savings/thrift/smart'),
-        leaf('Receipt Thrift', '/savings/thrift/collection'),
-        leaf('Receipt Thrift Spreadsheet', '/savings/thrift/spreadsheet'),
-        leaf('Receipt Multi-Day Thrift', '/savings/thrift/multi-day'),
+      grp('btn-savings-collection', 'COLLECTION', 'file-text', [
+        leaf('Collection Sheet', '/savings/collection/sheet'),
+        leaf('Collection Spreadsheet', '/savings/collection/spreadsheet'),
+        leaf('Multi-Day Deposit', '/savings/collection/multi-day'),
       ]),
       grp('btn-savings-rpt', 'REPORT', 'file-text', [
-        leaf('Thrift Report', '/reports/thrift'),
+        leaf('Savings by Product', '/reports/savings-by-product'),
         leaf('Daily Contribution Report', '/reports/contributions/daily'),
         leaf('Daily Contribution Spreadsheet', '/reports/contributions/spreadsheet'),
-        leaf('Thrift Savings List', '/savings/thrift/list'),
         leaf('Group Savings Report', '/reports/clients/groups'),
       ]),
     ]),
@@ -329,8 +325,8 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Report Summary by Date', '/reports/summary'),
         leaf('Daily Summary Report', '/reports/daily-summary'),
       ]),
-      grp('btn-reports-thrift', 'THRIFT', 'file-text', [
-        leaf('Thrift Report', '/reports/thrift'),
+      grp('btn-reports-savings', 'SAVINGS', 'file-text', [
+        leaf('Savings by Product', '/reports/savings-by-product'),
         leaf('Daily Contribution Report', '/reports/contributions/daily'),
         leaf('DC Spreadsheet', '/reports/contributions/spreadsheet'),
       ]),

@@ -53,7 +53,7 @@ export default function ThriftMultiDayPage() {
       for (const day of validDays) {
         await depositToSavings(selectedAccount.id, {
           amount: day.amount,
-          description: `Thrift contribution - ${day.date}`,
+          description: `Savings contribution - ${day.date}`,
           date: day.date,
         });
       }
