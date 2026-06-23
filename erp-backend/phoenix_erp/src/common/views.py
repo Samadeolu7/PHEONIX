@@ -742,6 +742,42 @@ def migration_diagnostics(request):
         ),
     )
 
+    # ── Savings entries broken down by series ─────────────────────────────────
+    sav_by_series = {}
+    for code in MIGRATION_SERIES:
+        se = TransactionEntry.objects.filter(
+            account__account_type=Account.SAVINGS,
+            account__tenant=tenant,
+            account__is_deleted=False,
+            transaction__series__code=code,
+        ).aggregate(
+            dr=Sum(Case(When(side=TransactionEntry.DEBIT,  then=F("amount")), output_field=DecimalField())),
+            cr=Sum(Case(When(side=TransactionEntry.CREDIT, then=F("amount")), output_field=DecimalField())),
+        )
+        if se["dr"] or se["cr"]:
+            sav_by_series[code] = {
+                "dr": str(se["dr"] or 0),
+                "cr": str(se["cr"] or 0),
+                "net_cr": str((se["cr"] or Decimal("0")) - (se["dr"] or Decimal("0"))),
+            }
+
+    # ── MIGS suspense breakdown by series ─────────────────────────────────────
+    migs_by_series = {}
+    if sus_acct:
+        for code in MIGRATION_SERIES:
+            me = TransactionEntry.objects.filter(
+                account=sus_acct,
+                transaction__series__code=code,
+            ).aggregate(
+                dr=Sum(Case(When(side=TransactionEntry.DEBIT,  then=F("amount")), output_field=DecimalField())),
+                cr=Sum(Case(When(side=TransactionEntry.CREDIT, then=F("amount")), output_field=DecimalField())),
+            )
+            if me["dr"] or me["cr"]:
+                migs_by_series[code] = {
+                    "dr": str(me["dr"] or 0),
+                    "cr": str(me["cr"] or 0),
+                }
+
     # ── Account-level counts ──────────────────────────────────────────────────
     loan_acct_count = LoanAccount.objects.filter(tenant=tenant).count()
     sav_acct_count  = SavingsAccount.objects.filter(tenant=tenant).count()
@@ -781,7 +817,14 @@ def migration_diagnostics(request):
     return Response({
         "as_of":  timezone.now().isoformat(),
         "tenant": {"id": tenant.pk, "name": str(tenant)},
-        "gl_by_account_type": gl_by_type,
+        "gl_by_account_type": {
+            **gl_by_type,
+            "_note": (
+                "WARNING: total_balance includes both parent and child accounts. "
+                "Parent balances mirror their children via signals, so totals here are ~2x the real GL balance. "
+                "Use loan_portfolio/savings/banks sections for accurate entry-level figures."
+            ),
+        },
         "loan_portfolio": {
             "account_count":       loan_acct_count,
             "total_dr_entries":    str(loan_entries["total_dr"] or 0),
@@ -816,6 +859,7 @@ def migration_diagnostics(request):
             "total_cr_entries": str(sav_entries["total_cr"] or 0),
             "net_liability":    str(sav_net),
             "expected_sign":    "POSITIVE (savings owed to members)",
+            "entries_by_series": sav_by_series,
         },
         "migration_series": series_stats,
         "special_accounts": {
@@ -826,7 +870,13 @@ def migration_diagnostics(request):
             },
             "migration_payment_suspense": {
                 "balance": str(sus_acct.balance) if sus_acct else None,
-                "_note": "Non-zero = payments whose bank could not be identified; investigate and reclassify",
+                "account_type": sus_acct.account_type if sus_acct else None,
+                "breakdown_by_series": migs_by_series,
+                "_note": (
+                    "Non-zero = payments whose bank could not be identified. "
+                    "ASSET type: positive balance = net debit (cash came in but not routed). "
+                    "breakdown_by_series shows DR (incoming to suspense) vs CR (outgoing from suspense) per series."
+                ),
             },
         },
         "balance_check": {

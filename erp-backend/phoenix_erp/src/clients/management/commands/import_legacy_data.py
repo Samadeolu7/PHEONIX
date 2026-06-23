@@ -1660,11 +1660,12 @@ class Command(BaseCommand):
             )
 
             entry_amount = abs(amount)
-            if txn_type in ("S", "C"):
-                # Deposit: Dr. Bank/Cash, Cr. Savings Account
+            if txn_type in ("S", "C") and amount > Decimal("0"):
+                # Normal deposit: Dr. Bank/Cash, Cr. Savings Account
                 dr_acct, cr_acct = cash_acct, gl_sav_acct
             else:
-                # Withdrawal: Dr. Savings Account, Cr. Bank/Cash
+                # Withdrawal OR negative-amount deposit (reversal/deduction):
+                # Dr. Savings Account, Cr. Bank/Cash
                 dr_acct, cr_acct = gl_sav_acct, cash_acct
 
             TransactionEntry.objects.create(
@@ -2189,9 +2190,9 @@ class Command(BaseCommand):
             branch=ctx["branch"],
             defaults={
                 "name": "Migration Payment Suspense",
-                "account_type": Account.LIABILITY,
+                "account_type": Account.ASSET,
                 "account_level": Account.LEVEL_CHILD,
-                "parent": gl["LIABILITY"],
+                "parent": gl["ASSET"],
                 "owner": ctx["owner"],
                 "created_by": ctx["owner"],
                 "is_system_account": True,
