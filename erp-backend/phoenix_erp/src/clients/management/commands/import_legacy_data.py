@@ -1219,7 +1219,9 @@ class Command(BaseCommand):
             else:
                 total_cr += abs(amount)
 
-        # Absorb any imbalance via an Opening Balance Equity account
+        # Absorb any imbalance via an Opening Balance Equity account.
+        # This is a standalone parent-level account — Phoenix requires child
+        # accounts to have a parent, but OBE is migration-only and has none.
         diff = total_dr - total_cr
         if abs(diff) > Decimal("0.01"):
             obe_acct, _ = Account.objects.get_or_create(
@@ -1229,7 +1231,7 @@ class Command(BaseCommand):
                 defaults={
                     "name": "Opening Balance Equity",
                     "account_type": Account.EQUITY,
-                    "account_level": Account.LEVEL_CHILD,
+                    "account_level": Account.LEVEL_PARENT,
                     "owner": ctx["owner"],
                     "created_by": ctx["owner"],
                     "is_system_account": True,
