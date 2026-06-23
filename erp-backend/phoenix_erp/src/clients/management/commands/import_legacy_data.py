@@ -162,6 +162,7 @@ class Command(BaseCommand):
         expense_data        = _load(data_dir, "expense_accounts.json")
         liability_data      = _load(data_dir, "liability_accounts.json")
         savings_pmts_data   = _load(data_dir, "savings_payments.json")
+        inventory_data      = _load(data_dir, "inventory.json")
         loan_disb_data      = _load(data_dir, "loan_disbursements.json")
         loan_pmts_data      = _load(data_dir, "loan_payments.json")
         income_pmts_data    = _load(data_dir, "income_payments.json")
@@ -177,6 +178,7 @@ class Command(BaseCommand):
                 f"banks={len(banks_data)}, income={len(income_data)}, "
                 f"expenses={len(expense_data)}, liabilities={len(liability_data)}, "
                 f"savings_payments={len(savings_pmts_data)}, "
+                f"inventory={len(inventory_data)}, "
                 f"loan_disbursements={len(loan_disb_data)}, "
                 f"loan_payments={len(loan_pmts_data)}, "
                 f"income_payments={len(income_pmts_data)}, "
@@ -198,7 +200,7 @@ class Command(BaseCommand):
         try:
             with transaction.atomic():
                 # ── STEP 1: Bootstrap  ───────────────────────────────────────
-                self.stdout.write("Step 1/18  Bootstrap (Tenant → User → Branch) …")
+                self.stdout.write("Step 1/19  Bootstrap (Tenant → User → Branch) …")
                 owner, tenant, branch = self._bootstrap(
                     options, Tenant, Branch
                 )
@@ -211,19 +213,19 @@ class Command(BaseCommand):
                 )
 
                 # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────
-                self.stdout.write("Step 2/18  Chart of accounts …")
+                self.stdout.write("Step 2/19  Chart of accounts …")
                 gl = self._setup_chart_of_accounts(Account, ctx)
 
                 # ── STEP 3: Financial Products ────────────────────────────────
-                self.stdout.write("Step 3/18  Financial products …")
+                self.stdout.write("Step 3/19  Financial products …")
                 products = self._setup_products(Product, LoanProduct, gl, ctx)
 
                 # ── STEP 4: Client Groups ─────────────────────────────────────
-                self.stdout.write("Step 4/18  Client groups …")
+                self.stdout.write("Step 4/19  Client groups …")
                 group_map = self._import_groups(groups_data, ClientGroup, ctx)
 
                 # ── STEP 5: Clients ───────────────────────────────────────────
-                self.stdout.write("Step 5/18  Clients …")
+                self.stdout.write("Step 5/19  Clients …")
                 client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
 
                 # ── STEP 6: Savings ───────────────────────────────────────────
@@ -232,69 +234,74 @@ class Command(BaseCommand):
                 # Step 12 posts these as a single balanced GL transaction.
                 ob_entries: list = []
 
-                self.stdout.write("Step 6/18  Savings accounts …")
+                self.stdout.write("Step 6/19  Savings accounts …")
                 self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 7: Loans ─────────────────────────────────────────────
-                self.stdout.write("Step 7/18  Loan accounts …")
+                self.stdout.write("Step 7/19  Loan accounts …")
                 self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 8: Banks / Cash ──────────────────────────────────────
-                self.stdout.write("Step 8/18  Bank / cash accounts …")
+                self.stdout.write("Step 8/19  Bank / cash accounts …")
                 self._import_banks(banks_data, Account, gl, ctx, ob_entries)
 
-                # ── STEP 9: Income ────────────────────────────────────────────
-                self.stdout.write("Step 9/18  Income accounts …")
+                # ── STEP 9: Inventory ─────────────────────────────────────────
+                # Must run before Step 13 (OBE) so inventory balance_bf is captured.
+                self.stdout.write("Step 9/19  Inventory …")
+                self._import_inventory(inventory_data, Account, gl, ctx, ob_entries)
+
+                # ── STEP 10: Income ───────────────────────────────────────────
+                self.stdout.write("Step 10/19 Income accounts …")
                 self._import_income(income_data, Account, gl, ctx, ob_entries)
 
-                # ── STEP 10: Expenses ─────────────────────────────────────────
-                self.stdout.write("Step 10/18 Expense accounts …")
+                # ── STEP 11: Expenses ─────────────────────────────────────────
+                self.stdout.write("Step 11/19 Expense accounts …")
                 self._import_expenses(expense_data, Account, gl, ctx, ob_entries)
 
-                # ── STEP 11: Liabilities ──────────────────────────────────────
-                self.stdout.write("Step 11/18 Liability accounts …")
+                # ── STEP 12: Liabilities ──────────────────────────────────────
+                self.stdout.write("Step 12/19 Liability accounts …")
                 self._import_liabilities(liability_data, Account, gl, ctx, ob_entries)
 
-                # ── STEP 12: Opening balance transaction ──────────────────────
-                self.stdout.write("Step 12/18 Opening balance transaction …")
+                # ── STEP 13: Opening balance transaction ──────────────────────
+                self.stdout.write("Step 13/19 Opening balance transaction …")
                 self._create_opening_balance_transaction(ob_entries, Account, ctx)
 
-                # ── STEP 13: Savings payment history ──────────────────────────
-                self.stdout.write("Step 13/18 Savings payment history …")
+                # ── STEP 14: Savings payment history ──────────────────────────
+                self.stdout.write("Step 14/19 Savings payment history …")
                 self._import_savings_payments(
                     savings_pmts_data, banks_data, SavingsAccount, Account, gl, ctx
                 )
 
-                # ── STEP 14: Loan disbursement history (new loans issued this year) ───
+                # ── STEP 15: Loan disbursement history (new loans issued this year) ──
                 # Posts: Dr. Loan child account, Cr. Bank (money going out to borrowers).
                 # Required because 2026-disbursed loans have opening_balance=0 and would
-                # otherwise only accumulate repayment credits (Step 15), driving the
+                # otherwise only accumulate repayment credits (Step 16), driving the
                 # loan portfolio negative.
-                self.stdout.write("Step 14/18 Loan disbursements …")
+                self.stdout.write("Step 15/19 Loan disbursements …")
                 self._import_loan_disbursements(
                     loan_disb_data, banks_data, LoanAccount, Account, gl, ctx
                 )
 
-                # ── STEP 15: Loan payment history (repayments) ────────────────
-                self.stdout.write("Step 15/18 Loan payment history …")
+                # ── STEP 16: Loan payment history (repayments) ────────────────
+                self.stdout.write("Step 16/19 Loan payment history …")
                 self._import_loan_payments(
                     loan_pmts_data, banks_data, LoanAccount, Account, gl, ctx
                 )
 
-                # ── STEP 16: Income payment history ───────────────────────────
-                self.stdout.write("Step 16/18 Income payment history …")
+                # ── STEP 17: Income payment history ───────────────────────────
+                self.stdout.write("Step 17/19 Income payment history …")
                 self._import_income_payments(
                     income_pmts_data, banks_data, Account, gl, ctx
                 )
 
-                # ── STEP 17: Expense payment history ──────────────────────────
-                self.stdout.write("Step 17/18 Expense payment history …")
+                # ── STEP 18: Expense payment history ──────────────────────────
+                self.stdout.write("Step 18/19 Expense payment history …")
                 self._import_expense_payments(
                     expense_pmts_data, banks_data, Account, gl, ctx
                 )
 
-                # ── STEP 18: Liability payment history ────────────────────────
-                self.stdout.write("Step 18/18 Liability payment history …")
+                # ── STEP 19: Liability payment history ────────────────────────
+                self.stdout.write("Step 19/19 Liability payment history …")
                 self._import_liability_payments(
                     liability_pmts_data, banks_data, Account, gl, ctx
                 )
@@ -1098,7 +1105,171 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 9 – Income accounts
+    # STEP 9 – Inventory
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_inventory(self, inventory_data, Account, gl, ctx, ob_entries):
+        """
+        Imports physical-stock items from the old Inventory model into Phoenix's
+        InventoryItem / InventoryStock / InventoryCategory hierarchy.
+
+        GL treatment (opening balance):
+          Dr  1200-00001  Inventory and Supplies  (ASSET, DR-normal)
+          Cr  OBE                                  (absorbed by OBE in Step 13)
+
+        The inventory GL account is set with balance_bf = sum of old balance_bf
+        values, so Step 13 picks it up automatically in the OBE sweep.
+        """
+        from inventory.models import InventoryCategory, InventoryItem, InventoryStock, Location
+
+        if not inventory_data:
+            self.stdout.write("    No inventory items to import — skipping.")
+            return
+
+        # ── 1. Inventory parent GL account (1200) ────────────────────────────
+        inv_parent, _ = Account.objects.get_or_create(
+            code="1200",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                "name":           "Inventory and Physical Assets",
+                "account_type":   Account.ASSET,
+                "account_level":  Account.LEVEL_PARENT,
+                "owner":          ctx["owner"],
+                "created_by":     ctx["owner"],
+                "is_system_account": True,
+                "balance":    Decimal("0.00"),
+                "balance_bf": Decimal("0.00"),
+            },
+        )
+
+        # ── 2. Child GL account for inventory valuation ───────────────────────
+        total_bf  = sum(_d(r.get("balance_bf", 0)) for r in inventory_data)
+        total_bal = sum(_d(r.get("balance",    0)) for r in inventory_data)
+
+        inv_gl, _ = Account.objects.get_or_create(
+            code="1200-00001",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                "name":          "Inventory and Supplies",
+                "account_type":  Account.ASSET,
+                "account_level": Account.LEVEL_CHILD,
+                "parent":        inv_parent,
+                "owner":         ctx["owner"],
+                "created_by":    ctx["owner"],
+                "balance_bf":    total_bf,
+                "balance":       total_bal,
+            },
+        )
+
+        # ── 3. COGS expense child account under 5300 ──────────────────────────
+        expense_parent = gl.get("EXPENSE") or Account.objects.filter(
+            code="5300", tenant=ctx["tenant"], branch=ctx["branch"]
+        ).first()
+
+        cogs_gl, _ = Account.objects.get_or_create(
+            code="5300-COGS",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                "name":          "Cost of Goods Sold",
+                "account_type":  Account.EXPENSE,
+                "account_level": Account.LEVEL_CHILD,
+                "parent":        expense_parent,
+                "owner":         ctx["owner"],
+                "created_by":    ctx["owner"],
+                "balance_bf": Decimal("0.00"),
+                "balance":    Decimal("0.00"),
+            },
+        )
+
+        # ── 4. InventoryCategory ──────────────────────────────────────────────
+        inv_cat, _ = InventoryCategory.objects.get_or_create(
+            code="INVGEN",
+            branch=ctx["branch"],
+            defaults={
+                "name":              "General Inventory",
+                "description":       "Migrated from legacy system",
+                "inventory_account": inv_gl,
+                "cogs_account":      cogs_gl,
+                "item_type":         "General",
+                "owner":             ctx["owner"],
+                "tenant":            ctx["tenant"],
+            },
+        )
+
+        # ── 5. Default Location ───────────────────────────────────────────────
+        location, _ = Location.objects.get_or_create(
+            name=ctx["branch"].name,
+            branch=ctx["branch"],
+            defaults={
+                "code":          "HO",
+                "location_type": "store",
+                "owner":         ctx["owner"],
+                "tenant":        ctx["tenant"],
+            },
+        )
+
+        # ── 6. InventoryItem + InventoryStock per record ──────────────────────
+        created = skipped = 0
+        for rec in inventory_data:
+            name = (rec.get("name") or "").strip()
+            if not name:
+                skipped += 1
+                continue
+
+            inv_id   = rec.get("id")
+            price    = _d(rec.get("price",    0))
+            quantity = _d(rec.get("quantity", 0))
+            balance  = _d(rec.get("balance",  0))
+
+            item, _ = InventoryItem.objects.get_or_create(
+                sku=f"INV-{inv_id}",
+                branch=ctx["branch"],
+                defaults={
+                    "name":             name,
+                    "description":      rec.get("description", ""),
+                    "category":         inv_cat,
+                    "cost_price":       price,
+                    "selling_price":    price,
+                    "valuation_method": "average",
+                    "owner":            ctx["owner"],
+                    "tenant":           ctx["tenant"],
+                },
+            )
+
+            InventoryStock.objects.get_or_create(
+                item=item,
+                location=location,
+                defaults={
+                    "quantity_on_hand":   quantity,
+                    "quantity_reserved":  Decimal("0"),
+                    "quantity_available": quantity,
+                    "average_cost":       price,
+                    "total_value":        balance,
+                    "branch":             ctx["branch"],
+                    "owner":              ctx["owner"],
+                    "tenant":             ctx["tenant"],
+                },
+            )
+            created += 1
+
+        # ── 7. Register opening balance entry ─────────────────────────────────
+        if total_bf != Decimal("0"):
+            ob_entries.append((inv_gl, total_bf, total_bf, "DR"))
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"    {created} inventory items imported, {skipped} skipped"
+            )
+        )
+        self.stdout.write(
+            f"    ► Total inventory opening balance (DR)    : {total_bf:>15,.2f}"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 10 – Income accounts
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_income(self, income_data, Account, gl, ctx, ob_entries):
@@ -1146,7 +1317,7 @@ class Command(BaseCommand):
         self.stdout.write(f"    {created_count} created, {skipped} skipped")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 10 – Expense accounts
+    # STEP 11 – Expense accounts
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_expenses(self, expense_data, Account, gl, ctx, ob_entries):
@@ -1191,7 +1362,7 @@ class Command(BaseCommand):
         self.stdout.write(f"    {created_count} created, {skipped} skipped")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 11 – Liability accounts
+    # STEP 12 – Liability accounts
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_liabilities(self, liability_data, Account, gl, ctx, ob_entries):
@@ -1407,7 +1578,7 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 13 – Savings payment history
+    # STEP 14 – Savings payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_savings_payments(self, savings_pmts_data, banks_data, SavingsAccount, Account, gl, ctx):
@@ -1514,7 +1685,7 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 14 – Loan disbursement history
+    # STEP 15 – Loan disbursement history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_loan_disbursements(self, loan_disb_data, banks_data, LoanAccount, Account, gl, ctx):
@@ -1609,7 +1780,7 @@ class Command(BaseCommand):
             )
         )
 
-    # STEP 15 – Loan payment history
+    # STEP 16 – Loan payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_loan_payments(self, loan_pmts_data, banks_data, LoanAccount, Account, gl, ctx):
@@ -1706,7 +1877,7 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 16 – Income payment history
+    # STEP 17 – Income payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_income_payments(self, income_pmts_data, banks_data, Account, gl, ctx):
@@ -1790,7 +1961,7 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 17 – Expense payment history
+    # STEP 18 – Expense payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_expense_payments(self, expense_pmts_data, banks_data, Account, gl, ctx):
@@ -1874,7 +2045,7 @@ class Command(BaseCommand):
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # STEP 18 – Liability payment history
+    # STEP 19 – Liability payment history
     # ══════════════════════════════════════════════════════════════════════════
 
     def _import_liability_payments(self, liability_pmts_data, banks_data, Account, gl, ctx):

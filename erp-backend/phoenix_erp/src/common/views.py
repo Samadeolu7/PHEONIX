@@ -612,7 +612,7 @@ def migration_diagnostics(request):
     and RAG ingestion.  Covers:
       - GL account balances by account type
       - Transaction counts and totals per migration series
-      - Loan portfolio, savings, bank, and liability positions
+      - Loan portfolio, savings, bank, inventory, and liability positions
       - Suspense and OBE account balances (key migration health signals)
 
     Query params:
@@ -623,13 +623,15 @@ def migration_diagnostics(request):
     from django.utils import timezone
     from django.apps import apps
 
-    Account          = apps.get_model("accounts",     "Account")
-    LoanAccount      = apps.get_model("loans",        "LoanAccount")
-    SavingsAccount   = apps.get_model("savings",      "SavingsAccount")
-    Transaction      = apps.get_model("transactions", "Transaction")
-    TransactionEntry = apps.get_model("transactions", "TransactionEntry")
+    Account           = apps.get_model("accounts",     "Account")
+    LoanAccount       = apps.get_model("loans",        "LoanAccount")
+    SavingsAccount    = apps.get_model("savings",      "SavingsAccount")
+    Transaction       = apps.get_model("transactions", "Transaction")
+    TransactionEntry  = apps.get_model("transactions", "TransactionEntry")
     TransactionSeries = apps.get_model("transactions", "TransactionSeries")
-    Tenant           = apps.get_model("accounts",     "Tenant")
+    Tenant            = apps.get_model("accounts",     "Tenant")
+    InventoryItem     = apps.get_model("inventory",    "InventoryItem")
+    InventoryStock    = apps.get_model("inventory",    "InventoryStock")
 
     # Tenant scoping
     tenant_id = request.GET.get("tenant_id")
@@ -761,6 +763,21 @@ def migration_diagnostics(request):
     bank_net = (bank_entries["total_dr"] or Decimal("0")) - (bank_entries["total_cr"] or Decimal("0"))
     sav_net  = (sav_entries["total_cr"] or Decimal("0")) - (sav_entries["total_dr"] or Decimal("0"))
 
+    # ── Inventory ─────────────────────────────────────────────────────────────
+    inv_item_count  = InventoryItem.objects.filter(tenant=tenant, is_deleted=False).count()
+    inv_stock_agg   = InventoryStock.objects.filter(
+        tenant=tenant, is_deleted=False
+    ).aggregate(
+        total_qty=Sum("quantity_on_hand"),
+        total_val=Sum("total_value"),
+    )
+    inv_gl_acct = Account.objects.filter(
+        code="1200-00001", tenant=tenant, is_deleted=False
+    ).first()
+    inv_parent_acct = Account.objects.filter(
+        code="1200", tenant=tenant, is_deleted=False
+    ).first()
+
     return Response({
         "as_of":  timezone.now().isoformat(),
         "tenant": {"id": tenant.pk, "name": str(tenant)},
@@ -778,6 +795,20 @@ def migration_diagnostics(request):
             "total_cr_entries": str(bank_entries["total_cr"] or 0),
             "net_balance":      str(bank_net),
             "breakdown":        bank_breakdown,
+        },
+        "inventory": {
+            "item_count":           inv_item_count,
+            "total_quantity_on_hand": str(inv_stock_agg["total_qty"] or 0),
+            "total_stock_value":    str(inv_stock_agg["total_val"] or 0),
+            "gl_account_1200_00001": {
+                "balance":    str(inv_gl_acct.balance)    if inv_gl_acct else None,
+                "balance_bf": str(inv_gl_acct.balance_bf) if inv_gl_acct else None,
+            },
+            "gl_parent_1200": {
+                "balance":    str(inv_parent_acct.balance)    if inv_parent_acct else None,
+                "balance_bf": str(inv_parent_acct.balance_bf) if inv_parent_acct else None,
+            },
+            "_note": "GL balance should equal total_stock_value (cost-basis). balance_bf = Jan-1 opening.",
         },
         "savings": {
             "account_count":    sav_acct_count,
