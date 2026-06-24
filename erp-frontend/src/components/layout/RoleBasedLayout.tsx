@@ -65,8 +65,12 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
         </div>
       )}
 
-      {/* Main Content — extra top padding when banner is visible */}
-      <main className={`${isDirectorPlus && !activeBranch ? 'pt-24' : 'pt-16'}`}>
+      {/* Main Content — extra top padding when banner is visible.
+          Key on activeBranch so every page remounts (re-fetches) on branch switch. */}
+      <main
+        key={activeBranch?.id ?? 'all'}
+        className={`${isDirectorPlus && !activeBranch ? 'pt-24' : 'pt-16'}`}
+      >
         {children || <Outlet />}
       </main>
 
