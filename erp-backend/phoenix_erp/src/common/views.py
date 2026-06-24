@@ -136,7 +136,77 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+    # ------------------------------------------------------------------
+    # Director branch-override helper
+    # ------------------------------------------------------------------
+
+    _DIRECTOR_ROLES = frozenset({'director', 'admin', 'operations'})
+
+    def _get_director_branch_override(self):
+        """
+        When a director/admin/operations/owner sends X-Branch-ID in the request
+        header, return that Branch so the queryset can be further filtered to it.
+        Non-elevated users cannot use this header (returns None = no change).
+        Returns None when no valid override is in effect.
+        """
+        if getattr(self, 'swagger_fake_view', False):
+            return None
+
+        header_val = self.request.META.get('HTTP_X_BRANCH_ID', '').strip()
+        if not header_val:
+            return None
+
+        user = getattr(self.request, 'user', None)
+        if not user or not getattr(user, 'is_authenticated', False):
+            return None
+
+        # Only elevated roles can use the header
+        is_elevated = (
+            getattr(user, 'is_system_admin', False)
+            or (callable(getattr(user, 'is_owner', None)) and user.is_owner())
+        )
+        if not is_elevated:
+            try:
+                role = user.staff_profile.role_level
+                is_elevated = role in self._DIRECTOR_ROLES
+            except Exception:
+                pass
+
+        if not is_elevated:
+            return None
+
+        try:
+            from branches.models import Branch
+            tenant = getattr(user, 'tenant', None)
+            qs = Branch.objects.filter(pk=int(header_val), is_deleted=False)
+            if tenant:
+                qs = qs.filter(tenant=tenant)
+            return qs.get()
+        except Exception:
+            return None
+
+    def _apply_director_branch_override(self, qs):
+        """Apply the X-Branch-ID branch override if one is in effect."""
+        branch = self._get_director_branch_override()
+        if branch is None:
+            return qs
+        try:
+            model = getattr(qs, 'model', None)
+            if model and any(f.name == 'branch' for f in model._meta.get_fields()):
+                return qs.filter(branch=branch)
+        except Exception:
+            pass
+        return qs
+
+    # ------------------------------------------------------------------
+    # Core queryset scoping
+    # ------------------------------------------------------------------
+
     def get_queryset(self):
+        qs = self._scoped_queryset()
+        return self._apply_director_branch_override(qs)
+
+    def _scoped_queryset(self):
         qs = super().get_queryset()
         # During OpenAPI/schema generation drf-spectacular sets
         # `swagger_fake_view` on the view. Avoid accessing `request.user`

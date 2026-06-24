@@ -141,7 +141,7 @@ class OwnerBranchManager(SoftDeleteManager):
             staff_role = user.staff_profile.role_level
         except Exception:
             pass
-        is_unrestricted = is_owner or staff_role in ('director', 'admin')
+        is_unrestricted = is_owner or staff_role in ('director', 'admin', 'operations')
         if is_unrestricted:
             return qs
 

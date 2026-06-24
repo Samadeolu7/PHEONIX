@@ -7,6 +7,8 @@ import { ErrorHandler } from '../utils/errorHandler';
 // Prod: https://api.erp.krystartrust.ng/api  (direct CORS request — no proxy needed)
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string) || '/api';
 
+const ACTIVE_BRANCH_KEY = 'activeBranch';
+
 const getHeaders = () => {
   const { accessToken } = tokenManager.getTokens();
   const headers: Record<string, string> = {
@@ -15,6 +17,19 @@ const getHeaders = () => {
 
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  // Director branch override — injected server-side only for elevated roles
+  try {
+    const raw = localStorage.getItem(ACTIVE_BRANCH_KEY);
+    if (raw) {
+      const branch = JSON.parse(raw) as { id: number };
+      if (branch?.id) {
+        headers['X-Branch-ID'] = String(branch.id);
+      }
+    }
+  } catch {
+    // ignore parse errors
   }
 
   return headers;

@@ -3,6 +3,7 @@ import { Outlet, useNavigate, Link, useLocation } from 'react-router-dom';
 import {
   Settings, LogOut, User as UserIcon, Users, Shield,
   ChevronLeft, ChevronRight, Home, LayoutDashboard,
+  GitBranch, ChevronDown, Check, X,
 } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { BRAND } from '../../constants/brand';
@@ -11,11 +12,157 @@ import RenderedSidebarButton from '../dashboard/RenderedSidebarButton';
 import { getRoleSidebarButtons } from '../../config/roleSidebarConfig';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
+import { branchService, Branch } from '../../services/branchService';
+
+// ---------------------------------------------------------------------------
+// BranchSwitcher — only rendered for director / admin / operations / owner
+// ---------------------------------------------------------------------------
+function BranchSwitcher() {
+  const { activeBranch, setActiveBranch, isDirectorPlus } = useAuth();
+  const [open, setOpen] = React.useState(false);
+  const [branches, setBranches] = React.useState<Branch[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Load branches when dropdown opens
+  React.useEffect(() => {
+    if (!open || branches.length > 0) return;
+    setLoading(true);
+    branchService.listBranches()
+      .then(setBranches)
+      .catch(() => setBranches([]))
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  if (!isDirectorPlus) return null;
+
+  const label = activeBranch ? activeBranch.name : 'All Branches';
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '5px 10px',
+          borderRadius: '8px',
+          border: `1px solid ${activeBranch ? BRAND.colors.primary : BRAND.colors.border}`,
+          background: activeBranch ? `${BRAND.colors.primary}12` : '#f9fafb',
+          color: activeBranch ? BRAND.colors.primary : BRAND.colors.textSecondary,
+          fontSize: '13px',
+          fontWeight: 500,
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+        }}
+        title="Switch branch view"
+      >
+        <GitBranch size={13} />
+        {label}
+        <ChevronDown size={12} />
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            minWidth: '200px',
+            background: '#fff',
+            border: `1px solid ${BRAND.colors.border}`,
+            borderRadius: '10px',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+            zIndex: 1000,
+            overflow: 'hidden',
+          }}
+        >
+          {/* All Branches option */}
+          <button
+            type="button"
+            onClick={() => { setActiveBranch(null); setOpen(false); }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              width: '100%',
+              padding: '10px 14px',
+              background: !activeBranch ? `${BRAND.colors.primary}0d` : 'transparent',
+              border: 'none',
+              borderBottom: `1px solid ${BRAND.colors.border}`,
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: BRAND.colors.primary,
+              textAlign: 'left',
+            }}
+          >
+            All Branches
+            {!activeBranch && <Check size={13} />}
+          </button>
+
+          {/* Branch list */}
+          <div style={{ maxHeight: '260px', overflowY: 'auto' }}>
+            {loading && (
+              <p style={{ padding: '12px 14px', fontSize: '12px', color: BRAND.colors.textSecondary }}>
+                Loading…
+              </p>
+            )}
+            {!loading && branches.length === 0 && (
+              <p style={{ padding: '12px 14px', fontSize: '12px', color: BRAND.colors.textSecondary }}>
+                No branches found.
+              </p>
+            )}
+            {branches.map(b => (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => { setActiveBranch({ id: b.id, name: b.name }); setOpen(false); }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  width: '100%',
+                  padding: '9px 14px',
+                  background: activeBranch?.id === b.id ? `${BRAND.colors.primary}0d` : 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  color: '#374151',
+                  textAlign: 'left',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#f3f4f6'; }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLElement).style.background =
+                    activeBranch?.id === b.id ? `${BRAND.colors.primary}0d` : 'transparent';
+                }}
+              >
+                <span>{b.name}</span>
+                {activeBranch?.id === b.id && <Check size={13} style={{ color: BRAND.colors.primary }} />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { selectedRole } = useAuth();
+  const { selectedRole, activeBranch } = useAuth();
   const [user, setUser] = React.useState<any>(null);
   const [collapsed, setCollapsed] = React.useState(false);
   const [clock, setClock] = React.useState(new Date());
@@ -276,6 +423,11 @@ export default function AppLayout() {
                       ? `${user.first_name} ${user.last_name || ''}`.trim()
                       : user?.username || 'User'}
                   </p>
+                  {activeBranch && (
+                    <p className="text-xs truncate font-medium" style={{ color: 'rgba(255,220,100,0.9)' }}>
+                      {activeBranch.name}
+                    </p>
+                  )}
                   <p className="text-xs truncate" style={{ color: 'rgba(255,255,255,0.45)' }}>
                     {user?.email}
                   </p>
@@ -349,6 +501,9 @@ export default function AppLayout() {
               </p>
             </div>
           </div>
+
+          {/* Centre-right: branch switcher */}
+          <BranchSwitcher />
 
           {/* Right: clock + notifications */}
           <div className="flex items-center space-x-5">

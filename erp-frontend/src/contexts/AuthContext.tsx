@@ -19,6 +19,15 @@ interface MockUser {
   tenant: string;
 }
 
+export interface ActiveBranch {
+  id: number;
+  name: string;
+}
+
+const ACTIVE_BRANCH_KEY = 'activeBranch';
+
+const DIRECTOR_ROLES = new Set(['director', 'admin', 'operations']);
+
 interface AuthContextType {
   user: User | null;
   userWithRole: UserWithRole | null;
@@ -33,6 +42,10 @@ interface AuthContextType {
   setRole: (role: UserRole) => void;
   clearRole: () => void;
   hasRole: (role: UserRole) => boolean;
+  // Branch switching (director/admin/operations/owner only)
+  activeBranch: ActiveBranch | null;
+  setActiveBranch: (branch: ActiveBranch | null) => void;
+  isDirectorPlus: boolean;
   // testing helpers (only present at runtime; safe to ignore in types)
   __setMockRole?: (role: MockUser['role']) => void;
   __seedMockUser?: (user: Partial<MockUser>) => void;
@@ -53,6 +66,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState(true);
+  const [activeBranch, setActiveBranchState] = useState<ActiveBranch | null>(() => {
+    try {
+      const raw = localStorage.getItem(ACTIVE_BRANCH_KEY);
+      return raw ? (JSON.parse(raw) as ActiveBranch) : null;
+    } catch {
+      return null;
+    }
+  });
 
   // Helper function to set selected role from user
   const setSelectedRoleFromUser = (userData: User | null) => {
@@ -192,6 +213,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Clear permissions from permissionService
     permissionService.clearPermissions();
 
+    // Clear branch selection
+    localStorage.removeItem(ACTIVE_BRANCH_KEY);
+    setActiveBranchState(null);
+
     setUser(null);
     setSelectedRole(null);
     const logoutBase = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -310,12 +335,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setRole = (role: UserRole) => {
     roleService.setSelectedRole(role);
     setSelectedRole(role);
+    // If switching to a non-director role, clear the active branch
+    if (!DIRECTOR_ROLES.has(role)) {
+      setActiveBranch(null);
+    }
   };
 
   const clearRole = () => {
     roleService.clearSelectedRole();
     setSelectedRole(null);
   };
+
+  // Branch switching
+  const setActiveBranch = (branch: ActiveBranch | null) => {
+    if (branch) {
+      localStorage.setItem(ACTIVE_BRANCH_KEY, JSON.stringify(branch));
+    } else {
+      localStorage.removeItem(ACTIVE_BRANCH_KEY);
+    }
+    setActiveBranchState(branch);
+  };
+
+  const isDirectorPlus =
+    DIRECTOR_ROLES.has(selectedRole ?? '') ||
+    (user?.is_owner ?? false) ||
+    (user?.is_system_admin ?? false);
 
   const hasRole = (role: UserRole) => {
     return selectedRole === role;
@@ -427,6 +471,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRole,
     clearRole,
     hasRole,
+    // Branch switching
+    activeBranch,
+    setActiveBranch,
+    isDirectorPlus,
     ...(USE_MOCK ? { __setMockRole: setMockRole, __seedMockUser: seedMockUser } : {}),
   };
 

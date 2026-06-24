@@ -69,6 +69,13 @@ export const branchService = {
     return api.delete(`/branches/${id}/`);
   },
 
+  // List all branches as a flat array (for branch-switcher dropdown)
+  async listBranches(): Promise<Branch[]> {
+    const data = await this.getBranches({ is_active: true });
+    if (Array.isArray(data)) return data;
+    return (data as any)?.results ?? [];
+  },
+
   // Get branches formatted for dropdown selection
   async getBranchOptions(filters?: { is_active?: boolean }): Promise<BranchOption[]> {
     try {
