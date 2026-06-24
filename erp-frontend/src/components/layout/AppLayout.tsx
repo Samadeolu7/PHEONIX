@@ -162,7 +162,7 @@ function BranchSwitcher() {
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { selectedRole, activeBranch } = useAuth();
+  const { selectedRole, activeBranch, isDirectorPlus } = useAuth();
   const [user, setUser] = React.useState<any>(null);
   const [collapsed, setCollapsed] = React.useState(false);
   const [clock, setClock] = React.useState(new Date());
@@ -531,6 +531,14 @@ export default function AppLayout() {
             </Link>
           </div>
         </header>
+
+        {/* All-branches read-only banner */}
+        {isDirectorPlus && !activeBranch && (
+          <div className="flex flex-shrink-0 items-center gap-2 border-b border-amber-200 bg-amber-50 px-6 py-2 text-sm font-medium text-amber-800">
+            <GitBranch size={14} />
+            Viewing all branches — select a branch from the top bar to create or edit records.
+          </div>
+        )}
 
         {/* Page content */}
         <main

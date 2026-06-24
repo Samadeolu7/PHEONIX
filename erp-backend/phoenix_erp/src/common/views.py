@@ -185,6 +185,21 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         except Exception:
             return None
 
+    def _is_elevated_user(self, user=None):
+        """True if the user is director/admin/operations/owner (cross-branch capable)."""
+        if user is None:
+            user = getattr(self.request, 'user', None)
+        if not user or not getattr(user, 'is_authenticated', False):
+            return False
+        if getattr(user, 'is_system_admin', False):
+            return True
+        if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+            return True
+        try:
+            return user.staff_profile.role_level in self._DIRECTOR_ROLES
+        except Exception:
+            return False
+
     def _apply_director_branch_override(self, qs):
         """Apply the X-Branch-ID branch override if one is in effect."""
         branch = self._get_director_branch_override()
@@ -272,22 +287,50 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         from django.db import IntegrityError
         from rest_framework.exceptions import ValidationError
         import logging
-        
+
         logger = logging.getLogger(__name__)
         user = self.request.user
-        
+
         # Skip if not authenticated (permission check should catch this, but be defensive)
         if not user.is_authenticated:
             raise ValidationError({'detail': 'Authentication required.'})
-        
+
         # Handle users without owner or branch attributes
         if not hasattr(user, 'owner') or user.owner is None:
             logger.error(f"User {user.id} missing owner attribute")
             raise ValidationError({
                 'detail': 'User profile incomplete. Missing tenant information.'
             })
-        
-        branch = getattr(user, 'branch', None)
+
+        # Elevated users (director/admin/operations/owner) must select a branch
+        # before creating records that carry branch scope — viewing "all branches"
+        # is read-only. When they have selected a branch, use that branch instead
+        # of their home branch so the record lands in the right place.
+        if self._is_elevated_user(user):
+            branch_override = self._get_director_branch_override()
+            if branch_override is None:
+                try:
+                    model = (
+                        getattr(getattr(serializer, 'Meta', None), 'model', None)
+                        or getattr(self.queryset, 'model', None)
+                    )
+                    has_branch_field = model and any(
+                        f.name == 'branch' for f in model._meta.get_fields()
+                    )
+                except Exception:
+                    has_branch_field = False
+
+                if has_branch_field:
+                    raise ValidationError({
+                        'non_field_errors': [
+                            'Select a branch from the branch switcher before creating records.'
+                        ]
+                    })
+            # Use the selected branch so the new record lands in the right branch
+            branch = branch_override
+        else:
+            branch = getattr(user, 'branch', None)
+
         if branch is None:
             logger.warning(f"User {user.id} missing branch attribute")
         
