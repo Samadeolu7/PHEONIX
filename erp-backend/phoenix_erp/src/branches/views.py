@@ -26,6 +26,9 @@ class BranchViewSet(ScopedModelViewSet):
     queryset = Branch.objects.all()
     serializer_class = BranchSerializer
     permission_classes = [IsAuthenticated]
+    # Branch listing is structural data needed by every role (e.g. branch-switcher
+    # dropdown for directors). Fine-grained action checks are unnecessary here.
+    skip_action_permission = True
     
     def get_queryset(self):
         """
