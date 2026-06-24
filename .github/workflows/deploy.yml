@@ -114,9 +114,6 @@ jobs:
             set -e
             cd /opt/phoenix-kti
 
-            # Pin the Compose project name so container names (phoenix_kti_*)
-            # are always stable regardless of the invoking directory or shell
-
             echo "==> Pulling latest images (old containers keep serving)..."
             docker compose pull
 
@@ -131,8 +128,9 @@ jobs:
             docker compose up -d --no-deps --force-recreate backend
 
             echo "==> Waiting for backend to pass health check..."
+            BACKEND_ID=$(docker compose ps -q backend)
             for i in $(seq 1 30); do
-              STATUS=$(docker inspect --format='{{.State.Health.Status}}' phoenix_kti_backend 2>/dev/null || echo "starting")
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$BACKEND_ID" 2>/dev/null || echo "starting")
               echo "  attempt $i/30: $STATUS"
               if [ "$STATUS" = "healthy" ]; then
                 echo "  Backend is healthy — continuing"
@@ -146,19 +144,8 @@ jobs:
               sleep 6
             done
 
-            echo "==> Stopping any stale worker containers (clean slate before recreate)..."
-            docker compose stop celery_worker celery_beat flower 2>/dev/null || true
-            docker compose rm -f celery_worker celery_beat flower 2>/dev/null || true
-            # Force-remove any orphan containers whose name contains these service
-            # names, regardless of which Compose project (or hash prefix) created them.
-            for svc in celery_worker celery_beat flower; do
-              docker ps -aq --filter "name=${svc}" | xargs -r docker rm -f 2>/dev/null || true
-            done
-
-            echo "==> Restarting Celery workers (backend is healthy)..."
-            # Use plain 'up' (no --force-recreate) — the explicit rm above already
-            # cleared the slots so Docker Compose won't create temp swap containers.
-            docker compose up -d --no-deps celery_worker celery_beat flower
+            echo "==> Restarting Celery workers and flower..."
+            docker compose up -d --no-deps --force-recreate celery_worker celery_beat flower
 
             echo "==> Restarting frontend (nginx — nearly instant)..."
             docker compose up -d --no-deps --force-recreate frontend

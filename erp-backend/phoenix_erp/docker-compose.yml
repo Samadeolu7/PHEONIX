@@ -37,7 +37,6 @@ services:
 
   backend:
     image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
-    container_name: phoenix_kti_backend
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -115,7 +114,6 @@ services:
       - "traefik.docker.network=traefik_public"
   celery_worker:
     image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
-    container_name: phoenix_kti_celery_worker
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -145,7 +143,6 @@ services:
 
   celery_beat:
     image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
-    container_name: phoenix_kti_celery_beat
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -175,7 +172,6 @@ services:
 
   flower:
     image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
-    container_name: phoenix_kti_flower
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -210,7 +206,6 @@ services:
 
   frontend:
     image: ${DOCKER_IMAGE_FRONTEND:-samadeolu7/phoenix-kti-frontend:latest}
-    container_name: phoenix_kti_frontend
     restart: unless-stopped
     networks:
       - traefik_public
