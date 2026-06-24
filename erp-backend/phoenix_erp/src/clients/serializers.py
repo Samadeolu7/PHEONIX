@@ -93,12 +93,11 @@ class ClientListSerializer(TenantModelSerializer):
     class Meta:
         model = Client
         fields = [
-            'id', 'client_id', 'first_name', 'middle_name', 'last_name', 
-            'full_name', 'gender', 'date_of_birth', 'age', 'phone_primary', 
+            'id', 'client_id', 'first_name', 'middle_name', 'last_name',
+            'full_name', 'gender', 'date_of_birth', 'age', 'phone_primary',
             'email', 'status', 'usage_context', 'client_type', 'client_type_display',
-            'group', 'group_name', 'classification', 
+            'group', 'group_name', 'classification',
             'classification_name', 'image',
-            'nin',
             'assigned_officer', 'assigned_officer_name',
             'account_manager', 'account_manager_name',
             'created_at', 'updated_at'
@@ -120,6 +119,41 @@ class ClientDetailSerializer(TenantModelSerializer):
     signature = serializers.ImageField(read_only=True, use_url=True)
     assigned_officer_name = serializers.SerializerMethodField()
     account_manager_name = serializers.SerializerMethodField()
+    nin = serializers.SerializerMethodField()
+    bank_verification_number = serializers.SerializerMethodField()
+    bank_account_number = serializers.SerializerMethodField()
+
+    def _can_view_restricted_pii(self):
+        request = self.context.get('request')
+        if not request or not request.user:
+            return False
+        user = request.user
+        # Directors, owners, system admins, and KYC officers can see full PII
+        return (
+            getattr(user, 'is_system_admin', False)
+            or getattr(user, 'is_owner', False)
+            or (hasattr(user, 'is_owner') and callable(user.is_owner) and user.is_owner())
+            or user.roles.filter(name__in=['Director', 'Owner', 'KYC Officer', 'Account Manager']).exists()
+        )
+
+    def get_nin(self, obj):
+        if self._can_view_restricted_pii():
+            return obj.nin
+        if obj.nin:
+            return f"***{obj.nin[-3:]}"  # Show only last 3 digits
+        return None
+
+    def get_bank_verification_number(self, obj):
+        if self._can_view_restricted_pii():
+            return obj.bank_verification_number
+        if obj.bank_verification_number:
+            return f"***{obj.bank_verification_number[-3:]}"
+        return None
+
+    def get_bank_account_number(self, obj):
+        if obj.bank_account_number:
+            return f"****{obj.bank_account_number[-4:]}"  # Last 4 always shown for account identification
+        return None
 
     def get_assigned_officer_name(self, obj):
         if obj.assigned_officer_id is None:

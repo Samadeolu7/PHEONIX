@@ -165,14 +165,13 @@ class HasActionPermission(BasePermission):
             return True
 
         except Exception as exc:
-            logger.warning(
+            logger.error(
                 'HasActionPermission: resolver error for user=%s action=%s — '
-                'defaulting to ALLOW. Error: %s',
+                'denying access. Error: %s',
                 getattr(user, 'id', '?'), action_name, exc,
             )
-            # Fail-open: don't break anything during a migration rollout.
-            # Once fully deployed this should be changed to fail-closed.
-            return True
+            self.message = 'Permission check failed. Please contact your administrator.'
+            return False
 
     def has_object_permission(self, request: Request, view, obj) -> bool:
         # Object-level: re-use has_permission (scope filtering is handled by

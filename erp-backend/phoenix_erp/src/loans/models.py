@@ -582,6 +582,17 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             self.outstanding_fees = self.processing_fee + self.insurance_amount
 
         self.save()
+
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.LOAN_APPROVE,
+            acted_by=user,
+            record_type='LoanAccount',
+            record_id=str(self.pk),
+            amount=self.approved_amount,
+            description=f'Loan {self.loan_number} approved',
+            extra={'loan_number': self.loan_number, 'client_id': str(self.client_id)},
+        )
     
     @transaction.atomic
     def disburse(self, disbursement_date=None, disbursement_account=None, disbursed_by=None):
@@ -685,7 +696,19 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.disbursement_journal_entry = journal_entry
         self.status = 'active'
         self.save()
-    
+
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.LOAN_DISBURSE,
+            acted_by=disbursed_by or self.approved_by,
+            record_type='LoanAccount',
+            record_id=str(self.pk),
+            amount=self.disbursed_amount,
+            description=f'Loan {self.loan_number} disbursed',
+            extra={'loan_number': self.loan_number, 'client_id': str(self.client_id),
+                   'journal_entry_id': str(journal_entry.pk)},
+        )
+
     def _generate_repayment_schedule(self):
         """Delegate schedule generation to RepaymentScheduleService."""
         from .schedule_service import RepaymentScheduleService
@@ -867,6 +890,25 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             principal=principal_payment,
         )
         self._calculate_arrears()
+
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.LOAN_REPAY,
+            acted_by=received_by or self.approved_by,
+            record_type='LoanAccount',
+            record_id=str(self.pk),
+            amount=amount,
+            description=f'Loan repayment on {self.loan_number}',
+            extra={
+                'loan_number': self.loan_number,
+                'client_id': str(self.client_id),
+                'principal': str(principal_payment),
+                'interest': str(interest_payment),
+                'fees': str(fee_payment),
+                'penalty': str(penalty_payment),
+                'journal_entry_id': str(journal_entry.pk),
+            },
+        )
 
         return journal_entry
 

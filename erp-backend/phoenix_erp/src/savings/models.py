@@ -172,6 +172,19 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.last_transaction_date = timezone.now().date()
         self.save(update_fields=['last_transaction_date'])
 
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.SAVINGS_DEPOSIT,
+            acted_by=transacted_by,
+            record_type='SavingsAccount',
+            record_id=str(self.pk),
+            amount=amount,
+            description=description or f'Savings deposit – {self.account_number}',
+            extra={'account_number': self.account_number,
+                   'client_id': str(self.client_id),
+                   'journal_entry_id': str(journal_entry.pk)},
+        )
+
         return journal_entry
 
     @transaction.atomic
@@ -249,7 +262,20 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         self.last_transaction_date = timezone.now().date()
         self.save(update_fields=['last_transaction_date'])
-    
+
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.SAVINGS_WITHDRAW,
+            acted_by=transacted_by,
+            record_type='SavingsAccount',
+            record_id=str(self.pk),
+            amount=amount,
+            description=description or f'Savings withdrawal – {self.account_number}',
+            extra={'account_number': self.account_number,
+                   'client_id': str(self.client_id),
+                   'journal_entry_id': str(journal_entry.pk)},
+        )
+
     def __str__(self):
         return f"{self.account_number} - {self.client.name} ({self.account.code})"
 

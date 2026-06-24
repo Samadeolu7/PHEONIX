@@ -2,9 +2,22 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import status
 from rest_framework.response import Response
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
+
+
+class LoginRateThrottle(AnonRateThrottle):
+    scope = 'login'
+
+
+class PasswordResetRateThrottle(AnonRateThrottle):
+    scope = 'password_reset'
+
+
+class RegisterRateThrottle(AnonRateThrottle):
+    scope = 'register'
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -119,6 +132,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [LoginRateThrottle]
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -155,6 +169,7 @@ def get_current_user(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([RegisterRateThrottle])
 def register_user(request):
     """Register a new user (for tenant creation or staff invitation)"""
     data = request.data
@@ -294,6 +309,7 @@ def update_profile(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([PasswordResetRateThrottle])
 def request_password_reset(request):
     """Request password reset (sends email with token)"""
     email = request.data.get('email')
@@ -338,6 +354,7 @@ def request_password_reset(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([PasswordResetRateThrottle])
 def reset_password_confirm(request):
     """Confirm password reset: accepts uid, token and new_password"""
     uidb64 = request.data.get('uid') or request.query_params.get('uid')

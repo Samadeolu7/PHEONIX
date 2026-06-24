@@ -330,3 +330,145 @@ class BackdateRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.reviewed_at = timezone.now()
         self.rejection_reason = reason
         self.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+
+
+# ── Financial Audit Log ───────────────────────────────────────────────────────
+
+class FinancialAuditLog(models.Model):
+    """
+    Immutable, append-only record of every financial operation.
+
+    Covers: loan approvals, disbursements, repayments, savings deposits and
+    withdrawals, manual GL journal entries, and permission/role changes.
+
+    This table must NEVER be truncated or soft-deleted in production.
+    Row-level DELETE permission should be revoked from the app DB user.
+    """
+
+    # Event types
+    LOAN_APPROVE        = 'loan_approve'
+    LOAN_DISBURSE       = 'loan_disburse'
+    LOAN_REPAY          = 'loan_repay'
+    SAVINGS_DEPOSIT     = 'savings_deposit'
+    SAVINGS_WITHDRAW    = 'savings_withdraw'
+    JOURNAL_POST        = 'journal_post'
+    PERMISSION_CHANGE   = 'permission_change'
+    USER_ROLE_CHANGE    = 'user_role_change'
+
+    EVENT_CHOICES = [
+        (LOAN_APPROVE,      'Loan Approved'),
+        (LOAN_DISBURSE,     'Loan Disbursed'),
+        (LOAN_REPAY,        'Loan Repayment'),
+        (SAVINGS_DEPOSIT,   'Savings Deposit'),
+        (SAVINGS_WITHDRAW,  'Savings Withdrawal'),
+        (JOURNAL_POST,      'Journal Entry Posted'),
+        (PERMISSION_CHANGE, 'Permission Changed'),
+        (USER_ROLE_CHANGE,  'User Role Changed'),
+    ]
+
+    event_type      = models.CharField(max_length=30, choices=EVENT_CHOICES, db_index=True)
+    acted_by        = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='financial_audit_logs',
+    )
+    branch          = models.ForeignKey(
+        'branches.Branch',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    tenant          = models.ForeignKey(
+        'users.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
+    record_type     = models.CharField(max_length=100)
+    record_id       = models.CharField(max_length=50, db_index=True)
+    amount          = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    description     = models.TextField(blank=True)
+    extra           = models.JSONField(default=dict, blank=True)
+    ip_address      = models.GenericIPAddressField(null=True, blank=True)
+    timestamp       = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['event_type', 'timestamp']),
+            models.Index(fields=['acted_by', 'timestamp']),
+            models.Index(fields=['record_type', 'record_id']),
+        ]
+
+    def __str__(self):
+        return f"{self.get_event_type_display()} by {self.acted_by_id} at {self.timestamp:%Y-%m-%d %H:%M}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('FinancialAuditLog entries are immutable and cannot be modified.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('FinancialAuditLog entries cannot be deleted.')
+
+
+def log_financial_event(
+    event_type,
+    *,
+    acted_by,
+    record_type,
+    record_id,
+    amount=None,
+    description='',
+    extra=None,
+    request=None,
+):
+    """
+    Write a FinancialAuditLog entry. Safe to call inside atomic blocks —
+    audit failures are logged but never propagate to the caller.
+
+    Usage::
+
+        log_financial_event(
+            FinancialAuditLog.LOAN_APPROVE,
+            acted_by=request.user,
+            record_type='LoanAccount',
+            record_id=str(loan.pk),
+            amount=loan.approved_amount,
+            description=f'Loan {loan.loan_number} approved',
+            request=request,
+        )
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    try:
+        branch = getattr(acted_by, 'branch', None) if acted_by else None
+        tenant = getattr(acted_by, 'tenant', None) if acted_by else None
+        ip = None
+        if request is not None:
+            x_forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+            ip = x_forwarded.split(',')[0].strip() if x_forwarded else request.META.get('REMOTE_ADDR')
+            if branch is None:
+                branch = getattr(request.user, 'branch', None)
+            if tenant is None:
+                tenant = getattr(request.user, 'tenant', None)
+        FinancialAuditLog.objects.create(
+            event_type=event_type,
+            acted_by=acted_by,
+            branch=branch,
+            tenant=tenant,
+            record_type=record_type,
+            record_id=str(record_id),
+            amount=amount,
+            description=description,
+            extra=extra or {},
+            ip_address=ip,
+        )
+    except Exception:
+        _log.exception(
+            'FinancialAuditLog: failed to write %s event for record %s#%s',
+            event_type, record_type, record_id,
+        )

@@ -146,13 +146,18 @@ class OwnerBranchManager(SoftDeleteManager):
             return qs
 
         # Scope by branch if available on user.
-        # Records with no branch (branch IS NULL) are treated as tenant-wide and
-        # must remain visible to every user in the tenant regardless of their own
-        # assigned branch – this prevents branch-scoped staff from losing sight of
-        # records created by owner-level users who have no branch assigned.
+        # Records with NULL branch are treated as explicitly tenant-wide only when the
+        # model opts in via `is_tenant_wide = True` (e.g. system config records).
+        # Regular data records must have a branch assigned; if not they are visible
+        # only to directors/owners (handled above) to avoid accidental cross-branch exposure.
         branch = getattr(user, 'branch', None)
         if branch:
-            qs = qs.filter(Q(branch=branch) | Q(branch__isnull=True))
+            from django.db.models import Q as _Q
+            tenant_wide_flag = getattr(self.model, 'ALLOW_NULL_BRANCH_VISIBILITY', False)
+            if tenant_wide_flag:
+                qs = qs.filter(_Q(branch=branch) | _Q(branch__isnull=True))
+            else:
+                qs = qs.filter(branch=branch)
 
         # NOTE: We do NOT filter by owner here.
         # The 'owner' field is for audit purposes only.

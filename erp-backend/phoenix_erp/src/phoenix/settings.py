@@ -26,10 +26,16 @@ except Exception:
 # ==================================================
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get(
-    'SECRET_KEY',
-    'django-insecure-7s-bq6x2p^i8cz4+ljgv9%71fco*)__d=9yqt&5!x!@qfra9&%'  # Only for development
-)
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if os.environ.get('DEBUG', 'True') == 'True':
+        SECRET_KEY = 'django-insecure-dev-only-never-use-in-production'
+    else:
+        from django.core.exceptions import ImproperlyConfigured
+        raise ImproperlyConfigured(
+            'SECRET_KEY environment variable is required in production. '
+            'Set it in your .env file or deployment environment.'
+        )
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'  # Default to True for development
@@ -220,27 +226,23 @@ ROOT_URLCONF = 'phoenix.urls'
 # https://api.erp.krystartrust.ng/api/... — no reverse-proxy rewrite needed.
 # django-cors-headers handles the Access-Control-Allow-Origin header.
 
-if DEBUG:
-    # Allow everything locally (dev server, tests, Postman, etc.)
-    CORS_ALLOW_ALL_ORIGINS = True
-else:
-    CORS_ALLOWED_ORIGINS = [
-        origin.strip()
-        for origin in os.environ.get(
-            'CORS_ALLOWED_ORIGINS',
-            'https://erp.krystartrust.ng,'
-            'https://api.kti.krystartrust.ng,'
-            'https://erp.mastermouldersacademy.org,'
-            'https://erp-cgun.vercel.app,'
-            'http://localhost:3000,'
-            'http://localhost:5173,'
-            'http://localhost:4173,'
-            'http://127.0.0.1:4173,'
-            'http://127.0.0.1:3000,'
-            'http://127.0.0.1:5173',
-        ).split(',')
-        if origin.strip()
-    ]
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        'CORS_ALLOWED_ORIGINS',
+        'https://erp.krystartrust.ng,'
+        'https://api.kti.krystartrust.ng,'
+        'https://erp.mastermouldersacademy.org,'
+        'https://erp-cgun.vercel.app,'
+        'http://localhost:3000,'
+        'http://localhost:5173,'
+        'http://localhost:4173,'
+        'http://127.0.0.1:4173,'
+        'http://127.0.0.1:3000,'
+        'http://127.0.0.1:5173',
+    ).split(',')
+    if origin.strip()
+]
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -295,6 +297,17 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.BrowsableAPIRenderer',
     ],
     'EXCEPTION_HANDLER': 'common.error_handlers.custom_exception_handler',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/hour',
+        'user': '1000/hour',
+        'login': '5/minute',
+        'password_reset': '3/hour',
+        'register': '10/hour',
+    },
 }
 
 # ==================================================
@@ -343,16 +356,24 @@ WSGI_APPLICATION = 'phoenix.wsgi.application'
 # DATABASE CONFIGURATION
 # ==================================================
 
+_db_password = os.environ.get('DB_PASSWORD', '')
+if not _db_password and not DEBUG:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        'DB_PASSWORD environment variable is required in production. '
+        'Set it in your .env file or deployment environment.'
+    )
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': os.environ.get('DB_NAME', 'phoenix_db'),
         'USER': os.environ.get('DB_USER', 'postgres'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'samore7'),
+        'PASSWORD': _db_password,
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
         'ATOMIC_REQUESTS': True,
-        'CONN_MAX_AGE': 600,  # Keep connections alive for 10 minutes
+        'CONN_MAX_AGE': 600,
         'OPTIONS': {
             'client_encoding': 'UTF8',
             'connect_timeout': 10,
@@ -582,10 +603,11 @@ LOGGING = {
         'file': {
             'level': 'INFO',
             'class': 'logging.handlers.RotatingFileHandler',
-            'filename': '/tmp/phoenix_django.log',  # Changed from BASE_DIR / 'logs' / 'django.log'
-            'maxBytes': 1024 * 1024 * 10,
-            'backupCount': 5,
+            'filename': str(BASE_DIR / 'logs' / 'django.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10 MB
+            'backupCount': 10,
             'formatter': 'verbose',
+            'encoding': 'utf-8',
         },
     },
     'root': {
@@ -601,11 +623,7 @@ LOGGING = {
     },
 }
 
-# Remove the mkdir line completely
-# (BASE_DIR / 'logs').mkdir(exist_ok=True)  # DELETE THIS LINE
-
-# Create logs directory if it doesn't exist
-# (BASE_DIR / 'logs').mkdir(exist_ok=True)
+(BASE_DIR / 'logs').mkdir(exist_ok=True)
 
 # ==================================================
 # CACHE CONFIGURATION
