@@ -150,13 +150,15 @@ jobs:
             echo "==> Stopping any stale worker containers (clean slate before recreate)..."
             docker compose stop celery_worker celery_beat flower 2>/dev/null || true
             docker compose rm -f celery_worker celery_beat flower 2>/dev/null || true
-            # Remove any orphan containers matching these service names regardless
-            # of which Compose project created them (handles the hash-prefix case).
+            # Force-remove any orphan containers whose name contains these service
+            # names, regardless of which Compose project (or hash prefix) created them.
             for svc in celery_worker celery_beat flower; do
               docker ps -aq --filter "name=${svc}" | xargs -r docker rm -f 2>/dev/null || true
             done
 
             echo "==> Restarting Celery workers (backend is healthy)..."
+            # Use plain 'up' (no --force-recreate) — the explicit rm above already
+            # cleared the slots so Docker Compose won't create temp swap containers.
             docker compose up -d --no-deps celery_worker celery_beat flower
 
             echo "==> Restarting frontend (nginx — nearly instant)..."
