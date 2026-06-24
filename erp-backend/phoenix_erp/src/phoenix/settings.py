@@ -58,7 +58,6 @@ ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
     "testserver",
-    "172.20.0.4",
     ".localhost",                    # Allow any subdomain of localhost (tenant1.localhost)
     ".krystartrust.ng",              # Allow any subdomain (erp.krystartrust.ng, api.kti.krystartrust.ng, etc.)
     ".mastermouldersacademy.org",    # Custom-domain tenant
@@ -70,6 +69,16 @@ ALLOWED_HOSTS = [
 # Add additional hosts from environment variable
 if os.environ.get('ALLOWED_HOSTS'):
     ALLOWED_HOSTS.extend(os.environ.get('ALLOWED_HOSTS', '').split(','))
+
+# Dynamically allow the container's own IP(s) so Traefik health checks
+# (which set Host: <container-ip>:<port>) are never rejected.
+# Docker IPs change on every compose up so they cannot be hardcoded.
+import socket as _socket
+try:
+    _, _, _container_ips = _socket.gethostbyname_ex(_socket.gethostname())
+    ALLOWED_HOSTS.extend(_container_ips)
+except OSError:
+    pass
 
 # In production, you should:
 # 1. Set ALLOWED_HOSTS env var to your actual domain(s)
