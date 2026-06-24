@@ -336,7 +336,7 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
   const [filter, setFilter] = useState<ModuleFilter>(searchParams.get('module') || 'all');
 
   // ── Approval authority ────────────────────────────────────────────────────
-  // Only APPROVER_ROLES (Director / Principal) get action callbacks.
+  // Only rank 4+ (Principal / Director) get action callbacks.
   // Other roles can view but the approve/reject buttons won't render.
   const { canUserApprove } = useApprovalGuard();
 

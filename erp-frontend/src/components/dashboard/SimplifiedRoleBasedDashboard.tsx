@@ -30,6 +30,7 @@ import {
   Banknote,
 } from 'lucide-react';
 import { getRoleSidebarButtons, NAV_CONFIG_ROLES } from '../../config/roleSidebarConfig';
+import { getRoleRank } from '../../types/roles';
 import RenderedSidebarButton from './RenderedSidebarButton';
 import { permissionService } from '@/services/permissionService';
 import {
@@ -605,8 +606,7 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
   const statsCards = buildStatsCards(effectiveRole, liveStats);
 
   // Director and Principal bypass all permission checks
-  const SUPERUSER_ROLES = ['Director', 'Principal'];
-  const isSuperUser = effectiveRole ? SUPERUSER_ROLES.includes(effectiveRole) : false;
+  const isSuperUser = getRoleRank(effectiveRole) >= 4;
 
   const accessibleModules = MODULES.filter(
     module =>

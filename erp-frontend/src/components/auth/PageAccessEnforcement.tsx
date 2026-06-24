@@ -18,7 +18,7 @@ export const PageAccessEnforcement: React.FC<PageAccessEnforcementProps> = ({
   fallbackComponent: FallbackComponent = ForbiddenPage,
   redirectTo,
 }) => {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, selectedRole } = useAuth();
   const location = useLocation();
 
   // Public routes that don't require authentication
@@ -41,8 +41,9 @@ export const PageAccessEnforcement: React.FC<PageAccessEnforcementProps> = ({
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Check if user can access the current route
-  const canAccess = canUserAccessRoute(location.pathname, user.role);
+  // Use the actively selected role for access check (rank-based)
+  const activeRole = selectedRole ?? (user.roles?.[0] ?? null);
+  const canAccess = canUserAccessRoute(location.pathname, activeRole);
 
   if (!canAccess) {
     // Check if route exists in our mapping
@@ -96,9 +97,10 @@ export const RouteAccessGuard: React.FC<RouteAccessGuardProps> = ({
   children,
   fallbackComponent: FallbackComponent = ForbiddenPage,
 }) => {
-  const { user } = useAuth();
+  const { user, selectedRole } = useAuth();
+  const activeRole = selectedRole ?? (user?.roles?.[0] ?? null);
 
-  const canAccess = canUserAccessRoute(path, user?.role || null);
+  const canAccess = canUserAccessRoute(path, activeRole);
 
   if (!canAccess) {
     const routeMapping = getRouteMapping(path);
@@ -125,15 +127,16 @@ export const AccessAwareBreadcrumbs: React.FC<AccessAwareBreadcrumbsProps> = ({
   separator = '/',
   maxItems = 5,
 }) => {
-  const { user } = useAuth();
+  const { user, selectedRole } = useAuth();
+  const activeRole = selectedRole ?? (user?.roles?.[0] ?? null);
   const location = useLocation();
 
   const breadcrumbs = getBreadcrumbs(location.pathname);
 
   // Filter breadcrumbs based on user access
   const accessibleBreadcrumbs = breadcrumbs.filter(breadcrumb => {
-    if (!breadcrumb.path) return true; // Always show non-clickable breadcrumbs
-    return canUserAccessRoute(breadcrumb.path, user?.role || null);
+    if (!breadcrumb.path) return true;
+    return canUserAccessRoute(breadcrumb.path, activeRole);
   });
 
   // Limit breadcrumbs if needed
@@ -173,7 +176,8 @@ export const PageMetadata: React.FC<PageMetadataProps> = ({
   className = '',
   showAccessInfo = false,
 }) => {
-  const { user } = useAuth();
+  const { user, selectedRole } = useAuth();
+  const activeRole = selectedRole ?? (user?.roles?.[0] ?? null);
   const location = useLocation();
 
   const routeMapping = getRouteMapping(location.pathname);
@@ -182,7 +186,7 @@ export const PageMetadata: React.FC<PageMetadataProps> = ({
     return null;
   }
 
-  const canAccess = canUserAccessRoute(location.pathname, user?.role || null);
+  const canAccess = canUserAccessRoute(location.pathname, activeRole);
 
   return (
     <div className={`page-metadata ${className}`}>
@@ -203,7 +207,7 @@ export const PageMetadata: React.FC<PageMetadataProps> = ({
             >
               {canAccess ? 'Authorized' : 'Unauthorized'}
             </div>
-            <p className="text-xs text-gray-500 mt-1">Role: {user?.role || 'None'}</p>
+            <p className="text-xs text-gray-500 mt-1">Role: {activeRole || 'None'}</p>
           </div>
         )}
       </div>
@@ -219,11 +223,12 @@ interface AccessDebugInfoProps {
 }
 
 export const AccessDebugInfo: React.FC<AccessDebugInfoProps> = ({ className = '' }) => {
-  const { user } = useAuth();
+  const { user, selectedRole } = useAuth();
+  const activeRole = selectedRole ?? (user?.roles?.[0] ?? null);
   const location = useLocation();
 
   const routeMapping = getRouteMapping(location.pathname);
-  const canAccess = canUserAccessRoute(location.pathname, user?.role || null);
+  const canAccess = canUserAccessRoute(location.pathname, activeRole);
 
   if (process.env.NODE_ENV !== 'development') {
     return null;
@@ -237,7 +242,7 @@ export const AccessDebugInfo: React.FC<AccessDebugInfoProps> = ({ className = ''
           <strong>Path:</strong> {location.pathname}
         </p>
         <p>
-          <strong>User Role:</strong> {user?.role || 'None'}
+          <strong>User Role:</strong> {activeRole || 'None'}
         </p>
         <p>
           <strong>Can Access:</strong> {canAccess ? 'Yes' : 'No'}
@@ -251,7 +256,7 @@ export const AccessDebugInfo: React.FC<AccessDebugInfoProps> = ({ className = ''
               <strong>Category:</strong> {routeMapping.category}
             </p>
             <p>
-              <strong>Required Roles:</strong> {routeMapping.roles.join(', ')}
+              <strong>Min Rank Required:</strong> {routeMapping.minRank}
             </p>
           </>
         )}

@@ -2,13 +2,14 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.db.models import Q
 from django.core.exceptions import ValidationError
+from rest_framework.views import APIView
 
 from rest_framework import viewsets, permissions, serializers, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema_view, extend_schema
 
-from .models import MenuGroup, MenuItem, BusinessDay, BackdateRequest
+from .models import MenuGroup, MenuItem, BusinessDay, BackdateRequest, RoleNavigationConfig
 from .serializers import IsTenantUser, MenuGroupSerializer, MenuItemSerializer, BusinessDaySerializer, BackdateRequestSerializer
 
 try:
@@ -1164,3 +1165,68 @@ class BackdateRequestViewSet(ScopedModelViewSet):
         except ValidationError as exc:
             return Response({'detail': exc.message}, status=status.HTTP_400_BAD_REQUEST)
         return Response(BackdateRequestSerializer(bdreq, context={'request': request}).data)
+
+
+# ── Role Navigation Config ─────────────────────────────────────────────────────
+
+class RoleNavigationConfigView(APIView):
+    """
+    GET  /api/common/navigation/config/
+         Returns { role: [id, ...], ... } for every configured role in the tenant.
+         Roles not yet saved return null so the frontend falls back to its defaults.
+
+    PUT  /api/common/navigation/config/
+         Body: { "role": "Credit Officer", "enabled_ids": ["leaf-x", "leaf-y", ...] }
+         Upserts the config for that role (Director/Principal only).
+
+    DELETE /api/common/navigation/config/
+         Body: { "role": "Credit Officer" }
+         Removes the server-side override so the role reverts to frontend defaults.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+
+    def get(self, request):
+        tenant = getattr(request.user, 'tenant', None)
+        if not tenant:
+            return Response({})
+        configs = RoleNavigationConfig.objects.filter(tenant=tenant)
+        return Response({c.role: c.enabled_ids for c in configs})
+
+    def put(self, request):
+        user = request.user
+        # Only Director/Principal/admin can change nav config
+        try:
+            allowed = {'Director', 'Principal', 'Admin'}
+            role_names = set(user.roles.filter(is_active=True).values_list('name', flat=True))
+            if not (allowed & role_names) and not getattr(user, 'is_system_admin', False):
+                return Response(
+                    {'detail': 'Only Directors and Principals can configure navigation.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        except Exception:
+            pass
+
+        role = request.data.get('role', '').strip()
+        enabled_ids = request.data.get('enabled_ids')
+        if not role:
+            return Response({'detail': 'role is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(enabled_ids, list):
+            return Response({'detail': 'enabled_ids must be a list.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        tenant = getattr(user, 'tenant', None)
+        if not tenant:
+            return Response({'detail': 'No tenant.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        obj, _ = RoleNavigationConfig.objects.update_or_create(
+            tenant=tenant,
+            role=role,
+            defaults={'enabled_ids': enabled_ids, 'updated_by': user},
+        )
+        return Response({'role': obj.role, 'enabled_ids': obj.enabled_ids})
+
+    def delete(self, request):
+        role = request.data.get('role', '').strip()
+        tenant = getattr(request.user, 'tenant', None)
+        if role and tenant:
+            RoleNavigationConfig.objects.filter(tenant=tenant, role=role).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

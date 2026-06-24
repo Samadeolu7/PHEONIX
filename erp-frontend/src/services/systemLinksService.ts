@@ -30,7 +30,7 @@
 
 import { FEATURE_REGISTRY, FeatureCard } from '../config/featureRegistry';
 import { ROUTE_MAPPINGS, RouteMapping } from '../utils/routeMapping';
-import { UserRole } from '../types/roles';
+import { UserRole, getRoleRank } from '../types/roles';
 import { stripLeadingEmoji } from '../utils/text';
 
 // ── Category display metadata ──────────────────────────────────────────────
@@ -179,8 +179,8 @@ function getAllLinks(): SystemLinkItem[] {
  * hasPermission(link.requiredPermission).
  */
 function isVisibleToRole(link: SystemLinkItem, role: UserRole | null | undefined): boolean {
-  // Director / Principal see everything
-  if (role === 'Director' || role === 'Principal') return true;
+  // Rank 4+ (Principal, Director) see everything
+  if (getRoleRank(role) >= 4) return true;
 
   // Registry links: no role filter here — caller handles permissions
   if (link.source === 'registry') return true;
@@ -211,8 +211,7 @@ export function getSystemLinksFlat(
       if (!isVisibleToRole(link, role)) return false;
       // Apply granular permission filter when the caller supplies one
       if (hasPermission && link.requiredPermission) {
-        // Director / Principal bypass
-        if (role === 'Director' || role === 'Principal') return true;
+        if (getRoleRank(role) >= 4) return true; // rank 4+ bypass
         return hasPermission(link.requiredPermission);
       }
       return true;
@@ -333,7 +332,7 @@ export function featureRegistryToModulePages(
 ) {
   const { moduleId, hasPermission, role, includeDeprecated = false } = options;
 
-  const isSuperUser = role === 'Director' || role === 'Principal';
+  const isSuperUser = getRoleRank(role) >= 4;
 
   return (
     FEATURE_REGISTRY.filter(f => {

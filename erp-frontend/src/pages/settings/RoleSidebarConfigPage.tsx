@@ -12,7 +12,7 @@
  */
 import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, RotateCcw, CheckSquare, Square, ChevronDown, ChevronRight, Navigation, Settings } from 'lucide-react';
+import { ArrowLeft, Save, RotateCcw, CheckSquare, Square, ChevronDown, ChevronRight, Navigation, Settings, Loader } from 'lucide-react';
 import { BRAND } from '../../constants/brand';
 import { useAuth } from '../../contexts/AuthContext';
 import { DASHBOARD_SIDEBAR_CONFIG } from '../../config/dashboardSidebarConfig';
@@ -24,6 +24,7 @@ import {
   saveEnabledIds,
   resetEnabledIds,
 } from '../../config/roleSidebarConfig';
+import { navConfigService } from '../../services/navConfigService';
 import { HierarchyButton } from '../../types';
 
 const C = BRAND.colors;
@@ -171,18 +172,23 @@ export const RoleSidebarConfigPage: React.FC = () => {
 
   const [activeRole, setActiveRole] = useState(ALL_ROLES[0]);
   const [enabledIds, setEnabledIds] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Load enabled IDs when active role changes
+  // Reload from server whenever the active role tab changes
   useEffect(() => {
-    setEnabledIds(getEnabledIds(activeRole));
     setSaved(false);
+    setSaveError(null);
+    // Refresh from server so the config page always shows the latest saved state
+    navConfigService.fetchAll()
+      .then(() => setEnabledIds(getEnabledIds(activeRole)))
+      .catch(() => setEnabledIds(getEnabledIds(activeRole)));
   }, [activeRole]);
 
   const handleToggle = useCallback((id: string, ids: string[]) => {
     setEnabledIds(prev => {
       const next = new Set(prev);
-      // If all in `ids` are checked → uncheck; otherwise check all
       const allChecked = ids.every(i => next.has(i));
       if (allChecked) {
         ids.forEach(i => next.delete(i));
@@ -192,18 +198,35 @@ export const RoleSidebarConfigPage: React.FC = () => {
       return next;
     });
     setSaved(false);
+    setSaveError(null);
   }, []);
 
-  const handleSave = () => {
-    saveEnabledIds(activeRole, enabledIds);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await saveEnabledIds(activeRole, enabledIds);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch {
+      setSaveError('Save failed — check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleReset = () => {
-    resetEnabledIds(activeRole);
-    setEnabledIds(getEnabledIds(activeRole));
-    setSaved(false);
+  const handleReset = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await resetEnabledIds(activeRole);
+      setEnabledIds(getEnabledIds(activeRole));
+      setSaved(false);
+    } catch {
+      setSaveError('Reset failed — check your connection and try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCheckAll = () => {
@@ -434,6 +457,7 @@ export const RoleSidebarConfigPage: React.FC = () => {
                 </button>
                 <button
                   onClick={handleReset}
+                  disabled={saving}
                   style={{
                     padding: '7px 14px',
                     borderRadius: '7px',
@@ -442,17 +466,22 @@ export const RoleSidebarConfigPage: React.FC = () => {
                     color: '#374151',
                     fontSize: '12px',
                     fontWeight: 600,
-                    cursor: 'pointer',
+                    cursor: saving ? 'not-allowed' : 'pointer',
+                    opacity: saving ? 0.7 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     gap: '5px',
                   }}
                 >
-                  <RotateCcw style={{ width: '13px', height: '13px' }} />
+                  {saving
+                    ? <Loader style={{ width: '13px', height: '13px', animation: 'spin 1s linear infinite' }} />
+                    : <RotateCcw style={{ width: '13px', height: '13px' }} />
+                  }
                   Reset Default
                 </button>
                 <button
                   onClick={handleSave}
+                  disabled={saving}
                   style={{
                     padding: '7px 18px',
                     borderRadius: '7px',
@@ -463,7 +492,8 @@ export const RoleSidebarConfigPage: React.FC = () => {
                     color: '#fff',
                     fontSize: '12px',
                     fontWeight: 700,
-                    cursor: 'pointer',
+                    cursor: saving ? 'not-allowed' : 'pointer',
+                    opacity: saving ? 0.7 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     gap: '5px',
@@ -471,8 +501,11 @@ export const RoleSidebarConfigPage: React.FC = () => {
                     transition: 'background 0.2s',
                   }}
                 >
-                  <Save style={{ width: '13px', height: '13px' }} />
-                  {saved ? 'Saved!' : 'Save Changes'}
+                  {saving
+                    ? <Loader style={{ width: '13px', height: '13px', animation: 'spin 1s linear infinite' }} />
+                    : <Save style={{ width: '13px', height: '13px' }} />
+                  }
+                  {saving ? 'Saving…' : saved ? 'Saved!' : 'Save Changes'}
                 </button>
               </div>
             </div>
@@ -525,10 +558,14 @@ export const RoleSidebarConfigPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Save reminder */}
-            {!saved && (
+            {saveError && (
+              <p style={{ marginTop: '12px', fontSize: '12px', color: '#dc2626', textAlign: 'right' }}>
+                {saveError}
+              </p>
+            )}
+            {!saved && !saveError && (
               <p style={{ marginTop: '12px', fontSize: '12px', color: C.textSecondary, textAlign: 'right' }}>
-                Changes are applied immediately after saving. They are stored per-browser.
+                Changes are synced to the server and applied across all devices.
               </p>
             )}
           </div>

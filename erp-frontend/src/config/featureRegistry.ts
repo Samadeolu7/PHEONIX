@@ -81,6 +81,7 @@ import {
   Banknote,
   ArrowRightLeft,
 } from 'lucide-react';
+import { getRoleRank } from '../types/roles';
 
 export interface FeatureCard {
   id: string;
@@ -2083,8 +2084,7 @@ export const getAccessibleFeatures = (
   hasPermission: (perm: string) => boolean,
   selectedRole?: string
 ): FeatureCard[] => {
-  const SUPERUSER_ROLES = ['Director', 'Principal'];
-  const isSuperUser = selectedRole ? SUPERUSER_ROLES.includes(selectedRole) : false;
+  const isSuperUser = getRoleRank(selectedRole) >= 4;
 
   return FEATURE_REGISTRY.filter(
     f =>

@@ -1,17 +1,17 @@
 /**
  * roleSidebarConfig.ts
  *
- * Per-role sidebar navigation config — storage utilities and role defaults.
+ * Per-role sidebar navigation config.
  *
- * Storage model:
- *   key  → `ktil_role_nav_<normalized_role>`   (localStorage)
- *   value → JSON of `string[]`  (array of enabled button IDs)
+ * Source of truth: server (via navConfigService / /api/common/navigation/config/).
+ * Fast path: localStorage write-through cache (populated on app boot by AuthContext).
  *
  * A leaf button is shown if its ID is in the enabled set.
  * A group button is shown automatically if any descendant leaf is enabled.
  */
 import { HierarchyButton } from '../types';
 import { DASHBOARD_SIDEBAR_CONFIG } from './dashboardSidebarConfig';
+import { navConfigService } from '../services/navConfigService';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -33,10 +33,7 @@ export const ALL_ROLES = [
   'Credit Officer',
 ];
 
-// ── Storage key ──────────────────────────────────────────────────────────────
-
-const storageKey = (role: string): string =>
-  `ktil_role_nav_${role.toLowerCase().replace(/\s+/g, '_')}`;
+// (localStorage keys kept only as legacy fallback — server cache is the primary store)
 
 // ── Tree traversal helpers ────────────────────────────────────────────────────
 
@@ -128,36 +125,30 @@ function defaultModuleIds(role: string): Set<string> {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/** Get enabled IDs for a role (from localStorage, or the default). */
+/**
+ * Get enabled IDs for a role.
+ * Reads from the server cache (populated on app boot); falls back to hardcoded defaults.
+ */
 export function getEnabledIds(role: string): Set<string> {
-  try {
-    const saved = localStorage.getItem(storageKey(role));
-    if (saved) {
-      const arr = JSON.parse(saved) as string[];
-      return new Set(arr);
-    }
-  } catch {
-    /* ignore parse errors */
-  }
+  const cached = navConfigService.getCached(role);
+  if (cached !== null) return new Set(cached);
   return defaultModuleIds(role);
 }
 
-/** Persist enabled IDs for a role. */
-export function saveEnabledIds(role: string, ids: Set<string>): void {
-  try {
-    localStorage.setItem(storageKey(role), JSON.stringify([...ids]));
-  } catch {
-    /* ignore quota errors */
-  }
+/**
+ * Persist enabled IDs for a role → server + local cache.
+ * Returns a Promise so the config page can await it and show a success state.
+ */
+export function saveEnabledIds(role: string, ids: Set<string>): Promise<void> {
+  return navConfigService.save(role, [...ids]);
 }
 
-/** Reset a role back to its defaults. */
-export function resetEnabledIds(role: string): void {
-  try {
-    localStorage.removeItem(storageKey(role));
-  } catch {
-    /* ignore */
-  }
+/**
+ * Reset a role back to its defaults → removes server record + clears local cache.
+ * Returns a Promise.
+ */
+export function resetEnabledIds(role: string): Promise<void> {
+  return navConfigService.reset(role);
 }
 
 /** Build the sidebar button tree for a role, filtered to enabled items. */

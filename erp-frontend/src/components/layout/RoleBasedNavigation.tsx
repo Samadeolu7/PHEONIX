@@ -25,6 +25,7 @@ import { BRAND } from '../../constants/brand';
 import NotificationDropdown from '../notifications/NotificationDropdown';
 import { api } from '../../services/api';
 import { branchService, Branch } from '../../services/branchService';
+import { getRoleRank } from '../../types/roles';
 
 // ---------------------------------------------------------------------------
 // BranchSwitcher — only visible to director / admin / operations / owner
@@ -203,9 +204,8 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
   // Get role color
   const roleColor = ROLE_COLORS[normalizedRole] || DEFAULT_ROLE_COLOR;
 
-  // Director and Principal bypass all permission checks — they see every module
-  const SUPERUSER_ROLES = ['Director', 'Principal'];
-  const isSuperUser = selectedRole ? SUPERUSER_ROLES.includes(selectedRole) : false;
+  // Rank 4+ (Principal, Director) bypass all permission checks — they see every module
+  const isSuperUser = getRoleRank(selectedRole) >= 4;
 
   // Filter modules based on user permissions (superusers always see all modules)
   const accessibleModules = NAV_MODULES.filter(

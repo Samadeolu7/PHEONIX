@@ -51,15 +51,16 @@ export const FunctionalNavigation: React.FC<FunctionalNavigationProps> = ({
   showIcons = true,
   showDescriptions = false,
 }) => {
-  const { user } = useAuth();
+  const { user, selectedRole } = useAuth();
+  const activeRole = selectedRole ?? (user?.roles?.[0] ?? null);
   const navigate = useNavigate();
   const location = useLocation();
   const [expandedCategories, setExpandedCategories] = useState<Set<FunctionalCategory>>(
-    new Set(['Financial Operations', 'Client Management']) // Default expanded categories
+    new Set(['Financial Operations', 'Client Management'])
   );
 
-  // Get navigation structure based on user role
-  const navigationStructure = getNavigationStructure(user?.role || null);
+  // Get navigation structure based on user role rank
+  const navigationStructure = getNavigationStructure(activeRole);
 
   const handleNavigate = (path: string) => {
     navigate(path);
@@ -88,7 +89,7 @@ export const FunctionalNavigation: React.FC<FunctionalNavigationProps> = ({
     return uniquePaths.size;
   };
 
-  if (!user?.role || Object.keys(navigationStructure).length === 0) {
+  if (!activeRole || Object.keys(navigationStructure).length === 0) {
     return (
       <div className={`p-4 text-center text-gray-500 ${className}`}>
         <p>No navigation items available for your role.</p>
@@ -183,7 +184,7 @@ export const FunctionalNavigation: React.FC<FunctionalNavigationProps> = ({
       {/* Role Information */}
       <div className="mt-6 p-3 bg-gray-50 rounded-lg border">
         <div className="text-xs text-gray-600">
-          <p className="font-medium">Current Role: {user.role}</p>
+          <p className="font-medium">Current Role: {activeRole}</p>
           <p className="mt-1">
             Access to {Object.values(navigationStructure).flat().length} pages across{' '}
             {Object.keys(navigationStructure).length} categories
@@ -217,11 +218,12 @@ export const CategoryNavigation: React.FC<CategoryNavigationProps> = ({
   className = '',
   onNavigate,
 }) => {
-  const { user } = useAuth();
+  const { user, selectedRole } = useAuth();
+  const activeRole = selectedRole ?? (user?.roles?.[0] ?? null);
   const navigate = useNavigate();
   const location = useLocation();
 
-  const navigationStructure = getNavigationStructure(user?.role || null);
+  const navigationStructure = getNavigationStructure(activeRole);
   const categoryRoutes = navigationStructure[category] || [];
 
   const handleNavigate = (path: string) => {

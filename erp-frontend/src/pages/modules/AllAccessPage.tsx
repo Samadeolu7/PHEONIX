@@ -33,8 +33,7 @@ const MODULE_NAMES = {
   administration: 'Administration',
 };
 
-// Roles that bypass all permission checks
-const SUPERUSER_ROLES = ['Director', 'Principal'];
+import { getRoleRank } from '../../types/roles';
 
 export const AllAccessPage: React.FC = () => {
   const { hasPermission } = usePermission();
@@ -45,8 +44,8 @@ export const AllAccessPage: React.FC = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [groupByModule, setGroupByModule] = useState(true);
 
-  // Director / Principal see every feature — no permission check needed
-  const isSuperUser = selectedRole ? SUPERUSER_ROLES.includes(selectedRole) : false;
+  // Rank 4+ (Principal, Director) see every feature — no permission check needed
+  const isSuperUser = getRoleRank(selectedRole) >= 4;
 
   // Get all accessible features across ALL modules
   const accessibleFeatures = useMemo(() => {

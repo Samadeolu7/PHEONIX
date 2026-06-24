@@ -26,10 +26,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { PermissionEditor } from '../settings/components/PermissionEditor';
 import { modulesData } from '@/config/permissionModules';
 
-// Roles that can see/edit role assignments in the user form
-const PRIVILEGED_ROLES = ['Director', 'Principal', 'Administrator'];
-// Only these roles are allowed to CREATE new users
-const USER_CREATION_ROLES = ['Director', 'Principal'];
+import { getRoleRank } from '../../types/roles';
+
+// Rank thresholds for user management actions
+const PRIVILEGED_MIN_RANK = 3;   // Administrator+ can see/edit role assignments
+const USER_CREATION_MIN_RANK = 4; // Principal+ can create new users
 
 const UserManagementPage: React.FC = () => {
   const toast = useToast();
@@ -38,9 +39,9 @@ const UserManagementPage: React.FC = () => {
 
   // Determine if the logged-in user has a privileged role (can manage role assignments)
   const currentUserRoles: string[] = (currentUser as any)?.roles || [];
-  const isPrivilegedUser = currentUserRoles.some(r => PRIVILEGED_ROLES.includes(r));
-  // Only Director / Principal may add new users
-  const isDirectorOrPrincipal = currentUserRoles.some(r => USER_CREATION_ROLES.includes(r));
+  const maxRank = Math.max(0, ...currentUserRoles.map(getRoleRank));
+  const isPrivilegedUser = maxRank >= PRIVILEGED_MIN_RANK;
+  const isDirectorOrPrincipal = maxRank >= USER_CREATION_MIN_RANK;
   const [activeTab, setActiveTab] = useState<'users' | 'roles' | 'statistics' | 'permissions'>(
     'users'
   );

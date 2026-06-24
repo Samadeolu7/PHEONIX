@@ -6,6 +6,7 @@ import { UserWithRole, UserRole } from '../types/roles';
 import { roleService } from '../services/roleService';
 import { tokenManager } from '../services/tokenManager';
 import { permissionService } from '@/services/permissionService';
+import { navConfigService } from '../services/navConfigService';
 
 // Use the real User type from authService
 type User = RealUser;
@@ -369,6 +370,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const userWithRole: UserWithRole | null = user
     ? roleService.combineUserWithRole(user, selectedRole || undefined)
     : null;
+
+  // Refresh nav config from server whenever the user first authenticates.
+  // This keeps the sidebar in sync across all devices without blocking rendering.
+  useEffect(() => {
+    if (user) {
+      navConfigService.fetchAll().catch(() => { /* non-fatal */ });
+    }
+  }, [user?.id]);
 
   // --- mount effect ---
   useEffect(() => {

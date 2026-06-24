@@ -4,8 +4,7 @@ import { User, Lock, Save, Eye, EyeOff, Shield } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { authService } from '@/services/authService';
 import { useToast } from '@/hooks/useToast';
-
-const PRIVILEGED_ROLES = ['Director', 'Principal', 'Administrator'];
+import { getRoleRank } from '@/types/roles';
 
 const UserProfilePage: React.FC = () => {
   const { user } = useAuth();
@@ -33,7 +32,7 @@ const UserProfilePage: React.FC = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const userRoles: string[] = (user as any)?.roles || [];
-  const isPrivileged = userRoles.some(r => PRIVILEGED_ROLES.includes(r));
+  const isPrivileged = Math.max(0, ...userRoles.map(getRoleRank)) >= 3;
 
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();

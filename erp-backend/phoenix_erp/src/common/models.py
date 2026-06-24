@@ -334,6 +334,29 @@ class BackdateRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
 # ── Financial Audit Log ───────────────────────────────────────────────────────
 
+class RoleNavigationConfig(models.Model):
+    """
+    Stores the sidebar button IDs that are enabled for a given role within a tenant.
+    One row per (tenant, role) pair.  Director configures from /settings/role-navigation
+    and changes propagate to every device at next page load.
+    """
+    tenant      = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='role_nav_configs')
+    role        = models.CharField(max_length=100, help_text='Role name, e.g. "Credit Officer"')
+    enabled_ids = models.JSONField(default=list, help_text='Ordered list of sidebar button IDs')
+    updated_by  = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='+'
+    )
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('tenant', 'role')
+        verbose_name = 'Role Navigation Config'
+
+    def __str__(self):
+        return f'{self.tenant} / {self.role}'
+
+
 class FinancialAuditLog(models.Model):
     """
     Immutable, append-only record of every financial operation.

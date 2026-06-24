@@ -3,9 +3,10 @@
 // Scope-aware, elevation-conscious permission service.
 // Reads from the login response and caches in localStorage.
 
-// Legacy superuser roles kept for backward compat with any code that still
-// calls isSuperUser(). New code should use hasPermission / getScope instead.
-const SUPERUSER_ROLES = ['Director', 'Principal', 'MD / CEO', 'Operations Manager'];
+import { getRoleRank } from '../types/roles';
+
+// Superuser threshold — rank 4+ (Principal, Director) bypass fine-grained permission checks.
+const SUPERUSER_MIN_RANK = 4;
 
 // Matches the SCOPE_RANK in permissions/models.py
 const SCOPE_RANK: Record<string, number> = {
@@ -174,7 +175,7 @@ class PermissionService {
 
   isSuperUser(): boolean {
     const roles = this.getUserRoles();
-    return roles.some(r => SUPERUSER_ROLES.includes(r));
+    return roles.some(r => getRoleRank(r) >= SUPERUSER_MIN_RANK);
   }
 
   isAuditor(): boolean {

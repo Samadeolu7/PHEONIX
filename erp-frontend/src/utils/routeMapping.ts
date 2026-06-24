@@ -1,16 +1,16 @@
-// Route mapping utility - Maps all existing App.tsx routes to functional categories
-// Based on Phoenix Software Access Table requirements
+// Route mapping utility — access control based on rank (1–5) not hardcoded role names.
+// Rank 5 = Director, 4 = Principal, 3 = Administrator, 2 = Officer-level, 1 = Basic staff
 
-import { UserRole } from '../types/roles';
+import { getRoleRank } from '../types/roles';
 import { FunctionalCategory, PageId } from '../types/permissions';
 
-// Extended route interface for comprehensive mapping
 export interface RouteMapping {
   path: string;
   pageId: PageId;
   title: string;
   category: FunctionalCategory;
-  roles: UserRole[];
+  /** Minimum rank required to access this route. */
+  minRank: number;
   component: string;
   description?: string;
   icon?: string;
@@ -18,16 +18,14 @@ export interface RouteMapping {
   isEnhanced?: boolean;
 }
 
-// Complete route mappings for all existing App.tsx routes
 export const ROUTE_MAPPINGS: RouteMapping[] = [
-  // User Management Routes'
-  // User Management Routes
+  // ── User Management ────────────────────────────────────────────────────────
   {
     path: '/settings',
     pageId: 'users.settings',
     title: 'User Management',
     category: 'User Management',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'UserManagementPage',
     icon: 'Users',
     description: 'Manage system users and their access',
@@ -37,7 +35,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'users.add',
     title: 'User Management',
     category: 'User Management',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'UserManagementPage',
     icon: 'Users',
     description: 'Manage system users and their access',
@@ -47,7 +45,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'users.edit_roles_permissions',
     title: 'Roles & Permissions Matrix',
     category: 'User Management',
-    roles: ['Director', 'Principal'],
+    minRank: 4,
     component: 'RolesPermissionsMatrixPage',
     icon: 'Shield',
     description: 'Configure role-based permissions',
@@ -57,7 +55,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'users.branch_tenant_management',
     title: 'Branch Management',
     category: 'User Management',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'BranchListPage',
     icon: 'Building',
     description: 'Manage organizational branches',
@@ -67,7 +65,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'users.branch_tenant_management',
     title: 'Tenant Management',
     category: 'User Management',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'TenantListPage',
     icon: 'Building2',
     description: 'Manage system tenants',
@@ -77,19 +75,29 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'users.edit_roles_permissions',
     title: 'Access Control',
     category: 'User Management',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'AccessControlPage',
     icon: 'Lock',
     description: 'Configure system access controls',
   },
+  {
+    path: '/settings/role-navigation',
+    pageId: 'admin.system_settings',
+    title: 'Navigation Configuration',
+    category: 'System Administration',
+    minRank: 4,
+    component: 'RoleSidebarConfigPage',
+    icon: 'Navigation',
+    description: 'Configure sidebar navigation per role',
+  },
 
-  // Financial Operations Routes
+  // ── Financial Operations ────────────────────────────────────────────────────
   {
     path: '/sales/invoices',
     pageId: 'financial.invoice_generation',
     title: 'Invoice Management',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'InvoicesList',
     icon: 'FileText',
     description: 'Create and manage invoices',
@@ -99,7 +107,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.invoice_generation',
     title: 'Create Invoice',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'CreateInvoice',
     icon: 'FilePlus',
     description: 'Create new invoices',
@@ -109,7 +117,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.invoice_generation',
     title: 'Bulk Invoice Creation',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BulkInvoiceWizardDemo',
     icon: 'FileStack',
     description: 'Create multiple invoices at once',
@@ -119,7 +127,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'Chart of Accounts',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'AccountsListPage',
     icon: 'BookOpen',
     description: 'Manage chart of accounts',
@@ -129,7 +137,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'Create Account',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'UnifiedAccountCreationPage',
     icon: 'Plus',
     description: 'Create new accounts',
@@ -139,7 +147,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.receivables_dashboard',
     title: 'Receivables Dashboard',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'ReceivablesDashboard',
     icon: 'TrendingUp',
     description: 'Monitor accounts receivable',
@@ -149,7 +157,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.receivables_dashboard',
     title: 'Receivables List',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'ReceivablesList',
     icon: 'List',
     description: 'View all receivables',
@@ -159,7 +167,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.payment_requests',
     title: 'Record Payment',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'RecordPayment',
     icon: 'CreditCard',
     description: 'Record customer payments',
@@ -169,7 +177,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'reports.aging_reports',
     title: 'Aging Report',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'AgingReport',
     icon: 'Clock',
     description: 'View receivables aging analysis',
@@ -179,7 +187,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.credit_notes',
     title: 'Credit Notes',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'CreditNotesList',
     icon: 'FileX',
     description: 'Manage credit notes',
@@ -189,7 +197,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.daily_posting',
     title: 'Treasury Dashboard',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'TreasuryDashboard',
     icon: 'Wallet',
     description: 'Treasury management dashboard',
@@ -199,7 +207,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.daily_posting',
     title: 'Bank Reconciliation',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BankReconciliationPage',
     icon: 'CreditCard',
     description: 'Reconcile bank statements',
@@ -209,7 +217,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.daily_posting',
     title: 'Petty Cash',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'PettyCashDashboard',
     icon: 'Wallet',
     description: 'Manage petty cash funds and vouchers',
@@ -219,7 +227,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.daily_posting',
     title: 'Petty Cash Vouchers',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'PettyCashVoucherList',
     icon: 'Receipt',
     description: 'Manage petty cash vouchers',
@@ -229,7 +237,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.payment_requests',
     title: 'Expenses',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'ExpenseListPage',
     icon: 'DollarSign',
     description: 'Manage general expenses',
@@ -239,7 +247,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.payment_requests',
     title: 'Prepaid Expenses',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'PrepaidExpenseListPage',
     icon: 'CalendarDays',
     description: 'Manage prepaid expense amortization',
@@ -249,7 +257,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.payment_requests',
     title: 'Accounts Payable',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'PayablesListPage',
     icon: 'Receipt',
     description: 'Manage accounts payable',
@@ -259,7 +267,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'Banks',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BankListPage',
     icon: 'Building2',
     description: 'Manage banks',
@@ -269,7 +277,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'Bank Accounts',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BankAccountListPage',
     icon: 'CreditCard',
     description: 'Manage bank accounts and GL links',
@@ -279,7 +287,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'New Bank Account',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'BankAccountFormPage',
     icon: 'CreditCard',
     description: 'Create a new bank account',
@@ -289,7 +297,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'Bank Account Detail',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BankAccountDetailPage',
     icon: 'CreditCard',
     description: 'View bank account detail and ledger',
@@ -299,7 +307,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'Inter-bank Transfers',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BankTransferListPage',
     icon: 'ArrowLeftRight',
     description: 'Manage bank-to-bank transfers',
@@ -309,7 +317,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'New Inter-bank Transfer',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BankTransferFormPage',
     icon: 'ArrowLeftRight',
     description: 'Create a new inter-bank transfer',
@@ -319,7 +327,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'Bank Payments',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BankPaymentListPage',
     icon: 'Receipt',
     description: 'Track supplier and expense bank payments',
@@ -329,39 +337,39 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'financial.accounts_management',
     title: 'New Bank Payment',
     category: 'Financial Operations',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'BankPaymentFormPage',
     icon: 'Receipt',
     description: 'Create a bank payment for suppliers or expenses',
   },
 
-  // Student Management Routes
+  // ── Client Management ─────────────────────────────────────────────────────
   {
     path: '/clients',
     pageId: 'students.client_management',
     title: 'Client Management',
     category: 'Client Management',
-    roles: ['Director', 'Principal', 'Administrator', 'Registrar'],
+    minRank: 1,
     component: 'ClientListPage',
     icon: 'Users',
-    description: 'Manage student/client records',
+    description: 'Manage client records',
   },
   {
     path: '/clients/create',
     pageId: 'students.registration',
     title: 'Client Registration',
     category: 'Client Management',
-    roles: ['Director', 'Principal', 'Administrator', 'Registrar'],
+    minRank: 1,
     component: 'ClientFormPage',
     icon: 'UserPlus',
-    description: 'Register new clients/students',
+    description: 'Register new clients',
   },
   {
     path: '/clients/classifications',
     pageId: 'students.client_management',
     title: 'Client Classifications',
     category: 'Client Management',
-    roles: ['Director', 'Principal', 'Administrator', 'Registrar'],
+    minRank: 1,
     component: 'ClientClassificationsPage',
     icon: 'Tags',
     description: 'Manage client classifications',
@@ -371,7 +379,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'students.entitlements',
     title: 'Student Entitlements',
     category: 'Client Management',
-    roles: ['Director', 'Principal', 'Registrar', 'Officer'],
+    minRank: 1,
     component: 'EntitlementsList',
     icon: 'Award',
     description: 'Manage student entitlements',
@@ -381,7 +389,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'students.entitlements',
     title: 'Entitlements Dashboard',
     category: 'Client Management',
-    roles: ['Director', 'Principal', 'Registrar', 'Officer'],
+    minRank: 1,
     component: 'EntitlementDashboard',
     icon: 'BarChart3',
     description: 'Entitlements overview dashboard',
@@ -391,7 +399,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'students.fee_structures',
     title: 'Fee Structures',
     category: 'Client Management',
-    roles: ['Director', 'Principal', 'Registrar'],
+    minRank: 3,
     component: 'IncomeFeeStructureListPage',
     icon: 'DollarSign',
     description: 'Manage fee structures',
@@ -399,31 +407,31 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
   {
     path: '/receivables/statements',
     pageId: 'students.statements',
-    title: 'Student Statements',
+    title: 'Client Statements',
     category: 'Client Management',
-    roles: ['Director', 'Principal', 'Registrar', 'Officer'],
+    minRank: 1,
     component: 'CustomerStatements',
     icon: 'Receipt',
-    description: 'Generate student statements',
+    description: 'Generate client statements',
   },
   {
     path: '/discounts/programs',
     pageId: 'students.entitlements',
     title: 'Discount Programs',
     category: 'Client Management',
-    roles: ['Director', 'Principal', 'Registrar'],
+    minRank: 3,
     component: 'DiscountProgramsList',
     icon: 'Percent',
     description: 'Manage discount/scholarship programs',
   },
 
-  // Reports & Analytics Routes
+  // ── Reports & Analytics ────────────────────────────────────────────────────
   {
     path: '/reports/financial/trial-balance',
     pageId: 'reports.trial_balance',
     title: 'Trial Balance',
     category: 'Reports & Analytics',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'TrialBalancePage',
     icon: 'Calculator',
     description: 'Generate trial balance reports',
@@ -433,27 +441,27 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'reports.profit_loss',
     title: 'Statement of Profit or Loss',
     category: 'Reports & Analytics',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'ProfitLossPage',
     icon: 'BarChart3',
-    description: 'FIRS-compliant Statement of Profit or Loss and Other Comprehensive Income',
+    description: 'Statement of Profit or Loss',
   },
   {
     path: '/reports/financial/balance-sheet',
     pageId: 'reports.balance_sheet',
     title: 'Statement of Financial Position',
     category: 'Reports & Analytics',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'BalanceSheetPage',
     icon: 'Scale',
-    description: 'FIRS/IAS 1-compliant Statement of Financial Position (formerly Balance Sheet)',
+    description: 'Statement of Financial Position',
   },
   {
     path: '/reports',
     pageId: 'reports.activity_reports',
     title: 'Reports Center',
     category: 'Reports & Analytics',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'ReportsListPage',
     icon: 'FileBarChart',
     description: 'Access all system reports',
@@ -463,7 +471,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'reports.aging_reports',
     title: 'Advanced Reporting',
     category: 'Reports & Analytics',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'AdvancedReporting',
     icon: 'TrendingUp',
     description: 'Advanced receivables reporting',
@@ -473,7 +481,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'reports.financial_dashboard',
     title: 'Payment Trends',
     category: 'Reports & Analytics',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'PaymentTrends',
     icon: 'LineChart',
     description: 'Analyze payment trends',
@@ -483,7 +491,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'reports.payroll_reports',
     title: 'Payroll Reports',
     category: 'Reports & Analytics',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'PayrollListPage',
     icon: 'Wallet',
     description: 'Generate payroll reports',
@@ -493,19 +501,19 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'reports.inventory_reports',
     title: 'Inventory Reports',
     category: 'Reports & Analytics',
-    roles: ['Director', 'Principal', 'Administrator', 'Officer'],
+    minRank: 2,
     component: 'StockValuationReportPage',
     icon: 'Package',
     description: 'Generate inventory reports',
   },
 
-  // Operations Routes
+  // ── Operations ─────────────────────────────────────────────────────────────
   {
     path: '/procurement',
     pageId: 'operations.procurement_dashboard',
     title: 'Procurement Dashboard',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'ProcurementIndexPage',
     icon: 'ShoppingCart',
     description: 'Procurement management dashboard',
@@ -515,7 +523,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.purchase_orders',
     title: 'Purchase Orders',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'PurchaseOrderListPage',
     icon: 'ShoppingBag',
     description: 'Manage purchase orders',
@@ -525,7 +533,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.purchase_orders',
     title: 'Purchase Requisitions',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'RequisitionListPage',
     icon: 'FileText',
     description: 'Manage purchase requisitions',
@@ -535,7 +543,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.supplier_management',
     title: 'Supplier Management',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'SupplierListPage',
     icon: 'Truck',
     description: 'Manage suppliers',
@@ -545,7 +553,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.goods_receipt',
     title: 'Goods Receipt Notes',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'GRNListPage',
     icon: 'PackageCheck',
     description: 'Manage goods receipt notes',
@@ -555,7 +563,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.supplier_management',
     title: 'Supplier Quotes',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'QuoteListPage',
     icon: 'FileSearch',
     description: 'Manage supplier quotes',
@@ -565,7 +573,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Inventory Management',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'InventoryIndexPage',
     icon: 'Warehouse',
     description: 'Inventory management dashboard',
@@ -575,7 +583,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Inventory Items',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'InventoryItemsPage',
     icon: 'Package',
     description: 'Manage inventory items',
@@ -585,7 +593,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.stock_movements',
     title: 'Stock Movements',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'StockMovementsPage',
     icon: 'ArrowRightLeft',
     description: 'Track stock movements',
@@ -595,7 +603,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Stock Locations',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'StockLocationsPage',
     icon: 'MapPin',
     description: 'Manage stock locations',
@@ -605,7 +613,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.stock_movements',
     title: 'Stock Adjustments',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'StockAdjustmentsListPage',
     icon: 'Settings',
     description: 'Manage stock adjustments',
@@ -615,7 +623,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Human Resources',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 2,
     component: 'HRIndexPage',
     icon: 'Users',
     description: 'HR management dashboard',
@@ -625,7 +633,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Staff Management',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'StaffListPage',
     icon: 'UserCheck',
     description: 'Manage staff records',
@@ -635,7 +643,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Attendance Management',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 2,
     component: 'AttendanceListPage',
     icon: 'Clock',
     description: 'Manage staff attendance',
@@ -645,7 +653,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Leave Management',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 2,
     component: 'LeaveRequestsListPage',
     icon: 'Calendar',
     description: 'Manage leave requests',
@@ -655,7 +663,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Resource Consumption',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'ResourceConsumptionListPage',
     icon: 'Zap',
     description: 'Manage resource consumption',
@@ -665,17 +673,17 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Log Fuel Receipt',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'FuelLogFormPage',
     icon: 'Droplets',
-    description: 'Simple form to record fuel received by a vehicle or staff member',
+    description: 'Record fuel received by a vehicle or staff member',
   },
   {
     path: '/expenses/resources',
     pageId: 'operations.inventory_management',
     title: 'Resource Management',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'ResourceListPage',
     icon: 'Layers',
     description: 'Manage resources',
@@ -685,7 +693,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Voucher Management',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Officer'],
+    minRank: 2,
     component: 'VoucherListPage',
     icon: 'Ticket',
     description: 'Manage vouchers',
@@ -695,19 +703,19 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'operations.inventory_management',
     title: 'Asset Management',
     category: 'Operations',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'AssetListPage',
     icon: 'HardDrive',
     description: 'Manage fixed assets',
   },
 
-  // System Administration Routes
+  // ── System Administration ──────────────────────────────────────────────────
   {
     path: '/admin/workflows',
     pageId: 'admin.workflow_management',
     title: 'Workflow Management',
     category: 'System Administration',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'AdminWorkflowsPage',
     icon: 'GitBranch',
     description: 'Configure system workflows',
@@ -717,7 +725,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'admin.workflow_management',
     title: 'Automation Templates',
     category: 'System Administration',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'AutomationTemplatesPage',
     icon: 'Zap',
     description: 'Manage automation templates',
@@ -727,7 +735,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'admin.workflow_management',
     title: 'Automation Runs',
     category: 'System Administration',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'AutomationRunsPage',
     icon: 'Play',
     description: 'Monitor automation runs',
@@ -737,7 +745,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'admin.system_settings',
     title: 'Form Management',
     category: 'System Administration',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'AdminFormsPage',
     icon: 'FileText',
     description: 'Manage system forms',
@@ -747,7 +755,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'admin.audit_logs',
     title: 'Form Submissions',
     category: 'System Administration',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'AdminSubmissionsPage',
     icon: 'Send',
     description: 'View form submissions',
@@ -757,7 +765,7 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'admin.dashboard_builder',
     title: 'Dashboard Builder',
     category: 'System Administration',
-    roles: ['Director', 'Principal', 'Administrator'],
+    minRank: 3,
     component: 'DashboardCreatePage',
     icon: 'Layout',
     description: 'Build custom dashboards',
@@ -767,101 +775,58 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     pageId: 'admin.audit_logs',
     title: 'Approval Management',
     category: 'System Administration',
-    // All four roles can VIEW the approvals page; only APPROVER_ROLES can act (see types/roles.ts)
-    roles: ['Director', 'Principal', 'Administrator', 'Registrar'],
+    minRank: 3,
     component: 'ApprovalsPage',
     icon: 'CheckCircle',
     description: 'View and manage system approvals',
   },
 ];
 
-// Helper functions for route mapping
-export const getRoutesByCategory = (category: FunctionalCategory): RouteMapping[] => {
-  return ROUTE_MAPPINGS.filter(route => route.category === category);
+// ── Helper functions ───────────────────────────────────────────────────────────
+
+export const getRoutesByCategory = (category: FunctionalCategory): RouteMapping[] =>
+  ROUTE_MAPPINGS.filter(route => route.category === category);
+
+export const getRoutesByRole = (role: string): RouteMapping[] => {
+  const rank = getRoleRank(role);
+  return ROUTE_MAPPINGS.filter(route => rank >= route.minRank);
 };
 
-export const getRoutesByRole = (role: UserRole): RouteMapping[] => {
-  return ROUTE_MAPPINGS.filter(route => route.roles.includes(role));
-};
+export const getRouteMapping = (path: string): RouteMapping | undefined =>
+  ROUTE_MAPPINGS.find(route => route.path === path);
 
-export const getRouteMapping = (path: string): RouteMapping | undefined => {
-  return ROUTE_MAPPINGS.find(route => route.path === path);
-};
+export const getRouteMappingByPageId = (pageId: PageId): RouteMapping[] =>
+  ROUTE_MAPPINGS.filter(route => route.pageId === pageId);
 
-export const getRouteMappingByPageId = (pageId: PageId): RouteMapping[] => {
-  return ROUTE_MAPPINGS.filter(route => route.pageId === pageId);
-};
+export const getAllCategories = (): FunctionalCategory[] =>
+  [...new Set(ROUTE_MAPPINGS.map(route => route.category))];
 
-// Get all unique categories
-export const getAllCategories = (): FunctionalCategory[] => {
-  const categories = new Set(ROUTE_MAPPINGS.map(route => route.category));
-  return Array.from(categories);
-};
-
-// Get navigation structure organized by categories
-export const getNavigationStructure = (userRole: UserRole | null) => {
+export const getNavigationStructure = (userRole: string | null) => {
   if (!userRole) return {};
-
   const userRoutes = getRoutesByRole(userRole);
   const structure: Record<FunctionalCategory, RouteMapping[]> = {} as Record<
     FunctionalCategory,
     RouteMapping[]
   >;
-
   userRoutes.forEach(route => {
-    if (!structure[route.category]) {
-      structure[route.category] = [];
-    }
+    if (!structure[route.category]) structure[route.category] = [];
     structure[route.category].push(route);
   });
-
   return structure;
 };
 
-// Check if user can access a specific route
-export const canUserAccessRoute = (path: string, userRole: UserRole | null): boolean => {
-  console.log('🔍 canUserAccessRoute Debug:', {
-    path,
-    userRole,
-    timestamp: new Date().toISOString(),
-  });
-
-  if (!userRole) {
-    console.log('❌ canUserAccessRoute: No user role provided');
-    return false;
-  }
-
-  // Director and Principal roles have access to all pages - bypass route restrictions
-  if (userRole === 'Director' || userRole === 'Principal') {
-    console.log('✅ canUserAccessRoute: Superuser role - allowing access to all pages', {
-      path,
-      userRole,
-    });
-    return true;
-  }
+export const canUserAccessRoute = (path: string, userRole: string | null): boolean => {
+  if (!userRole) return false;
 
   const route = getRouteMapping(path);
-  if (!route) {
-    console.log('✅ canUserAccessRoute: Route not in mapping, allowing access', { path });
-    return true; // Allow access to unmapped routes
-  }
+  if (!route) return true; // unmapped routes are open
 
-  const hasAccess = route.roles.includes(userRole);
-  console.log('🔍 canUserAccessRoute Result:', {
-    path,
-    userRole,
-    requiredRoles: route.roles,
-    hasAccess,
-    routeTitle: route.title,
-  });
-
-  return hasAccess;
+  const userRank = getRoleRank(userRole);
+  return userRank >= route.minRank;
 };
 
-// Get breadcrumb navigation for a route
 export const getBreadcrumbs = (path: string): Array<{ label: string; path?: string }> => {
   const route = getRouteMapping(path);
   if (!route) return [{ label: 'Home', path: '/' }];
-
   return [{ label: 'Home', path: '/' }, { label: route.category }, { label: route.title }];
 };

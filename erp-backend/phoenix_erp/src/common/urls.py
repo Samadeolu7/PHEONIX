@@ -1,7 +1,7 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path, include
 
-from .views import MenuGroupViewSet, MenuItemViewSet, health_check, migration_diagnostics, BusinessDayViewSet, BackdateRequestViewSet
+from .views import MenuGroupViewSet, MenuItemViewSet, health_check, migration_diagnostics, BusinessDayViewSet, BackdateRequestViewSet, RoleNavigationConfigView
 from .reference_views import (
     trace_reference,
     search_references,
@@ -24,6 +24,7 @@ urlpatterns = [
     path('references/trace/<str:reference_number>/', trace_reference, name='trace-reference'),
     path('references/search/', search_references, name='search-references'),
     path('references/<str:reference_number>/children/', get_children, name='get-children'),
+    path('navigation/config/', RoleNavigationConfigView.as_view(), name='role-nav-config'),
     path('health/', health_check, name='health-check'),
     path('diagnostics/migration/', migration_diagnostics, name='migration-diagnostics'),
 ]
