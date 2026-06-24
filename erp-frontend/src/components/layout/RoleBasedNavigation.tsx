@@ -1,5 +1,5 @@
 // RoleBasedNavigation - Horizontal navigation bar with permission-based modules
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Home,
@@ -15,12 +15,91 @@ import {
   Clock,
   LayoutDashboard,
   Navigation,
+  GitBranch,
+  ChevronDown,
+  Check,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
 import { BRAND } from '../../constants/brand';
 import NotificationDropdown from '../notifications/NotificationDropdown';
 import { api } from '../../services/api';
+import { branchService, Branch } from '../../services/branchService';
+
+// ---------------------------------------------------------------------------
+// BranchSwitcher — only visible to director / admin / operations / owner
+// ---------------------------------------------------------------------------
+function BranchSwitcher() {
+  const { activeBranch, setActiveBranch, isDirectorPlus } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [loading, setLoading] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || branches.length > 0) return;
+    setLoading(true);
+    branchService.listBranches()
+      .then(setBranches)
+      .catch(() => setBranches([]))
+      .finally(() => setLoading(false));
+  }, [open, branches.length]);
+
+  if (!isDirectorPlus) return null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+        title="Switch branch"
+      >
+        <GitBranch size={13} />
+        <span className="hidden md:inline">{activeBranch ? activeBranch.name : 'All Branches'}</span>
+        <ChevronDown size={11} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-[9999] mt-1.5 min-w-[200px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
+          <button
+            type="button"
+            onClick={() => { setActiveBranch(null); setOpen(false); }}
+            className={`flex w-full items-center justify-between border-b border-gray-100 px-3.5 py-2.5 text-left text-sm text-gray-900 transition-colors hover:bg-gray-50 ${!activeBranch ? 'bg-blue-50 font-medium' : ''}`}
+          >
+            All Branches
+            {!activeBranch && <Check size={13} className="text-blue-600" />}
+          </button>
+
+          {loading && (
+            <p className="px-3.5 py-2 text-xs text-gray-500">Loading…</p>
+          )}
+
+          {branches.map(b => (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => { setActiveBranch({ id: b.id, name: b.name }); setOpen(false); }}
+              className={`flex w-full items-center justify-between px-3.5 py-2.5 text-left text-sm text-gray-900 transition-colors hover:bg-gray-50 ${activeBranch?.id === b.id ? 'bg-blue-50 font-medium' : ''}`}
+            >
+              <span>{b.name}</span>
+              {activeBranch?.id === b.id && <Check size={13} className="text-blue-600" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Module definitions with their paths and required permissions
 const NAV_MODULES = [
@@ -247,6 +326,10 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 <Clock className="h-4 w-4" />
                 <span>Approvals</span>
               </Link>
+
+              {/* Branch Switcher — director/admin/operations/owner only */}
+              <BranchSwitcher />
+
               {/* Role Badge - Show normalized role */}
               <div className="hidden sm:block">
                 <span

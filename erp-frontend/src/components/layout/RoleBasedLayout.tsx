@@ -1,5 +1,6 @@
 // RoleBasedLayout - Main layout component with role-based navigation
 import React, { useState } from 'react';
+import { GitBranch } from 'lucide-react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { RoleBasedNavigation } from './RoleBasedNavigation';
 import { useAuth } from '../../contexts/AuthContext';
@@ -10,7 +11,7 @@ interface RoleBasedLayoutProps {
 }
 
 const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
-  const { user, selectedRole } = useAuth();
+  const { user, selectedRole, activeBranch, isDirectorPlus } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -56,17 +57,23 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
         role={effectiveRole}
       />
 
-      {/* Main Content */}
-      <main className="pt-16">
-        {' '}
-        {/* Add padding-top to account for fixed navigation */}
+      {/* All-branches read-only banner — sits directly below the fixed 64px navbar */}
+      {isDirectorPlus && !activeBranch && (
+        <div className="fixed left-0 right-0 top-16 z-40 flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-6 py-1.5 text-sm font-medium text-amber-800">
+          <GitBranch size={13} />
+          Viewing all branches — select a branch from the top bar to create or edit records.
+        </div>
+      )}
+
+      {/* Main Content — extra top padding when banner is visible */}
+      <main className={`${isDirectorPlus && !activeBranch ? 'pt-24' : 'pt-16'}`}>
         {children || <Outlet />}
       </main>
 
       {/* Mobile menu overlay */}
       {isMobileMenuOpen && (
         <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+          className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
           onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
