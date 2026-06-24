@@ -14,12 +14,16 @@ import {
   CreditCard,
   CheckCircle,
   DollarSign,
+  RotateCcw,
+  Printer,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   loanService,
   LoanAccount,
   LoanRepaymentSchedule,
   RepayLoanPayload,
+  RestructureLoanPayload,
 } from '../../services/loanService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -259,6 +263,147 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
   );
 }
 
+// ── Restructure Modal ──────────────────────────────────────────────────────
+
+interface RestructureModalProps {
+  loan: LoanAccount;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
+  const [newTerm, setNewTerm] = useState(String(loan.term_months));
+  const [newTermUnit, setNewTermUnit] = useState(loan.term_unit ?? 'months');
+  const [newRate, setNewRate] = useState(loan.interest_rate);
+  const [newFreq, setNewFreq] = useState(loan.repayment_frequency);
+  const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
+  const [reason, setReason] = useState('');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newTerm || !newRate || !newFreq) {
+      setError('All fields are required.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload: RestructureLoanPayload = {
+        new_term: parseInt(newTerm, 10),
+        new_term_unit: newTermUnit as 'days' | 'weeks' | 'months',
+        new_interest_rate: newRate,
+        new_repayment_frequency: newFreq as RestructureLoanPayload['new_repayment_frequency'],
+        effective_date: effectiveDate,
+        reason,
+        notes,
+      };
+      await loanService.restructureLoan(loan.id, payload);
+      setSuccess(true);
+      setTimeout(() => { onSuccess(); }, 1200);
+    } catch (e: unknown) {
+      const err = e as { detail?: string; message?: string };
+      setError(err?.detail ?? err?.message ?? 'Restructure failed.');
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl overflow-y-auto max-h-[90vh]">
+        <button type="button" aria-label="Close" onClick={onClose}
+          className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100">
+          <X size={18} />
+        </button>
+        <h2 className="mb-1 text-lg font-semibold text-gray-900">Restructure Loan</h2>
+        <p className="mb-4 text-sm text-gray-500">
+          {loan.loan_number} — Outstanding: ₦{fmt(loan.outstanding_principal)}
+        </p>
+        <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+          Old schedule will be cancelled. A new schedule is generated from outstanding principal using the new terms.
+        </div>
+        {success ? (
+          <div className="flex flex-col items-center py-6 text-center">
+            <CheckCircle size={40} className="mb-2 text-green-500" />
+            <p className="font-medium text-gray-900">Loan restructured successfully</p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="rs-term" className="mb-1 block text-sm font-medium text-gray-700">New Term</label>
+                <input id="rs-term" type="number" min="1" title="New loan term" value={newTerm} onChange={e => setNewTerm(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
+              </div>
+              <div>
+                <label htmlFor="rs-term-unit" className="mb-1 block text-sm font-medium text-gray-700">Term Unit</label>
+                <select id="rs-term-unit" title="Term unit" value={newTermUnit} onChange={e => setNewTermUnit(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                  <option value="days">Days</option>
+                  <option value="weeks">Weeks</option>
+                  <option value="months">Months</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="rs-rate" className="mb-1 block text-sm font-medium text-gray-700">New Interest Rate (%)</label>
+                <input id="rs-rate" type="number" step="0.01" min="0" title="New annual interest rate" value={newRate} onChange={e => setNewRate(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
+              </div>
+              <div>
+                <label htmlFor="rs-freq" className="mb-1 block text-sm font-medium text-gray-700">Repayment Frequency</label>
+                <select id="rs-freq" title="Repayment frequency" value={newFreq} onChange={e => setNewFreq(e.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="biweekly">Bi-weekly</option>
+                  <option value="monthly">Monthly</option>
+                  <option value="quarterly">Quarterly</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label htmlFor="rs-date" className="mb-1 block text-sm font-medium text-gray-700">Effective Date</label>
+              <input id="rs-date" type="date" title="Restructure effective date" value={effectiveDate} onChange={e => setEffectiveDate(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
+            </div>
+            <div>
+              <label htmlFor="rs-reason" className="mb-1 block text-sm font-medium text-gray-700">Reason</label>
+              <input id="rs-reason" type="text" title="Restructure reason" value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Financial hardship, Business downturn"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+            </div>
+            <div>
+              <label htmlFor="rs-notes" className="mb-1 block text-sm font-medium text-gray-700">Notes</label>
+              <textarea id="rs-notes" title="Additional notes" value={notes} onChange={e => setNotes(e.target.value)} rows={2}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+            </div>
+            {error && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle size={14} />{error}
+              </div>
+            )}
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={submitting}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
+                {submitting ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                Restructure Loan
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function LoanAccountDetailPage() {
@@ -271,6 +416,7 @@ export default function LoanAccountDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showRepayModal, setShowRepayModal] = useState(false);
+  const [showRestructureModal, setShowRestructureModal] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -353,6 +499,8 @@ export default function LoanAccountDetailPage() {
   const isActive = loan.status === 'active' || loan.status === 'disbursed';
   const isOverdue = loan.days_in_arrears > 0 && isActive;
 
+  const canRestructure = ['active', 'disbursed', 'defaulted'].includes(loan.status);
+
   return (
     <div className="min-h-screen bg-gray-50">
       {showRepayModal && (
@@ -362,6 +510,17 @@ export default function LoanAccountDetailPage() {
           onClose={() => setShowRepayModal(false)}
           onSuccess={() => {
             setShowRepayModal(false);
+            load();
+          }}
+        />
+      )}
+
+      {showRestructureModal && (
+        <RestructureModal
+          loan={loan}
+          onClose={() => setShowRestructureModal(false)}
+          onSuccess={() => {
+            setShowRestructureModal(false);
             load();
           }}
         />
@@ -390,6 +549,12 @@ export default function LoanAccountDetailPage() {
                     {loan.days_in_arrears}d overdue
                   </span>
                 )}
+                {loan.interest_suspended && (
+                  <span className="flex items-center gap-1 rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-700">
+                    <ShieldAlert size={11} />
+                    Interest Suspended (NPL)
+                  </span>
+                )}
               </div>
               <p className="text-sm text-gray-500">{loan.client_name} — {loan.product_name}</p>
             </div>
@@ -403,6 +568,14 @@ export default function LoanAccountDetailPage() {
               title="Refresh"
             >
               <RefreshCw size={16} />
+            </button>
+
+            <button
+              onClick={() => window.open(`/loans/accounts/${loan.id}/statement`, '_blank')}
+              className="rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-50"
+              title="Print Loan Statement"
+            >
+              <Printer size={16} />
             </button>
 
             {loan.status === 'pending' && (
@@ -435,6 +608,16 @@ export default function LoanAccountDetailPage() {
               >
                 {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                 Approve
+              </button>
+            )}
+
+            {canRestructure && (
+              <button
+                onClick={() => setShowRestructureModal(true)}
+                className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"
+              >
+                <RotateCcw size={14} />
+                Restructure
               </button>
             )}
 
@@ -519,6 +702,39 @@ export default function LoanAccountDetailPage() {
                 <div>
                   <p className="text-gray-500">Days in Arrears</p>
                   <p className="font-semibold text-red-600">{loan.days_in_arrears} days (₦{fmt(loan.arrears_amount)})</p>
+                </div>
+              )}
+              {loan.contractual_interest_total && parseFloat(loan.contractual_interest_total) > 0 && (
+                <div>
+                  <p className="text-gray-500">Contractual Interest (Total)</p>
+                  <p className="font-semibold text-indigo-700">₦{fmt(loan.contractual_interest_total)}</p>
+                </div>
+              )}
+            </div>
+
+            {/* CBN Risk & Provision Row */}
+            <div className="mt-4 flex flex-wrap items-center gap-4 rounded-lg bg-gray-50 px-4 py-3 text-sm">
+              <div>
+                <span className="text-gray-500">CBN Classification: </span>
+                <span className={`font-medium capitalize ${
+                  loan.risk_classification === 'performing' ? 'text-green-700' :
+                  loan.risk_classification === 'watch' ? 'text-yellow-700' :
+                  loan.risk_classification === 'substandard' ? 'text-orange-700' :
+                  'text-red-700'
+                }`}>{loan.risk_classification ?? '—'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">Provision Rate: </span>
+                <span className="font-medium text-gray-800">{loan.provision_pct ?? '—'}%</span>
+              </div>
+              <div>
+                <span className="text-gray-500">Provision Amount: </span>
+                <span className="font-medium text-red-700">₦{fmt(loan.provision_amount ?? '0')}</span>
+              </div>
+              {loan.interest_suspended && (
+                <div className="flex items-center gap-1 text-orange-700">
+                  <ShieldAlert size={13} />
+                  <span className="font-medium">Interest suspended since {fmtDate(loan.interest_suspended_at)}</span>
                 </div>
               )}
             </div>

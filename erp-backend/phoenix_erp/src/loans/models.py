@@ -220,12 +220,42 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text="Additional product-specific configuration"
     )
     
+    # ── CBN provisioning & accrual GL accounts ───────────────────────────
+    provision_expense_account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='loan_products_provision_expense',
+        help_text='P&L account debited when monthly provision is posted (EXPENSE type).',
+    )
+    allowance_account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='loan_products_allowance',
+        help_text='Balance-sheet contra-asset credited when monthly provision is posted.',
+    )
+    interest_suspense_account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='loan_products_interest_suspense',
+        help_text='Account used to park suspended interest on NPL loans.',
+    )
+    accrued_interest_account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='loan_products_accrued_interest',
+        help_text='ASSET account debited in daily interest accrual entries.',
+    )
+
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
-    
+
     class Meta:
         ordering = ['product__name']
-    
+
     def __str__(self):
         return f"{self.product.name}"
     
@@ -480,6 +510,24 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     batch_accrual_posted = models.BooleanField(
         default=False,
         help_text="True when the current period's accrual journal entry has been posted by the batch processor"
+    )
+
+    # ── CBN compliance fields (migration 0012) ────────────────────────────
+    interest_suspended = models.BooleanField(
+        default=False,
+        help_text='True when interest accrual is suspended per CBN NPL rules (90+ DPD).',
+    )
+    interest_suspended_at = models.DateField(
+        null=True, blank=True,
+        help_text='Date interest was first suspended on this loan.',
+    )
+    provision_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('1.00'),
+        help_text='CBN provision rate currently applied (%), updated by daily batch.',
+    )
+    provision_amount = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal('0.00'),
+        help_text='Required provision in Naira (provision_pct × outstanding_principal).',
     )
 
     objects = OwnerBranchManager()
@@ -763,6 +811,8 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         payment_date = payment_date or timezone.now().date()
 
         # ── Apply payment in priority order ──────────────────────────────
+        # CBN NPL rule: when interest is suspended (90+ DPD), apply cash to
+        # principal first so the loan balance reduces before income is recognised.
         remaining = amount
 
         penalty_payment = min(remaining, self.outstanding_penalties)
@@ -770,20 +820,38 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.penalties_paid += penalty_payment
         remaining -= penalty_payment
 
-        interest_payment = min(remaining, self.outstanding_interest)
-        self.outstanding_interest -= interest_payment
-        self.interest_paid += interest_payment
-        remaining -= interest_payment
+        if self.interest_suspended:
+            # NPL priority: principal → fees → interest
+            principal_payment = min(remaining, self.outstanding_principal)
+            self.outstanding_principal -= principal_payment
+            self.principal_paid += principal_payment
+            remaining -= principal_payment
 
-        fee_payment = min(remaining, self.outstanding_fees)
-        self.outstanding_fees -= fee_payment
-        self.fees_paid += fee_payment
-        remaining -= fee_payment
+            fee_payment = min(remaining, self.outstanding_fees)
+            self.outstanding_fees -= fee_payment
+            self.fees_paid += fee_payment
+            remaining -= fee_payment
 
-        principal_payment = min(remaining, self.outstanding_principal)
-        self.outstanding_principal -= principal_payment
-        self.principal_paid += principal_payment
-        remaining -= principal_payment
+            interest_payment = min(remaining, self.outstanding_interest)
+            self.outstanding_interest -= interest_payment
+            self.interest_paid += interest_payment
+            remaining -= interest_payment
+        else:
+            # Normal priority: interest → fees → principal
+            interest_payment = min(remaining, self.outstanding_interest)
+            self.outstanding_interest -= interest_payment
+            self.interest_paid += interest_payment
+            remaining -= interest_payment
+
+            fee_payment = min(remaining, self.outstanding_fees)
+            self.outstanding_fees -= fee_payment
+            self.fees_paid += fee_payment
+            remaining -= fee_payment
+
+            principal_payment = min(remaining, self.outstanding_principal)
+            self.outstanding_principal -= principal_payment
+            self.principal_paid += principal_payment
+            remaining -= principal_payment
 
         self.total_paid += amount
 
@@ -1103,6 +1171,215 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.save()
 
         return journal
+
+    # ── CBN Compliance helpers ────────────────────────────────────────────
+
+    # CBN Prudential Guidelines: DPD → classification → provision rate
+    _CBN_BUCKETS = [
+        (0,   0,   'performing',  Decimal('1.00')),
+        (1,   29,  'watch',       Decimal('5.00')),
+        (30,  89,  'substandard', Decimal('25.00')),
+        (90,  179, 'doubtful',    Decimal('50.00')),
+        (180, None,'loss',        Decimal('100.00')),
+    ]
+
+    def update_risk_classification(self) -> bool:
+        """
+        Set risk_classification, provision_pct, and provision_amount from
+        days_in_arrears using CBN Prudential Guidelines buckets.
+        Returns True if classification changed (caller can decide to save).
+        """
+        dpd = self.days_in_arrears
+        classification = 'performing'
+        pct = Decimal('1.00')
+
+        for low, high, label, rate in self._CBN_BUCKETS:
+            if high is None:
+                if dpd >= low:
+                    classification, pct = label, rate
+                    break
+            elif low <= dpd <= high:
+                classification, pct = label, rate
+                break
+
+        changed = (
+            self.risk_classification != classification
+            or self.provision_pct != pct
+        )
+        self.risk_classification = classification
+        self.provision_pct = pct
+        self.provision_amount = (
+            self.outstanding_principal * pct / Decimal('100')
+        ).quantize(Decimal('0.01'))
+        return changed
+
+    def suspend_interest(self, today=None):
+        """
+        Suspend interest accrual on this NPL loan (CBN: 90+ DPD).
+        Sets the flag; does NOT post a journal entry because under Option A
+        (net receivable) no interest has been pre-recognised in the P&L.
+        """
+        if self.interest_suspended:
+            return
+        from django.utils import timezone as _tz
+        self.interest_suspended = True
+        self.interest_suspended_at = today or _tz.now().date()
+        self.save(update_fields=['interest_suspended', 'interest_suspended_at', 'updated_at'])
+
+    def reinstate_interest(self):
+        """Remove interest suspension when loan cures (drops below 90 DPD)."""
+        if not self.interest_suspended:
+            return
+        self.interest_suspended = False
+        self.save(update_fields=['interest_suspended', 'updated_at'])
+
+    @transaction.atomic
+    def restructure(
+        self,
+        new_term: int,
+        new_term_unit: str,
+        new_interest_rate: Decimal,
+        new_repayment_frequency: str,
+        effective_date=None,
+        restructured_by=None,
+        reason: str = '',
+        notes: str = '',
+    ):
+        """
+        Restructure a loan: save old terms, apply new ones, regenerate schedule.
+
+        Old pending/overdue installments are cancelled ('restructured').
+        A LoanRestructure audit record is created.
+        The loan status is set to 'active' and interest suspension cleared.
+
+        Args:
+            new_term: New term value (interpreted in new_term_unit).
+            new_term_unit: 'days' | 'weeks' | 'months'.
+            new_interest_rate: New annual interest rate (%).
+            new_repayment_frequency: 'daily'|'weekly'|'biweekly'|'monthly'|'quarterly'.
+            effective_date: Date the restructure takes effect (defaults to today).
+            restructured_by: User authorising the restructure.
+            reason: Short reason code/label.
+            notes: Free-text notes.
+        """
+        if self.status not in ('active', 'disbursed', 'defaulted', 'overdue'):
+            raise ValidationError(
+                f"Cannot restructure a loan with status '{self.status}'."
+            )
+        if self.outstanding_principal <= 0:
+            raise ValidationError("Cannot restructure a fully repaid loan.")
+
+        from django.utils import timezone as _tz
+        effective_date = effective_date or _tz.now().date()
+
+        # ── Snapshot old terms ────────────────────────────────────────────
+        restructure = LoanRestructure(
+            loan=self,
+            effective_date=effective_date,
+            restructured_by=restructured_by,
+            reason=reason,
+            notes=notes,
+            old_term=self.term_months,
+            old_term_unit=self.term_unit,
+            old_interest_rate=self.interest_rate,
+            old_repayment_frequency=self.repayment_frequency,
+            old_outstanding_principal=self.outstanding_principal,
+            old_installment_amount=self.installment_amount,
+            old_maturity_date=self.maturity_date,
+        )
+
+        # ── Cancel remaining installments ─────────────────────────────────
+        self.repayment_schedule.filter(
+            status__in=['pending', 'partial', 'overdue']
+        ).update(status='restructured')
+
+        # ── Apply new terms ───────────────────────────────────────────────
+        self.term_months = new_term
+        self.term_unit = new_term_unit
+        self.interest_rate = new_interest_rate
+        self.repayment_frequency = new_repayment_frequency
+        self.disbursement_date = effective_date   # regenerate from today
+
+        # Reset arrears — restructure is a fresh start
+        self.days_in_arrears = 0
+        self.arrears_amount = Decimal('0.00')
+        self.status = 'active'
+        self.interest_suspended = False
+
+        # Regenerate schedule from outstanding principal
+        self._generate_repayment_schedule()
+
+        # Update maturity/first payment dates from new schedule
+        new_schedules = self.repayment_schedule.filter(
+            status='pending'
+        ).order_by('due_date')
+        if new_schedules.exists():
+            self.first_payment_date = new_schedules.first().due_date
+            self.maturity_date = new_schedules.last().due_date
+
+        self.save()
+
+        # ── Save restructure record with new installment amount ───────────
+        restructure.new_term = new_term
+        restructure.new_term_unit = new_term_unit
+        restructure.new_interest_rate = new_interest_rate
+        restructure.new_repayment_frequency = new_repayment_frequency
+        restructure.new_maturity_date = self.maturity_date
+        restructure.new_installment_amount = self.installment_amount
+        restructure.save()
+
+        # Update risk classification now that arrears are cleared
+        self.update_risk_classification()
+        self.save(update_fields=[
+            'risk_classification', 'provision_pct', 'provision_amount', 'updated_at'
+        ])
+
+        return restructure
+
+
+class LoanRestructure(models.Model):
+    """Audit record of every loan restructure event."""
+
+    loan = models.ForeignKey(
+        LoanAccount,
+        on_delete=models.CASCADE,
+        related_name='restructures',
+    )
+    effective_date = models.DateField()
+    restructured_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_restructures_authorised',
+    )
+    reason = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+
+    # Old terms snapshot
+    old_term = models.PositiveIntegerField()
+    old_term_unit = models.CharField(max_length=10)
+    old_interest_rate = models.DecimalField(max_digits=5, decimal_places=2)
+    old_repayment_frequency = models.CharField(max_length=20)
+    old_outstanding_principal = models.DecimalField(max_digits=18, decimal_places=2)
+    old_installment_amount = models.DecimalField(max_digits=18, decimal_places=2)
+    old_maturity_date = models.DateField(blank=True, null=True)
+
+    # New terms
+    new_term = models.PositiveIntegerField()
+    new_term_unit = models.CharField(max_length=10)
+    new_interest_rate = models.DecimalField(max_digits=5, decimal_places=2)
+    new_repayment_frequency = models.CharField(max_length=20)
+    new_installment_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    new_maturity_date = models.DateField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-effective_date']
+
+    def __str__(self):
+        return f"Restructure #{self.pk} — {self.loan.loan_number} on {self.effective_date}"
 
 
 class LoanRepaymentSchedule(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

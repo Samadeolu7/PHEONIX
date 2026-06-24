@@ -9,6 +9,8 @@ from django.shortcuts import get_object_or_404
 from decimal import Decimal
 import logging
 
+from common.views import ScopedModelViewSet
+
 from .models import (
     CashierAccount,
     CashCollection,
@@ -1509,7 +1511,6 @@ class PettyCashReplenishmentViewSet(viewsets.ModelViewSet):
 # Daily Collection Workflow ViewSets
 # ============================================================================
 
-from common.views import ScopedModelViewSet
 from .models import DailyCollectionSheet, CollectionSheetItem
 from .serializers import (
     DailyCollectionSheetSerializer,

@@ -6,7 +6,7 @@ from .models import (
     LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement,
     LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
-    LoanRepaymentRequest,
+    LoanRepaymentRequest, LoanRestructure,
 )
 
 
@@ -119,6 +119,8 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
     interest_method = serializers.CharField(source='product.interest_calculation_method', read_only=True)
     next_due_date = serializers.SerializerMethodField()
     last_payment_date = serializers.SerializerMethodField()
+    restructures = LoanRestructureSerializer(many=True, read_only=True)
+    contractual_interest_total = serializers.SerializerMethodField()
 
     class Meta:
         model = LoanAccount
@@ -148,10 +150,14 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'next_due_date', 'last_payment_date',
             # Arrears & risk
             'days_in_arrears', 'arrears_amount', 'risk_classification',
+            # CBN compliance fields
+            'interest_suspended', 'interest_suspended_at',
+            'provision_pct', 'provision_amount',
+            'contractual_interest_total',
             # Java App 1 hooks
             'last_batch_processed_at', 'batch_accrual_posted',
             # Related
-            'repayment_schedule', 'collaterals', 'guarantors',
+            'repayment_schedule', 'collaterals', 'guarantors', 'restructures',
             'metadata',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
@@ -159,9 +165,17 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'id', 'loan_number', 'client_name', 'product_name',
             'total_outstanding', 'total_charges', 'charges_summary',
             'total_repaid', 'interest_method', 'next_due_date', 'last_payment_date',
-            'repayment_schedule', 'collaterals', 'guarantors',
+            'interest_suspended', 'interest_suspended_at', 'provision_pct', 'provision_amount',
+            'contractual_interest_total',
+            'repayment_schedule', 'collaterals', 'guarantors', 'restructures',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
+
+    def get_contractual_interest_total(self, obj):
+        """Total future interest due from all schedule rows (paid + remaining)."""
+        from django.db.models import Sum
+        result = obj.repayment_schedule.aggregate(t=Sum('interest_due'))['t']
+        return str(result) if result is not None else '0.00'
 
     def get_charges_summary(self, obj):
         return {
@@ -386,6 +400,28 @@ class FeePreviewer(serializers.Serializer):
     default_savings_product_id = serializers.IntegerField(read_only=True, allow_null=True)
     default_savings_product_name = serializers.CharField(read_only=True, allow_null=True)
 
+
+
+class LoanRestructureSerializer(serializers.ModelSerializer):
+    restructured_by_name = serializers.SerializerMethodField()
+
+    def get_restructured_by_name(self, obj):
+        return obj.restructured_by.get_full_name() if obj.restructured_by else None
+
+    class Meta:
+        model = LoanRestructure
+        fields = [
+            'id', 'loan', 'effective_date',
+            'restructured_by', 'restructured_by_name',
+            'reason', 'notes',
+            'old_term', 'old_term_unit', 'old_interest_rate',
+            'old_repayment_frequency', 'old_outstanding_principal',
+            'old_installment_amount', 'old_maturity_date',
+            'new_term', 'new_term_unit', 'new_interest_rate',
+            'new_repayment_frequency', 'new_installment_amount', 'new_maturity_date',
+            'created_at',
+        ]
+        read_only_fields = fields
 
 
 class LoanRepaymentRequestSerializer(TenantModelSerializer):

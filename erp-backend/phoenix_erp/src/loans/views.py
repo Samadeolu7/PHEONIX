@@ -15,14 +15,14 @@ from common.views import ScopedModelViewSet
 
 from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
-    LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest,
+    LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest, LoanRestructure,
 )
 from .serializers import (
     LoanProductSerializer,
     LoanAccountListSerializer, LoanAccountDetailSerializer, LoanAccountCreateSerializer,
     LoanRepaymentScheduleSerializer, LoanCollateralSerializer, LoanGuarantorSerializer,
     LoanVerificationRequestSerializer, LoanDisbursementSerializer,
-    LoanRepaymentRequestSerializer,
+    LoanRepaymentRequestSerializer, LoanRestructureSerializer,
 )
 from .utils import LoanVerifier
 from cash_management.services.payment_routing import PaymentRoutingService
@@ -851,6 +851,314 @@ class LoanAccountViewSet(ScopedModelViewSet):
             LoanRepaymentRequestSerializer(repay_request, context={'request': request}).data,
             status=status.HTTP_201_CREATED,
         )
+
+    # ── CBN Compliance endpoints ──────────────────────────────────────────
+
+    @action(detail=True, methods=['post'])
+    def restructure(self, request, pk=None):
+        """
+        Restructure a loan — change terms, regenerate schedule from outstanding principal.
+
+        Body:
+          new_term              (int, required)
+          new_term_unit         ('days'|'weeks'|'months', required)
+          new_interest_rate     (Decimal, required)
+          new_repayment_frequency ('daily'|'weekly'|'biweekly'|'monthly'|'quarterly', required)
+          effective_date        (YYYY-MM-DD, optional — defaults to today)
+          reason                (str, optional)
+          notes                 (str, optional)
+        """
+        from decimal import Decimal
+        from django.utils import timezone
+
+        loan = self.get_object()
+
+        required_fields = ['new_term', 'new_term_unit', 'new_interest_rate', 'new_repayment_frequency']
+        for field in required_fields:
+            if not request.data.get(field):
+                return Response({'detail': f'{field} is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            new_term = int(request.data['new_term'])
+            new_interest_rate = Decimal(str(request.data['new_interest_rate']))
+        except (ValueError, TypeError):
+            return Response({'detail': 'new_term must be an integer and new_interest_rate must be a number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        effective_date_raw = request.data.get('effective_date')
+        if effective_date_raw:
+            from datetime import date
+            try:
+                effective_date = date.fromisoformat(effective_date_raw)
+            except ValueError:
+                return Response({'detail': 'Invalid effective_date. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            effective_date = timezone.localdate()
+
+        try:
+            restructure_record = loan.restructure(
+                new_term=new_term,
+                new_term_unit=request.data['new_term_unit'],
+                new_interest_rate=new_interest_rate,
+                new_repayment_frequency=request.data['new_repayment_frequency'],
+                effective_date=effective_date,
+                restructured_by=request.user,
+                reason=request.data.get('reason', ''),
+                notes=request.data.get('notes', ''),
+            )
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            'restructure': LoanRestructureSerializer(restructure_record).data,
+            'loan': LoanAccountDetailSerializer(loan, context={'request': request}).data,
+        })
+
+    @action(detail=True, methods=['get'])
+    def statement(self, request, pk=None):
+        """
+        Return full loan statement data (for PDF rendering on frontend).
+        Includes loan details, client, all schedule rows, all payments made.
+        """
+        loan = self.get_object()
+        schedule = loan.repayment_schedule.all().order_by('installment_number')
+
+        from django.db.models import Sum
+        schedule_data = LoanRepaymentScheduleSerializer(schedule, many=True).data
+
+        return Response({
+            'loan': LoanAccountDetailSerializer(loan, context={'request': request}).data,
+            'schedule': schedule_data,
+            'summary': {
+                'total_contractual_interest': str(
+                    schedule.aggregate(t=Sum('interest_due'))['t'] or 0
+                ),
+                'interest_paid': str(loan.interest_paid),
+                'interest_outstanding': str(loan.outstanding_interest),
+                'principal_paid': str(loan.principal_paid),
+                'principal_outstanding': str(loan.outstanding_principal),
+                'total_paid': str(loan.total_paid),
+                'restructure_count': loan.restructures.count(),
+            },
+        })
+
+    @action(detail=False, methods=['get'], url_path='par-summary')
+    def par_summary(self, request):
+        """
+        Backend-aggregated Portfolio at Risk (PAR) summary.
+        Returns PAR buckets calculated on outstanding_principal (not just overdue amount)
+        per CBN standard — the whole loan balance is at risk, not just the late portion.
+
+        Query params:
+          as_of (YYYY-MM-DD, optional)
+        """
+        from decimal import Decimal
+        from django.db.models import Sum, Count
+
+        qs = self.get_queryset().filter(
+            status__in=['active', 'disbursed', 'defaulted'],
+        )
+
+        # Gross Loan Portfolio (excludes written-off)
+        glp = qs.aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0')
+
+        buckets = [
+            ('current',      0,   0,   'Performing (0 DPD)'),
+            ('par_1_29',     1,   29,  'Watch (1–29 DPD)'),
+            ('par_30_89',    30,  89,  'Substandard (30–89 DPD)'),
+            ('par_90_179',   90,  179, 'Doubtful (90–179 DPD)'),
+            ('par_180_plus', 180, None,'Loss (180+ DPD)'),
+        ]
+
+        result = {'glp': str(glp), 'buckets': [], 'par_ratios': {}}
+        npl_balance = Decimal('0')
+        par30_balance = Decimal('0')
+
+        for key, low, high, label in buckets:
+            if high is None:
+                bucket_qs = qs.filter(days_in_arrears__gte=low)
+            elif low == 0:
+                bucket_qs = qs.filter(days_in_arrears=0)
+            else:
+                bucket_qs = qs.filter(days_in_arrears__gte=low, days_in_arrears__lte=high)
+
+            agg = bucket_qs.aggregate(balance=Sum('outstanding_principal'), count=Count('id'))
+            balance = agg['balance'] or Decimal('0')
+            count = agg['count'] or 0
+            pct = (balance / glp * 100).quantize(Decimal('0.01')) if glp > 0 else Decimal('0')
+
+            result['buckets'].append({
+                'key': key,
+                'label': label,
+                'loan_count': count,
+                'outstanding_balance': str(balance),
+                'par_pct': str(pct),
+            })
+
+            if low >= 90:
+                npl_balance += balance
+            if low >= 30:
+                par30_balance += balance
+
+        result['par_ratios'] = {
+            'par30': str((par30_balance / glp * 100).quantize(Decimal('0.01')) if glp > 0 else 0),
+            'par90': str((npl_balance / glp * 100).quantize(Decimal('0.01')) if glp > 0 else 0),
+            'npl_ratio': str((npl_balance / glp * 100).quantize(Decimal('0.01')) if glp > 0 else 0),
+        }
+
+        return Response(result)
+
+    @action(detail=False, methods=['get'], url_path='cbn-returns')
+    def cbn_returns(self, request):
+        """
+        CBN Prudential Returns — monthly summary data.
+        Returns loan classification breakdown, provisioning, key ratios.
+        Intended to be copy-pasted / exported into the CBN MFB001/MFB002 forms.
+
+        Query params:
+          as_of (YYYY-MM-DD, optional)
+        """
+        from decimal import Decimal
+        from django.db.models import Sum, Count
+        from django.utils import timezone
+
+        as_of_raw = request.query_params.get('as_of')
+        if as_of_raw:
+            from datetime import date
+            try:
+                as_of = date.fromisoformat(as_of_raw)
+            except ValueError:
+                as_of = timezone.localdate()
+        else:
+            as_of = timezone.localdate()
+
+        all_loans = self.get_queryset()
+        active_qs = all_loans.filter(status__in=['active', 'disbursed', 'defaulted'])
+        written_off_qs = all_loans.filter(status='written_off')
+
+        # Gross Loan Portfolio
+        glp = active_qs.aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0')
+        total_loans = active_qs.count()
+
+        # Classification breakdown (CBN buckets)
+        classifications = [
+            ('performing',  Decimal('1.00'),  0,   0),
+            ('watch',       Decimal('5.00'),  1,   29),
+            ('substandard', Decimal('25.00'), 30,  89),
+            ('doubtful',    Decimal('50.00'), 90,  179),
+            ('loss',        Decimal('100.00'),180, None),
+        ]
+
+        classification_data = []
+        total_required_provision = Decimal('0')
+        total_interest_income_at_risk = Decimal('0')
+
+        for label, pct, low, high in classifications:
+            if label == 'performing':
+                qs_f = active_qs.filter(days_in_arrears=0)
+            elif high is None:
+                qs_f = active_qs.filter(days_in_arrears__gte=low)
+            else:
+                qs_f = active_qs.filter(days_in_arrears__gte=low, days_in_arrears__lte=high)
+
+            agg = qs_f.aggregate(
+                balance=Sum('outstanding_principal'),
+                interest=Sum('outstanding_interest'),
+                count=Count('id'),
+            )
+            balance = agg['balance'] or Decimal('0')
+            interest = agg['interest'] or Decimal('0')
+            count = agg['count'] or 0
+            required = (balance * pct / 100).quantize(Decimal('0.01'))
+            total_required_provision += required
+            if label in ('substandard', 'doubtful', 'loss'):
+                total_interest_income_at_risk += interest
+
+            classification_data.append({
+                'classification': label,
+                'provision_rate_pct': str(pct),
+                'loan_count': count,
+                'outstanding_principal': str(balance),
+                'outstanding_interest': str(interest),
+                'required_provision': str(required),
+            })
+
+        # Contractual interest receivable (total future interest from schedules)
+        from .models import LoanRepaymentSchedule
+        from django.db.models import F
+        contractual_interest = LoanRepaymentSchedule.objects.filter(
+            loan__in=active_qs,
+            status__in=['pending', 'partial', 'overdue'],
+        ).aggregate(t=Sum('interest_due'))['t'] or Decimal('0')
+
+        # Written off this period (approximate — all written off loans)
+        wo_agg = written_off_qs.aggregate(
+            count=Count('id'),
+        )
+
+        return Response({
+            'as_of': str(as_of),
+            'gross_loan_portfolio': str(glp),
+            'total_active_loans': total_loans,
+            'classification_breakdown': classification_data,
+            'total_required_provision': str(total_required_provision),
+            'total_interest_income_at_risk': str(total_interest_income_at_risk),
+            'contractual_interest_receivable': str(contractual_interest),
+            'written_off_loan_count': wo_agg['count'],
+            'par_30': str(
+                sum(
+                    Decimal(r['outstanding_principal'])
+                    for r in classification_data
+                    if r['classification'] in ('substandard', 'doubtful', 'loss')
+                )
+            ),
+            'npl_ratio_pct': str(
+                (sum(
+                    Decimal(r['outstanding_principal'])
+                    for r in classification_data
+                    if r['classification'] in ('substandard', 'doubtful', 'loss')
+                ) / glp * 100).quantize(Decimal('0.01')) if glp > 0 else Decimal('0')
+            ),
+        })
+
+    @action(detail=False, methods=['get'], url_path='contractual-interest-summary')
+    def contractual_interest_summary(self, request):
+        """
+        Dashboard widget: total contractual interest from all active loans.
+        This is what the client sees as 'total income' — the full schedule interest,
+        split into earned (paid) and receivable (future).
+        """
+        from decimal import Decimal
+        from django.db.models import Sum
+        from .models import LoanRepaymentSchedule
+
+        active_qs = self.get_queryset().filter(
+            status__in=['active', 'disbursed', 'defaulted']
+        )
+
+        schedule_qs = LoanRepaymentSchedule.objects.filter(loan__in=active_qs)
+
+        total_interest_due = schedule_qs.aggregate(t=Sum('interest_due'))['t'] or Decimal('0')
+        interest_collected = schedule_qs.aggregate(t=Sum('interest_paid'))['t'] or Decimal('0')
+        interest_receivable = total_interest_due - interest_collected
+
+        # Already posted to P&L via record_payment()
+        earned_confirmed = active_qs.aggregate(t=Sum('interest_paid'))['t'] or Decimal('0')
+
+        return Response({
+            'total_contractual_interest': str(total_interest_due),
+            'interest_collected': str(interest_collected),
+            'interest_receivable': str(interest_receivable),
+            'interest_suspended_loans': active_qs.filter(interest_suspended=True).count(),
+            'interest_at_risk': str(
+                schedule_qs.filter(
+                    loan__interest_suspended=True,
+                    status__in=['pending', 'partial', 'overdue'],
+                ).aggregate(t=Sum('interest_due'))['t'] or Decimal('0')
+            ),
+        })
 
     def perform_create(self, serializer):
         """

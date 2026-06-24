@@ -23,9 +23,16 @@ import {
   Download,
   Clock,
   GitBranch,
+  Wallet,
+  TrendingUp,
+  PlusCircle,
+  ChevronRight,
+  Landmark,
 } from 'lucide-react';
 import { clientService, Client } from '../../services/clientService';
 import { invoiceService, Invoice } from '../../services/invoiceService';
+import { loanService } from '../../services/loanService';
+import { getSavingsAccounts } from '../../services/savingsService';
 import { useDomainLabels } from '../../contexts/DomainLabelContext';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -39,11 +46,15 @@ const ClientDetailPage: React.FC = () => {
   const [invoicesLoading, setInvoicesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'audit' | 'cross_branch'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'loans' | 'savings' | 'audit' | 'cross_branch'>('overview');
   const [auditLog, setAuditLog] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [crossBranchHistory, setCrossBranchHistory] = useState<any[]>([]);
   const [crossBranchLoading, setCrossBranchLoading] = useState(false);
+  const [loans, setLoans] = useState<any[]>([]);
+  const [loansLoading, setLoansLoading] = useState(false);
+  const [savings, setSavings] = useState<any[]>([]);
+  const [savingsLoading, setSavingsLoading] = useState(false);
 
   const isBmPlus = ['branch_manager', 'supervisor', 'director', 'admin', 'operations'].includes(selectedRole || '');
 
@@ -83,12 +94,44 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
+  const loadLoans = async () => {
+    if (!id) return;
+    setLoansLoading(true);
+    try {
+      const data = await loanService.listLoans({ client: Number(id), page_size: 100 });
+      setLoans(data.results || data);
+    } catch {
+      setLoans([]);
+    } finally {
+      setLoansLoading(false);
+    }
+  };
+
+  const loadSavings = async () => {
+    if (!id) return;
+    setSavingsLoading(true);
+    try {
+      const data = await getSavingsAccounts({ client: Number(id) });
+      setSavings(Array.isArray(data) ? data : (data as any).results || []);
+    } catch {
+      setSavings([]);
+    } finally {
+      setSavingsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'audit' && auditLog.length === 0 && !auditLoading) {
       loadAuditLog();
     }
     if (activeTab === 'cross_branch' && crossBranchHistory.length === 0 && !crossBranchLoading) {
       loadCrossBranchHistory();
+    }
+    if (activeTab === 'loans' && loans.length === 0 && !loansLoading) {
+      loadLoans();
+    }
+    if (activeTab === 'savings' && savings.length === 0 && !savingsLoading) {
+      loadSavings();
     }
   }, [activeTab]);
 
@@ -357,12 +400,34 @@ const ClientDetailPage: React.FC = () => {
             </div>
           </div>
         </div>
-        <div className="flex gap-4">
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <button
             onClick={() => navigate(`/clients/${id}/edit`)}
             style={{
-              padding: '0.75rem 1.5rem',
-              background: '#3b82f6',
+              padding: '0.75rem 1.25rem',
+              background: '#f3f4f6',
+              color: '#374151',
+              border: '1px solid #e5e7eb',
+              borderRadius: '0.5rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontWeight: 500,
+              fontSize: '0.875rem',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#e5e7eb')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#f3f4f6')}
+          >
+            <Edit size={16} />
+            Edit
+          </button>
+          <button
+            onClick={() => navigate(`/loans/accounts/create?client=${client.id}`)}
+            style={{
+              padding: '0.75rem 1.25rem',
+              background: '#7c3aed',
               color: 'white',
               border: 'none',
               borderRadius: '0.5rem',
@@ -374,16 +439,38 @@ const ClientDetailPage: React.FC = () => {
               fontSize: '0.875rem',
               transition: 'background-color 0.2s',
             }}
-            onMouseEnter={e => (e.currentTarget.style.background = '#2563eb')}
-            onMouseLeave={e => (e.currentTarget.style.background = '#3b82f6')}
+            onMouseEnter={e => (e.currentTarget.style.background = '#6d28d9')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#7c3aed')}
           >
-            <Edit size={18} />
-            Edit Client
+            <TrendingUp size={16} />
+            Apply for Loan
+          </button>
+          <button
+            onClick={() => navigate(`/savings/accounts/create?client=${client.id}`)}
+            style={{
+              padding: '0.75rem 1.25rem',
+              background: '#0891b2',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.5rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontWeight: 500,
+              fontSize: '0.875rem',
+              transition: 'background-color 0.2s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#0e7490')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#0891b2')}
+          >
+            <Wallet size={16} />
+            Open Savings
           </button>
           <button
             onClick={() => navigate(`/invoices/create?clientId=${client.id}`)}
             style={{
-              padding: '0.75rem 1.5rem',
+              padding: '0.75rem 1.25rem',
               background: '#10b981',
               color: 'white',
               border: 'none',
@@ -399,8 +486,8 @@ const ClientDetailPage: React.FC = () => {
             onMouseEnter={e => (e.currentTarget.style.background = '#059669')}
             onMouseLeave={e => (e.currentTarget.style.background = '#10b981')}
           >
-            <CreditCard size={18} />
-            Create Invoice
+            <CreditCard size={16} />
+            Invoice
           </button>
         </div>
       </div>
@@ -409,6 +496,8 @@ const ClientDetailPage: React.FC = () => {
       <div style={{ display: 'flex', gap: '0', borderBottom: '2px solid #e5e7eb', marginBottom: '1.5rem', background: 'white', borderRadius: '0.5rem 0.5rem 0 0', padding: '0 1rem' }}>
         {[
           { key: 'overview', label: 'Overview', icon: <User size={16} /> },
+          { key: 'loans', label: 'Loans', icon: <TrendingUp size={16} /> },
+          { key: 'savings', label: 'Savings', icon: <Wallet size={16} /> },
           { key: 'audit', label: 'Audit Log', icon: <Clock size={16} /> },
           ...(isBmPlus ? [{ key: 'cross_branch', label: 'Cross-Branch History', icon: <GitBranch size={16} /> }] : []),
         ].map(tab => (
@@ -1026,6 +1115,224 @@ const ClientDetailPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Loans Tab */}
+      {activeTab === 'loans' && (
+        <div style={{ background: 'white', borderRadius: '0.75rem', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <TrendingUp size={20} color="#7c3aed" />
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Loan Accounts</h3>
+            </div>
+            <button
+              onClick={() => navigate(`/loans/accounts/create?client=${client.id}`)}
+              style={{
+                padding: '0.625rem 1.25rem',
+                background: '#7c3aed',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontWeight: 500,
+                fontSize: '0.875rem',
+                transition: 'background-color 0.2s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#6d28d9')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#7c3aed')}
+            >
+              <PlusCircle size={16} />
+              Apply for Loan
+            </button>
+          </div>
+          {loansLoading ? (
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#6b7280' }}>Loading loans…</div>
+          ) : loans.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '3rem' }}>
+              <TrendingUp size={48} style={{ margin: '0 auto 1rem', color: '#9ca3af', display: 'block' }} />
+              <h4 style={{ fontSize: '1rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>No Loan Accounts</h4>
+              <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1.5rem' }}>
+                This client doesn't have any loan accounts yet.
+              </p>
+              <button
+                onClick={() => navigate(`/loans/accounts/create?client=${client.id}`)}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  background: '#7c3aed',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  fontWeight: 500,
+                  fontSize: '0.875rem',
+                }}
+              >
+                <PlusCircle size={16} />
+                Apply for First Loan
+              </button>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                <thead style={{ background: '#f9fafb' }}>
+                  <tr>
+                    {['Loan #', 'Product', 'Applied', 'Approved', 'Outstanding', 'Status', 'Disbursed', ''].map(h => (
+                      <th key={h} style={{ padding: '0.75rem 1rem', textAlign: h === 'Applied' || h === 'Approved' || h === 'Outstanding' ? 'right' : 'left', fontWeight: 600, color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {loans.map((loan: any, idx: number) => (
+                    <tr
+                      key={loan.id}
+                      onClick={() => navigate(`/loans/accounts/${loan.id}`)}
+                      style={{ borderTop: idx > 0 ? '1px solid #f3f4f6' : undefined, cursor: 'pointer', transition: 'background 0.15s' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: '#7c3aed' }}>{loan.loan_number || loan.account_number || `LN-${loan.id}`}</td>
+                      <td style={{ padding: '0.875rem 1rem', color: '#374151' }}>{loan.product_name || loan.product || '—'}</td>
+                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', color: '#374151' }}>{loan.requested_amount ? `₦${Number(loan.requested_amount).toLocaleString()}` : '—'}</td>
+                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', color: '#374151' }}>{loan.approved_amount ? `₦${Number(loan.approved_amount).toLocaleString()}` : '—'}</td>
+                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: 600, color: Number(loan.outstanding_principal || loan.outstanding_balance || 0) > 0 ? '#dc2626' : '#10b981' }}>
+                        {loan.outstanding_principal != null || loan.outstanding_balance != null
+                          ? `₦${Number(loan.outstanding_principal ?? loan.outstanding_balance).toLocaleString()}`
+                          : '—'}
+                      </td>
+                      <td style={{ padding: '0.875rem 1rem' }}>
+                        <span style={{
+                          padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: 600,
+                          background: loan.status === 'active' ? '#d1fae5' : loan.status === 'overdue' ? '#fee2e2' : loan.status === 'paid_off' ? '#dbeafe' : '#f3f4f6',
+                          color: loan.status === 'active' ? '#065f46' : loan.status === 'overdue' ? '#991b1b' : loan.status === 'paid_off' ? '#1e40af' : '#4b5563',
+                          textTransform: 'capitalize',
+                        }}>
+                          {(loan.status || '—').replace(/_/g, ' ')}
+                        </span>
+                      </td>
+                      <td style={{ padding: '0.875rem 1rem', color: '#6b7280' }}>{loan.disbursement_date ? new Date(loan.disbursement_date).toLocaleDateString() : '—'}</td>
+                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
+                        <ChevronRight size={16} color="#9ca3af" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Savings Tab */}
+      {activeTab === 'savings' && (
+        <div style={{ background: 'white', borderRadius: '0.75rem', border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.25rem 1.5rem', borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <Wallet size={20} color="#0891b2" />
+              <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Savings Accounts</h3>
+            </div>
+            <button
+              onClick={() => navigate(`/savings/accounts/create?client=${client.id}`)}
+              style={{
+                padding: '0.625rem 1.25rem',
+                background: '#0891b2',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontWeight: 500,
+                fontSize: '0.875rem',
+                transition: 'background-color 0.2s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#0e7490')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#0891b2')}
+            >
+              <PlusCircle size={16} />
+              Open Savings Account
+            </button>
+          </div>
+          {savingsLoading ? (
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#6b7280' }}>Loading savings…</div>
+          ) : savings.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '3rem' }}>
+              <Landmark size={48} style={{ margin: '0 auto 1rem', color: '#9ca3af', display: 'block' }} />
+              <h4 style={{ fontSize: '1rem', fontWeight: 600, color: '#374151', marginBottom: '0.5rem' }}>No Savings Accounts</h4>
+              <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1.5rem' }}>
+                This client doesn't have any savings accounts yet.
+              </p>
+              <button
+                onClick={() => navigate(`/savings/accounts/create?client=${client.id}`)}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  background: '#0891b2',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '0.5rem',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  fontWeight: 500,
+                  fontSize: '0.875rem',
+                }}
+              >
+                <PlusCircle size={16} />
+                Open First Savings Account
+              </button>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                <thead style={{ background: '#f9fafb' }}>
+                  <tr>
+                    {['Account #', 'Product', 'Balance', 'Status', 'Opened', ''].map(h => (
+                      <th key={h} style={{ padding: '0.75rem 1rem', textAlign: h === 'Balance' ? 'right' : 'left', fontWeight: 600, color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {savings.map((acct: any, idx: number) => (
+                    <tr
+                      key={acct.id}
+                      onClick={() => navigate(`/savings/accounts/${acct.id}`)}
+                      style={{ borderTop: idx > 0 ? '1px solid #f3f4f6' : undefined, cursor: 'pointer', transition: 'background 0.15s' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: '#0891b2' }}>{acct.account_number || `SAV-${acct.id}`}</td>
+                      <td style={{ padding: '0.875rem 1rem', color: '#374151' }}>{acct.product_name || acct.product || '—'}</td>
+                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>
+                        {acct.current_balance != null ? `₦${Number(acct.current_balance).toLocaleString()}` : acct.balance != null ? `₦${Number(acct.balance).toLocaleString()}` : '—'}
+                      </td>
+                      <td style={{ padding: '0.875rem 1rem' }}>
+                        <span style={{
+                          padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: 600,
+                          background: acct.status === 'active' ? '#d1fae5' : acct.status === 'dormant' ? '#fef3c7' : '#f3f4f6',
+                          color: acct.status === 'active' ? '#065f46' : acct.status === 'dormant' ? '#92400e' : '#4b5563',
+                          textTransform: 'capitalize',
+                        }}>
+                          {acct.status || '—'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '0.875rem 1rem', color: '#6b7280' }}>{acct.opened_on ? new Date(acct.opened_on).toLocaleDateString() : acct.created_at ? new Date(acct.created_at).toLocaleDateString() : '—'}</td>
+                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
+                        <ChevronRight size={16} color="#9ca3af" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Audit Log Tab */}
       {activeTab === 'audit' && (

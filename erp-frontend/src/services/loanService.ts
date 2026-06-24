@@ -105,6 +105,13 @@ export interface LoanAccount extends LoanAccountList {
   closed_date: string | null;
   last_batch_processed_at: string | null;
   batch_accrual_posted: boolean;
+  // CBN compliance
+  interest_suspended: boolean;
+  interest_suspended_at: string | null;
+  provision_pct: string;
+  provision_amount: string;
+  contractual_interest_total: string;
+  restructures: LoanRestructure[];
   repayment_schedule: LoanRepaymentSchedule[];
   collaterals: LoanCollateral[];
   guarantors: LoanGuarantor[];
@@ -493,6 +500,28 @@ export const loanService = {
   async deleteSavingsRequirement(id: number): Promise<void> {
     return api.delete(`${BASE}/product-savings-requirements/${id}/`);
   },
+
+  // ===== CBN COMPLIANCE =====
+
+  async restructureLoan(id: number, data: RestructureLoanPayload): Promise<RestructureLoanResult> {
+    return api.post(`${BASE}/accounts/${id}/restructure/`, data);
+  },
+
+  async getLoanStatement(id: number): Promise<LoanStatement> {
+    return api.get(`${BASE}/accounts/${id}/statement/`);
+  },
+
+  async getPARSummary(): Promise<PARSummary> {
+    return api.get(`${BASE}/accounts/par-summary/`);
+  },
+
+  async getCBNReturns(asOf?: string): Promise<CBNReturns> {
+    return api.get(`${BASE}/accounts/cbn-returns/`, { params: asOf ? { as_of: asOf } : undefined });
+  },
+
+  async getContractualInterestSummary(): Promise<ContractualInterestSummary> {
+    return api.get(`${BASE}/accounts/contractual-interest-summary/`);
+  },
 };
 
 export default loanService;
@@ -569,4 +598,107 @@ export interface LoanRepaymentRequest {
   branch: number;
   created_at: string;
   updated_at: string;
+}
+
+// ── CBN Compliance types ───────────────────────────────────────────────────
+
+export interface LoanRestructure {
+  id: number;
+  loan: number;
+  effective_date: string;
+  restructured_by: number | null;
+  restructured_by_name: string | null;
+  reason: string;
+  notes: string;
+  old_term: number;
+  old_term_unit: string;
+  old_interest_rate: string;
+  old_repayment_frequency: string;
+  old_outstanding_principal: string;
+  old_installment_amount: string;
+  old_maturity_date: string | null;
+  new_term: number;
+  new_term_unit: string;
+  new_interest_rate: string;
+  new_repayment_frequency: string;
+  new_installment_amount: string;
+  new_maturity_date: string | null;
+  created_at: string;
+}
+
+export interface RestructureLoanPayload {
+  new_term: number;
+  new_term_unit: 'days' | 'weeks' | 'months';
+  new_interest_rate: string;
+  new_repayment_frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
+  effective_date?: string;
+  reason?: string;
+  notes?: string;
+}
+
+export interface RestructureLoanResult {
+  restructure: LoanRestructure;
+  loan: LoanAccount;
+}
+
+export interface LoanStatement {
+  loan: LoanAccount;
+  schedule: LoanRepaymentSchedule[];
+  summary: {
+    total_contractual_interest: string;
+    interest_paid: string;
+    interest_outstanding: string;
+    principal_paid: string;
+    principal_outstanding: string;
+    total_paid: string;
+    restructure_count: number;
+  };
+}
+
+export interface PARBucket {
+  key: string;
+  label: string;
+  loan_count: number;
+  outstanding_balance: string;
+  par_pct: string;
+}
+
+export interface PARSummary {
+  glp: string;
+  buckets: PARBucket[];
+  par_ratios: {
+    par30: string;
+    par90: string;
+    npl_ratio: string;
+  };
+}
+
+export interface CBNClassificationRow {
+  classification: string;
+  provision_rate_pct: string;
+  loan_count: number;
+  outstanding_principal: string;
+  outstanding_interest: string;
+  required_provision: string;
+}
+
+export interface CBNReturns {
+  as_of: string;
+  gross_loan_portfolio: string;
+  total_active_loans: number;
+  classification_breakdown: CBNClassificationRow[];
+  total_required_provision: string;
+  total_interest_income_at_risk: string;
+  contractual_interest_receivable: string;
+  written_off_loan_count: number;
+  par_30: string;
+  npl_ratio_pct: string;
+}
+
+export interface ContractualInterestSummary {
+  total_contractual_interest: string;
+  interest_collected: string;
+  interest_receivable: string;
+  interest_suspended_loans: number;
+  interest_at_risk: string;
 }
