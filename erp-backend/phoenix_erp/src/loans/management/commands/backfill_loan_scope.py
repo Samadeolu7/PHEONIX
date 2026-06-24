@@ -57,7 +57,17 @@ class Command(BaseCommand):
     # ── LoanAccount ──────────────────────────────────────────────────────────
 
     def _backfill_loan_accounts(self, name, dry_run):
+        from django.db import connection
         from loans.models import LoanAccount
+
+        table = LoanAccount._meta.db_table
+        table_cols = {col.name for col in connection.introspection.get_table_description(connection.cursor(), table)}
+        missing = [c for c in ('tenant_id', 'branch_id') if c not in table_cols]
+        if missing:
+            self.stdout.write(self.style.WARNING(
+                f'LoanAccount: skipping — columns not in DB: {missing}. Run pending migrations first.'
+            ))
+            return
 
         records = LoanAccount.objects.filter(
             Q(tenant__isnull=True) | Q(branch__isnull=True)
@@ -103,6 +113,7 @@ class Command(BaseCommand):
     # ── Child records (derive from parent loan) ───────────────────────────────
 
     def _backfill_child(self, model_key, dry_run):
+        from django.db import connection
         from loans.models import (
             LoanRepaymentSchedule, LoanDisbursement, LoanRepaymentRequest
         )
@@ -113,8 +124,19 @@ class Command(BaseCommand):
             'loanrepaymentrequest': (LoanRepaymentRequest, 'objects', 'loan'),
         }
         Model, manager_attr, loan_field = model_map[model_key]
-        manager = getattr(Model, manager_attr)
 
+        # Skip gracefully if the table hasn't been fully migrated yet
+        table = Model._meta.db_table
+        table_cols = {col.name for col in connection.introspection.get_table_description(connection.cursor(), table)}
+        missing = [c for c in ('tenant_id', 'branch_id') if c not in table_cols]
+        if missing:
+            self.stdout.write(self.style.WARNING(
+                f'{Model.__name__}: skipping — columns not yet in DB: {missing}. '
+                f'Run pending migrations first.'
+            ))
+            return
+
+        manager = getattr(Model, manager_attr)
         records = manager.filter(
             Q(tenant__isnull=True) | Q(branch__isnull=True)
         ).select_related(loan_field)
@@ -151,7 +173,17 @@ class Command(BaseCommand):
     # ── Client ────────────────────────────────────────────────────────────────
 
     def _backfill_clients(self, name, dry_run):
+        from django.db import connection
         from clients.models import Client
+
+        table = Client._meta.db_table
+        table_cols = {col.name for col in connection.introspection.get_table_description(connection.cursor(), table)}
+        missing = [c for c in ('tenant_id', 'branch_id') if c not in table_cols]
+        if missing:
+            self.stdout.write(self.style.WARNING(
+                f'Client: skipping — columns not in DB: {missing}. Run pending migrations first.'
+            ))
+            return
 
         records = Client.objects.filter(
             Q(tenant__isnull=True) | Q(branch__isnull=True)
