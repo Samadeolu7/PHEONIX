@@ -1207,8 +1207,21 @@ class LoanAccountViewSet(ScopedModelViewSet):
         fee_routing = {int(k): v for k, v in raw_routing.items() if str(k).isdigit()}
 
         user = self.request.user
-        branch = getattr(user, 'branch', None)
         tenant = getattr(user, 'tenant', None)
+
+        # Resolve branch the same way the base ScopedModelViewSet does:
+        # elevated users (director/admin) must have selected a branch via the
+        # X-Branch-ID header; regular users use their own assigned branch.
+        if self._is_elevated_user(user):
+            branch = self._get_director_branch_override()
+            if branch is None:
+                raise DRFValidationError({
+                    'non_field_errors': [
+                        'Select a branch from the branch switcher before creating a loan.'
+                    ]
+                })
+        else:
+            branch = getattr(user, 'branch', None)
 
         with db_transaction.atomic():
             # Generate a unique loan number
@@ -1254,6 +1267,9 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 account=gl_account,
                 loan_number=loan_number,
                 interest_rate=product.default_interest_rate,
+                branch=branch,
+                tenant=tenant,
+                owner=user,
             )
 
             # Only resolve cashier if at least one active registration fee

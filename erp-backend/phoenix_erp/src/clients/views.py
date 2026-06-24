@@ -107,8 +107,21 @@ class ClientViewSet(ScopedModelViewSet):
         """
         from django.db import transaction as db_transaction
 
+        user = self.request.user
+        tenant = getattr(user, 'tenant', None)
+        if self._is_elevated_user(user):
+            branch = self._get_director_branch_override()
+            if branch is None:
+                raise DRFValidationError({
+                    'non_field_errors': [
+                        'Select a branch from the branch switcher before registering a client.'
+                    ]
+                })
+        else:
+            branch = getattr(user, 'branch', None)
+
         with db_transaction.atomic():
-            client = serializer.save()
+            client = serializer.save(owner=user, branch=branch, tenant=tenant)
 
             # Prospects pay on conversion, not at public/staff capture.
             if (client.client_type or '').lower() == 'pr':
