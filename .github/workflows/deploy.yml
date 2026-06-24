@@ -115,8 +115,7 @@ jobs:
             cd /opt/phoenix-kti
 
             # Pin the Compose project name so container names (phoenix_kti_*)
-            # are always stable regardless of the invoking directory or shell.
-            export COMPOSE_PROJECT_NAME=phoenix_kti
+            # are always stable regardless of the invoking directory or shell
 
             echo "==> Pulling latest images (old containers keep serving)..."
             docker compose pull
