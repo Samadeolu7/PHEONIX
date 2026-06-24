@@ -234,10 +234,19 @@ class PermissionResolver:
 
     @staticmethod
     def _is_wildcard(user) -> bool:
-        return (
-            getattr(user, 'is_system_admin', False)
-            or getattr(user, 'is_owner', lambda: False)()
-        )
+        if getattr(user, 'is_system_admin', False):
+            return True
+        if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+            return True
+        # Roles seeded with permission_codes=["*"] (Director, Admin, Operations)
+        # bypass fine-grained checks — they have full access by design.
+        try:
+            return user.roles.filter(
+                is_active=True, permission_codes__contains=['*']
+            ).exists()
+        except Exception:
+            pass
+        return False
 
     @staticmethod
     def _wildcard() -> EffectivePermission:
@@ -307,16 +316,29 @@ class PermissionResolver:
         Build a Q filter that matches policies applicable to the given target.
         A policy applies if it matches at the action level, page level, module level,
         or has no target at all (global for the role).
+
+        Parameters may be model instances or string codes.  String codes are
+        matched via __code lookups (Module.code / ModulePage.code / PageAction.code)
+        to avoid ValueError when Django tries to cast a string to an integer PK.
         """
         from django.db.models import Q
 
         q = Q()
         if action is not None:
-            q |= Q(action=action)
+            if isinstance(action, str):
+                q |= Q(action__code=action)
+            else:
+                q |= Q(action=action)
         if page is not None:
-            q |= Q(page=page, action__isnull=True)
+            if isinstance(page, str):
+                q |= Q(page__code=page, action__isnull=True)
+            else:
+                q |= Q(page=page, action__isnull=True)
         if module is not None:
-            q |= Q(module=module, page__isnull=True, action__isnull=True)
+            if isinstance(module, str):
+                q |= Q(module__code=module, page__isnull=True, action__isnull=True)
+            else:
+                q |= Q(module=module, page__isnull=True, action__isnull=True)
         # policies with no target key set apply globally within the role
         q |= Q(module__isnull=True, page__isnull=True, action__isnull=True)
         return q
