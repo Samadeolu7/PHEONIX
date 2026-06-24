@@ -15,6 +15,53 @@ from django.utils import timezone
 from decimal import Decimal
 import datetime
 
+_ELEVATED_ROLES = frozenset({'director', 'admin', 'operations'})
+
+
+def _get_director_branch(request):
+    """
+    Return the Branch the director has selected via X-Branch-ID, or None.
+    Returns None both when the user is not elevated AND when no branch is selected
+    (all-branches view).  Callers should apply no extra filter when None is returned.
+    """
+    user = request.user
+    is_elevated = getattr(user, 'is_system_admin', False)
+    if not is_elevated and callable(getattr(user, 'is_owner', None)) and user.is_owner():
+        is_elevated = True
+    if not is_elevated:
+        try:
+            is_elevated = user.staff_profile.role_level in _ELEVATED_ROLES
+        except Exception:
+            pass
+    if not is_elevated:
+        return None
+
+    header_val = request.META.get('HTTP_X_BRANCH_ID', '').strip()
+    if not header_val:
+        return None  # director chose "All Branches" — no extra filter
+
+    try:
+        from branches.models import Branch
+        tenant = getattr(user, 'tenant', None)
+        qs = Branch.objects.filter(pk=int(header_val), is_deleted=False)
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        return qs.get()
+    except Exception:
+        return None
+
+
+def _scoped(qs, branch):
+    """Filter queryset by branch when the director has selected one."""
+    if branch is None:
+        return qs
+    try:
+        if any(f.name == 'branch' for f in qs.model._meta.get_fields()):
+            return qs.filter(branch=branch)
+    except Exception:
+        pass
+    return qs
+
 
 class MicrofinanceDashboardStatsView(APIView):
     """
@@ -30,13 +77,14 @@ class MicrofinanceDashboardStatsView(APIView):
     def get(self, request):
         user = request.user
         today = timezone.now().date()
+        branch = _get_director_branch(request)
 
         req_tenant = getattr(request, 'tenant', None)
 
         def scope_qs(qs):
             if req_tenant and not getattr(user, 'tenant', None):
                 qs = qs.filter(tenant=req_tenant)
-            return qs
+            return _scoped(qs, branch)
 
         data = {}
 
@@ -120,15 +168,15 @@ class MicrofinanceDashboardStatsView(APIView):
 
         try:
             from hr.models import LeaveRequest, BonusDeductionRequest
-            pending_approvals += LeaveRequest.objects.for_user(user).filter(status='submitted').count()
-            pending_approvals += BonusDeductionRequest.objects.for_user(user).filter(status='PENDING').count()
+            pending_approvals += scope_qs(LeaveRequest.objects.for_user(user)).filter(status='submitted').count()
+            pending_approvals += scope_qs(BonusDeductionRequest.objects.for_user(user)).filter(status='PENDING').count()
         except Exception:
             pass
 
         try:
             from procurement.models import PurchaseRequisition, PurchaseOrder
-            pending_approvals += PurchaseRequisition.objects.for_user(user).filter(status='submitted').count()
-            pending_approvals += PurchaseOrder.objects.for_user(user).filter(status='submitted').count()
+            pending_approvals += scope_qs(PurchaseRequisition.objects.for_user(user)).filter(status='submitted').count()
+            pending_approvals += scope_qs(PurchaseOrder.objects.for_user(user)).filter(status='submitted').count()
         except Exception:
             pass
 
@@ -137,7 +185,7 @@ class MicrofinanceDashboardStatsView(APIView):
         # ── Pending Tickets ───────────────────────────────────────────────────
         try:
             from tickets.models import Ticket
-            data['pending_tickets'] = Ticket.objects.for_user(user).filter(
+            data['pending_tickets'] = scope_qs(Ticket.objects.for_user(user)).filter(
                 status__in=['OPEN', 'INPR']
             ).count()
         except Exception:
@@ -146,7 +194,7 @@ class MicrofinanceDashboardStatsView(APIView):
         # ── Staff ─────────────────────────────────────────────────────────────
         try:
             from hr.models import Staff
-            data['total_staff'] = Staff.objects.for_user(user).count()
+            data['total_staff'] = scope_qs(Staff.objects.for_user(user)).count()
         except Exception:
             data['total_staff'] = 0
 
@@ -193,6 +241,7 @@ class LoanRepaymentTrendView(APIView):
         user = request.user
         months = min(int(request.query_params.get('months', 6)), 24)
         today = timezone.now().date()
+        branch = _get_director_branch(request)
 
         result = []
         for i in range(months - 1, -1, -1):
@@ -204,12 +253,12 @@ class LoanRepaymentTrendView(APIView):
 
             try:
                 from loans.models import LoanAccount, LoanRepaymentSchedule
-                disbursed = LoanAccount.objects.for_user(user).filter(
+                disbursed = _scoped(LoanAccount.objects.for_user(user), branch).filter(
                     disbursement_date__year=year,
                     disbursement_date__month=month,
                 ).aggregate(total=Sum('disbursed_amount'))['total'] or Decimal('0.00')
 
-                repaid = LoanRepaymentSchedule.objects.for_user(user).filter(
+                repaid = _scoped(LoanRepaymentSchedule.objects.for_user(user), branch).filter(
                     paid_date__year=year,
                     paid_date__month=month,
                     status='paid',
@@ -240,6 +289,7 @@ class ClientGrowthView(APIView):
         user = request.user
         months = min(int(request.query_params.get('months', 6)), 24)
         today = timezone.now().date()
+        branch = _get_director_branch(request)
 
         result = []
         for i in range(months - 1, -1, -1):
@@ -251,7 +301,7 @@ class ClientGrowthView(APIView):
 
             try:
                 from clients.models import Client
-                count = Client.objects.for_user(user).filter(
+                count = _scoped(Client.objects.for_user(user), branch).filter(
                     created_at__year=year,
                     created_at__month=month,
                 ).count()
