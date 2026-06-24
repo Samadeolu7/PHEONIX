@@ -266,6 +266,8 @@ CORS_ALLOW_HEADERS = [
     'x-branch-id',
     'x-csrftoken',
     'x-requested-with',
+    'x-tenant-id',
+    'x-tenant-slug',
 ]
 
 # Cache preflight responses for 10 minutes to reduce OPTIONS round-trips
