@@ -334,6 +334,11 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
 
     // 14. OFFICE SPACE / ADMIN
     grp('btn-admin', 'ADMIN', 'settings', [
+      grp('btn-admin-access', 'ACCESS CONTROL', 'shield', [
+        leaf('User Management', '/admin/users'),
+        leaf('Role Management', '/admin/roles'),
+        leaf('Permission Setup', '/admin/permission-setup'),
+      ]),
       grp('btn-admin-office', 'OFFICE SPACE', 'file-text', [
         leaf('Clock In', '/hr/attendance/clock'),
         leaf('Clock Out', '/hr/attendance/clock'),
