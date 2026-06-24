@@ -64,26 +64,34 @@ class SubscriptionAccessMiddleware:
             try:
                 # Import here to avoid circular dependency
                 from accounts.subscription_models import TenantSubscription
-                
-                subscription = TenantSubscription.objects.select_related(
-                    'subscription_product'
-                ).get(tenant_owner=request.user, deleted_at__isnull=True)
-                
+                from django.db import transaction as _tx
+
+                # Wrap in a savepoint: if TenantSubscription or its related table
+                # doesn't exist yet (e.g. pending migration), the DB error only
+                # rolls back the savepoint and the outer request transaction
+                # stays alive.  Without this, the bare except below would swallow
+                # the Python exception but leave PostgreSQL's transaction aborted,
+                # poisoning every subsequent query for the entire request.
+                with _tx.atomic():
+                    subscription = TenantSubscription.objects.select_related(
+                        'subscription_product'
+                    ).get(tenant_owner=request.user, deleted_at__isnull=True)
+
                 # Redirect suspended accounts to payment page
                 if subscription.status == 'suspended':
                     if path != reverse('payment_required'):
                         return redirect(reverse('payment_required'))
-                
+
                 # Redirect expired accounts
                 if subscription.status == 'expired':
                     if path != reverse('subscription_expired'):
                         return redirect(reverse('subscription_expired'))
-                
+
                 # Check if overdue (auto-suspend is handled by Celery)
                 if subscription.is_overdue() and subscription.status == 'active':
                     # Mark as overdue but don't suspend yet (grace period)
                     pass
-                
+
             except TenantSubscription.DoesNotExist:
                 # No subscription found - allow access for initial setup
                 pass

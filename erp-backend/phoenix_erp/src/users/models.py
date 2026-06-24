@@ -467,7 +467,23 @@ class User(AbstractUser):
     )
 
     def is_owner(self):
-        return hasattr(self, 'tenant_owned')
+        # `tenant_owned` is a reverse OneToOne accessor — accessing it triggers a
+        # DB query.  If the query fails (e.g. during a migration that hasn't run
+        # yet), hasattr() silently returns False but leaves the PostgreSQL
+        # transaction in an aborted state, poisoning every subsequent query in
+        # the same request.  The savepoint ensures the outer transaction stays
+        # alive even when the lookup fails.
+        if getattr(self, '_is_owner_cached', None) is not None:
+            return self._is_owner_cached
+        try:
+            with db_tx.atomic():
+                self._is_owner_cached = (
+                    hasattr(self, 'tenant_owned')
+                    and getattr(self, 'tenant_owned', None) is not None
+                )
+        except Exception:
+            self._is_owner_cached = False
+        return self._is_owner_cached
     
     @property
     def owner(self):
