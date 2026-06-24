@@ -472,6 +472,13 @@ export const clientService = {
     return api.delete(`/clients/groups/${id}/`);
   },
 
+  async assignOfficerToGroup(
+    groupId: number,
+    officerId: number | null,
+  ): Promise<{ detail: string; updated_clients: number; officer_id?: number; officer_name?: string }> {
+    return api.post(`/clients/groups/${groupId}/assign-officer/`, { officer_id: officerId });
+  },
+
   async activateClient(id: number): Promise<{ success: boolean; status: string }> {
     return api.post(`/clients/clients/${id}/activate/`, {});
   },

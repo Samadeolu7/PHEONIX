@@ -1802,11 +1802,15 @@ class ClientGroupViewSet(ScopedModelViewSet):
     Query params:
       - is_active: true/false
       - search: matches name or code
+
+    Credit officers see only groups assigned to them (assigned_officer = current staff).
+    Groups with no assigned_officer are visible to everyone in the branch.
     """
     permission_module = 'clients'
     permission_page = 'client-groups'
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = ClientGroup.objects.all()
+    officer_client_lookup = 'assigned_officer'
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -1832,6 +1836,47 @@ class ClientGroupViewSet(ScopedModelViewSet):
         clients = group.members.filter(is_deleted=False).order_by('last_name', 'first_name')
         serializer = ClientListSerializer(clients, many=True, context={'request': request})
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='assign-officer')
+    def assign_officer(self, request, pk=None):
+        """
+        Assign a credit officer to this group and cascade to all member clients.
+
+        Body: { "officer_id": <Staff PK> }  or  { "officer_id": null }  to unassign.
+        """
+        from hr.models import Staff
+        from django.db import transaction as db_tx
+
+        group = self.get_object()
+        officer_id = request.data.get('officer_id')
+
+        if officer_id is None:
+            # Unassign — clear the group and all members
+            with db_tx.atomic():
+                group.assigned_officer = None
+                group.save(update_fields=['assigned_officer'])
+                updated = Client.objects.filter(group=group, is_deleted=False).update(assigned_officer=None)
+            return Response({
+                'detail': f'Officer unassigned from group and {updated} member client(s).',
+                'updated_clients': updated,
+            })
+
+        try:
+            officer = Staff.objects.get(pk=officer_id, tenant=request.user.tenant)
+        except Staff.DoesNotExist:
+            raise DRFValidationError({'officer_id': 'Staff member not found in this tenant.'})
+
+        with db_tx.atomic():
+            group.assigned_officer = officer
+            group.save(update_fields=['assigned_officer'])
+            updated = Client.objects.filter(group=group, is_deleted=False).update(assigned_officer=officer)
+
+        return Response({
+            'detail': f'Officer "{officer}" assigned to group and {updated} member client(s) updated.',
+            'updated_clients': updated,
+            'officer_id': officer.pk,
+            'officer_name': getattr(officer, 'full_name', str(officer)),
+        })
 
 
 class ClientRegistrationConfigViewSet(ScopedModelViewSet):

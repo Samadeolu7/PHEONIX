@@ -5,9 +5,12 @@ import {
   ClientGroupPayload,
   ClientOption,
 } from '../../services/clientService';
+import { hrService } from '../../services/hrService';
 import { api } from '../../services/api';
 import { useToast } from '../../hooks/useToast';
-import { Users, X, ChevronRight } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { getRoleRank } from '../../types/roles';
+import { Users, X, ChevronRight, UserCog } from 'lucide-react';
 
 const MEETING_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -25,10 +28,14 @@ const emptyForm = (): Partial<ClientGroupPayload> => ({
 });
 
 const ClientGroupsPage: React.FC = () => {
+  const { selectedRole } = useAuth();
+  const canManageOfficers = getRoleRank(selectedRole) >= 3;
+
   const [groups, setGroups] = useState<ClientGroup[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
+  const [staffOptions, setStaffOptions] = useState<Array<{ id: number; name: string }>>([]);
 
   const [showModal, setShowModal] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ClientGroup | null>(null);
@@ -37,6 +44,10 @@ const ClientGroupsPage: React.FC = () => {
 
   const [slideOver, setSlideOver] = useState<{ group: ClientGroup; members: any[] } | null>(null);
   const [membersLoading, setMembersLoading] = useState(false);
+
+  const [assignModal, setAssignModal] = useState<ClientGroup | null>(null);
+  const [assignOfficerId, setAssignOfficerId] = useState<string>('');
+  const [assigning, setAssigning] = useState(false);
 
   const { success, error: showError } = useToast();
 
@@ -59,6 +70,11 @@ const ClientGroupsPage: React.FC = () => {
   useEffect(() => {
     clientService.getClientOptions({ status: 'active' }).then(setClientOptions).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!canManageOfficers) return;
+    hrService.getStaffForDropdown().then(setStaffOptions).catch(() => {});
+  }, [canManageOfficers]);
 
   const openCreate = () => {
     setEditingGroup(null);
@@ -131,6 +147,27 @@ const ClientGroupsPage: React.FC = () => {
     }
   };
 
+  const openAssignModal = (group: ClientGroup) => {
+    setAssignModal(group);
+    setAssignOfficerId((group as any).assigned_officer ? String((group as any).assigned_officer) : '');
+  };
+
+  const handleAssignOfficer = async () => {
+    if (!assignModal) return;
+    try {
+      setAssigning(true);
+      const officerId = assignOfficerId ? Number(assignOfficerId) : null;
+      const result = await clientService.assignOfficerToGroup(assignModal.id, officerId);
+      success(`${result.detail}`);
+      setAssignModal(null);
+      loadGroups();
+    } catch (e: any) {
+      showError(e?.message || 'Failed to assign officer');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
   const setField = (key: keyof ClientGroupPayload, value: any) =>
     setFormData(prev => ({ ...prev, [key]: value }));
 
@@ -146,13 +183,15 @@ const ClientGroupsPage: React.FC = () => {
             </div>
             <p className="text-gray-600">Manage Ajo / savings groups and their members</p>
           </div>
-          <button
-            onClick={openCreate}
-            className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 flex items-center gap-2"
-          >
-            <Users size={18} />
-            New Group
-          </button>
+          {canManageOfficers && (
+            <button
+              onClick={openCreate}
+              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 flex items-center gap-2"
+            >
+              <Users size={18} />
+              New Group
+            </button>
+          )}
         </div>
       </div>
 
@@ -233,71 +272,95 @@ const ClientGroupsPage: React.FC = () => {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  {['Name', 'Code', 'Meeting Day', 'Leader', 'Members', 'Status', 'Actions'].map(
-                    col => (
-                      <th
-                        key={col}
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        {col}
-                      </th>
-                    )
-                  )}
+                  {[
+                    'Name', 'Code', 'Meeting Day', 'Leader',
+                    'Assigned Officer', 'Members', 'Status',
+                    ...(canManageOfficers ? ['Actions'] : []),
+                  ].map(col => (
+                    <th
+                      key={col}
+                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      {col}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {groups.map(group => (
-                  <tr key={group.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{group.name}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {group.group_code || '—'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {group.meeting_day || '—'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {group.group_leader_name || '—'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <button
-                        onClick={() => openMembers(group)}
-                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 hover:bg-indigo-200 cursor-pointer"
-                      >
-                        {group.members_count ?? 0}
-                        <ChevronRight size={12} />
-                      </button>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          group.is_active
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {group.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex space-x-2">
+                {groups.map(group => {
+                  const grp = group as any;
+                  return (
+                    <tr key={group.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">{group.name}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {group.group_code || '—'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {group.meeting_day || '—'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {group.group_leader_name || '—'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        {grp.assigned_officer_name ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            <UserCog size={11} />
+                            {grp.assigned_officer_name}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-xs">Unassigned</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
                         <button
-                          onClick={() => openEdit(group)}
-                          className="text-green-600 hover:text-green-900"
+                          onClick={() => openMembers(group)}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 hover:bg-indigo-200 cursor-pointer"
                         >
-                          Edit
+                          {group.members_count ?? 0}
+                          <ChevronRight size={12} />
                         </button>
-                        <button
-                          onClick={() => handleDelete(group)}
-                          className="text-red-600 hover:text-red-900"
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            group.is_active
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
                         >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          {group.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      {canManageOfficers && (
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => openAssignModal(group)}
+                              className="text-blue-600 hover:text-blue-900"
+                              title="Assign Officer"
+                            >
+                              Assign
+                            </button>
+                            <button
+                              onClick={() => openEdit(group)}
+                              className="text-green-600 hover:text-green-900"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDelete(group)}
+                              className="text-red-600 hover:text-red-900"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 
@@ -308,9 +371,11 @@ const ClientGroupsPage: React.FC = () => {
                 <p className="text-gray-600 mb-4">
                   {search
                     ? 'No groups match your search.'
-                    : 'Create your first group to get started.'}
+                    : canManageOfficers
+                    ? 'Create your first group to get started.'
+                    : 'No groups have been assigned to you yet.'}
                 </p>
-                {!search && (
+                {!search && canManageOfficers && (
                   <button
                     onClick={openCreate}
                     className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 inline-flex items-center gap-2"
@@ -324,6 +389,63 @@ const ClientGroupsPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Assign Officer Modal */}
+      {assignModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen px-4">
+            <div className="fixed inset-0 bg-black bg-opacity-40" onClick={() => setAssignModal(null)} />
+            <div className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+              <div className="flex items-center justify-between mb-5">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Assign Officer</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">{assignModal.name}</p>
+                </div>
+                <button onClick={() => setAssignModal(null)} className="text-gray-400 hover:text-gray-600">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <p className="text-sm text-gray-600 mb-4">
+                Assigning an officer will also update <strong>all clients</strong> in this group to the
+                same assigned officer.
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Credit Officer</label>
+                <select
+                  value={assignOfficerId}
+                  onChange={e => setAssignOfficerId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                >
+                  <option value="">— Unassign —</option>
+                  {staffOptions.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-3 mt-6">
+                <button
+                  onClick={() => setAssignModal(null)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAssignOfficer}
+                  disabled={assigning}
+                  className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {assigning ? 'Saving...' : 'Confirm Assignment'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create / Edit Modal */}
       {showModal && (

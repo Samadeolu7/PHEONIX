@@ -425,6 +425,7 @@ class ProspectPublicRegistrationSerializer(serializers.ModelSerializer):
 class ClientGroupSerializer(TenantModelSerializer):
     """Serializer for Ajo / loan group management."""
     leader_name = serializers.CharField(source='leader.full_name', read_only=True, default=None)
+    assigned_officer_name = serializers.SerializerMethodField(read_only=True)
     member_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -432,15 +433,25 @@ class ClientGroupSerializer(TenantModelSerializer):
         fields = [
             'id', 'name', 'code', 'meeting_day', 'leader', 'leader_name',
             'description', 'is_active', 'member_count',
+            'assigned_officer', 'assigned_officer_name',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'leader_name', 'member_count', 'owner', 'branch', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'leader_name', 'assigned_officer_name', 'member_count',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
         extra_kwargs = {
             'code': {'required': True, 'allow_blank': False},
         }
 
     def get_member_count(self, obj):
         return obj.members.filter(is_deleted=False).count()
+
+    def get_assigned_officer_name(self, obj):
+        if obj.assigned_officer_id is None:
+            return None
+        officer = obj.assigned_officer
+        return getattr(officer, 'full_name', None) or str(officer)
 
 
 class ClientGroupListSerializer(TenantModelSerializer):

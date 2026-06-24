@@ -645,6 +645,14 @@ class ClientGroup(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     )
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    assigned_officer = models.ForeignKey(
+        'hr.Staff',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='managed_groups',
+        help_text='Credit officer responsible for managing this group and all its members.',
+    )
 
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
@@ -654,6 +662,7 @@ class ClientGroup(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         unique_together = [('owner', 'code')]
         indexes = [
             models.Index(fields=['is_active']),
+            models.Index(fields=['assigned_officer']),
         ]
 
     def __str__(self):

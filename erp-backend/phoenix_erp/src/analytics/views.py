@@ -63,6 +63,38 @@ def _scoped(qs, branch):
     return qs
 
 
+def _apply_officer_scope(qs, user, client_lookup: str):
+    """
+    Narrow a queryset to only the records a credit officer or supervisor
+    should see, using the same logic as ScopedModelViewSet._apply_officer_scope.
+
+    client_lookup is the ORM path from the queryset model to the
+    assigned_officer FK on Client — e.g. 'assigned_officer' for Client,
+    or 'client__assigned_officer' for LoanAccount.
+    """
+    try:
+        staff = user.staff_profile
+    except Exception:
+        return qs
+
+    role = getattr(staff, 'role_level', None)
+
+    if role == 'credit_officer':
+        return qs.filter(
+            Q(**{client_lookup: staff}) | Q(**{f'{client_lookup}__isnull': True})
+        )
+
+    if role == 'supervisor':
+        return qs.filter(
+            Q(**{client_lookup: staff}) |
+            Q(**{f'{client_lookup}__reports_to': staff}) |
+            Q(**{f'{client_lookup}__isnull': True})
+        )
+
+    # branch_manager / director / operations / admin — no extra restriction
+    return qs
+
+
 class MicrofinanceDashboardStatsView(APIView):
     """
     GET /api/analytics/dashboard-stats/
@@ -91,7 +123,11 @@ class MicrofinanceDashboardStatsView(APIView):
         # ── Clients ───────────────────────────────────────────────────────────
         try:
             from clients.models import Client
-            client_qs = scope_qs(Client.objects.for_user(user))
+            client_qs = _apply_officer_scope(
+                scope_qs(Client.objects.for_user(user)),
+                user,
+                client_lookup='assigned_officer',
+            )
             data['total_clients'] = client_qs.count()
             data['active_clients'] = client_qs.filter(status='active').count()
             data['new_clients_this_month'] = client_qs.filter(
@@ -104,7 +140,11 @@ class MicrofinanceDashboardStatsView(APIView):
         # ── Loans ─────────────────────────────────────────────────────────────
         try:
             from loans.models import LoanAccount
-            loan_qs = scope_qs(LoanAccount.objects.for_user(user))
+            loan_qs = _apply_officer_scope(
+                scope_qs(LoanAccount.objects.for_user(user)),
+                user,
+                client_lookup='client__assigned_officer',
+            )
 
             data['active_loans'] = loan_qs.filter(status__in=['active', 'disbursed']).count()
 
@@ -160,8 +200,10 @@ class MicrofinanceDashboardStatsView(APIView):
         pending_approvals = 0
         try:
             from loans.models import LoanAccount
-            pending_approvals += scope_qs(
-                LoanAccount.objects.for_user(user)
+            pending_approvals += _apply_officer_scope(
+                scope_qs(LoanAccount.objects.for_user(user)),
+                user,
+                client_lookup='client__assigned_officer',
             ).filter(status='pending').count()
         except Exception:
             pass

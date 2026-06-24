@@ -25,10 +25,12 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   // Wildcard: global-scope superusers bypass all fine-grained checks.
   const isSuperWildcard = permissionService.hasGlobalScope() && permissionService.isSuperUser();
 
-  // View-only pages are open to any authenticated user who has at least one role.
-  // Write-level codes (create/edit/delete/approve) still require explicit backend grants.
+  // View-only pages are open to any authenticated user who has a role.
+  // selectedRole is guaranteed non-null here (the loading spinner below handles the null case).
+  // Using selectedRole from AuthContext rather than permissionService.getUserRoles() to avoid
+  // a race where the singleton hasn't been hydrated from localStorage yet.
   const isViewPermission = typeof requiredPermission === 'string' && requiredPermission.endsWith('-view');
-  const hasAnyRole = permissionService.getUserRoles().length > 0;
+  const hasAnyRole = selectedRole != null;
 
   const isWildcard = isSuperWildcard || (isViewPermission && hasAnyRole);
 
