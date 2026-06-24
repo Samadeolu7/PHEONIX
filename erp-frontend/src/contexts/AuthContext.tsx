@@ -336,7 +336,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     roleService.setSelectedRole(role);
     setSelectedRole(role);
     // If switching to a non-director role, clear the active branch
-    if (!DIRECTOR_ROLES.has(role)) {
+    if (!DIRECTOR_ROLES.has(role.toLowerCase())) {
       setActiveBranch(null);
     }
   };
@@ -357,7 +357,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const isDirectorPlus =
-    DIRECTOR_ROLES.has(selectedRole ?? '') ||
+    DIRECTOR_ROLES.has((selectedRole ?? '').toLowerCase()) ||
     (user?.is_owner ?? false) ||
     (user?.is_system_admin ?? false);
 
