@@ -6,7 +6,7 @@ from .models import (
     LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement,
     LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
-    LoanRepaymentRequest, LoanRestructure,
+    LoanRepaymentRequest, LoanRestructure, 
 )
 
 
@@ -95,6 +95,28 @@ class LoanAccountListSerializer(TenantModelSerializer):
             'days_in_arrears', 'arrears_amount',
             'application_date', 'disbursement_date', 'maturity_date',
             'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class LoanRestructureSerializer(serializers.ModelSerializer):
+    restructured_by_name = serializers.SerializerMethodField()
+
+    def get_restructured_by_name(self, obj):
+        return obj.restructured_by.get_full_name() if obj.restructured_by else None
+
+    class Meta:
+        model = LoanRestructure
+        fields = [
+            'id', 'loan', 'effective_date',
+            'restructured_by', 'restructured_by_name',
+            'reason', 'notes',
+            'old_term', 'old_term_unit', 'old_interest_rate',
+            'old_repayment_frequency', 'old_outstanding_principal',
+            'old_installment_amount', 'old_maturity_date',
+            'new_term', 'new_term_unit', 'new_interest_rate',
+            'new_repayment_frequency', 'new_installment_amount', 'new_maturity_date',
+            'created_at',
         ]
         read_only_fields = fields
 
@@ -400,28 +422,6 @@ class FeePreviewer(serializers.Serializer):
     default_savings_product_id = serializers.IntegerField(read_only=True, allow_null=True)
     default_savings_product_name = serializers.CharField(read_only=True, allow_null=True)
 
-
-
-class LoanRestructureSerializer(serializers.ModelSerializer):
-    restructured_by_name = serializers.SerializerMethodField()
-
-    def get_restructured_by_name(self, obj):
-        return obj.restructured_by.get_full_name() if obj.restructured_by else None
-
-    class Meta:
-        model = LoanRestructure
-        fields = [
-            'id', 'loan', 'effective_date',
-            'restructured_by', 'restructured_by_name',
-            'reason', 'notes',
-            'old_term', 'old_term_unit', 'old_interest_rate',
-            'old_repayment_frequency', 'old_outstanding_principal',
-            'old_installment_amount', 'old_maturity_date',
-            'new_term', 'new_term_unit', 'new_interest_rate',
-            'new_repayment_frequency', 'new_installment_amount', 'new_maturity_date',
-            'created_at',
-        ]
-        read_only_fields = fields
 
 
 class LoanRepaymentRequestSerializer(TenantModelSerializer):
