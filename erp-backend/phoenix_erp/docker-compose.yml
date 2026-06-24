@@ -231,6 +231,8 @@ networks:
     name: traefik_public
 volumes:
   kti_postgres_data:
+    external: true
+    name: phoenix-kti_kti_postgres_data
   kti_redis_data:
   kti_static_files:
   kti_media_files:
