@@ -22,10 +22,15 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   const { isAuthenticated, loading, selectedRole } = useAuth();
   const { hasPermission } = usePermission();
 
-  // A user bypasses specific permission checks only when they have global scope
-  // AND the backend has confirmed can_view/can_create/etc on everything.
-  // This is determined by PermissionResolver (not a hardcoded role name list).
-  const isWildcard = permissionService.hasGlobalScope() && permissionService.isSuperUser();
+  // Wildcard: global-scope superusers bypass all fine-grained checks.
+  const isSuperWildcard = permissionService.hasGlobalScope() && permissionService.isSuperUser();
+
+  // View-only pages are open to any authenticated user who has at least one role.
+  // Write-level codes (create/edit/delete/approve) still require explicit backend grants.
+  const isViewPermission = typeof requiredPermission === 'string' && requiredPermission.endsWith('-view');
+  const hasAnyRole = permissionService.getUserRoles().length > 0;
+
+  const isWildcard = isSuperWildcard || (isViewPermission && hasAnyRole);
 
   // Wait for auth to finish loading
   if (loading) {
