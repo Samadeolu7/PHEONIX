@@ -17,14 +17,20 @@ import {
   RotateCcw,
   Printer,
   ShieldAlert,
+  UserCheck,
+  UserPlus,
+  Trash2,
+  Users,
 } from 'lucide-react';
 import {
   loanService,
   LoanAccount,
+  LoanGuarantor,
   LoanRepaymentSchedule,
   RepayLoanPayload,
   RestructureLoanPayload,
 } from '../../services/loanService';
+import { clientService, ClientOption } from '../../services/clientService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -404,6 +410,167 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
   );
 }
 
+// ── Add Guarantor Modal ────────────────────────────────────────────────────
+
+interface AddGuarantorModalProps {
+  loanId: number;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProps) {
+  const [search, setSearch] = useState('');
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<ClientOption | null>(null);
+  const [guaranteedAmount, setGuaranteedAmount] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      if (!search.trim()) { setClients([]); return; }
+      setClientsLoading(true);
+      try {
+        const opts = await clientService.getClientOptions({ search: search.trim(), status: 'active' } as any);
+        setClients(opts);
+      } catch {
+        setClients([]);
+      } finally {
+        setClientsLoading(false);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedClient) { setError('Please select a client as guarantor.'); return; }
+    if (!guaranteedAmount || parseFloat(guaranteedAmount) <= 0) {
+      setError('Enter a valid guaranteed amount.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await loanService.addGuarantor({
+        loan: loanId,
+        guarantor: selectedClient.id,
+        guaranteed_amount: guaranteedAmount,
+      });
+      setSuccess(true);
+      setTimeout(() => { onSuccess(); }, 1000);
+    } catch (e: unknown) {
+      const err = e as { detail?: string; message?: string; guarantor?: string[] };
+      setError((err as any)?.guarantor?.[0] ?? err?.detail ?? err?.message ?? 'Failed to add guarantor.');
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <button type="button" aria-label="Close" onClick={onClose}
+          className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100">
+          <X size={18} />
+        </button>
+        <h2 className="mb-4 text-lg font-semibold text-gray-900">Add Guarantor</h2>
+        {success ? (
+          <div className="flex flex-col items-center py-8 text-center">
+            <CheckCircle size={40} className="mb-2 text-green-500" />
+            <p className="font-medium text-gray-900">Guarantor added successfully</p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Client search */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Search client by name or ID <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={search}
+                onChange={e => { setSearch(e.target.value); setSelectedClient(null); }}
+                placeholder="Type name or client ID…"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              {clientsLoading && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-gray-400">
+                  <Loader2 size={11} className="animate-spin" /> Searching…
+                </p>
+              )}
+              {!clientsLoading && clients.length > 0 && !selectedClient && (
+                <ul className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+                  {clients.map(c => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedClient(c); setSearch(c.name); setClients([]); }}
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50"
+                      >
+                        <span className="font-medium text-gray-900">{c.name}</span>
+                        <span className="ml-2 text-xs text-gray-400">{c.client_id}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {selectedClient && (
+                <div className="mt-1 flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm">
+                  <UserCheck size={14} className="text-green-600" />
+                  <span className="font-medium text-green-800">{selectedClient.name}</span>
+                  <span className="text-green-600">({selectedClient.client_id})</span>
+                  <button type="button" onClick={() => { setSelectedClient(null); setSearch(''); }}
+                    className="ml-auto text-gray-400 hover:text-gray-600">
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Guaranteed amount */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Guaranteed Amount (₦) <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="0.01"
+                value={guaranteedAmount}
+                onChange={e => setGuaranteedAmount(e.target.value)}
+                placeholder="e.g. 500000"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                required
+              />
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle size={14} />
+                {error}
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={submitting}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50">
+                {submitting ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+                Add Guarantor
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function LoanAccountDetailPage() {
@@ -413,10 +580,13 @@ export default function LoanAccountDetailPage() {
 
   const [loan, setLoan] = useState<LoanAccount | null>(null);
   const [schedule, setSchedule] = useState<LoanRepaymentSchedule[]>([]);
+  const [guarantors, setGuarantors] = useState<LoanGuarantor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showRepayModal, setShowRepayModal] = useState(false);
   const [showRestructureModal, setShowRestructureModal] = useState(false);
+  const [showAddGuarantorModal, setShowAddGuarantorModal] = useState(false);
+  const [removingGuarantorId, setRemovingGuarantorId] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -425,12 +595,14 @@ export default function LoanAccountDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [loanData, scheduleData] = await Promise.all([
+      const [loanData, scheduleData, guarantorData] = await Promise.all([
         loanService.getLoan(loanId),
         loanService.getLoanSchedule(loanId),
+        loanService.listGuarantors(loanId),
       ]);
       setLoan(loanData);
       setSchedule(scheduleData);
+      setGuarantors(guarantorData);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setError(err?.detail ?? err?.message ?? 'Failed to load loan details.');
@@ -438,6 +610,20 @@ export default function LoanAccountDetailPage() {
       setLoading(false);
     }
   }, [loanId]);
+
+  async function handleRemoveGuarantor(guarantorId: number) {
+    if (!window.confirm('Remove this guarantor from the loan?')) return;
+    setRemovingGuarantorId(guarantorId);
+    try {
+      await loanService.deleteGuarantor(guarantorId);
+      setGuarantors(prev => prev.filter(g => g.id !== guarantorId));
+    } catch (e: unknown) {
+      const err = e as { detail?: string; message?: string };
+      setActionError(err?.detail ?? err?.message ?? 'Failed to remove guarantor.');
+    } finally {
+      setRemovingGuarantorId(null);
+    }
+  }
 
   useEffect(() => {
     load();
@@ -522,6 +708,17 @@ export default function LoanAccountDetailPage() {
           onSuccess={() => {
             setShowRestructureModal(false);
             load();
+          }}
+        />
+      )}
+
+      {showAddGuarantorModal && (
+        <AddGuarantorModal
+          loanId={loan.id}
+          onClose={() => setShowAddGuarantorModal(false)}
+          onSuccess={() => {
+            setShowAddGuarantorModal(false);
+            loanService.listGuarantors(loan.id).then(setGuarantors);
           }}
         />
       )}
@@ -846,6 +1043,83 @@ export default function LoanAccountDetailPage() {
                     })}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+
+        {/* Guarantors */}
+        <div className="rounded-xl bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <div className="flex items-center gap-2">
+              <Users size={16} className="text-purple-500" />
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+                Guarantors
+              </h2>
+              <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">
+                {guarantors.length} linked
+              </span>
+            </div>
+            {['pending', 'approved'].includes(loan.status) && (
+              <button
+                type="button"
+                onClick={() => setShowAddGuarantorModal(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700"
+              >
+                <UserPlus size={13} />
+                Add Guarantor
+              </button>
+            )}
+          </div>
+
+          {guarantors.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-gray-400">
+              <UserCheck size={28} className="text-gray-300" />
+              <p>No guarantors linked to this loan yet.</p>
+              {loan.status === 'pending' && (
+                <p className="text-xs text-amber-600">
+                  Add guarantors before the loan is approved if required by the product.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {guarantors.map(g => (
+                <div key={g.id} className="flex items-center gap-4 px-5 py-3.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-100 text-purple-700">
+                    <UserCheck size={16} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-gray-900">{g.guarantor_name}</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500">
+                      <span>{g.guarantor_client_id}</span>
+                      {g.guarantor_phone && <span>{g.guarantor_phone}</span>}
+                      {g.guarantor_occupation && <span>{g.guarantor_occupation}</span>}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold text-gray-800">₦{fmt(g.guaranteed_amount)}</p>
+                    <span className={`text-xs font-medium capitalize ${
+                      g.status === 'approved' ? 'text-green-600' :
+                      g.status === 'rejected' ? 'text-red-600' : 'text-yellow-600'
+                    }`}>
+                      {g.status}
+                    </span>
+                  </div>
+                  {['pending', 'approved'].includes(loan.status) && (
+                    <button
+                      type="button"
+                      aria-label="Remove guarantor"
+                      onClick={() => handleRemoveGuarantor(g.id)}
+                      disabled={removingGuarantorId === g.id}
+                      className="ml-2 shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
+                    >
+                      {removingGuarantorId === g.id
+                        ? <Loader2 size={14} className="animate-spin" />
+                        : <Trash2 size={14} />}
+                    </button>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>

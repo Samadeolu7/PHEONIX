@@ -147,17 +147,28 @@ export interface LoanCollateral {
   updated_at: string;
 }
 
+export type GuarantorStatus = 'pending' | 'approved' | 'rejected';
+
 export interface LoanGuarantor {
   id: number;
   loan: number;
-  name: string;
-  relationship: string;
-  phone: string;
-  occupation: string;
-  home_address: string;
-  office_address: string;
+  guarantor: number;           // Client PK
+  guarantor_name: string;
+  guarantor_client_id: string;
+  guarantor_phone: string;
+  guarantor_occupation: string | null;
+  guarantor_address: string | null;
+  guaranteed_amount: string;
+  status: GuarantorStatus;
+  approval_date: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface AddGuarantorPayload {
+  loan: number;
+  guarantor: number;
+  guaranteed_amount: string;
 }
 
 // ── Verification Request ───────────────────────────────────────────────────────
@@ -405,7 +416,7 @@ export const loanService = {
     return Array.isArray(res) ? res : (res?.results ?? []);
   },
 
-  async addGuarantor(data: Omit<LoanGuarantor, 'id' | 'created_at' | 'updated_at'>): Promise<LoanGuarantor> {
+  async addGuarantor(data: AddGuarantorPayload): Promise<LoanGuarantor> {
     return api.post(`${BASE}/guarantors/`, data);
   },
 

@@ -335,14 +335,6 @@ class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text="Ajo/group savings group this client belongs to"
     )
 
-    # Guarantor information
-    guarantor_name = models.CharField(max_length=200, blank=True, null=True)
-    guarantor_relationship = models.CharField(max_length=100, blank=True, null=True)
-    guarantor_phone = models.CharField(max_length=20, blank=True, null=True)
-    guarantor_occupation = models.CharField(max_length=200, blank=True, null=True)
-    guarantor_home_address = models.TextField(blank=True, null=True)
-    guarantor_office_address = models.TextField(blank=True, null=True)
-
     # Assigned credit officer — drives data-access scoping
     assigned_officer = models.ForeignKey(
         'hr.Staff',

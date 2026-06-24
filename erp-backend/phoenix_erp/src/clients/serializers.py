@@ -230,8 +230,6 @@ class ClientDetailSerializer(TenantModelSerializer):
 
             # KTIL microfinance fields
             'client_type', 'group',
-            'guarantor_name', 'guarantor_relationship', 'guarantor_phone',
-            'guarantor_occupation', 'guarantor_home_address', 'guarantor_office_address',
             'assigned_officer', 'assigned_officer_name',
             'account_manager', 'account_manager_name',
             
@@ -330,8 +328,6 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
 
             # KTIL microfinance fields
             'client_type', 'group',
-            'guarantor_name', 'guarantor_relationship', 'guarantor_phone',
-            'guarantor_occupation', 'guarantor_home_address', 'guarantor_office_address',
             'assigned_officer', 'account_manager',
             'nin',
         ]

@@ -633,36 +633,6 @@ const ClientDetailPage: React.FC = () => {
           </InfoGrid>
         </SectionCard>
 
-        {/* Guarantor (if exists) */}
-        {(client as any).guarantor_name && (
-          <SectionCard title="Guarantor" icon={<Users size={20} color="#8b5cf6" />}>
-            <InfoGrid>
-              <InfoItem label="Name" value={(client as any).guarantor_name} />
-              <InfoItem
-                label="Relationship"
-                value={(client as any).guarantor_relationship || 'Not specified'}
-                capitalize
-              />
-              <InfoItem
-                label="Phone"
-                value={(client as any).guarantor_phone || 'Not provided'}
-              />
-              <InfoItem
-                label="Occupation"
-                value={(client as any).guarantor_occupation || 'Not provided'}
-              />
-              <InfoItem
-                label="Home Address"
-                value={(client as any).guarantor_home_address || 'Not provided'}
-              />
-              <InfoItem
-                label="Office Address"
-                value={(client as any).guarantor_office_address || 'Not provided'}
-              />
-            </InfoGrid>
-          </SectionCard>
-        )}
-
         {/* Employment / Business Information */}
         <SectionCard title="Employment / Business" icon={<Building size={20} color="#06b6d4" />}>
           <InfoGrid>

@@ -1507,16 +1507,14 @@ class LoanGuarantor(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         Client,
         on_delete=models.PROTECT,
         related_name='guaranteed_loans',
-        null=True,
-        blank=True
     )
-    
+
     guaranteed_amount = models.DecimalField(
         max_digits=18,
         decimal_places=2,
         help_text="Maximum amount guaranteed"
     )
-    
+
     status = models.CharField(
         max_length=20,
         choices=[
@@ -1526,15 +1524,40 @@ class LoanGuarantor(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         ],
         default='pending'
     )
-    
+
     approval_date = models.DateField(null=True, blank=True)
-    
+
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
-    
+
+    # Loan statuses that count as "active" for guarantor blocking purposes
+    ACTIVE_LOAN_STATUSES = ['pending', 'approved', 'disbursed', 'active']
+
     class Meta:
         unique_together = [('loan', 'guarantor')]
-    
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.guarantor_id and self.loan_id:
+            if self.guarantor_id == self.loan.client_id:
+                raise ValidationError(
+                    "A borrower cannot be their own guarantor."
+                )
+            # Block guarantor already serving on another active loan
+            conflict = LoanGuarantor.objects.filter(
+                guarantor_id=self.guarantor_id,
+                loan__status__in=self.ACTIVE_LOAN_STATUSES,
+            ).exclude(pk=self.pk).exists()
+            if conflict:
+                raise ValidationError(
+                    f"{self.guarantor.full_name} is already an active guarantor "
+                    "on another loan and cannot be used until that loan is closed."
+                )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.guarantor.full_name} for {self.loan.loan_number}"
 

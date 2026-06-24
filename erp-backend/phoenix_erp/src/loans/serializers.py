@@ -68,14 +68,51 @@ class LoanCollateralSerializer(TenantModelSerializer):
 
 
 class LoanGuarantorSerializer(TenantModelSerializer):
+    # Read-only display fields pulled from the guarantor Client record
+    guarantor_name = serializers.CharField(source='guarantor.full_name', read_only=True)
+    guarantor_client_id = serializers.CharField(source='guarantor.client_id', read_only=True)
+    guarantor_phone = serializers.CharField(source='guarantor.phone_primary', read_only=True)
+    guarantor_occupation = serializers.CharField(source='guarantor.occupation', read_only=True, default=None)
+    guarantor_address = serializers.CharField(source='guarantor.address_street', read_only=True, default=None)
+
     class Meta:
         model = LoanGuarantor
         fields = [
-            'id', 'loan', 'name', 'relationship', 'phone',
-            'occupation', 'home_address', 'office_address',
+            'id', 'loan', 'guarantor',
+            'guarantor_name', 'guarantor_client_id', 'guarantor_phone',
+            'guarantor_occupation', 'guarantor_address',
+            'guaranteed_amount', 'status', 'approval_date',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'loan', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'guarantor_name', 'guarantor_client_id', 'guarantor_phone',
+            'guarantor_occupation', 'guarantor_address',
+            'approval_date', 'created_at', 'updated_at',
+        ]
+
+    def validate(self, attrs):
+        loan = attrs.get('loan') or (self.instance.loan if self.instance else None)
+        guarantor = attrs.get('guarantor') or (self.instance.guarantor if self.instance else None)
+
+        if guarantor and loan:
+            if guarantor.pk == loan.client_id:
+                raise serializers.ValidationError(
+                    {'guarantor': "A borrower cannot be their own guarantor."}
+                )
+            conflict_qs = LoanGuarantor.objects.filter(
+                guarantor=guarantor,
+                loan__status__in=LoanGuarantor.ACTIVE_LOAN_STATUSES,
+            )
+            if self.instance:
+                conflict_qs = conflict_qs.exclude(pk=self.instance.pk)
+            if conflict_qs.exists():
+                raise serializers.ValidationError(
+                    {'guarantor': (
+                        f"{guarantor.full_name} is already an active guarantor on another loan "
+                        "and cannot be used until that loan is closed."
+                    )}
+                )
+        return attrs
 
 
 class LoanAccountListSerializer(TenantModelSerializer):
