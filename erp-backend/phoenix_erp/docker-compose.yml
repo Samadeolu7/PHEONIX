@@ -41,14 +41,16 @@ services:
     command:
       - |
         cd /app/src
-        python manage.py migrate
+        python manage.py migrate --noinput
         python manage.py collectstatic --noinput
+        python manage.py createcachetable 2>/dev/null || true
         exec gunicorn phoenix.wsgi:application \
           --bind 0.0.0.0:8000 \
           --workers 3 \
           --worker-class gthread \
           --threads 2 \
           --timeout 120 \
+          --preload \
           --access-logfile - \
           --error-logfile -
     environment:
@@ -80,6 +82,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/common/health/')"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 40s
     networks:
       - phoenix_kti_backend
       - traefik_public
@@ -90,6 +103,8 @@ services:
       - "traefik.http.routers.phoenix-kti-api.tls=true"
       - "traefik.http.routers.phoenix-kti-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.phoenix-kti-api.loadbalancer.server.port=8000"
+      - "traefik.http.services.phoenix-kti-api.loadbalancer.healthcheck.path=/api/common/health/"
+      - "traefik.http.services.phoenix-kti-api.loadbalancer.healthcheck.interval=10s"
       - "traefik.docker.network=traefik_public"
   celery_worker:
     image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}

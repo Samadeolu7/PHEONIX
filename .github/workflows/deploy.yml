@@ -108,14 +108,48 @@ jobs:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Keep timeout generous — migration + health-wait can take a few minutes
+          command_timeout: 10m
           script: |
             set -e
             cd /opt/phoenix-kti
 
-            echo "==> Pulling latest images..."
+            echo "==> Pulling latest images (old containers keep serving)..."
             docker compose pull
 
-            echo "==> Restarting services..."
+            echo "==> Running migrations with new image while old backend is live..."
+            docker compose run --rm --no-deps \
+              -e DJANGO_SETTINGS_MODULE=phoenix.settings \
+              -e PYTHONPATH=/app/src \
+              backend \
+              sh -c "cd /app/src && python manage.py migrate --noinput && python manage.py collectstatic --noinput && python manage.py createcachetable 2>/dev/null || true"
+
+            echo "==> Restarting backend (migrate is already done — startup is fast)..."
+            docker compose up -d --no-deps --force-recreate backend
+
+            echo "==> Waiting for backend to pass health check..."
+            for i in $(seq 1 30); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' phoenix_kti_backend 2>/dev/null || echo "starting")
+              echo "  attempt $i/30: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then
+                echo "  Backend is healthy — continuing"
+                break
+              fi
+              if [ "$i" = "30" ]; then
+                echo "  ERROR: backend did not become healthy in time"
+                docker compose logs --tail=50 backend
+                exit 1
+              fi
+              sleep 6
+            done
+
+            echo "==> Restarting Celery workers (backend is healthy)..."
+            docker compose up -d --no-deps --force-recreate celery_worker celery_beat flower
+
+            echo "==> Restarting frontend (nginx — nearly instant)..."
+            docker compose up -d --no-deps --force-recreate frontend
+
+            echo "==> Removing orphaned containers..."
             docker compose up -d --remove-orphans
 
             echo "==> Cleaning up old images..."
