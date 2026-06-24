@@ -85,14 +85,22 @@ services:
     stop_grace_period: 30s
     healthcheck:
       test:
-        - "CMD"
-        - "python"
-        - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/common/health/')"
+        - "CMD-SHELL"
+        - |
+          python -c "
+          import urllib.request, sys
+          try:
+              r = urllib.request.urlopen('http://localhost:8000/api/common/health/', timeout=4)
+              sys.exit(0)
+          except urllib.error.HTTPError as e:
+              sys.exit(0 if e.code == 429 else 1)
+          except Exception:
+              sys.exit(1)
+          "
       interval: 15s
-      timeout: 5s
-      retries: 4
-      start_period: 40s
+      timeout: 6s
+      retries: 5
+      start_period: 90s
     networks:
       - phoenix_kti_backend
       - traefik_public
