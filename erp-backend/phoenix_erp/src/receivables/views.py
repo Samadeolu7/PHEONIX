@@ -52,6 +52,7 @@ class CustomerReceivableViewSet(ScopedModelViewSet):
     ordering = ['-due_date']
     permission_module = 'receivables'
     permission_page = 'customer-receivables'
+    officer_client_lookup = 'client__assigned_officer'
 
     @action(detail=True, methods=['post'])
     def record_payment(self, request, pk=None):

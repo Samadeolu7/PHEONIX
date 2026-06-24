@@ -347,6 +347,7 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
     """
     permission_module = 'savings'
     permission_page = 'contribution-schedules'
+    officer_client_lookup = 'savings_account__client__assigned_officer'
     queryset = ContributionSchedule.objects.select_related(
         'savings_account',
         'savings_account__client',
@@ -564,12 +565,13 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
     """
     Withdrawal request management.
 
-    POST  /api/savings/withdrawals/           � initiate a new request
-    GET   /api/savings/withdrawals/           � list (branch-scoped; directors see all)
-    GET   /api/savings/withdrawals/pending/   � steps pending MY approval
-    POST  /api/savings/withdrawals/{id}/approve_step/ � approve/reject a step
-    POST  /api/savings/withdrawals/{id}/cancel/       � cancel (before approvals)
+    POST  /api/savings/withdrawals/           — initiate a new request
+    GET   /api/savings/withdrawals/           — list (branch-scoped; directors see all)
+    GET   /api/savings/withdrawals/pending/   — steps pending MY approval
+    POST  /api/savings/withdrawals/{id}/approve_step/ — approve/reject a step
+    POST  /api/savings/withdrawals/{id}/cancel/       — cancel (before approvals)
     """
+    officer_client_lookup = 'savings_account__client__assigned_officer'
     queryset = SavingsWithdrawalRequest.objects.select_related(
         'savings_account__client',
         'savings_account__product',

@@ -1031,6 +1031,7 @@ class LoanVerificationRequestViewSet(ScopedModelViewSet):
     serializer_class = LoanVerificationRequestSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     http_method_names = ['get', 'head', 'options', 'post', 'patch']
+    officer_client_lookup = 'loan__client__assigned_officer'
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -1109,6 +1110,7 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
     http_method_names = ['get', 'head', 'options', 'post', 'patch']
     permission_module = 'loans'
     permission_page = 'loan-disbursements'
+    officer_client_lookup = 'loan__client__assigned_officer'
 
     def get_queryset(self):
         qs = LoanDisbursement.all_objects.select_related(
@@ -1117,6 +1119,7 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
             'disbursement_account__bank_account__bank',
         ).filter(is_deleted=False)
         qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
+        qs = self._apply_officer_scope(qs)
         loan_id = self.request.query_params.get('loan')
         if loan_id:
             qs = qs.filter(loan_id=loan_id)
@@ -1326,6 +1329,7 @@ class LoanFeeApplicationViewSet(ScopedModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = LoanFeeApplication.objects.all()
     http_method_names = ['get', 'head', 'options', 'post']
+    officer_client_lookup = 'loan_account__client__assigned_officer'
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -1417,12 +1421,14 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
     ).all()
     serializer_class = LoanRepaymentRequestSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+    officer_client_lookup = 'loan__client__assigned_officer'
 
     def get_queryset(self):
         qs = LoanRepaymentRequest.objects.select_related(
             'loan', 'loan__client', 'savings_account', 'requested_by', 'reviewed_by',
         ).all()
         qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
+        qs = self._apply_officer_scope(qs)
         status_filter = self.request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)

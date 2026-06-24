@@ -89,12 +89,13 @@ class CashierAccountViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class CashCollectionViewSet(viewsets.ModelViewSet):
+class CashCollectionViewSet(ScopedModelViewSet):
     permission_module = 'cash-management'
     permission_page = 'cash-collections'
     queryset = CashCollection.objects.all()
     serializer_class = CashCollectionSerializer
     permission_classes = [permissions.IsAuthenticated]
+    officer_client_lookup = 'client__assigned_officer'
     
     def get_queryset(self):
         queryset = super().get_queryset()

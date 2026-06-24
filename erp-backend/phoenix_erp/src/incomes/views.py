@@ -199,6 +199,7 @@ class IncomeViewSet(ScopedModelViewSet):
     queryset = Income.objects.all()
     serializer_class = IncomeSerializer
     permission_classes = [IsAuthenticated]
+    officer_client_lookup = 'client__assigned_officer'
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -2359,6 +2360,7 @@ class FeeEntitlementViewSet(ScopedModelViewSet):
     permission_page = 'fee-entitlements'
     queryset = FeeEntitlement.objects.all()
     permission_classes = [IsAuthenticated]
+    officer_client_lookup = 'client__assigned_officer'
     
     def get_serializer_class(self):
         if self.action == 'list':
