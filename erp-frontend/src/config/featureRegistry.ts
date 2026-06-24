@@ -680,6 +680,17 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     moduleId: 'administration',
     category: 'Admin Management',
   },
+  {
+    id: 'permission-setup',
+    title: 'Permission Setup',
+    description: 'Set view, create, edit, approve, and export permissions per role',
+    path: '/admin/permission-setup',
+    icon: Shield,
+    requiredPermission: 'user-list',
+    moduleId: 'administration',
+    category: 'Admin Management',
+    isNew: true,
+  },
 
   // ----- HR & Payroll Category -----
   {
