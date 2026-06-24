@@ -117,9 +117,6 @@ jobs:
             echo "==> Pulling latest images (old containers keep serving)..."
             docker compose pull
 
-            echo "==> Ensuring all services are attached to the current project network..."
-            docker compose up -d --no-recreate
-
             echo "==> Running migrations with new image while old backend is live..."
             docker compose run --rm --no-deps \
               -e DJANGO_SETTINGS_MODULE=phoenix.settings \
