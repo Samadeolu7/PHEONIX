@@ -142,9 +142,22 @@ class StaffUserViewSet(ScopedModelViewSet):
         return qs
     
     def perform_create(self, serializer):
-        """Create user with proper tenant assignment"""
-        # Tenant is set in serializer
-        serializer.save()
+        """Create user with tenant and branch resolved from the branch switcher."""
+        from rest_framework.exceptions import ValidationError
+        user = self.request.user
+
+        if self._is_elevated_user(user):
+            branch = self._get_director_branch_override()
+            if branch is None:
+                raise ValidationError({
+                    'non_field_errors': [
+                        'Select a branch from the branch switcher before creating a user.'
+                    ]
+                })
+        else:
+            branch = getattr(user, 'branch', None)
+
+        serializer.save(branch=branch)
 
     def create(self, request, *args, **kwargs):
         """Only Directors and Principals are permitted to create new users."""
