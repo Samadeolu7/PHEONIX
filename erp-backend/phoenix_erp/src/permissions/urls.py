@@ -12,6 +12,11 @@ from permissions.views import (
     PermissionExceptionReportView,
     PermissionElevationLogView,
 )
+from permissions.setup_views import (
+    PermissionSetupSyncView,
+    PermissionSetupRoleListView,
+    PermissionSetupRolePoliciesView,
+)
 
 router = DefaultRouter()
 router.register(r'role-policies',   RolePermissionPolicyViewSet,   basename='role-policy')
@@ -22,4 +27,8 @@ urlpatterns = [
     path('effective/',        EffectivePermissionsView.as_view(),     name='permissions-effective'),
     path('exception-report/', PermissionExceptionReportView.as_view(), name='permissions-exception-report'),
     path('elevation-log/',    PermissionElevationLogView.as_view(),    name='permissions-elevation-log'),
+    # Permission setup UI endpoints
+    path('setup/sync/',                        PermissionSetupSyncView.as_view(),        name='permissions-setup-sync'),
+    path('setup/roles/',                       PermissionSetupRoleListView.as_view(),    name='permissions-setup-roles'),
+    path('setup/role-policies/<int:role_id>/', PermissionSetupRolePoliciesView.as_view(), name='permissions-setup-role-policies'),
 ]

@@ -298,10 +298,10 @@ export const contextualNavigationMap: Record<string, ContextualNavigation> = {
       },
       {
         id: 'user-permissions',
-        title: 'Permissions',
-        path: '/admin/permissions',
+        title: 'Permission Setup',
+        path: '/admin/permission-setup',
         type: 'related',
-        description: 'Configure permissions',
+        description: 'Configure role permissions',
       },
       {
         id: 'audit-logs',

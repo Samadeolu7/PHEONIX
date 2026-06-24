@@ -790,8 +790,8 @@ export const navigationModules: NavigationModule[] = [
       },
       {
         id: 'user-permissions',
-        title: 'Permission Management',
-        path: '/admin/permissions',
+        title: 'Permission Setup',
+        path: '/admin/permission-setup',
         icon: Lock,
         permissions: ['admin.permissions.view'],
         isNew: true,

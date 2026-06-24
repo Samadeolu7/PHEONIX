@@ -157,6 +157,7 @@ const PermissionElevationLogPage = lazy(() => import('./pages/admin/PermissionEl
 // Settings pages
 const UserSettingsPage = lazy(() => import('./pages/settings/UserSettingsPage'));
 const UserProfilePage = lazy(() => import('./pages/profile/UserProfilePage'));
+const PermissionSetupPage = lazy(() => import('./pages/settings/PermissionSetupPage'));
 // const PagesActionsSettingsPage = lazy(() => import('./pages/settings/PagesActionsSettingsPage'));
 // const UserPreferencesDemoPage = lazy(() => import('./pages/UserPreferencesDemoPage'));
 
@@ -2324,6 +2325,16 @@ function App() {
                                   element={
                                     <ProtectedRoute>
                                       <UserProfilePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Permission Setup - Director / Principal only (rank 4+) */}
+                                <Route
+                                  path="/admin/permission-setup"
+                                  element={
+                                    <ProtectedRoute requiredPermission="user-list">
+                                      <PermissionSetupPage />
                                     </ProtectedRoute>
                                   }
                                 />

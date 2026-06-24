@@ -259,6 +259,25 @@ class PermissionResolver:
         )
 
     @classmethod
+    def _legacy_mode_baseline(cls, user) -> EffectivePermission:
+        """
+        Called when a role has NO RolePermissionPolicy entries at all, meaning
+        the fine-grained permission system hasn't been configured for this role.
+        Fall back to the pre-policy behaviour: allow view/create/edit/delete,
+        block approve/export (those require explicit grants), use own_branch scope.
+        """
+        return EffectivePermission(
+            can_view=True,
+            can_create=True,
+            can_edit=True,
+            can_delete=True,
+            can_approve=False,
+            can_export=False,
+            scope=SCOPE_OWN_BRANCH,
+            approval_limit=Decimal('0'),
+        )
+
+    @classmethod
     def _resolve_role_baseline(cls, user, *, module, page, action) -> EffectivePermission:
         """
         Find the most specific RolePermissionPolicy for the user's active roles
@@ -282,6 +301,15 @@ class PermissionResolver:
         )
 
         if not policies.exists():
+            # No RolePermissionPolicy configured for this target.
+            # Check if ANY policy exists for this role — if not, the permission
+            # system hasn't been set up for this role yet; fall back to legacy
+            # behaviour (allow view/create/edit, block approve/export).
+            any_policies = RolePermissionPolicy.objects.filter(
+                role_id__in=role_ids
+            ).exists()
+            if not any_policies:
+                return cls._legacy_mode_baseline(user)
             return EffectivePermission()
 
         # Pick the single most specific policy per role then aggregate across roles

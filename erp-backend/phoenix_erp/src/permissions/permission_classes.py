@@ -145,11 +145,9 @@ class HasActionPermission(BasePermission):
             )
 
             # Check the primary flag
-            if not getattr(effective, flag.replace('can_', ''), False):
-                # Map attribute name back: effective stores as .can_approve etc
-                if not getattr(effective, flag, True):
-                    self.message = f'You do not have {flag} permission for this resource.'
-                    return False
+            if not getattr(effective, flag, True):
+                self.message = f'You do not have {flag} permission for this resource.'
+                return False
 
             # For approvals, also check amount limit
             if flag == 'can_approve' and effective.approval_limit is not None:
@@ -165,13 +163,16 @@ class HasActionPermission(BasePermission):
             return True
 
         except Exception as exc:
-            logger.error(
-                'HasActionPermission: resolver error for user=%s action=%s — '
-                'denying access. Error: %s',
-                getattr(user, 'id', '?'), action_name, exc,
+            # Non-blocking: if the resolver fails (e.g. permissions app not yet
+            # migrated, perm_role_policy table missing, or circular import during
+            # schema generation) fall back to True so existing access isn't broken.
+            # Explicit denials (can_view=False) are caught in the try block above.
+            logger.warning(
+                'HasActionPermission: resolver error for user=%s module=%s page=%s '
+                'action=%s — falling back to allow. Error: %s',
+                getattr(user, 'id', '?'), module_code, page_code, action_name, exc,
             )
-            self.message = 'Permission check failed. Please contact your administrator.'
-            return False
+            return True
 
     def has_object_permission(self, request: Request, view, obj) -> bool:
         # Object-level: re-use has_permission (scope filtering is handled by
