@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional, Dict, Any
 
+from django.db import transaction as db_tx
 from permissions.models import (
     RolePermissionPolicy, UserPermissionOverride,
     SCOPE_GLOBAL, SCOPE_OWN_BRANCH, SCOPE_RANK,
@@ -123,37 +124,39 @@ class PermissionResolver:
         codes: set[str] = set()
 
         # --- 1. RolePermissionPolicy (new system) ---
-        # Collect action-level codes from policies where the action is enabled.
+        # Each try block is wrapped in a savepoint so a DB error (e.g. table not
+        # yet migrated) only rolls back that savepoint and leaves the request
+        # transaction alive. Without the savepoint, a ProgrammingError here would
+        # abort the entire PostgreSQL transaction and break every subsequent query.
         try:
-            from permissions.models import RolePermissionPolicy
-            role_ids = list(user.roles.filter(is_active=True).values_list('id', flat=True))
-            for policy in (
-                RolePermissionPolicy.objects
-                .filter(role_id__in=role_ids, action__isnull=False)
-                .select_related('action')
-            ):
-                if not policy.action or not policy.action.code:
-                    continue
-                if any([
-                    policy.can_view, policy.can_create, policy.can_edit,
-                    policy.can_delete, policy.can_approve, policy.can_export,
-                ]):
-                    codes.add(policy.action.code)
+            with db_tx.atomic():
+                from permissions.models import RolePermissionPolicy
+                role_ids = list(user.roles.filter(is_active=True).values_list('id', flat=True))
+                for policy in (
+                    RolePermissionPolicy.objects
+                    .filter(role_id__in=role_ids, action__isnull=False)
+                    .select_related('action')
+                ):
+                    if not policy.action or not policy.action.code:
+                        continue
+                    if any([
+                        policy.can_view, policy.can_create, policy.can_edit,
+                        policy.can_delete, policy.can_approve, policy.can_export,
+                    ]):
+                        codes.add(policy.action.code)
         except Exception:
             pass  # Permissions app may not be available during early migrations
 
         # --- 2. Legacy fallback: only for roles with no RolePermissionPolicy records ---
-        # Prevents divergence when both systems are populated for the same role.
-        # Once all roles have at least one RolePermissionPolicy record, this path
-        # is never taken and can be fully removed.
         try:
-            from permissions.models import RolePermissionPolicy as _RolePermissionPolicy
-            policy_role_ids = set(
-                _RolePermissionPolicy.objects
-                .filter(role_id__in=role_ids)
-                .values_list('role_id', flat=True)
-                .distinct()
-            )
+            with db_tx.atomic():
+                from permissions.models import RolePermissionPolicy as _RolePermissionPolicy
+                policy_role_ids = set(
+                    _RolePermissionPolicy.objects
+                    .filter(role_id__in=role_ids)
+                    .values_list('role_id', flat=True)
+                    .distinct()
+                )
         except Exception:
             policy_role_ids = set()
 
@@ -162,20 +165,27 @@ class PermissionResolver:
                 codes.update(role.permission_codes)
 
         # --- 3. Active user overrides that explicitly enable a flag ---
-        for override in cls._active_overrides(user):
-            if override.action and override.action.code:
-                # If any flag is True in the override, add the action's code
-                if any([
-                    override.can_view, override.can_create, override.can_edit,
-                    override.can_delete, override.can_approve, override.can_export,
-                ]):
-                    codes.add(override.action.code)
+        try:
+            with db_tx.atomic():
+                for override in cls._active_overrides(user):
+                    if override.action and override.action.code:
+                        if any([
+                            override.can_view, override.can_create, override.can_edit,
+                            override.can_delete, override.can_approve, override.can_export,
+                        ]):
+                            codes.add(override.action.code)
+        except Exception:
+            pass
 
         # Remove codes where role has excluded_permission_codes
         excluded: set[str] = set()
-        for role in user.roles.filter(is_active=True):
-            if isinstance(role.excluded_permission_codes, list):
-                excluded.update(role.excluded_permission_codes)
+        try:
+            with db_tx.atomic():
+                for role in user.roles.filter(is_active=True):
+                    if isinstance(role.excluded_permission_codes, list):
+                        excluded.update(role.excluded_permission_codes)
+        except Exception:
+            pass
         codes -= excluded
 
         return sorted(codes)

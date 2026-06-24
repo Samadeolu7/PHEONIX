@@ -28,6 +28,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+from django.db import transaction as db_tx
 from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
 
@@ -137,12 +138,26 @@ class HasActionPermission(BasePermission):
             if PermissionResolver._is_wildcard(user):
                 return True
 
-            effective = PermissionResolver.resolve(
-                user,
-                module=module_code,
-                page=page_code,
-                action=action_name,
-            )
+            # Wrap the resolver in a savepoint so that any DB error it raises
+            # only aborts the savepoint, not the entire request transaction.
+            # Without this, a FieldError / ProgrammingError inside the resolver
+            # would leave PostgreSQL in "transaction aborted" state and break
+            # every subsequent query in the same request.
+            try:
+                with db_tx.atomic():
+                    effective = PermissionResolver.resolve(
+                        user,
+                        module=module_code,
+                        page=page_code,
+                        action=action_name,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    'HasActionPermission: resolver error for user=%s module=%s page=%s '
+                    'action=%s — falling back to allow. Error: %s',
+                    getattr(user, 'id', '?'), module_code, page_code, action_name, exc,
+                )
+                return True
 
             # Check the primary flag
             if not getattr(effective, flag, True):
@@ -163,12 +178,8 @@ class HasActionPermission(BasePermission):
             return True
 
         except Exception as exc:
-            # Non-blocking: if the resolver fails (e.g. permissions app not yet
-            # migrated, perm_role_policy table missing, or circular import during
-            # schema generation) fall back to True so existing access isn't broken.
-            # Explicit denials (can_view=False) are caught in the try block above.
             logger.warning(
-                'HasActionPermission: resolver error for user=%s module=%s page=%s '
+                'HasActionPermission: unexpected error for user=%s module=%s page=%s '
                 'action=%s — falling back to allow. Error: %s',
                 getattr(user, 'id', '?'), module_code, page_code, action_name, exc,
             )
