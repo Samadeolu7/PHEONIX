@@ -250,10 +250,13 @@ class PermissionResolver:
             return True
         # Roles seeded with permission_codes=["*"] (Director, Admin, Operations)
         # bypass fine-grained checks — they have full access by design.
+        # Wrapped in a savepoint: if the DB query fails, only the savepoint is
+        # rolled back; the outer transaction remains alive so callers can proceed.
         try:
-            return user.roles.filter(
-                is_active=True, permission_codes__contains=['*']
-            ).exists()
+            with db_tx.atomic():
+                return user.roles.filter(
+                    is_active=True, permission_codes__contains=['*']
+                ).exists()
         except Exception:
             pass
         return False

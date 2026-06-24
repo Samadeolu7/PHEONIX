@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction as db_tx
 from django.contrib.auth.models import AbstractUser, Permission, Group
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
@@ -491,16 +491,23 @@ class User(AbstractUser):
             return ['*']
 
         try:
-            from permissions.services import PermissionResolver
-            return PermissionResolver.get_all_permission_codes(self)
+            with db_tx.atomic():
+                from permissions.services import PermissionResolver
+                return PermissionResolver.get_all_permission_codes(self)
         except Exception:
             pass
 
-        # Legacy fallback
+        # Legacy fallback — wrapped in its own savepoint so a DB error in the
+        # resolver above (which was caught) doesn't leave the transaction aborted
+        # when we reach these queries.
         permissions = set()
-        for role in self.roles.filter(is_active=True):
-            if isinstance(role.permission_codes, list):
-                permissions.update(role.permission_codes)
+        try:
+            with db_tx.atomic():
+                for role in self.roles.filter(is_active=True):
+                    if isinstance(role.permission_codes, list):
+                        permissions.update(role.permission_codes)
+        except Exception:
+            pass
         if isinstance(self.permission_codes, list):
             permissions.update(self.permission_codes)
         return sorted(permissions)
@@ -511,8 +518,9 @@ class User(AbstractUser):
         This is the primary method for permission checks in views/serializers.
         """
         try:
-            from permissions.services import PermissionResolver
-            return PermissionResolver.resolve(self, module=module, page=page, action=action)
+            with db_tx.atomic():
+                from permissions.services import PermissionResolver
+                return PermissionResolver.resolve(self, module=module, page=page, action=action)
         except Exception:
             # Graceful fallback during migrations
             from permissions.services import EffectivePermission
