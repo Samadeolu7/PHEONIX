@@ -58,16 +58,6 @@ const ClientDetailPage: React.FC = () => {
 
   const isBmPlus = ['branch_manager', 'supervisor', 'director', 'admin', 'operations'].includes(selectedRole || '');
 
-  useEffect(() => {
-    loadClientData();
-  }, [id]);
-
-  useEffect(() => {
-    if (id) {
-      loadClientInvoices();
-    }
-  }, [id]);
-
   const loadAuditLog = async () => {
     if (!id) return;
     setAuditLoading(true);
@@ -99,7 +89,7 @@ const ClientDetailPage: React.FC = () => {
     setLoansLoading(true);
     try {
       const data = await loanService.listLoans({ client: Number(id), page_size: 100 });
-      setLoans(data.results || data);
+      setLoans(data.results ?? []);
     } catch {
       setLoans([]);
     } finally {
@@ -111,8 +101,9 @@ const ClientDetailPage: React.FC = () => {
     if (!id) return;
     setSavingsLoading(true);
     try {
-      const data = await getSavingsAccounts({ client: Number(id) });
-      setSavings(Array.isArray(data) ? data : (data as any).results || []);
+      const raw = await getSavingsAccounts({ client: Number(id) }) as unknown;
+      const list = Array.isArray(raw) ? raw : ((raw as any)?.results ?? []);
+      setSavings(list);
     } catch {
       setSavings([]);
     } finally {
@@ -121,17 +112,19 @@ const ClientDetailPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!id) return;
+    loadClientData();
+    loadLoans();
+    loadSavings();
+    loadClientInvoices();
+  }, [id]);
+
+  useEffect(() => {
     if (activeTab === 'audit' && auditLog.length === 0 && !auditLoading) {
       loadAuditLog();
     }
     if (activeTab === 'cross_branch' && crossBranchHistory.length === 0 && !crossBranchLoading) {
       loadCrossBranchHistory();
-    }
-    if (activeTab === 'loans' && loans.length === 0 && !loansLoading) {
-      loadLoans();
-    }
-    if (activeTab === 'savings' && savings.length === 0 && !savingsLoading) {
-      loadSavings();
     }
   }, [activeTab]);
 
