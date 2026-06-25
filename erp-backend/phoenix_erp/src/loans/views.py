@@ -104,6 +104,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = LoanAccount.objects.all()
     officer_client_lookup = 'client__assigned_officer'
+    officer_group_lookup = 'client__group__assigned_officer'
     permission_module = 'loans'
     permission_page = 'loan-accounts'
 

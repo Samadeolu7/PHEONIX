@@ -27,12 +27,21 @@ from django.db import transaction as db_transaction
 from django.utils import timezone
 
 
-DAYS_PER_YEAR = Decimal('365')
+_DAYS_PER_PERIOD = {
+    'daily':     Decimal('1'),
+    'weekly':    Decimal('7'),
+    'biweekly':  Decimal('14'),
+    'monthly':   Decimal('30'),
+    'quarterly': Decimal('91'),
+}
 
 
-def _daily_interest(principal: Decimal, annual_rate_pct: Decimal) -> Decimal:
-    """Daily interest = principal × (annual_rate / 365)."""
-    return (principal * annual_rate_pct / Decimal('100') / DAYS_PER_YEAR).quantize(
+def _daily_interest(principal: Decimal, period_rate_pct: Decimal, repayment_frequency: str) -> Decimal:
+    """Daily interest = principal × (period_rate / days_per_period).
+    period_rate_pct is the per-period percentage (e.g. 5 for 5% per week).
+    """
+    days = _DAYS_PER_PERIOD.get(repayment_frequency, Decimal('30'))
+    return (principal * period_rate_pct / Decimal('100') / days).quantize(
         Decimal('0.01'), rounding=ROUND_HALF_UP
     )
 
@@ -109,7 +118,11 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            daily_amount = _daily_interest(loan.outstanding_principal, loan.interest_rate)
+            daily_amount = _daily_interest(
+                loan.outstanding_principal,
+                loan.interest_rate,
+                loan.repayment_frequency or 'monthly',
+            )
             if daily_amount <= 0:
                 skipped += 1
                 continue

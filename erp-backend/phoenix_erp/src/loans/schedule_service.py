@@ -49,14 +49,6 @@ FREQ_CONFIG: dict[str, tuple] = {
 _DEFAULT_FREQ = (relativedelta(months=1), Decimal('12'))
 
 
-def _term_to_years(term_value: int, term_unit: str) -> Decimal:
-    """Convert term to a fraction of a year for interest calculations."""
-    v = Decimal(str(term_value))
-    if term_unit == 'weeks':
-        return v / Decimal('52')
-    if term_unit == 'days':
-        return v / Decimal('365')
-    return v / Decimal('12')
 
 
 def _maturity_date(start_date, term_value: int, term_unit: str):
@@ -100,21 +92,19 @@ def _build_due_dates(disbursement_date, date_increment, maturity_date, buffer_da
 def flat_schedule(
     disbursed_amount: Decimal,
     interest_rate: Decimal,
-    term_value: int,
-    term_unit: str,
     num_installments: int,
 ) -> list[dict]:
     """
     Flat / straight-line schedule.
 
-    Interest = principal × annual_rate × (term as fraction of year).
+    Interest = principal × rate%.  The rate is the total flat percentage of
+    the loan amount — NOT an annual rate — so no term weighting is applied.
     Each installment gets an equal share; the last row absorbs rounding.
 
     Returns a list of dicts: [{principal_due, interest_due, total_due}, ...]
     """
     rate = interest_rate / Decimal('100')
-    term_years = _term_to_years(term_value, term_unit)
-    total_interest = (disbursed_amount * rate * term_years).quantize(
+    total_interest = (disbursed_amount * rate).quantize(
         Decimal('0.01'), rounding=ROUND_HALF_UP
     )
     total_repayable = disbursed_amount + total_interest
@@ -141,18 +131,17 @@ def reducing_balance_schedule(
     disbursed_amount: Decimal,
     interest_rate: Decimal,
     num_installments: int,
-    periods_per_year: Decimal,
 ) -> list[dict]:
     """
     Reducing-balance (amortising) schedule.
 
-    Each period's interest is computed on the remaining principal so that
-    principal rises and interest falls over the life of the loan.
+    interest_rate is the per-period rate (%) — NOT an annual rate — so it is
+    applied directly to the outstanding balance each period without dividing
+    by periods_per_year.
 
     Returns a list of dicts: [{principal_due, interest_due, total_due}, ...]
     """
-    annual_rate = interest_rate / Decimal('100')
-    period_rate = annual_rate / periods_per_year
+    period_rate = interest_rate / Decimal('100')
     balance = disbursed_amount
     n = num_installments
 
@@ -208,7 +197,7 @@ class RepaymentScheduleService:
             loan.repayment_frequency    — 'daily' | 'weekly' | … | 'quarterly'
             loan.disbursement_date      — start date
             loan.disbursed_amount       — principal
-            loan.interest_rate          — annual rate (%)
+            loan.interest_rate          — flat % of principal (flat) or per-period % (reducing balance)
             loan.product.interest_calculation_method
             loan.product.first_repayment_buffer_days
 
@@ -224,7 +213,7 @@ class RepaymentScheduleService:
         frequency   = loan.repayment_frequency
         buffer_days = int(getattr(loan.product, 'first_repayment_buffer_days', 0) or 0)
 
-        date_increment, periods_per_year = FREQ_CONFIG.get(frequency, _DEFAULT_FREQ)
+        date_increment, _ = FREQ_CONFIG.get(frequency, _DEFAULT_FREQ)
 
         # ── Due dates: step from first payment to maturity ────────────────────
         maturity = _maturity_date(loan.disbursement_date, term_value, term_unit)
@@ -240,14 +229,11 @@ class RepaymentScheduleService:
                 loan.disbursed_amount,
                 Decimal(str(loan.interest_rate)),
                 num_installments,
-                periods_per_year,
             )
         else:
             rows = flat_schedule(
                 loan.disbursed_amount,
                 Decimal(str(loan.interest_rate)),
-                term_value,
-                term_unit,
                 num_installments,
             )
 
@@ -289,7 +275,7 @@ class RepaymentScheduleService:
         """
         from datetime import date as date_cls
 
-        date_increment, periods_per_year = FREQ_CONFIG.get(repayment_frequency, _DEFAULT_FREQ)
+        date_increment, _ = FREQ_CONFIG.get(repayment_frequency, _DEFAULT_FREQ)
 
         if disbursement_date:
             maturity = _maturity_date(disbursement_date, term_value, term_unit)
@@ -310,11 +296,11 @@ class RepaymentScheduleService:
 
         if calculation_method == 'reducing_balance':
             rows = reducing_balance_schedule(
-                disbursed_amount, interest_rate, num_installments, periods_per_year
+                disbursed_amount, interest_rate, num_installments
             )
         else:
             rows = flat_schedule(
-                disbursed_amount, interest_rate, term_value, term_unit, num_installments
+                disbursed_amount, interest_rate, num_installments
             )
 
         if due_dates:

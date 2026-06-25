@@ -56,6 +56,7 @@ class ClientViewSet(ScopedModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = Client.objects.all()
     officer_client_lookup = 'assigned_officer'
+    officer_group_lookup = 'group__assigned_officer'
 
     def get_queryset(self):
         # Get the base scoped + officer-scoped queryset from parent class

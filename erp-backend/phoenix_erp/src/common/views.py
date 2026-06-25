@@ -80,6 +80,11 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # Override in subclasses that manage client-linked records.
     officer_client_lookup: 'str | None' = None
 
+    # Optional: ORM path from the model to the group's assigned_officer.
+    # When set, the officer scope also includes records where the group is
+    # assigned to this officer (e.g. 'group__assigned_officer' for Client).
+    officer_group_lookup: 'str | None' = None
+
     # ------------------------------------------------------------------
     # Officer-scope helper
     # ------------------------------------------------------------------
@@ -143,14 +148,22 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         if not staff:
             return qs.none()
 
+        group_lookup = self.officer_group_lookup
+
         if rank == 0:  # assigned_clients / own_records
-            return qs.filter(Q(**{lookup: staff}))
+            q = Q(**{lookup: staff})
+            if group_lookup:
+                q |= Q(**{group_lookup: staff})
+            return qs.filter(q)
 
         # rank 1: ajo_group / supervisor
-        return qs.filter(
+        q = (
             Q(**{lookup: staff}) |
             Q(**{f'{lookup}__reports_to': staff})
         )
+        if group_lookup:
+            q |= Q(**{group_lookup: staff})
+        return qs.filter(q)
 
     def list(self, request, *args, **kwargs):
         """
