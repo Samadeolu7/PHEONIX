@@ -38,6 +38,16 @@ export interface BranchOption {
   is_active: boolean;
 }
 
+export interface CloneConfigResult {
+  success: boolean;
+  message: string;
+  source_branch: string;
+  target_branch: string;
+  created: Record<string, number>;
+  skipped: Record<string, number>;
+  errors: string[];
+}
+
 export const branchService = {
   // Get all branches with filtering
   async getBranches(filters?: BranchFilters) {
@@ -67,6 +77,14 @@ export const branchService = {
   // Delete a branch
   async deleteBranch(id: number) {
     return api.delete(`/branches/${id}/`);
+  },
+
+  // Clone configuration data from one branch to another
+  async cloneConfig(sourceBranchId: number, targetBranchId: number): Promise<CloneConfigResult> {
+    return api.post('/branches/clone-config/', {
+      source_branch_id: sourceBranchId,
+      target_branch_id: targetBranchId,
+    });
   },
 
   // List all branches as a flat array (for branch-switcher dropdown)

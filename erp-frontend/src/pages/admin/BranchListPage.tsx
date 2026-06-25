@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { branchService, Branch, BranchFilters } from '../../services/branchService';
 import { useToast } from '../../hooks/useToast';
-import { Trash2, Edit, Plus, Building } from 'lucide-react';
+import { Trash2, Edit, Plus, Building, Copy } from 'lucide-react';
+import CloneBranchConfigModal from '../../components/admin/CloneBranchConfigModal';
 
 const BranchListPage: React.FC = () => {
   const navigate = useNavigate();
@@ -16,6 +17,7 @@ const BranchListPage: React.FC = () => {
     previous: null,
     currentPage: 1,
   });
+  const [cloneModalOpen, setCloneModalOpen] = useState(false);
   const { success, error: showError } = useToast();
 
   useEffect(() => {
@@ -100,13 +102,24 @@ const BranchListPage: React.FC = () => {
               <p className="text-gray-600">Manage organization branches and locations</p>
             </div>
           </div>
-          <button
-            onClick={() => navigate('/admin/branches/create')}
-            className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add New Branch
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setCloneModalOpen(true)}
+              className="inline-flex items-center px-4 py-2 text-sm font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-md hover:bg-purple-100"
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Clone Config
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/admin/branches/create')}
+              className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add New Branch
+            </button>
+          </div>
         </div>
       </div>
 
@@ -326,6 +339,11 @@ const BranchListPage: React.FC = () => {
           </>
         )}
       </div>
+      <CloneBranchConfigModal
+        isOpen={cloneModalOpen}
+        onClose={() => setCloneModalOpen(false)}
+        branches={branches}
+      />
     </div>
   );
 };
