@@ -117,12 +117,28 @@ jobs:
             echo "==> Pulling latest images (old containers keep serving)..."
             docker compose pull
 
+            echo "==> Ensuring postgres is healthy before migrations..."
+            PGID=$(docker compose ps -q postgres)
+            for i in $(seq 1 18); do
+              PGSTATUS=$(docker inspect --format='{{.State.Health.Status}}' "$PGID" 2>/dev/null || echo "starting")
+              echo "  attempt $i/18: postgres=$PGSTATUS"
+              if [ "$PGSTATUS" = "healthy" ]; then break; fi
+              if [ "$i" = "18" ]; then echo "ERROR: postgres not healthy" && docker compose logs --tail=30 postgres && exit 1; fi
+              sleep 5
+            done
+
             echo "==> Running migrations with new image while old backend is live..."
+            # NOTE: The backend service has entrypoint=["/bin/sh","-c"], so we MUST override
+            # the entrypoint here. Without --entrypoint, docker merges to:
+            #   /bin/sh -c sh -c "migrate..."
+            # which runs 'sh' as the command string (not the migrate commands) and exits 0,
+            # silently skipping all migrations.
             docker compose run --rm --no-deps \
+              --entrypoint /bin/sh \
               -e DJANGO_SETTINGS_MODULE=phoenix.settings \
               -e PYTHONPATH=/app/src \
               backend \
-              sh -c "set -e; cd /app/src; python manage.py migrate --noinput; python manage.py collectstatic --noinput; python manage.py createcachetable 2>/dev/null || true"
+              -c "set -e; cd /app/src; python manage.py migrate --noinput && python manage.py collectstatic --noinput && python manage.py createcachetable 2>/dev/null || true"
 
             echo "==> Restarting backend (migrate is already done — startup is fast)..."
             docker compose up -d --no-deps --force-recreate backend
