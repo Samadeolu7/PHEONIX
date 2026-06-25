@@ -84,7 +84,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # Officer-scope helper
     # ------------------------------------------------------------------
 
-    # Rank: lower number = more restricted.
+    # Rank: lower = more restricted. Driven by Role.default_scope only.
     _SCOPE_RANK = {
         'assigned_clients': 0,
         'own_records':       0,
@@ -92,37 +92,30 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         'own_branch':        2,
         'global':            3,
     }
-    _ROLE_LEVEL_RANK = {
-        'credit_officer':  0,
-        'supervisor':      1,
-        'branch_manager':  2,
-        'operations':      2,
-        'director':        3,
-        'admin':           3,
-    }
 
-    def _effective_access_rank(self, user, staff_role):
+    @staticmethod
+    def _user_scope_rank(user):
         """
-        Return the most-restrictive access rank for this user by reconciling
-        Staff.role_level with every tenant Role.default_scope assigned to them.
-        Lower rank = more restricted.
+        Return the most-restrictive (lowest) scope rank across all active
+        tenant Roles assigned to this user.
+        Defaults to 2 (own_branch) when the user has no roles configured.
         """
-        rank = self._ROLE_LEVEL_RANK.get(staff_role, 2)  # default: branch_manager level
+        rank = 2  # safe default: branch-level
         try:
             for r in user.roles.filter(is_active=True):
-                scope_rank = self._SCOPE_RANK.get(getattr(r, 'default_scope', None))
-                if scope_rank is not None:
-                    rank = min(rank, scope_rank)
+                s = getattr(r, 'default_scope', None)
+                r_rank = ScopedModelViewSet._SCOPE_RANK.get(s)
+                if r_rank is not None and r_rank < rank:
+                    rank = r_rank
         except Exception:
             pass
         return rank
 
     def _apply_officer_scope(self, qs):
         """
-        Apply credit-officer / supervisor visibility restriction.
-        Reconciles Staff.role_level with tenant Role.default_scope and uses
-        whichever is more restrictive. Fails closed for non-elevated users
-        without a linked Staff record.
+        Restrict queryset to the records this user may see based solely on
+        their tenant Role.default_scope.  Fails closed for restricted users
+        who have no linked Staff record.
         """
         lookup = self.officer_client_lookup
         if not lookup:
@@ -130,35 +123,30 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
 
         user = self.request.user
 
-        # System admins and tenant owners bypass officer scoping entirely.
         if getattr(user, 'is_system_admin', False):
             return qs
         if callable(getattr(user, 'is_owner', None)) and user.is_owner():
             return qs
 
-        staff = None
-        staff_role = None
-        try:
-            staff = user.staff_profile
-            if staff:
-                staff_role = getattr(staff, 'role_level', None)
-        except Exception:
-            pass
+        rank = self._user_scope_rank(user)
 
-        rank = self._effective_access_rank(user, staff_role)
-
-        # Rank 3 (director/global) or 2 (branch/operations) — no per-officer filter.
+        # own_branch (2) or global (3) — full queryset, no per-officer filter.
         if rank >= 2:
             return qs
 
-        # Rank 0 or 1 requires a Staff record to identify whose clients to show.
-        if staff is None:
+        # assigned_clients (0) or ajo_group (1) require a Staff record.
+        staff = None
+        try:
+            staff = user.staff_profile
+        except Exception:
+            pass
+        if not staff:
             return qs.none()
 
-        if rank == 0:  # credit_officer / assigned_clients
+        if rank == 0:  # assigned_clients / own_records
             return qs.filter(Q(**{lookup: staff}))
 
-        # rank == 1: supervisor / ajo_group
+        # rank 1: ajo_group / supervisor
         return qs.filter(
             Q(**{lookup: staff}) |
             Q(**{f'{lookup}__reports_to': staff})
@@ -186,14 +174,11 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # Director branch-override helper
     # ------------------------------------------------------------------
 
-    _DIRECTOR_ROLES = frozenset({'director', 'admin', 'operations'})
-
     def _get_director_branch_override(self):
         """
-        When a director/admin/operations/owner sends X-Branch-ID in the request
-        header, return that Branch so the queryset can be further filtered to it.
+        When a global-scope user (director/admin/owner) sends X-Branch-ID in
+        the request header, return that Branch for further filtering.
         Non-elevated users cannot use this header (returns None = no change).
-        Returns None when no valid override is in effect.
         """
         if getattr(self, 'swagger_fake_view', False):
             return None
@@ -206,19 +191,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         if not user or not getattr(user, 'is_authenticated', False):
             return None
 
-        # Only elevated roles can use the header
-        is_elevated = (
-            getattr(user, 'is_system_admin', False)
-            or (callable(getattr(user, 'is_owner', None)) and user.is_owner())
-        )
-        if not is_elevated:
-            try:
-                role = user.staff_profile.role_level
-                is_elevated = role in self._DIRECTOR_ROLES
-            except Exception:
-                pass
-
-        if not is_elevated:
+        if not self._is_elevated_user(user):
             return None
 
         try:
@@ -232,7 +205,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
             return None
 
     def _is_elevated_user(self, user=None):
-        """True if the user is director/admin/operations/owner (cross-branch capable)."""
+        """True when the user has global-scope access (can see across branches)."""
         if user is None:
             user = getattr(self.request, 'user', None)
         if not user or not getattr(user, 'is_authenticated', False):
@@ -242,7 +215,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         if callable(getattr(user, 'is_owner', None)) and user.is_owner():
             return True
         try:
-            return user.staff_profile.role_level in self._DIRECTOR_ROLES
+            return user.roles.filter(is_active=True, default_scope='global').exists()
         except Exception:
             return False
 

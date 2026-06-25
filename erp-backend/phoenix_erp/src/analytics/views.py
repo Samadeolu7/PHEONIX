@@ -15,30 +15,31 @@ from django.utils import timezone
 from decimal import Decimal
 import datetime
 
-_ELEVATED_ROLES = frozenset({'director', 'admin', 'operations'})
+def _is_global_user(user):
+    """True when the user has a global-scope Role (cross-branch access)."""
+    if getattr(user, 'is_system_admin', False):
+        return True
+    if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+        return True
+    try:
+        return user.roles.filter(is_active=True, default_scope='global').exists()
+    except Exception:
+        return False
 
 
 def _get_director_branch(request):
     """
-    Return the Branch the director has selected via X-Branch-ID, or None.
+    Return the Branch the global-scope user selected via X-Branch-ID, or None.
     Returns None both when the user is not elevated AND when no branch is selected
     (all-branches view).  Callers should apply no extra filter when None is returned.
     """
     user = request.user
-    is_elevated = getattr(user, 'is_system_admin', False)
-    if not is_elevated and callable(getattr(user, 'is_owner', None)) and user.is_owner():
-        is_elevated = True
-    if not is_elevated:
-        try:
-            is_elevated = user.staff_profile.role_level in _ELEVATED_ROLES
-        except Exception:
-            pass
-    if not is_elevated:
+    if not _is_global_user(user):
         return None
 
     header_val = request.META.get('HTTP_X_BRANCH_ID', '').strip()
     if not header_val:
-        return None  # director chose "All Branches" — no extra filter
+        return None  # "All Branches" view — no extra filter
 
     try:
         from branches.models import Branch
@@ -63,36 +64,52 @@ def _scoped(qs, branch):
     return qs
 
 
+_SCOPE_RANK = {
+    'assigned_clients': 0,
+    'own_records':       0,
+    'ajo_group':         1,
+    'own_branch':        2,
+    'global':            3,
+}
+
+
 def _apply_officer_scope(qs, user, client_lookup: str):
     """
-    Narrow a queryset to only the records a credit officer or supervisor
-    should see, using the same logic as ScopedModelViewSet._apply_officer_scope.
-
-    client_lookup is the ORM path from the queryset model to the
-    assigned_officer FK on Client — e.g. 'assigned_officer' for Client,
-    or 'client__assigned_officer' for LoanAccount.
+    Narrow a queryset to only the records this user may see based on
+    their tenant Role.default_scope.
     """
+    if _is_global_user(user):
+        return qs
+
+    rank = 2
+    try:
+        for r in user.roles.filter(is_active=True):
+            s = getattr(r, 'default_scope', None)
+            r_rank = _SCOPE_RANK.get(s)
+            if r_rank is not None and r_rank < rank:
+                rank = r_rank
+    except Exception:
+        pass
+
+    if rank >= 2:
+        return qs
+
+    staff = None
     try:
         staff = user.staff_profile
     except Exception:
-        return qs
+        pass
+    if not staff:
+        return qs.none()
 
-    role = getattr(staff, 'role_level', None)
+    if rank == 0:
+        return qs.filter(Q(**{client_lookup: staff}))
 
-    if role == 'credit_officer':
-        return qs.filter(
-            Q(**{client_lookup: staff}) | Q(**{f'{client_lookup}__isnull': True})
-        )
-
-    if role == 'supervisor':
-        return qs.filter(
-            Q(**{client_lookup: staff}) |
-            Q(**{f'{client_lookup}__reports_to': staff}) |
-            Q(**{f'{client_lookup}__isnull': True})
-        )
-
-    # branch_manager / director / operations / admin — no extra restriction
-    return qs
+    # rank 1: ajo_group / supervisor
+    return qs.filter(
+        Q(**{client_lookup: staff}) |
+        Q(**{f'{client_lookup}__reports_to': staff})
+    )
 
 
 class MicrofinanceDashboardStatsView(APIView):

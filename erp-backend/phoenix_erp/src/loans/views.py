@@ -43,10 +43,7 @@ def _resolve_scope(user, fallback_obj=None):
 def _build_scoped_qs(qs, user):
     """
     Apply tenant + branch scoping to an already-constructed QuerySet.
-    Mirrors OwnerBranchManager.for_user() but also includes null-tenant /
-    null-branch records so data created before the scope fix remains visible.
-
-    Directors, admins, and tenant owners always bypass the branch filter.
+    Global-scope Role users (directors, admins, owners) bypass the branch filter.
     """
     if not user or not getattr(user, 'is_authenticated', False):
         return qs.none()
@@ -56,13 +53,13 @@ def _build_scoped_qs(qs, user):
         qs = qs.filter(Q(tenant=tenant) | Q(tenant__isnull=True))
 
     is_owner = callable(getattr(user, 'is_owner', None)) and user.is_owner()
-    staff_role = None
+    has_global_role = False
     try:
-        staff_role = user.staff_profile.role_level
+        has_global_role = user.roles.filter(is_active=True, default_scope='global').exists()
     except Exception:
         pass
-    is_unrestricted = is_owner or staff_role in ('director', 'admin')
-    if not is_unrestricted:
+
+    if not (is_owner or has_global_role):
         branch = getattr(user, 'branch', None)
         if branch:
             qs = qs.filter(Q(branch=branch) | Q(branch__isnull=True))

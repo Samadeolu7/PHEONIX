@@ -133,31 +133,16 @@ class OwnerBranchManager(SoftDeleteManager):
         if tenant:
             qs = qs.filter(tenant=tenant)
 
-        # Bypass branch filter for tenant owners, directors, and admins —
-        # these roles must have cross-branch visibility within the tenant.
+        # Users with global-scope Roles (directors, admins) bypass branch filtering.
+        # Tenant owners are always unrestricted. Everyone else is branch-scoped.
         is_owner = callable(getattr(user, 'is_owner', None)) and user.is_owner()
-        staff_role = None
+        has_global_role = False
         try:
-            staff_role = user.staff_profile.role_level
+            has_global_role = user.roles.filter(is_active=True, default_scope='global').exists()
         except Exception:
             pass
 
-        # A user is unrestricted (cross-branch) only when both their Staff role
-        # AND their tenant Roles agree they should have global access.
-        # If any tenant Role has a non-global scope, apply branch filtering.
-        _GLOBAL_STAFF_ROLES = frozenset({'director', 'admin', 'operations'})
-        _NON_GLOBAL_SCOPES  = frozenset({'assigned_clients', 'own_records', 'ajo_group', 'own_branch'})
-        has_restricting_role = False
-        try:
-            has_restricting_role = user.roles.filter(
-                is_active=True, default_scope__in=_NON_GLOBAL_SCOPES
-            ).exists()
-        except Exception:
-            pass
-
-        is_unrestricted = is_owner or (
-            staff_role in _GLOBAL_STAFF_ROLES and not has_restricting_role
-        )
+        is_unrestricted = is_owner or has_global_role
         if is_unrestricted:
             return qs
 
