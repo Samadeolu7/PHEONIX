@@ -75,6 +75,8 @@ export interface ChargesSummary {
 }
 
 export interface LoanAccount extends LoanAccountList {
+  product_requires_guarantor: boolean;
+  product_min_guarantors: number;
   interest_rate: string;
   interest_method: string;
   term_months: number;

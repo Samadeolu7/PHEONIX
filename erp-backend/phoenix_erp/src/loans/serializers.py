@@ -162,6 +162,8 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
     """Full detail serializer including Java App 1 batch fields."""
     client_name = serializers.CharField(source='client.full_name', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
+    product_requires_guarantor = serializers.BooleanField(source='product.requires_guarantor', read_only=True)
+    product_min_guarantors = serializers.IntegerField(source='product.min_guarantors', read_only=True)
     total_outstanding = serializers.DecimalField(
         max_digits=18, decimal_places=2, read_only=True
     )
@@ -187,6 +189,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'id', 'loan_number',
             'client', 'client_name',
             'product', 'product_name',
+            'product_requires_guarantor', 'product_min_guarantors',
             # Amounts
             'requested_amount', 'approved_amount', 'disbursed_amount',
             'interest_rate', 'interest_method',
@@ -222,6 +225,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
         ]
         read_only_fields = [
             'id', 'loan_number', 'client_name', 'product_name',
+            'product_requires_guarantor', 'product_min_guarantors',
             'total_outstanding', 'total_charges', 'charges_summary',
             'total_repaid', 'interest_method', 'next_due_date', 'last_payment_date',
             'interest_suspended', 'interest_suspended_at', 'provision_pct', 'provision_amount',

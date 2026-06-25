@@ -277,7 +277,7 @@ export default function LoanAccountFormPage() {
                   <select required value={clientId} onChange={e => setClientId(e.target.value)} aria-label="Client"
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                     <option value="">-- Select client --</option>
-                    {clients.map(c => <option key={c.id} value={c.id}>{c.full_name} ({c.client_id})</option>)}
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.full_name}{c.phone_primary ? ` · ${c.phone_primary}` : ''}</option>)}
                   </select>
                 ) : (
                   <input type="number" required min="1" value={clientId} onChange={e => setClientId(e.target.value)}
@@ -323,10 +323,12 @@ export default function LoanAccountFormPage() {
                   <span className="text-blue-600 text-xs">Full Name</span>
                   <p className="font-medium text-gray-900">{selectedClient.full_name}</p>
                 </div>
-                <div>
-                  <span className="text-blue-600 text-xs">Client ID</span>
-                  <p className="font-medium text-gray-900">{selectedClient.client_id}</p>
-                </div>
+                {selectedClient.email && (
+                  <div>
+                    <span className="text-blue-600 text-xs">Email</span>
+                    <p className="font-medium text-gray-900">{selectedClient.email}</p>
+                  </div>
+                )}
                 {selectedClient.phone_primary && (
                   <div>
                     <span className="text-blue-600 text-xs">Phone</span>

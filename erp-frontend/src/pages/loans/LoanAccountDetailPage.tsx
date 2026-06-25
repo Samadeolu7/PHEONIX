@@ -412,6 +412,8 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
 
 // ── Add Guarantor Modal ────────────────────────────────────────────────────
 
+type GuarantorMode = 'search' | 'new';
+
 interface AddGuarantorModalProps {
   loanId: number;
   onClose: () => void;
@@ -419,16 +421,29 @@ interface AddGuarantorModalProps {
 }
 
 function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProps) {
+  const [mode, setMode] = useState<GuarantorMode>('search');
+
+  // Search-existing state
   const [search, setSearch] = useState('');
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [selectedClient, setSelectedClient] = useState<ClientOption | null>(null);
+
+  // New-person state
+  const [newPerson, setNewPerson] = useState({
+    first_name: '', last_name: '', phone_primary: '',
+    gender: '' as 'male' | 'female' | 'other' | '',
+    occupation: '', address_street: '',
+  });
+
+  // Shared state
   const [guaranteedAmount, setGuaranteedAmount] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
+  const [successName, setSuccessName] = useState('');
 
   useEffect(() => {
+    if (mode !== 'search') return;
     const timer = setTimeout(async () => {
       if (!search.trim()) { setClients([]); return; }
       setClientsLoading(true);
@@ -442,11 +457,14 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
       }
     }, 350);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, mode]);
+
+  function setPerson(field: keyof typeof newPerson, value: string) {
+    setNewPerson(p => ({ ...p, [field]: value }));
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedClient) { setError('Please select a client as guarantor.'); return; }
     if (!guaranteedAmount || parseFloat(guaranteedAmount) <= 0) {
       setError('Enter a valid guaranteed amount.');
       return;
@@ -454,46 +472,100 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
     setSubmitting(true);
     setError(null);
     try {
-      await loanService.addGuarantor({
-        loan: loanId,
-        guarantor: selectedClient.id,
-        guaranteed_amount: guaranteedAmount,
-      });
-      setSuccess(true);
-      setTimeout(() => { onSuccess(); }, 1000);
+      let clientId: number;
+      let clientName: string;
+
+      if (mode === 'search') {
+        if (!selectedClient) { setError('Select a person first.'); setSubmitting(false); return; }
+        clientId = selectedClient.id;
+        clientName = selectedClient.name;
+      } else {
+        const { first_name, last_name, phone_primary, gender, occupation, address_street } = newPerson;
+        if (!first_name || !last_name || !phone_primary || !gender) {
+          setError('First name, last name, phone and gender are required.');
+          setSubmitting(false);
+          return;
+        }
+        const created = await clientService.createClient({
+          first_name, last_name, phone_primary,
+          gender: gender as 'male' | 'female' | 'other',
+          occupation: occupation || undefined,
+          address_street: address_street || undefined,
+          usage_context: 'financial' as any,
+          status: 'active',
+        });
+        clientId = created.id;
+        clientName = created.full_name;
+      }
+
+      await loanService.addGuarantor({ loan: loanId, guarantor: clientId, guaranteed_amount: guaranteedAmount });
+      setSuccessName(clientName);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string; guarantor?: string[] };
-      setError((err as any)?.guarantor?.[0] ?? err?.detail ?? err?.message ?? 'Failed to add guarantor.');
+      const err = e as any;
+      const msg = err?.guarantor?.[0] ?? err?.phone_primary?.[0] ?? err?.non_field_errors?.[0]
+        ?? err?.detail ?? err?.message ?? 'Failed to add guarantor.';
+      setError(msg);
       setSubmitting(false);
     }
   }
 
+  if (successName) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-8 text-center shadow-xl">
+          <CheckCircle size={44} className="mx-auto mb-3 text-green-500" />
+          <p className="text-base font-semibold text-gray-900">{successName}</p>
+          <p className="mt-1 text-sm text-gray-500">Added as guarantor successfully.</p>
+          <button type="button" onClick={onSuccess}
+            className="mt-5 w-full rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700">
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="relative w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
         <button type="button" aria-label="Close" onClick={onClose}
           className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100">
           <X size={18} />
         </button>
-        <h2 className="mb-4 text-lg font-semibold text-gray-900">Add Guarantor</h2>
-        {success ? (
-          <div className="flex flex-col items-center py-8 text-center">
-            <CheckCircle size={40} className="mb-2 text-green-500" />
-            <p className="font-medium text-gray-900">Guarantor added successfully</p>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Client search */}
+        <h2 className="mb-1 text-lg font-semibold text-gray-900">Add Guarantor</h2>
+        <p className="mb-4 text-xs text-gray-400">
+          Search for an existing person or register a new one as guarantor.
+        </p>
+
+        {/* Mode tabs */}
+        <div className="mb-5 flex rounded-lg border border-gray-200 p-1">
+          {(['search', 'new'] as GuarantorMode[]).map(m => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => { setMode(m); setError(null); }}
+              className={`flex-1 rounded-md py-1.5 text-sm font-medium transition-colors ${
+                mode === m ? 'bg-purple-600 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {m === 'search' ? 'Search Existing' : 'Register New Person'}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {mode === 'search' ? (
+            /* ── Search existing ── */
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
-                Search client by name or ID <span className="text-red-500">*</span>
+                Search by name or phone <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 value={search}
                 onChange={e => { setSearch(e.target.value); setSelectedClient(null); }}
-                placeholder="Type name or client ID…"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                placeholder="Type a name or phone number…"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
               />
               {clientsLoading && (
                 <p className="mt-1 flex items-center gap-1 text-xs text-gray-400">
@@ -501,26 +573,32 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
                 </p>
               )}
               {!clientsLoading && clients.length > 0 && !selectedClient && (
-                <ul className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-sm">
+                <ul className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-sm">
                   {clients.map(c => (
                     <li key={c.id}>
-                      <button
-                        type="button"
+                      <button type="button"
                         onClick={() => { setSelectedClient(c); setSearch(c.name); setClients([]); }}
-                        className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50"
-                      >
+                        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-purple-50">
                         <span className="font-medium text-gray-900">{c.name}</span>
-                        <span className="ml-2 text-xs text-gray-400">{c.client_id}</span>
+                        <span className="text-xs text-gray-400 capitalize">{c.status}</span>
                       </button>
                     </li>
                   ))}
                 </ul>
               )}
+              {!clientsLoading && search.trim() && clients.length === 0 && !selectedClient && (
+                <p className="mt-1 text-xs text-gray-400">
+                  No match found.{' '}
+                  <button type="button" onClick={() => setMode('new')}
+                    className="text-purple-600 underline hover:text-purple-700">
+                    Register as new person instead
+                  </button>
+                </p>
+              )}
               {selectedClient && (
-                <div className="mt-1 flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm">
-                  <UserCheck size={14} className="text-green-600" />
-                  <span className="font-medium text-green-800">{selectedClient.name}</span>
-                  <span className="text-green-600">({selectedClient.client_id})</span>
+                <div className="mt-2 flex items-center gap-2 rounded-lg bg-purple-50 px-3 py-2 text-sm">
+                  <UserCheck size={14} className="text-purple-600" />
+                  <span className="font-medium text-purple-900">{selectedClient.name}</span>
                   <button type="button" onClick={() => { setSelectedClient(null); setSearch(''); }}
                     className="ml-auto text-gray-400 hover:text-gray-600">
                     <X size={14} />
@@ -528,44 +606,104 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
                 </div>
               )}
             </div>
-
-            {/* Guaranteed amount */}
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Guaranteed Amount (₦) <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="number"
-                min="1"
-                step="0.01"
-                value={guaranteedAmount}
-                onChange={e => setGuaranteedAmount(e.target.value)}
-                placeholder="e.g. 500000"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                required
-              />
-            </div>
-
-            {error && (
-              <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
-                <AlertCircle size={14} />
-                {error}
+          ) : (
+            /* ── Register new person ── */
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700">
+                    First Name <span className="text-red-500">*</span>
+                  </label>
+                  <input type="text" value={newPerson.first_name}
+                    onChange={e => setPerson('first_name', e.target.value)}
+                    placeholder="First name"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700">
+                    Last Name <span className="text-red-500">*</span>
+                  </label>
+                  <input type="text" value={newPerson.last_name}
+                    onChange={e => setPerson('last_name', e.target.value)}
+                    placeholder="Last name"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500" />
+                </div>
               </div>
-            )}
-
-            <div className="flex gap-3 pt-1">
-              <button type="button" onClick={onClose}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                Cancel
-              </button>
-              <button type="submit" disabled={submitting}
-                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50">
-                {submitting ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
-                Add Guarantor
-              </button>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700">
+                    Phone <span className="text-red-500">*</span>
+                  </label>
+                  <input type="tel" value={newPerson.phone_primary}
+                    onChange={e => setPerson('phone_primary', e.target.value)}
+                    placeholder="08012345678"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700">
+                    Gender <span className="text-red-500">*</span>
+                  </label>
+                  <select value={newPerson.gender}
+                    onChange={e => setPerson('gender', e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500">
+                    <option value="">Select…</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">Occupation</label>
+                <input type="text" value={newPerson.occupation}
+                  onChange={e => setPerson('occupation', e.target.value)}
+                  placeholder="e.g. Trader, Teacher, Civil Servant"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">Home Address</label>
+                <input type="text" value={newPerson.address_street}
+                  onChange={e => setPerson('address_street', e.target.value)}
+                  placeholder="Street address"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500" />
+              </div>
             </div>
-          </form>
-        )}
+          )}
+
+          {/* Guaranteed amount — always shown */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Guaranteed Amount (₦) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="number" min="1" step="0.01"
+              value={guaranteedAmount}
+              onChange={e => setGuaranteedAmount(e.target.value)}
+              placeholder="e.g. 500000"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+              required
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle size={14} className="shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              Cancel
+            </button>
+            <button type="submit" disabled={submitting}
+              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50">
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
+              {mode === 'new' ? 'Register & Add' : 'Add Guarantor'}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -797,16 +935,30 @@ export default function LoanAccountDetailPage() {
             )}
 
             {/* For loans that have a verification but need approval */}
-            {loan.status === 'pending' && (
-              <button
-                onClick={handleApprove}
-                disabled={actionLoading}
-                className="flex items-center gap-2 rounded-lg border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
-              >
-                {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
-                Approve
-              </button>
-            )}
+            {loan.status === 'pending' && (() => {
+              const minRequired = loan.product_requires_guarantor ? (loan.product_min_guarantors || 1) : 0;
+              const guarantorsMissing = minRequired > 0 && guarantors.length < minRequired;
+              return (
+                <div className="flex items-center gap-2">
+                  {guarantorsMissing && (
+                    <span className="flex items-center gap-1 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 border border-amber-200">
+                      <AlertCircle size={13} />
+                      {guarantors.length}/{minRequired} guarantor{minRequired !== 1 ? 's' : ''} required
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleApprove}
+                    disabled={actionLoading || guarantorsMissing}
+                    title={guarantorsMissing ? `Add at least ${minRequired} guarantor(s) before approving` : undefined}
+                    className="flex items-center gap-2 rounded-lg border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                    Approve
+                  </button>
+                </div>
+              );
+            })()}
 
             {canRestructure && (
               <button
@@ -981,6 +1133,83 @@ export default function LoanAccountDetailPage() {
           </div>
         </div>
 
+        {/* Guarantors */}
+        <div className="rounded-xl bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <div className="flex items-center gap-2">
+              <Users size={16} className="text-purple-500" />
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+                Guarantors
+              </h2>
+              <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">
+                {guarantors.length} linked
+              </span>
+            </div>
+            {['pending', 'approved'].includes(loan.status) && (
+              <button
+                type="button"
+                onClick={() => setShowAddGuarantorModal(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700"
+              >
+                <UserPlus size={13} />
+                Add Guarantor
+              </button>
+            )}
+          </div>
+
+          {guarantors.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-gray-400">
+              <UserCheck size={28} className="text-gray-300" />
+              <p>No guarantors linked to this loan yet.</p>
+              {loan.status === 'pending' && loan.product_requires_guarantor && (
+                <p className="flex items-center gap-1 text-xs font-medium text-red-600">
+                  <AlertCircle size={12} />
+                  {loan.product_min_guarantors || 1} guarantor(s) required before this loan can be approved.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {guarantors.map(g => (
+                <div key={g.id} className="flex items-center gap-4 px-5 py-3.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-100 text-purple-700">
+                    <UserCheck size={16} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-gray-900">{g.guarantor_name}</p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500">
+                      {g.guarantor_phone && <span>{g.guarantor_phone}</span>}
+                      {g.guarantor_occupation && <span>{g.guarantor_occupation}</span>}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold text-gray-800">₦{fmt(g.guaranteed_amount)}</p>
+                    <span className={`text-xs font-medium capitalize ${
+                      g.status === 'approved' ? 'text-green-600' :
+                      g.status === 'rejected' ? 'text-red-600' : 'text-yellow-600'
+                    }`}>
+                      {g.status}
+                    </span>
+                  </div>
+                  {['pending', 'approved'].includes(loan.status) && (
+                    <button
+                      type="button"
+                      aria-label="Remove guarantor"
+                      onClick={() => handleRemoveGuarantor(g.id)}
+                      disabled={removingGuarantorId === g.id}
+                      className="ml-2 shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
+                    >
+                      {removingGuarantorId === g.id
+                        ? <Loader2 size={14} className="animate-spin" />
+                        : <Trash2 size={14} />}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Repayment Schedule */}
         <div className="rounded-xl bg-white shadow-sm">
           <div className="border-b px-5 py-4">
@@ -1043,83 +1272,6 @@ export default function LoanAccountDetailPage() {
                     })}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
-
-        {/* Guarantors */}
-        <div className="rounded-xl bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b px-5 py-4">
-            <div className="flex items-center gap-2">
-              <Users size={16} className="text-purple-500" />
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
-                Guarantors
-              </h2>
-              <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">
-                {guarantors.length} linked
-              </span>
-            </div>
-            {['pending', 'approved'].includes(loan.status) && (
-              <button
-                type="button"
-                onClick={() => setShowAddGuarantorModal(true)}
-                className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-700"
-              >
-                <UserPlus size={13} />
-                Add Guarantor
-              </button>
-            )}
-          </div>
-
-          {guarantors.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-10 text-center text-sm text-gray-400">
-              <UserCheck size={28} className="text-gray-300" />
-              <p>No guarantors linked to this loan yet.</p>
-              {loan.status === 'pending' && (
-                <p className="text-xs text-amber-600">
-                  Add guarantors before the loan is approved if required by the product.
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {guarantors.map(g => (
-                <div key={g.id} className="flex items-center gap-4 px-5 py-3.5">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-purple-100 text-purple-700">
-                    <UserCheck size={16} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-gray-900">{g.guarantor_name}</p>
-                    <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500">
-                      <span>{g.guarantor_client_id}</span>
-                      {g.guarantor_phone && <span>{g.guarantor_phone}</span>}
-                      {g.guarantor_occupation && <span>{g.guarantor_occupation}</span>}
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-sm font-semibold text-gray-800">₦{fmt(g.guaranteed_amount)}</p>
-                    <span className={`text-xs font-medium capitalize ${
-                      g.status === 'approved' ? 'text-green-600' :
-                      g.status === 'rejected' ? 'text-red-600' : 'text-yellow-600'
-                    }`}>
-                      {g.status}
-                    </span>
-                  </div>
-                  {['pending', 'approved'].includes(loan.status) && (
-                    <button
-                      type="button"
-                      aria-label="Remove guarantor"
-                      onClick={() => handleRemoveGuarantor(g.id)}
-                      disabled={removingGuarantorId === g.id}
-                      className="ml-2 shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
-                    >
-                      {removingGuarantorId === g.id
-                        ? <Loader2 size={14} className="animate-spin" />
-                        : <Trash2 size={14} />}
-                    </button>
-                  )}
-                </div>
-              ))}
             </div>
           )}
         </div>
