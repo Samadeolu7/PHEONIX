@@ -3,15 +3,14 @@ import {
   Shield, ChevronDown, ChevronRight, Check, Save,
   AlertTriangle, Loader2, Info, RefreshCw, Copy, Zap,
 } from 'lucide-react';
-import { PERMISSION_REGISTRY, ROLE_TEMPLATES } from '../../config/permissionRegistry';
+import { PERMISSION_REGISTRY, ROLE_TEMPLATES, PermModule } from '../../config/permissionRegistry';
 import {
   permissionSetupService,
   RoleListItem,
   PolicyMap,
   PagePolicy,
 } from '../../services/permissionSetupService';
-import { PermissionEditor } from './components/PermissionEditor';
-import { modulesData } from '../../config/permissionModules';
+import { api } from '../../services/api';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -116,6 +115,304 @@ function ScopeSelect({ value, onChange }: ScopeSelectProps) {
         <option key={o.value} value={o.value}>{o.label}</option>
       ))}
     </select>
+  );
+}
+
+// ─── Flag → permission code suffix ───────────────────────────────────────────
+
+const FLAG_TO_CODE: Record<FlagKey, string> = {
+  can_view: 'view', can_create: 'create', can_edit: 'edit',
+  can_delete: 'delete', can_approve: 'approve', can_export: 'export',
+};
+
+// ─── Action Permissions Panel ─────────────────────────────────────────────────
+
+interface ActionPermissionsPanelProps {
+  roleId: number | null;
+  roleName: string;
+  policies: PolicyMap;
+  showToast: (type: 'success' | 'error', msg: string) => void;
+}
+
+function ActionPermissionsPanel({ roleId, roleName, policies, showToast }: ActionPermissionsPanelProps) {
+  const [codes, setCodes] = useState<Set<string>>(new Set());
+  const [savedCodes, setSavedCodes] = useState<Set<string>>(new Set());
+  const [loadingCodes, setLoadingCodes] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(
+    new Set(PERMISSION_REGISTRY.slice(0, 3).map(m => m.code))
+  );
+
+  const isDirty = useMemo(() => {
+    if (codes.size !== savedCodes.size) return true;
+    for (const c of codes) if (!savedCodes.has(c)) return true;
+    return false;
+  }, [codes, savedCodes]);
+
+  // Codes that would be derived from the current Page Policies state
+  const policyDerived = useMemo(() => {
+    const s = new Set<string>();
+    for (const [key, pol] of Object.entries(policies)) {
+      const pageCode = key.split(':')[1];
+      if (!pageCode) continue;
+      for (const [flag, action] of Object.entries(FLAG_TO_CODE) as Array<[FlagKey, string]>) {
+        if (pol[flag as FlagKey]) s.add(`${pageCode}-${action}`);
+      }
+    }
+    return s;
+  }, [policies]);
+
+  useEffect(() => {
+    if (!roleId) return;
+    setLoadingCodes(true);
+    api.get(`/users/roles/${roleId}/`)
+      .then((res: any) => {
+        const loaded = new Set<string>(res.permission_codes || []);
+        setCodes(loaded);
+        setSavedCodes(loaded);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingCodes(false));
+  }, [roleId]);
+
+  const toggle = useCallback((code: string) => {
+    setCodes(prev => {
+      const n = new Set(prev);
+      n.has(code) ? n.delete(code) : n.add(code);
+      return n;
+    });
+  }, []);
+
+  const toggleAll = useCallback((mod: PermModule, value: boolean) => {
+    setCodes(prev => {
+      const n = new Set(prev);
+      for (const page of mod.pages) {
+        for (const action of Object.values(FLAG_TO_CODE)) {
+          value ? n.add(`${page.code}-${action}`) : n.delete(`${page.code}-${action}`);
+        }
+      }
+      return n;
+    });
+  }, []);
+
+  const syncFromPolicies = useCallback(() => {
+    setCodes(prev => {
+      const n = new Set(prev);
+      for (const code of policyDerived) n.add(code);
+      return n;
+    });
+    showToast('success', 'Action codes synced from current Page Policies — save to apply.');
+  }, [policyDerived, showToast]);
+
+  const handleSave = useCallback(async () => {
+    if (!roleId) return;
+    setSaving(true);
+    try {
+      await api.patch(`/users/roles/${roleId}/`, { permission_codes: [...codes] });
+      setSavedCodes(new Set(codes));
+      showToast('success', `Saved ${codes.size} action codes for ${roleName}.`);
+    } catch (e: any) {
+      showToast('error', 'Save failed: ' + (e?.message ?? 'Unknown'));
+    } finally {
+      setSaving(false);
+    }
+  }, [roleId, codes, roleName, showToast]);
+
+  if (!roleId) {
+    return (
+      <div className="flex items-center justify-center py-16 text-gray-400 text-sm">
+        Select a role from the sidebar to configure action codes.
+      </div>
+    );
+  }
+
+  if (loadingCodes) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="animate-spin text-blue-400 mr-2" size={22} />
+        <span className="text-gray-400 text-sm">Loading action codes…</span>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Toolbar */}
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-sm text-gray-500 font-medium">{codes.size} codes active</span>
+          <button
+            type="button"
+            onClick={syncFromPolicies}
+            className="flex items-center gap-1.5 text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg border border-blue-200 transition-colors"
+          >
+            <RefreshCw size={12} />
+            Sync from Page Policies
+          </button>
+          {isDirty && (
+            <span className="text-xs text-amber-600 flex items-center gap-1">
+              <AlertTriangle size={12} /> Unsaved changes
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!isDirty || saving}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            isDirty && !saving
+              ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+          {saving ? 'Saving…' : isDirty ? 'Save Codes' : 'Saved'}
+        </button>
+      </div>
+
+      {/* Legend */}
+      <div className="mb-4 flex items-center gap-5 flex-wrap text-xs text-gray-500">
+        <span className="flex items-center gap-1.5">
+          <span className="w-5 h-5 rounded flex items-center justify-center bg-blue-100 border-0">
+            <Check size={10} className="text-blue-600" strokeWidth={3} />
+          </span>
+          Active
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-5 h-5 rounded flex items-center justify-center bg-indigo-50 border border-indigo-300">
+            <span className="text-[9px] text-indigo-500 font-bold">P</span>
+          </span>
+          Derived from Page Policy (click to activate)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-5 h-5 rounded border border-gray-200 bg-white" />
+          Not set
+        </span>
+        <span className="text-gray-400 ml-1">
+          <Info size={11} className="inline mr-1" />
+          Codes auto-generated from Page Policies on policy save. Toggle here for manual overrides.
+        </span>
+      </div>
+
+      {/* Module sections */}
+      {PERMISSION_REGISTRY.map(mod => {
+        const isExpanded = expanded.has(mod.code);
+        const allCodes = mod.pages.flatMap(p =>
+          Object.values(FLAG_TO_CODE).map(a => `${p.code}-${a}`)
+        );
+        const activeCount = allCodes.filter(c => codes.has(c)).length;
+
+        return (
+          <div key={mod.code} className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-3">
+            <div
+              className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50 transition-colors select-none"
+              onClick={() => setExpanded(prev => {
+                const n = new Set(prev);
+                n.has(mod.code) ? n.delete(mod.code) : n.add(mod.code);
+                return n;
+              })}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-xs font-bold"
+                  style={{ backgroundColor: mod.color }}
+                >
+                  {mod.name.charAt(0)}
+                </div>
+                <div>
+                  <div className="font-semibold text-gray-800 text-sm">{mod.name}</div>
+                  <div className="text-xs text-gray-400">
+                    {activeCount}/{allCodes.length} codes active
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                <button type="button" onClick={() => toggleAll(mod, true)} className="text-xs bg-green-50 hover:bg-green-100 text-green-700 px-2 py-1 rounded transition-colors">All On</button>
+                <button type="button" onClick={() => toggleAll(mod, false)} className="text-xs bg-red-50 hover:bg-red-100 text-red-700 px-2 py-1 rounded transition-colors">All Off</button>
+                {isExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+              </div>
+            </div>
+
+            {isExpanded && (
+              <div className="border-t border-gray-100">
+                <div
+                  className="grid px-4 py-2 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500"
+                  style={{ gridTemplateColumns: '1fr repeat(6, 2.5rem)' }}
+                >
+                  <span>Page</span>
+                  {FLAG_COLS.map(col => (
+                    <span key={col.key} className="text-center">
+                      <span className={`px-1 py-0.5 rounded text-xs font-semibold ${col.color}`}>{col.short}</span>
+                    </span>
+                  ))}
+                </div>
+
+                {mod.pages.map((page, idx) => (
+                  <div
+                    key={page.code}
+                    className={`grid items-center px-4 py-2.5 border-b border-gray-50 last:border-0 ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'}`}
+                    style={{ gridTemplateColumns: '1fr repeat(6, 2.5rem)' }}
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="text-sm text-gray-700 font-medium truncate">{page.title}</div>
+                      {page.description && (
+                        <div className="text-xs text-gray-400 truncate">{page.description}</div>
+                      )}
+                    </div>
+                    {FLAG_COLS.map(col => {
+                      const code = `${page.code}-${FLAG_TO_CODE[col.key]}`;
+                      const isActive = codes.has(code);
+                      const isDerived = policyDerived.has(code);
+                      return (
+                        <div key={col.key} className="flex justify-center">
+                          <button
+                            type="button"
+                            onClick={() => toggle(code)}
+                            title={`${code}${isDerived ? ' — derived from Page Policy' : ''}`}
+                            className={`
+                              w-8 h-8 rounded flex items-center justify-center transition-all border
+                              ${isActive
+                                ? `${col.color} border-transparent shadow-sm`
+                                : isDerived
+                                  ? 'bg-indigo-50 border-indigo-300 hover:bg-indigo-100'
+                                  : 'bg-white border-gray-200 hover:border-gray-400'}
+                            `}
+                          >
+                            {isActive
+                              ? <Check size={13} strokeWidth={3} />
+                              : isDerived
+                                ? <span className="text-[9px] text-indigo-500 font-bold leading-none">P</span>
+                                : null}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {isDirty && (
+        <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-3 flex items-center justify-between shadow-lg mt-4 rounded-t-xl">
+          <span className="text-sm text-amber-700 font-medium flex items-center gap-2">
+            <AlertTriangle size={15} />
+            Unsaved action code changes for <strong>{roleName}</strong>
+          </span>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition-colors shadow-sm"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {saving ? 'Saving…' : 'Save Codes'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -526,11 +823,13 @@ export default function PermissionSetupPage() {
               </div>
             )}
 
-            {/* ── Tab 2: Action Permissions (PermissionEditor) ─────────── */}
+            {/* ── Tab 2: Action Permissions ────────────────────────────── */}
             {activePanel === 'actions' && (
-              <PermissionEditor
-                modulesData={modulesData}
-                controlledRoleId={selectedRoleId}
+              <ActionPermissionsPanel
+                roleId={selectedRoleId}
+                roleName={selectedRole?.name ?? ''}
+                policies={policies}
+                showToast={showToast}
               />
             )}
 

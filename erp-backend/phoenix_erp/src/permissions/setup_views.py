@@ -352,12 +352,37 @@ class PermissionSetupRolePoliciesView(APIView):
                 created_by=request.user,
             ))
 
+        # Derive permission codes from the saved policies.
+        # Format: {page_code}-{action}  e.g. "clients-view", "loan-accounts-create"
+        # These are stored on role.permission_codes so the frontend hasPermission()
+        # check can gate navigation cards without a separate Action Permissions save.
+        _FLAG_TO_ACTION = {
+            'can_view': 'view', 'can_create': 'create', 'can_edit': 'edit',
+            'can_delete': 'delete', 'can_approve': 'approve', 'can_export': 'export',
+        }
+        derived_codes: set[str] = set()
+        for key, flags in policies_data.items():
+            if ':' not in key:
+                continue
+            _, page_code = key.split(':', 1)
+            for flag, action in _FLAG_TO_ACTION.items():
+                if flags.get(flag):
+                    derived_codes.add(f'{page_code}-{action}')
+
         with db_tx.atomic():
             # Atomic replace: delete existing page-level policies then bulk create
             deleted, _ = RolePermissionPolicy.objects.filter(
                 role=role, page__isnull=False
             ).delete()
             RolePermissionPolicy.objects.bulk_create(new_policies)
+            # Merge derived codes with any manually-added custom codes, then save
+            existing = set(role.permission_codes or [])
+            # Keep codes that don't follow the derived format (manually added) plus all derived
+            non_derived = {c for c in existing if not any(
+                c.endswith(f'-{a}') for a in _FLAG_TO_ACTION.values()
+            )}
+            role.permission_codes = sorted(derived_codes | non_derived)
+            role.save(update_fields=['permission_codes'])
 
         logger.info(
             'Permission policies saved: role=%s (%s) by user=%s — '

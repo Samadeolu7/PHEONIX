@@ -147,21 +147,12 @@ class PermissionResolver:
         except Exception:
             pass  # Permissions app may not be available during early migrations
 
-        # --- 2. Legacy fallback: only for roles with no RolePermissionPolicy records ---
-        try:
-            with db_tx.atomic():
-                from permissions.models import RolePermissionPolicy as _RolePermissionPolicy
-                policy_role_ids = set(
-                    _RolePermissionPolicy.objects
-                    .filter(role_id__in=role_ids)
-                    .values_list('role_id', flat=True)
-                    .distinct()
-                )
-        except Exception:
-            policy_role_ids = set()
-
+        # --- 2. Role permission_codes (complements page policies) ---
+        # Always include permission_codes from all active roles. These are generated
+        # automatically by setup_views.py when page policies are saved, and can also
+        # be set manually via the Action Permissions tab.
         for role in user.roles.filter(is_active=True):
-            if role.pk not in policy_role_ids and isinstance(role.permission_codes, list):
+            if isinstance(role.permission_codes, list):
                 codes.update(role.permission_codes)
 
         # --- 3. Active user overrides that explicitly enable a flag ---
