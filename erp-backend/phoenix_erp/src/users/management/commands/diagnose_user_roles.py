@@ -41,12 +41,33 @@ class Command(BaseCommand):
         # Show tenant roles
         try:
             from users.models import Role
-            roles = user.roles.all() if hasattr(user, 'roles') else []
+            roles = list(user.roles.filter(is_active=True))
+            self.stdout.write(f'\n=== Tenant Roles ===')
             if roles:
-                self.stdout.write(f'\n=== Tenant Roles ===')
                 for r in roles:
                     self.stdout.write(f'  - {r.name} (scope={r.default_scope})')
-        except Exception:
-            pass
+            else:
+                self.stdout.write('  [!] No active roles assigned — user will be treated as own_branch scope')
+        except Exception as e:
+            self.stdout.write(f'  [!] Could not load roles: {e}')
+
+        # Show assigned clients
+        try:
+            from clients.models import Client
+            if staff:
+                total = Client.objects.filter(tenant=user.tenant, is_deleted=False).count()
+                assigned = Client.objects.filter(
+                    tenant=user.tenant, assigned_officer=staff, is_deleted=False
+                ).count()
+                self.stdout.write(f'\n=== Client Assignments ===')
+                self.stdout.write(f'  Total clients in tenant : {total}')
+                self.stdout.write(f'  Assigned to this staff  : {assigned}')
+                if assigned == 0:
+                    self.stdout.write(
+                        '  [!] No clients assigned → credit officer will see 0 results\n'
+                        '      Run: python manage.py assign_officer_clients to bulk-assign'
+                    )
+        except Exception as e:
+            self.stdout.write(f'  [!] Could not check client assignments: {e}')
 
         self.stdout.write('')
