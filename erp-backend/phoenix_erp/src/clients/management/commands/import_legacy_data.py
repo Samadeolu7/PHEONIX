@@ -602,6 +602,7 @@ class Command(BaseCommand):
         client_map = {}
         created_count = 0
         skipped = 0
+        group_patched = 0
 
         for rec in clients_data:
             old_id = rec.get("client_id")
@@ -609,12 +610,26 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
+            # Resolve group early — needed for both new and existing clients.
+            # Explicit int() conversion guards against string/int type mismatches
+            # that can occur depending on the JSON serialiser used during export.
+            raw_gid = rec.get("group_id")
+            try:
+                group = group_map.get(int(raw_gid)) if raw_gid is not None else None
+            except (TypeError, ValueError):
+                group = None
+
             # Skip if already imported (external_id is unique per tenant)
             existing = Client.objects.filter(
                 external_id=old_id,
                 tenant=ctx["tenant"],
             ).first()
             if existing:
+                # Patch missing group without touching the rest of the record
+                # (avoids re-triggering signals / audit-log noise on all fields).
+                if group is not None and existing.group_id != group.pk:
+                    Client.objects.filter(pk=existing.pk).update(group_id=group.pk)
+                    group_patched += 1
                 client_map[old_id] = existing
                 skipped += 1
                 continue
@@ -622,7 +637,6 @@ class Command(BaseCommand):
             first_name, last_name = _split_name(rec.get("name", ""))
             client_type = self._TYPE_MAP.get(rec.get("client_type", "").upper())
             status = self._STATUS_MAP.get(rec.get("account_status", "A"), "active")
-            group = group_map.get(rec.get("group_id"))
 
             client = Client(
                 # Phoenix will auto-generate client_id (WL-00001 etc.) in save()
@@ -651,8 +665,9 @@ class Command(BaseCommand):
             client_map[old_id] = client
             created_count += 1
 
+        patch_msg = f", {group_patched} group assignments patched" if group_patched else ""
         self.stdout.write(
-            f"    {created_count} created, {skipped} skipped (already existed / no ID)"
+            f"    {created_count} created, {skipped} skipped (already existed / no ID){patch_msg}"
         )
         return client_map
 
