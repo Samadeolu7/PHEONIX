@@ -722,7 +722,7 @@ export default function PermissionSetupPage() {
               </div>
             )}
 
-            </> {/* end Tab 1 fragment */}
+            </>
             )}
 
           </div>
