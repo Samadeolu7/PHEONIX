@@ -87,22 +87,33 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     def _apply_officer_scope(self, qs):
         """
         Apply credit-officer / supervisor visibility restriction.
-        No-ops when ``officer_client_lookup`` is None or the user has no
-        ``staff_profile`` (system/superuser accounts remain unrestricted).
+        Fails closed: users without a linked Staff record see nothing unless
+        they are system admins or tenant owners.
         """
         lookup = self.officer_client_lookup
         if not lookup:
             return qs
 
         user = self.request.user
+
+        # System admins and tenant owners bypass officer scoping entirely.
+        if getattr(user, 'is_system_admin', False):
+            return qs
+        if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+            return qs
+
         try:
             staff = user.staff_profile
         except Exception:
-            return qs
+            # No linked Staff record for a non-elevated user — deny access.
+            return qs.none()
         if staff is None:
-            return qs
+            return qs.none()
 
-        role = getattr(staff, 'role_level', 'operations')
+        role = getattr(staff, 'role_level', None)
+
+        if role in ('branch_manager', 'director', 'operations', 'admin'):
+            return qs
 
         if role == 'credit_officer':
             return qs.filter(
@@ -116,8 +127,8 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
                 Q(**{f'{lookup}__isnull': True})
             )
 
-        # branch_manager / director / operations / admin — no extra restriction
-        return qs
+        # Unknown or missing role — fail closed.
+        return qs.none()
 
     def list(self, request, *args, **kwargs):
         """
