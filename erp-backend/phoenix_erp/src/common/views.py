@@ -116,15 +116,12 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
             return qs
 
         if role == 'credit_officer':
-            return qs.filter(
-                Q(**{lookup: staff}) | Q(**{f'{lookup}__isnull': True})
-            )
+            return qs.filter(Q(**{lookup: staff}))
 
         if role == 'supervisor':
             return qs.filter(
                 Q(**{lookup: staff}) |
-                Q(**{f'{lookup}__reports_to': staff}) |
-                Q(**{f'{lookup}__isnull': True})
+                Q(**{f'{lookup}__reports_to': staff})
             )
 
         # Unknown or missing role — fail closed.
