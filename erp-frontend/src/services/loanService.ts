@@ -248,6 +248,8 @@ export interface RepayLoanPayload {
 export interface RepayLoanResult {
   loan: LoanAccount;
   schedule: LoanRepaymentSchedule[];
+  spillover_to_savings?: string;
+  /** @deprecated renamed to spillover_to_savings */
   overpayment_credited?: string;
 }
 

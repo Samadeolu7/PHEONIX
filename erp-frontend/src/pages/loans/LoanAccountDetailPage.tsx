@@ -79,17 +79,34 @@ interface RepayModalProps {
 }
 
 function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalProps) {
-  const totalDue = parseFloat(nextInstallment?.total_due ?? '0') - parseFloat(nextInstallment?.total_paid ?? '0');
-  const [amount, setAmount] = useState(totalDue > 0 ? totalDue.toFixed(2) : '');
+  // Compute total currently due = all overdue/partial installments + next pending installment.
+  // This matches the backend's payable_now calculation so the spillover preview is accurate.
+  const overdueItems = loan.repayment_schedule.filter(
+    (s) => s.status === 'overdue' || s.status === 'partial'
+  );
+  const overdueDue = overdueItems.reduce(
+    (sum, s) => sum + parseFloat(s.total_due) - parseFloat(s.total_paid), 0
+  );
+  const nextPending = loan.repayment_schedule
+    .filter((s) => s.status === 'pending')
+    .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())[0] ?? null;
+  const nextPendingDue = nextPending
+    ? parseFloat(nextPending.total_due) - parseFloat(nextPending.total_paid)
+    : 0;
+  const totalOutstanding = parseFloat(String(loan.total_outstanding ?? '0'));
+  const totalCurrentlyDue = Math.min(overdueDue + nextPendingDue, totalOutstanding);
+
+  const [amount, setAmount] = useState(totalCurrentlyDue > 0 ? totalCurrentlyDue.toFixed(2) : '');
   const [paymentMode, setPaymentMode] = useState<'cash' | 'bank_transfer'>('cash');
   const [bankReference, setBankReference] = useState('');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [spilloverCredited, setSpilloverCredited] = useState('0.00');
 
   const enteredAmount = parseFloat(amount) || 0;
-  const excess = Math.max(0, enteredAmount - totalDue);
+  const previewSpillover = Math.max(0, enteredAmount - totalCurrentlyDue);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -110,11 +127,13 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
         payment_mode: paymentMode,
         bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
       };
-      await loanService.repayLoan(loan.id, payload);
+      const result = await loanService.repayLoan(loan.id, payload);
+      const credited = result?.spillover_to_savings ?? result?.overpayment_credited ?? '0';
+      setSpilloverCredited(credited);
       setSuccess(true);
       setTimeout(() => {
         onSuccess();
-      }, 1200);
+      }, 2000);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setError(err?.detail ?? err?.message ?? 'Failed to record repayment.');
@@ -139,17 +158,21 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
           {loan.loan_number} — {loan.client_name}
         </p>
 
-        {nextInstallment && totalDue > 0 && (
-          <div className="mb-4 rounded-lg bg-blue-50 p-3 text-sm">
-            <div className="font-medium text-blue-800">
-              Next Installment Due: {fmtDate(nextInstallment.due_date)}
-            </div>
-            <div className="mt-1 text-blue-700">
-              Principal ₦{fmt(nextInstallment.principal_due)} + Interest ₦{fmt(nextInstallment.interest_due)} + Fees ₦{fmt(nextInstallment.fees_due)}{' '}
-              = <strong>₦{fmt(totalDue)}</strong>
-              {parseFloat(nextInstallment.total_paid) > 0 && (
-                <span className="ml-1 text-blue-500">(₦{fmt(nextInstallment.total_paid)} already paid)</span>
-              )}
+        {totalCurrentlyDue > 0 && (
+          <div className="mb-4 rounded-lg bg-blue-50 p-3 text-sm space-y-1">
+            {overdueItems.length > 0 && (
+              <div className="text-red-700 font-medium">
+                {overdueItems.length} overdue installment{overdueItems.length > 1 ? 's' : ''} — ₦{fmt(overdueDue)} outstanding
+              </div>
+            )}
+            {nextPending && (
+              <div className="text-blue-800">
+                {overdueItems.length > 0 ? 'Next pending: ' : 'Installment due '}
+                {fmtDate(nextPending.due_date)} — ₦{fmt(nextPendingDue)}
+              </div>
+            )}
+            <div className="font-semibold text-blue-900 border-t border-blue-200 pt-1 mt-1">
+              Total currently due: <strong>₦{fmt(totalCurrentlyDue)}</strong>
             </div>
           </div>
         )}
@@ -158,6 +181,11 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
           <div className="flex flex-col items-center py-6 text-center">
             <CheckCircle size={40} className="mb-2 text-green-500" />
             <p className="font-medium text-gray-900">Repayment recorded successfully</p>
+            {parseFloat(spilloverCredited) > 0 && (
+              <p className="mt-2 text-sm text-blue-700 bg-blue-50 rounded-lg px-3 py-1.5">
+                ₦{fmt(spilloverCredited)} spillover credited to client savings
+              </p>
+            )}
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -175,9 +203,9 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
                 placeholder="Enter amount collected"
                 required
               />
-              {excess > 0 && (
-                <p className="mt-1 text-xs text-amber-600">
-                  ₦{fmt(excess)} excess will be credited to borrower's savings account
+              {previewSpillover > 0 && (
+                <p className="mt-1 text-xs text-blue-600">
+                  ₦{fmt(previewSpillover)} above current dues — will be credited to savings
                 </p>
               )}
             </div>

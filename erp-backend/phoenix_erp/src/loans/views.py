@@ -341,7 +341,9 @@ class LoanAccountViewSet(ScopedModelViewSet):
           cashier_account_id (int, optional — for cash mode auto-resolves if omitted)
           bank_account_id  (int, optional — for bank_transfer mode, company bank GL account)
 
-        On success returns: {loan: <detail>, schedule: [...], overpayment_credited: <amount>}
+        On success returns: {loan: <detail>, schedule: [...], spillover_to_savings: <amount>}
+        Spillover = amount paid beyond (overdue installments + next pending installment);
+        it is deposited into the client's primary savings account.
         """
         from decimal import Decimal
         from django.utils import timezone
@@ -414,7 +416,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             except GlAccount.DoesNotExist:
                 return Response({'detail': 'Bank account not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # ── Detect overpayment (cap payment at total outstanding) ─────────
+        # ── Detect spillover / overpayment ───────────────────────────────
         from decimal import ROUND_HALF_UP
         total_outstanding = loan.total_outstanding
         try:
@@ -422,13 +424,50 @@ class LoanAccountViewSet(ScopedModelViewSet):
         except Exception:
             total_outstanding = Decimal('0.00')
 
+        # Determine how much is payable right now:
+        #   all overdue/partial installments  +  the single next pending installment.
+        # Anything the client pays beyond this is spillover and goes to savings,
+        # not pre-applied to a future installment they haven't reached yet.
+        overdue_due = Decimal('0.00')
+        for s in loan.repayment_schedule.filter(status__in=['overdue', 'partial']):
+            overdue_due += Decimal(str(s.total_due)) - Decimal(str(s.total_paid))
+
+        next_pending = (
+            loan.repayment_schedule
+            .filter(status='pending')
+            .order_by('due_date')
+            .first()
+        )
+        next_pending_due = (
+            Decimal(str(next_pending.total_due)) - Decimal(str(next_pending.total_paid))
+            if next_pending else Decimal('0.00')
+        )
+
+        # payable_now is capped at total_outstanding to handle rounding drift.
+        # If there is no schedule at all, fall back to total_outstanding so
+        # balloon / bullet loans are not affected.
+        has_schedule = loan.repayment_schedule.exists()
+        if has_schedule and (overdue_due + next_pending_due) > Decimal('0.00'):
+            payable_now = min(
+                (overdue_due + next_pending_due).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                total_outstanding,
+            )
+        else:
+            payable_now = total_outstanding
+
         overpayment_credited = Decimal('0.00')
-        payment_amount = amount
         excess = Decimal('0.00')
 
         if total_outstanding > Decimal('0.00') and amount > total_outstanding:
+            # Full overpayment — more than the entire loan balance.
             excess = (amount - total_outstanding).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             payment_amount = total_outstanding
+        elif payable_now > Decimal('0.00') and amount > payable_now:
+            # Spillover — payment exceeds current-period dues; route excess to savings.
+            excess = (amount - payable_now).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            payment_amount = payable_now
+        else:
+            payment_amount = amount
 
         # ── Post the repayment ────────────────────────────────────────────
         description = f"Loan repayment — {loan.loan_number}"
@@ -456,7 +495,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
                     if primary_savings:
                         primary_savings.deposit(
                             amount=excess,
-                            description=f"Overpayment credit from loan {loan.loan_number}",
+                            description=f"Loan spillover credit from {loan.loan_number}",
                             cashier_account=payment_account,
                             transacted_by=request.user,
                         )
@@ -480,7 +519,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
         return Response({
             'loan': LoanAccountDetailSerializer(loan, context={'request': request}).data,
             'schedule': LoanRepaymentScheduleSerializer(schedule_qs, many=True).data,
-            'overpayment_credited': str(overpayment_credited),
+            'spillover_to_savings': str(overpayment_credited),
         })
 
     @action(detail=False, methods=['get'], url_path='group-collection')
