@@ -270,7 +270,7 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
         model = Client
         fields = [
             # Basic Information
-            'client_id', 'title', 'first_name', 'middle_name', 'last_name',
+            'id', 'client_id', 'title', 'first_name', 'middle_name', 'last_name',
             'gender', 'date_of_birth', 'place_of_birth',
 
             # Classification and Status
@@ -332,6 +332,7 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
             'nin',
         ]
         extra_kwargs = {
+            'id': {'read_only': True},
             'client_id': {'required': False},  # Auto-generated if not provided
             'first_name': {'required': True},
             'last_name': {'required': True},

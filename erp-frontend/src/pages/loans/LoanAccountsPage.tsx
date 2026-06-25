@@ -221,6 +221,11 @@ export default function LoanAccountsPage() {
                   <td className="px-4 py-3 text-gray-600">{loan.product_name}</td>
                   <td className="px-4 py-3 text-right text-gray-900">
                     ₦{fmt(loan.disbursed_amount)}
+                    {['pending', 'approved'].includes(loan.status) && (
+                      <div className="text-xs text-gray-400 font-normal">
+                        ₦{fmt(loan.requested_amount)} req.
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
                     ₦{fmt(loan.outstanding_principal)}

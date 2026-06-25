@@ -125,7 +125,7 @@ class LoanAccountListSerializer(TenantModelSerializer):
         fields = [
             'id', 'loan_number', 'client', 'client_name',
             'product', 'product_name',
-            'disbursed_amount', 'outstanding_principal',
+            'requested_amount', 'disbursed_amount', 'outstanding_principal',
             'processing_fee', 'insurance_amount',
             'term_months', 'term_unit',
             'repayment_frequency', 'status', 'risk_classification',

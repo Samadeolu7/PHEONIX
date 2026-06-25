@@ -52,6 +52,7 @@ export interface LoanAccountList {
   client_name: string;
   product: number;
   product_name: string;
+  requested_amount: string;
   disbursed_amount: string;
   outstanding_principal: string;
   processing_fee: string;
