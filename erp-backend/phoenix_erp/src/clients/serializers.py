@@ -338,6 +338,7 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
             'last_name': {'required': True},
             'phone_primary': {'required': True},
             'gender': {'required': True},
+            'client_type': {'required': True},
             'image': {'required': False, 'allow_null': True},
             'signature': {'required': False, 'allow_null': True},
         }
@@ -365,8 +366,8 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
         return value
 
     def validate_client_type(self, value):
-        if value is None or value == '':
-            return value
+        if not value:
+            raise serializers.ValidationError('client_type is required.')
         normalized = str(value).lower()
         allowed = {'dc', 'wl', 'ml', 'pr'}
         if normalized not in allowed:

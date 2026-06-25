@@ -77,7 +77,6 @@ def collect_client_registration_fees(
         account=cashier_account,
         side=JournalEntryLine.DEBIT,
         amount=total,
-        description=f"Cash received for client registration ({client.client_type})",
     )
 
     if registration_fee > 0:
@@ -86,7 +85,6 @@ def collect_client_registration_fees(
             account=config.registration_income_account,
             side=JournalEntryLine.CREDIT,
             amount=registration_fee,
-            description='Client registration fee income',
         )
 
     if id_fee > 0:
@@ -95,7 +93,6 @@ def collect_client_registration_fees(
             account=config.id_fee_income_account,
             side=JournalEntryLine.CREDIT,
             amount=id_fee,
-            description='Client ID-card fee income',
         )
 
     journal.post()
