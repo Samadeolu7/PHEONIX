@@ -112,6 +112,9 @@ export interface Role {
 
 interface PermissionEditorProps {
   modulesData: ModuleInfo[];
+  /** When provided, the editor is externally controlled — role selector is hidden
+   *  and this roleId is used directly. The editor re-fetches when it changes. */
+  controlledRoleId?: number | null;
 }
 
 // ============================================================================
@@ -139,8 +142,10 @@ const getActionTypeColor = (type: string) => {
 // Component
 // ============================================================================
 
-export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData }) => {
+export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData, controlledRoleId }) => {
   const toast = useToast();
+
+  const isControlled = controlledRoleId !== undefined;
 
   // State
   const [roles, setRoles] = useState<Role[]>([]);
@@ -172,9 +177,12 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
   // Data Fetching
   // ==========================================================================
 
+  // The effective role: externally controlled takes priority over internal selection
+  const effectiveRoleId = isControlled ? (controlledRoleId ?? null) : selectedRoleId;
+
   useEffect(() => {
-    fetchRoles();
-  }, []);
+    if (!isControlled) fetchRoles();
+  }, [isControlled]);
 
   const fetchRoles = async () => {
     setLoadingRoles(true);
@@ -195,11 +203,11 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
   };
 
   useEffect(() => {
-    if (!selectedRoleId) return;
+    if (!effectiveRoleId) return;
 
     const fetchRolePermissions = async () => {
       try {
-        const response = await api.get(`/users/roles/${selectedRoleId}/`);
+        const response = await api.get(`/users/roles/${effectiveRoleId}/`);
         setRolePermissions(response.permission_codes || []);
       } catch (error) {
         console.error('Failed to fetch role permissions:', error);
@@ -208,7 +216,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
     };
 
     fetchRolePermissions();
-  }, [selectedRoleId, toast]);
+  }, [effectiveRoleId]);
 
   // ==========================================================================
   // Permission Helpers
@@ -306,10 +314,10 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
   // ==========================================================================
 
   const handleSave = async () => {
-    if (!selectedRoleId) return;
+    if (!effectiveRoleId) return;
     setSaving(true);
     try {
-      const response = await api.patch(`/users/roles/${selectedRoleId}/`, {
+      const response = await api.patch(`/users/roles/${effectiveRoleId}/`, {
         permission_codes: rolePermissions,
       });
 
@@ -348,7 +356,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
   // Render
   // ==========================================================================
 
-  if (loadingRoles) {
+  if (loadingRoles && !isControlled) {
     return (
       <div style={{ textAlign: 'center', padding: '3rem' }}>
         <div style={{ color: '#6b7280' }}>Loading roles...</div>
@@ -356,9 +364,18 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
     );
   }
 
+  if (isControlled && !effectiveRoleId) {
+    return (
+      <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+        Select a role from the sidebar to configure its action permissions.
+      </div>
+    );
+  }
+
   return (
     <div>
-      {/* Role Selector and Save Button */}
+      {/* Role Selector — only shown in standalone (non-controlled) mode */}
+      {!isControlled && (
       <div
         style={{
           background: 'white',
@@ -407,15 +424,15 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button
               onClick={handleSave}
-              disabled={saving || !selectedRoleId}
+              disabled={saving || !effectiveRoleId}
               style={{
                 padding: '0.5rem 1rem',
                 backgroundColor: '#3b82f6',
                 color: 'white',
                 border: 'none',
                 borderRadius: '0.375rem',
-                cursor: saving || !selectedRoleId ? 'not-allowed' : 'pointer',
-                opacity: saving || !selectedRoleId ? 0.5 : 1,
+                cursor: saving || !effectiveRoleId ? 'not-allowed' : 'pointer',
+                opacity: saving || !effectiveRoleId ? 0.5 : 1,
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.5rem',
@@ -428,6 +445,7 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
           </div>
         </div>
       </div>
+      )}
 
       {/* Filters */}
       <div
@@ -517,7 +535,34 @@ export const PermissionEditor: React.FC<PermissionEditorProps> = ({ modulesData 
 
       {/* Modules List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-        {filteredModules.map(module => (
+        {/* Save button shown inline when editor is controlled (no external role selector) */}
+      {isControlled && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
+          <button
+            onClick={handleSave}
+            disabled={saving || !effectiveRoleId}
+            style={{
+              padding: '0.5rem 1.25rem',
+              backgroundColor: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '0.375rem',
+              cursor: saving || !effectiveRoleId ? 'not-allowed' : 'pointer',
+              opacity: saving || !effectiveRoleId ? 0.5 : 1,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontWeight: 500,
+              fontSize: '0.875rem',
+            }}
+          >
+            <Save style={{ width: '1rem', height: '1rem' }} />
+            {saving ? 'Saving…' : 'Save Action Permissions'}
+          </button>
+        </div>
+      )}
+
+      {filteredModules.map(module => (
           <div
             key={module.id}
             style={{

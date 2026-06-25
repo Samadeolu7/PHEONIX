@@ -12,7 +12,9 @@ import {
   Key,
   Eye,
   EyeOff,
+  ExternalLink,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import {
   userManagementService,
   User,
@@ -23,8 +25,6 @@ import {
 import { useToast } from '../../hooks/useToast';
 import { usePermission } from '@/hooks/usePermissions';
 import { useAuth } from '@/contexts/AuthContext';
-import { PermissionEditor } from '../settings/components/PermissionEditor';
-import { modulesData } from '@/config/permissionModules';
 
 import { getRoleRank } from '../../types/roles';
 
@@ -868,9 +868,39 @@ const UserManagementPage: React.FC = () => {
         </div>
       )}
 
-      {/* Permissions Tab */}
+      {/* Permissions Tab — now lives at /admin/permission-setup */}
       {activeTab === 'permissions' && (canViewPermissions || canManagePermissions) && (
-        <PermissionEditor modulesData={modulesData} />
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', padding: '4rem 2rem', textAlign: 'center',
+        }}>
+          <div style={{
+            width: '3.5rem', height: '3.5rem', borderRadius: '1rem',
+            background: 'rgba(99,102,241,0.1)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', marginBottom: '1.25rem',
+          }}>
+            <Shield style={{ width: '1.75rem', height: '1.75rem', color: '#6366f1' }} />
+          </div>
+          <h2 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem', color: '#111827' }}>
+            Permission Management has moved
+          </h2>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', maxWidth: '28rem', marginBottom: '1.75rem', lineHeight: 1.6 }}>
+            Page Policies and Action Permissions are now managed together on the
+            <strong> Permission Setup</strong> page — one place to configure everything for each role.
+          </p>
+          <Link
+            to="/admin/permission-setup"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+              padding: '0.625rem 1.5rem', background: '#6366f1', color: 'white',
+              borderRadius: '0.5rem', fontWeight: 600, fontSize: '0.875rem',
+              textDecoration: 'none',
+            }}
+          >
+            <ExternalLink style={{ width: '1rem', height: '1rem' }} />
+            Go to Permission Setup
+          </Link>
+        </div>
       )}
 
       {/* User Details Modal — delete lives here, not in the list */}

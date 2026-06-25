@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Shield, ChevronDown, ChevronRight, Check, Save,
-  AlertTriangle, Loader2, Info, RefreshCw, Copy,
+  AlertTriangle, Loader2, Info, RefreshCw, Copy, Zap,
 } from 'lucide-react';
 import { PERMISSION_REGISTRY, ROLE_TEMPLATES } from '../../config/permissionRegistry';
 import {
@@ -10,6 +10,8 @@ import {
   PolicyMap,
   PagePolicy,
 } from '../../services/permissionSetupService';
+import { PermissionEditor } from './components/PermissionEditor';
+import { modulesData } from '../../config/permissionModules';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -120,6 +122,7 @@ function ScopeSelect({ value, onChange }: ScopeSelectProps) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function PermissionSetupPage() {
+  const [activePanel, setActivePanel] = useState<'policies' | 'actions'>('policies');
   const [roles, setRoles] = useState<RoleListItem[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
   const [policies, setPolicies] = useState<PolicyMap>({});
@@ -382,78 +385,158 @@ export default function PermissionSetupPage() {
         ) : (
           <div className="max-w-6xl mx-auto p-6">
 
-            {/* Header */}
-            <div className="flex items-center justify-between mb-6">
+            {/* Header — role name always visible */}
+            <div className="flex items-center justify-between mb-5">
               <div>
                 <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                   <Shield size={20} className="text-indigo-600" />
                   {selectedRole.name}
                 </h1>
                 <p className="text-sm text-gray-500 mt-0.5">
-                  Configure exactly what this role can do in each module
+                  {activePanel === 'policies'
+                    ? 'Set what this role can see and do in each module'
+                    : 'Set which specific system actions this role can perform'}
                 </p>
               </div>
 
-              <div className="flex items-center gap-3">
-                {/* Copy from another role */}
-                <div className="flex items-center gap-1.5 text-sm">
-                  <Copy size={14} className="text-gray-400" />
-                  <select
-                    value={copyFromRoleId}
-                    onChange={e => setCopyFromRoleId(e.target.value)}
-                    className="border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-400"
-                  >
-                    <option value="">Copy from role…</option>
-                    {roles.filter(r => r.id !== selectedRoleId && r.has_policies).map(r => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
-                    ))}
-                  </select>
-                  {copyFromRoleId && (
-                    <button
-                      onClick={handleCopyFrom}
-                      className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded transition-colors"
+              {/* Policy tab tools — only show on Tab 1 */}
+              {activePanel === 'policies' && (
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 text-sm">
+                    <Copy size={14} className="text-gray-400" />
+                    <select
+                      value={copyFromRoleId}
+                      onChange={e => setCopyFromRoleId(e.target.value)}
+                      className="border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-400"
                     >
-                      Apply
-                    </button>
-                  )}
-                </div>
-
-                {/* Template picker */}
-                <div className="flex items-center gap-1.5 text-sm">
-                  <RefreshCw size={14} className="text-gray-400" />
-                  <select
-                    value={selectedTemplate}
-                    onChange={e => { if (e.target.value) applyTemplate(e.target.value); }}
-                    className="border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-400"
+                      <option value="">Copy from role…</option>
+                      {roles.filter(r => r.id !== selectedRoleId && r.has_policies).map(r => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                    {copyFromRoleId && (
+                      <button
+                        onClick={handleCopyFrom}
+                        className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded transition-colors"
+                      >
+                        Apply
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 text-sm">
+                    <RefreshCw size={14} className="text-gray-400" />
+                    <select
+                      value={selectedTemplate}
+                      onChange={e => { if (e.target.value) applyTemplate(e.target.value); }}
+                      className="border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:border-indigo-400"
+                    >
+                      <option value="">Apply template…</option>
+                      {ROLE_TEMPLATES.map(t => (
+                        <option key={t.label} value={t.label}>{t.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={handleSave}
+                    disabled={!isDirty || saving}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
+                      ${isDirty && !saving
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
+                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
                   >
-                    <option value="">Apply template…</option>
-                    {ROLE_TEMPLATES.map(t => (
-                      <option key={t.label} value={t.label}>{t.label}</option>
-                    ))}
-                  </select>
+                    {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                    {saving ? 'Saving…' : isDirty ? 'Save Policies' : 'Saved'}
+                  </button>
                 </div>
-
-                {/* Save */}
-                <button
-                  onClick={handleSave}
-                  disabled={!isDirty || saving}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
-                    ${isDirty && !saving
-                      ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
-                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
-                >
-                  {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-                  {saving ? 'Saving…' : isDirty ? 'Save Changes' : 'Saved'}
-                </button>
-              </div>
+              )}
             </div>
 
+            {/* Unsaved-policy warning — visible on both tabs so user doesn't lose changes */}
             {isDirty && (
-              <div className="mb-4 flex items-center gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm">
-                <AlertTriangle size={15} />
-                You have unsaved changes — click Save Changes to apply them.
+              <div className="mb-4 flex items-center justify-between gap-2 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm">
+                <span className="flex items-center gap-2">
+                  <AlertTriangle size={15} />
+                  Unsaved page-policy changes for <strong>{selectedRole.name}</strong>
+                  {activePanel === 'actions' && ' — switch to "Page Policies" tab to save'}
+                </span>
+                {activePanel === 'policies' && (
+                  <button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-amber-600 text-white rounded text-xs font-medium hover:bg-amber-700"
+                  >
+                    <Save size={12} /> Save now
+                  </button>
+                )}
               </div>
             )}
+
+            {/* ── Tab switcher ───────────────────────────────────────── */}
+            <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-6">
+              <button
+                onClick={() => setActivePanel('policies')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  activePanel === 'policies'
+                    ? 'bg-white text-indigo-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Shield size={15} />
+                Page Policies
+                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                  activePanel === 'policies' ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-200 text-gray-500'
+                }`}>
+                  {Object.values(policies).filter(p => FLAG_COLS.some(f => p[f.key])).length} pages
+                </span>
+              </button>
+              <button
+                onClick={() => setActivePanel('actions')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  activePanel === 'actions'
+                    ? 'bg-white text-blue-700 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <Zap size={15} />
+                Action Permissions
+              </button>
+            </div>
+
+            {/* ── Explanatory callout ─────────────────────────────────── */}
+            {activePanel === 'policies' && (
+              <div className="mb-5 flex gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3">
+                <Shield size={16} className="text-indigo-500 mt-0.5 shrink-0" />
+                <div className="text-sm text-indigo-800">
+                  <strong>Page Policies</strong> control whether this role can access each section and what they can do there —
+                  View, Create, Edit, Delete, Approve, and Export. The <em>Scope</em> column determines what data they see:
+                  their own branch only, their assigned clients, or all branches globally.
+                  Configure this first before setting Action Permissions.
+                </div>
+              </div>
+            )}
+            {activePanel === 'actions' && (
+              <div className="mb-5 flex gap-3 bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                <Zap size={16} className="text-blue-500 mt-0.5 shrink-0" />
+                <div className="text-sm text-blue-800">
+                  <strong>Action Permissions</strong> control specific capabilities within each page — individual buttons
+                  like "Bulk Approve Orders", "Export Client List", or "Process Loan Disbursement".
+                  These gate individual API endpoints. Use Page Policies (the other tab) to set broad module access first,
+                  then fine-tune specific actions here.
+                </div>
+              </div>
+            )}
+
+            {/* ── Tab 2: Action Permissions (PermissionEditor) ─────────── */}
+            {activePanel === 'actions' && (
+              <PermissionEditor
+                modulesData={modulesData}
+                controlledRoleId={selectedRoleId}
+              />
+            )}
+
+            {/* ── Tab 1: Page Policies matrix ─────────────────────────── */}
+            {activePanel === 'policies' && (
+            <>
 
             {/* Legend */}
             <div className="mb-4 flex items-center gap-4 flex-wrap">
@@ -626,7 +709,7 @@ export default function PermissionSetupPage() {
               <div className="sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-6 py-3 flex items-center justify-between shadow-lg mt-4 rounded-t-xl">
                 <span className="text-sm text-amber-700 font-medium flex items-center gap-2">
                   <AlertTriangle size={15} />
-                  Unsaved changes for <strong>{selectedRole.name}</strong>
+                  Unsaved policy changes for <strong>{selectedRole.name}</strong>
                 </span>
                 <button
                   onClick={handleSave}
@@ -634,10 +717,14 @@ export default function PermissionSetupPage() {
                   className="flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-60 transition-colors shadow-sm"
                 >
                   {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {saving ? 'Saving…' : 'Save Changes'}
+                  {saving ? 'Saving…' : 'Save Policies'}
                 </button>
               </div>
             )}
+
+            </> {/* end Tab 1 fragment */}
+            )}
+
           </div>
         )}
       </main>
