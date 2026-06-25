@@ -2511,8 +2511,9 @@ class PhysicalCountViewSet(ScopedModelViewSet):
         return super().get_serializer_class()
     
     def perform_create(self, serializer):
-        """Set counted_by to current user"""
-        serializer.save(counted_by=self.request.user)
+        """Set counted_by and apply branch/tenant scoping."""
+        user, branch, tenant = self._resolve_create_scope()
+        serializer.save(counted_by=user, owner=user, branch=branch, tenant=tenant)
     
     @action(detail=True, methods=['post'])
     def add_lines(self, request, pk=None):

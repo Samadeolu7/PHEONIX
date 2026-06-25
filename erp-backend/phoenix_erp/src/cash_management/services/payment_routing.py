@@ -72,47 +72,45 @@ class PaymentRoutingService:
         from accounts.models import Account
         
         branch = user.branch if hasattr(user, 'branch') else None
-        
+        tenant = getattr(user, 'tenant', None)
+
         # Generate unique account number
         existing_count = CashierAccount.objects.filter(
             account_number__startswith='CASH-'
         ).count()
         account_number = f"CASH-{str(existing_count + 1).zfill(4)}"
-        
-        # Find or create parent "Cash and Cash Equivalents" GL account (4-digit FIRS scheme)
-        parent_account = Account.objects.filter(
+
+        # Find or create parent "Cash and Cash Equivalents" GL account (4-digit FIRS scheme).
+        # Filter by tenant+branch (matching the unique constraint) not by owner, because the
+        # parent account may have been created by a different user (e.g. system admin).
+        parent_account, _ = Account.objects.get_or_create(
             code='1100',
             account_type=Account.ASSET,
             account_level=Account.LEVEL_PARENT,
-            owner=user,
-            branch=branch
-        ).first()
+            tenant=tenant,
+            branch=branch,
+            defaults={
+                'name': 'Cash and Cash Equivalents',
+                'owner': user,
+                'allow_manual_entries': False,
+                'is_system_account': True,
+            }
+        )
 
-        if not parent_account:
-            parent_account = Account.objects.create(
-                code='1100',
-                name='Cash and Cash Equivalents',
-                account_type=Account.ASSET,
-                account_level=Account.LEVEL_PARENT,
-                owner=user,
-                branch=branch,
-                allow_manual_entries=False,
-                is_system_account=True
-            )
-
-        # Generate child account code using 4-digit scheme (1101, 1102, …)
+        # Generate child account code using 4-digit scheme (1101, 1102, …).
+        # Count by tenant+branch so codes from other owners are included, avoiding collisions.
         existing_children = Account.objects.filter(
             parent=parent_account,
-            owner=user,
+            tenant=tenant,
             branch=branch
         ).count()
         parent_int = int(parent_account.code)
         seq = existing_children + 1
         child_code = str(parent_int + seq)
-        while Account.objects.filter(owner=user, branch=branch, code=child_code).exists():
+        while Account.objects.filter(tenant=tenant, branch=branch, code=child_code).exists():
             seq += 1
             child_code = str(parent_int + seq)
-        
+
         # Create child GL account
         child_account = Account.objects.create(
             code=child_code,
@@ -121,6 +119,7 @@ class PaymentRoutingService:
             account_level=Account.LEVEL_CHILD,
             parent=parent_account,
             owner=user,
+            tenant=tenant,
             branch=branch,
             allow_manual_entries=True,
             is_cashier_bank=True

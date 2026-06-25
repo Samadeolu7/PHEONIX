@@ -107,24 +107,14 @@ class ClientViewSet(ScopedModelViewSet):
         """
         from django.db import transaction as db_transaction
 
-        user = self.request.user
-        tenant = getattr(user, 'tenant', None)
-        if self._is_elevated_user(user):
-            branch = self._get_director_branch_override()
-            if branch is None:
-                raise DRFValidationError({
-                    'non_field_errors': [
-                        'Select a branch from the branch switcher before registering a client.'
-                    ]
-                })
-        else:
-            branch = getattr(user, 'branch', None)
+        user, branch, tenant = self._resolve_create_scope()
 
         with db_transaction.atomic():
             client = serializer.save(owner=user, branch=branch, tenant=tenant)
 
             # Prospects pay on conversion, not at public/staff capture.
-            if (client.client_type or '').lower() == 'pr':
+            # Clients with no type (e.g. guarantor quick-add) also skip fee collection.
+            if not client.client_type or (client.client_type or '').lower() == 'pr':
                 return
 
             try:
@@ -135,15 +125,15 @@ class ClientViewSet(ScopedModelViewSet):
                     cashier_account_id=self.request.data.get('cashier_account_id'),
                 )
             except ValidationError:
-                raise DRFValidationError({'cashier_account_id': 'Cashier account not found.'})
+                raise DRFValidationError({'detail': 'Cashier account not found.'})
 
             config = get_active_registration_config(owner=client.owner, branch=client.branch)
             if not config:
                 raise DRFValidationError(
                     {
-                        'registration_config': (
-                            'No active registration config found for this branch. '
-                            'Create one first before registering non-prospect clients.'
+                        'detail': (
+                            'No active registration fee config found for this branch. '
+                            'Please set one up in Administration before registering clients.'
                         )
                     }
                 )

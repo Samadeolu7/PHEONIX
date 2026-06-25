@@ -201,9 +201,12 @@ class BankPaymentViewSet(ScopedModelViewSet):
 
     def perform_create(self, serializer):
         """Create payment in pending status — does not post directly."""
+        user, branch, tenant = self._resolve_create_scope()
         serializer.save(
-            created_by=self.request.user,
-            branch=getattr(self.request.user, 'branch', None),
+            created_by=user,
+            owner=user,
+            branch=branch,
+            tenant=tenant,
         )
 
     @action(detail=True, methods=['post'])
@@ -726,10 +729,12 @@ class BankTransferViewSet(ScopedModelViewSet):
     
     def perform_create(self, serializer):
         """Set initiated_by on create"""
+        user, branch, tenant = self._resolve_create_scope()
         serializer.save(
-            initiated_by=self.request.user,
-            owner=self.request.user,
-            branch=self.request.user.branch if hasattr(self.request.user, 'branch') else None
+            initiated_by=user,
+            owner=user,
+            branch=branch,
+            tenant=tenant,
         )
     
     def update(self, request, *args, **kwargs):

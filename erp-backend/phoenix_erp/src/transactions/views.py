@@ -86,21 +86,18 @@ class TransactionViewSet(ScopedModelViewSet):
         return TransactionSerializer
     
     def create(self, request, *args, **kwargs):
-        """Override create to return proper serialized response"""
+        """Create a transaction and return the full detail representation."""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        instance = serializer.save()
-        # Return using TransactionDetailSerializer for response
+        # Route through perform_create so owner/branch/tenant scoping and
+        # IntegrityError handling from ScopedModelViewSet are applied.
+        self.perform_create(serializer)
         output_serializer = TransactionDetailSerializer(
-            instance, 
+            serializer.instance,
             context=self.get_serializer_context()
         )
         headers = self.get_success_headers(output_serializer.data)
-        return Response(
-            output_serializer.data,
-            status=status.HTTP_201_CREATED,
-            headers=headers
-        )
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
     
     @action(detail=True, methods=['post'])
     def reverse(self, request, pk=None):

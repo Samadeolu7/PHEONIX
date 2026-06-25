@@ -208,13 +208,16 @@ class CreateTransactionSerializer(serializers.Serializer):
         entries_data = validated_data.pop('entries')
         series_id = validated_data.pop('series_id')
         
-        # Get owner and branch from context (set by view)
+        # owner/branch/tenant are injected by ScopedModelViewSet.perform_create()
+        # via serializer.save(owner=..., branch=..., tenant=...).
+        # The setdefaults below are a fallback only (e.g. tests calling the
+        # serializer directly without a view).
         request = self.context.get('request')
         if request and hasattr(request, 'user'):
             validated_data.setdefault('owner', request.user)
             validated_data.setdefault('created_by', request.user)
-        if request and hasattr(request.user, 'default_branch'):
-            validated_data.setdefault('branch', request.user.default_branch)
+            validated_data.setdefault('branch', getattr(request.user, 'branch', None))
+            validated_data.setdefault('tenant', getattr(request.user, 'tenant', None))
         
         with db_transaction.atomic():
             # Get series

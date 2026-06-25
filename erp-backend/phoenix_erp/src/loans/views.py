@@ -1206,22 +1206,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
         # Normalise keys to integers (JSON keys are always strings)
         fee_routing = {int(k): v for k, v in raw_routing.items() if str(k).isdigit()}
 
-        user = self.request.user
-        tenant = getattr(user, 'tenant', None)
-
-        # Resolve branch the same way the base ScopedModelViewSet does:
-        # elevated users (director/admin) must have selected a branch via the
-        # X-Branch-ID header; regular users use their own assigned branch.
-        if self._is_elevated_user(user):
-            branch = self._get_director_branch_override()
-            if branch is None:
-                raise DRFValidationError({
-                    'non_field_errors': [
-                        'Select a branch from the branch switcher before creating a loan.'
-                    ]
-                })
-        else:
-            branch = getattr(user, 'branch', None)
+        user, branch, tenant = self._resolve_create_scope()
 
         with db_transaction.atomic():
             # Generate a unique loan number

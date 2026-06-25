@@ -71,16 +71,8 @@ class FixedAssetViewSet(ScopedModelViewSet):
         The asset's financial value is added ONLY when an AssetRequisition or
         AssetAcquisition is approved and posted, which activates the asset.
         """
-        user   = self.request.user
-        branch = user.branch
-        tenant = getattr(user, 'tenant', None)
-
-        serializer.save(
-            owner=user,
-            branch=branch,
-            tenant=tenant,
-            status='draft',
-        )
+        user, branch, tenant = self._resolve_create_scope()
+        serializer.save(owner=user, branch=branch, tenant=tenant, status='draft')
 
     @action(detail=True, methods=['post'])
     @transaction.atomic
@@ -1172,9 +1164,7 @@ class AssetAcquisitionViewSet(ScopedModelViewSet):
         import random
         from django.utils import timezone as tz
 
-        user   = self.request.user
-        branch = user.branch
-        tenant = getattr(user, 'tenant', None)
+        user, branch, tenant = self._resolve_create_scope()
 
         # Auto-generate a unique reference number
         for _attempt in range(10):

@@ -373,7 +373,7 @@ class CashTransferViewSet(viewsets.ModelViewSet):
             )
 
 
-class BankReconciliationViewSet(viewsets.ModelViewSet):
+class BankReconciliationViewSet(ScopedModelViewSet):
     permission_module = 'cash-management'
     permission_page = 'bank-reconciliation'
     queryset = BankReconciliation.objects.all()
@@ -403,7 +403,8 @@ class BankReconciliationViewSet(viewsets.ModelViewSet):
         return queryset.order_by('-reconciliation_period_end', '-reconciliation_date')
     
     def perform_create(self, serializer):
-        serializer.save(prepared_by=self.request.user)
+        user, branch, tenant = self._resolve_create_scope()
+        serializer.save(prepared_by=user, owner=user, branch=branch, tenant=tenant)
     
     @action(detail=True, methods=['post'])
     def submit_for_review(self, request, pk=None):

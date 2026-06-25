@@ -283,6 +283,60 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         # Last resort: return the unscoped queryset
         return qs
 
+    def _resolve_create_scope(self, model=None):
+        """
+        Return ``(user, branch, tenant)`` for a create operation, enforcing all
+        the same rules as ``perform_create``:
+
+        - User must be authenticated with an ``owner`` attribute
+        - Elevated users (director/admin/owner) must have selected a branch via
+          the ``X-Branch-ID`` request header before writing branch-scoped records
+        - Regular users use their assigned branch
+
+        Subclasses that override ``perform_create`` should call this instead of
+        duplicating the elevated-user logic.  ``model`` is optional; pass it to
+        enable the "has branch field" check for elevated users.
+        """
+        from rest_framework.exceptions import ValidationError
+        import logging
+        logger = logging.getLogger(__name__)
+
+        user = self.request.user
+
+        if not getattr(user, 'is_authenticated', False):
+            raise ValidationError({'detail': 'Authentication required.'})
+
+        if not hasattr(user, 'owner') or user.owner is None:
+            logger.error(f"User {user.id} missing owner attribute")
+            raise ValidationError({'detail': 'User profile incomplete. Missing tenant information.'})
+
+        if self._is_elevated_user(user):
+            branch_override = self._get_director_branch_override()
+            if branch_override is None:
+                has_branch_field = False
+                try:
+                    resolved_model = model or getattr(self.queryset, 'model', None)
+                    if resolved_model:
+                        has_branch_field = any(
+                            f.name == 'branch' for f in resolved_model._meta.get_fields()
+                        )
+                except Exception:
+                    pass
+                if has_branch_field:
+                    raise ValidationError({
+                        'non_field_errors': [
+                            'Select a branch from the branch switcher before creating records.'
+                        ]
+                    })
+            branch = branch_override
+        else:
+            branch = getattr(user, 'branch', None)
+
+        if branch is None:
+            logger.warning(f"User {user.id} missing branch attribute")
+
+        return user, branch, getattr(user, 'tenant', None)
+
     def perform_create(self, serializer):
         """Create with owner and branch, handling database errors gracefully"""
         from django.db import IntegrityError
@@ -290,50 +344,16 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         import logging
 
         logger = logging.getLogger(__name__)
-        user = self.request.user
 
-        # Skip if not authenticated (permission check should catch this, but be defensive)
-        if not user.is_authenticated:
-            raise ValidationError({'detail': 'Authentication required.'})
+        try:
+            model = (
+                getattr(getattr(serializer, 'Meta', None), 'model', None)
+                or getattr(self.queryset, 'model', None)
+            )
+        except Exception:
+            model = None
 
-        # Handle users without owner or branch attributes
-        if not hasattr(user, 'owner') or user.owner is None:
-            logger.error(f"User {user.id} missing owner attribute")
-            raise ValidationError({
-                'detail': 'User profile incomplete. Missing tenant information.'
-            })
-
-        # Elevated users (director/admin/operations/owner) must select a branch
-        # before creating records that carry branch scope — viewing "all branches"
-        # is read-only. When they have selected a branch, use that branch instead
-        # of their home branch so the record lands in the right place.
-        if self._is_elevated_user(user):
-            branch_override = self._get_director_branch_override()
-            if branch_override is None:
-                try:
-                    model = (
-                        getattr(getattr(serializer, 'Meta', None), 'model', None)
-                        or getattr(self.queryset, 'model', None)
-                    )
-                    has_branch_field = model and any(
-                        f.name == 'branch' for f in model._meta.get_fields()
-                    )
-                except Exception:
-                    has_branch_field = False
-
-                if has_branch_field:
-                    raise ValidationError({
-                        'non_field_errors': [
-                            'Select a branch from the branch switcher before creating records.'
-                        ]
-                    })
-            # Use the selected branch so the new record lands in the right branch
-            branch = branch_override
-        else:
-            branch = getattr(user, 'branch', None)
-
-        if branch is None:
-            logger.warning(f"User {user.id} missing branch attribute")
+        user, branch, tenant = self._resolve_create_scope(model=model)
         
         try:
             # Save the instance and explicitly set tenant from authenticated user
