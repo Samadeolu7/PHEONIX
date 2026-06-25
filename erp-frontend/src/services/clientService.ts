@@ -207,6 +207,7 @@ export interface ClassificationOption {
 export interface ClientGroup {
   id: number;
   name: string;
+  code: string;
   group_code: string;
   client_type: string;
   meeting_frequency: string;
@@ -218,7 +219,10 @@ export interface ClientGroup {
   contribution_amount: string;
   target_amount: string;
   is_active: boolean;
+  member_count: number;
   members_count: number;
+  assigned_officer: number | null;
+  assigned_officer_name: string | null;
   created_at: string;
 }
 

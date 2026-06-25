@@ -149,7 +149,7 @@ const ClientGroupsPage: React.FC = () => {
 
   const openAssignModal = (group: ClientGroup) => {
     setAssignModal(group);
-    setAssignOfficerId((group as any).assigned_officer ? String((group as any).assigned_officer) : '');
+    setAssignOfficerId(group.assigned_officer ? String(group.assigned_officer) : '');
   };
 
   const handleAssignOfficer = async () => {
@@ -287,15 +287,13 @@ const ClientGroupsPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {groups.map(group => {
-                  const grp = group as any;
-                  return (
+                {groups.map(group => (
                     <tr key={group.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{group.name}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {group.group_code || '—'}
+                        {group.code || '—'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {group.meeting_day || '—'}
@@ -304,10 +302,10 @@ const ClientGroupsPage: React.FC = () => {
                         {group.group_leader_name || '—'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {grp.assigned_officer_name ? (
+                        {group.assigned_officer_name ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                             <UserCog size={11} />
-                            {grp.assigned_officer_name}
+                            {group.assigned_officer_name}
                           </span>
                         ) : (
                           <span className="text-gray-400 text-xs">Unassigned</span>
@@ -318,7 +316,7 @@ const ClientGroupsPage: React.FC = () => {
                           onClick={() => openMembers(group)}
                           className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 hover:bg-indigo-200 cursor-pointer"
                         >
-                          {group.members_count ?? 0}
+                          {group.member_count ?? 0}
                           <ChevronRight size={12} />
                         </button>
                       </td>
@@ -359,8 +357,7 @@ const ClientGroupsPage: React.FC = () => {
                         </td>
                       )}
                     </tr>
-                  );
-                })}
+                ))}
               </tbody>
             </table>
 

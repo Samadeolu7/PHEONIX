@@ -455,13 +455,22 @@ class ClientGroupSerializer(TenantModelSerializer):
 class ClientGroupListSerializer(TenantModelSerializer):
     """Lightweight list serializer for ClientGroup dropdowns."""
     member_count = serializers.SerializerMethodField()
+    assigned_officer_name = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = ClientGroup
-        fields = ['id', 'name', 'code', 'meeting_day', 'is_active', 'member_count']
+        fields = [
+            'id', 'name', 'code', 'meeting_day', 'is_active', 'member_count',
+            'assigned_officer', 'assigned_officer_name',
+        ]
 
     def get_member_count(self, obj):
         return obj.members.filter(is_deleted=False).count()
+
+    def get_assigned_officer_name(self, obj):
+        if obj.assigned_officer_id is None:
+            return None
+        return getattr(obj.assigned_officer, 'full_name', None) or str(obj.assigned_officer)
 
 
 class CustomerAuditLogSerializer(serializers.ModelSerializer):
