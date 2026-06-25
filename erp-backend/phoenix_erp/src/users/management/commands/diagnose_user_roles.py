@@ -53,20 +53,42 @@ class Command(BaseCommand):
 
         # Show assigned clients
         try:
-            from clients.models import Client
+            from clients.models import Client, ClientGroup
             if staff:
                 total = Client.objects.filter(tenant=user.tenant, is_deleted=False).count()
-                assigned = Client.objects.filter(
+
+                direct = Client.objects.filter(
                     tenant=user.tenant, assigned_officer=staff, is_deleted=False
                 ).count()
+
+                via_group = Client.objects.filter(
+                    tenant=user.tenant,
+                    group__assigned_officer=staff,
+                    is_deleted=False,
+                ).count()
+
+                groups_assigned = ClientGroup.objects.filter(
+                    tenant=user.tenant, assigned_officer=staff, is_deleted=False
+                )
+
                 self.stdout.write(f'\n=== Client Assignments ===')
-                self.stdout.write(f'  Total clients in tenant : {total}')
-                self.stdout.write(f'  Assigned to this staff  : {assigned}')
-                if assigned == 0:
-                    self.stdout.write(
-                        '  [!] No clients assigned → credit officer will see 0 results\n'
-                        '      Run: python manage.py assign_officer_clients to bulk-assign'
-                    )
+                self.stdout.write(f'  Total clients in tenant        : {total}')
+                self.stdout.write(f'  Directly assigned (Client.assigned_officer)   : {direct}')
+                self.stdout.write(f'  Via group (ClientGroup.assigned_officer)       : {via_group}')
+                self.stdout.write(f'\n=== Groups Assigned to This Staff ===')
+                if groups_assigned:
+                    for g in groups_assigned:
+                        member_count = Client.objects.filter(
+                            group=g, is_deleted=False
+                        ).count()
+                        self.stdout.write(f'  - {g.name} (pk={g.pk}, members={member_count})')
+                else:
+                    self.stdout.write('  [!] No groups assigned to this staff record')
+                    self.stdout.write('      Assign groups via the Groups page or run:')
+                    self.stdout.write('      python manage.py assign_officer_clients --staff-pk <pk>')
+
+                effective = direct + via_group
+                self.stdout.write(f'\n  Effective visible clients (direct + via group): {effective}')
         except Exception as e:
             self.stdout.write(f'  [!] Could not check client assignments: {e}')
 

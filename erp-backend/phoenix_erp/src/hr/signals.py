@@ -101,37 +101,74 @@ def auto_initialize_leave_balances(sender, instance, created, **kwargs):
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)
 def auto_create_staff_profile(sender, instance, created, **kwargs):
     """
-    Every user is also a staff member. Auto-create a stub Staff profile
-    the first time a user account is saved so the payroll / HR modules
-    can always find a linked record.
+    Ensure every user has a linked Staff profile for payroll/HR use.
 
-    If a Staff already exists with this user linked (e.g. linked manually
-    in the admin before the signal fires) nothing is done.
+    On new user creation:
+    1. If a Staff is already linked to this user — nothing to do.
+    2. If an unlinked Staff exists with a matching email in the same tenant
+       (common after legacy data import) — link it rather than creating a duplicate.
+    3. If no match is found — create a stub Staff record.
     """
     if not created:
         return
 
     try:
         from hr.models import Staff
+
+        # 1. Already linked.
         if Staff.objects.filter(user=instance).exists():
             return
 
-        branch = getattr(instance, 'branch', None)
-        owner = instance  # self-owned until an admin reassigns
+        tenant = getattr(instance, 'tenant', None)
+        email = (instance.email or '').strip()
 
+        # 2. Try to find an existing unlinked Staff by email (most reliable match).
+        existing = None
+        if email and tenant:
+            existing = Staff.objects.filter(
+                email__iexact=email,
+                tenant=tenant,
+                user__isnull=True,
+                is_deleted=False,
+            ).first()
+
+        # 3. Fall back to first/last name match within the tenant.
+        if not existing and tenant:
+            first = (instance.first_name or '').strip()
+            last = (instance.last_name or '').strip()
+            if first and last:
+                existing = Staff.objects.filter(
+                    first_name__iexact=first,
+                    last_name__iexact=last,
+                    tenant=tenant,
+                    user__isnull=True,
+                    is_deleted=False,
+                ).first()
+
+        if existing:
+            existing.user = instance
+            existing.save(update_fields=['user'])
+            logger.info(
+                f"Linked existing Staff pk={existing.pk} to user '{instance.username}'"
+            )
+            return
+
+        # 4. No existing Staff found — create a stub.
+        branch = getattr(instance, 'branch', None)
         Staff.objects.create(
             user=instance,
             first_name=instance.first_name or instance.username,
             last_name=instance.last_name or '',
-            email=instance.email or '',
+            email=email,
             branch=branch,
-            owner=owner,
+            owner=instance,
+            tenant=tenant,
         )
         logger.info(
-            f"Auto-created Staff profile for user '{instance.username}' (id={instance.pk})"
+            f"Auto-created Staff profile for user '{instance.username}' (pk={instance.pk})"
         )
     except Exception as exc:
-        # Never block user creation because of a staff-profile failure
+        # Never block user creation because of a staff-profile failure.
         logger.error(
             f"Failed to auto-create Staff profile for user '{instance.username}': {exc}",
             exc_info=True,
