@@ -84,11 +84,45 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # Officer-scope helper
     # ------------------------------------------------------------------
 
+    # Rank: lower number = more restricted.
+    _SCOPE_RANK = {
+        'assigned_clients': 0,
+        'own_records':       0,
+        'ajo_group':         1,
+        'own_branch':        2,
+        'global':            3,
+    }
+    _ROLE_LEVEL_RANK = {
+        'credit_officer':  0,
+        'supervisor':      1,
+        'branch_manager':  2,
+        'operations':      2,
+        'director':        3,
+        'admin':           3,
+    }
+
+    def _effective_access_rank(self, user, staff_role):
+        """
+        Return the most-restrictive access rank for this user by reconciling
+        Staff.role_level with every tenant Role.default_scope assigned to them.
+        Lower rank = more restricted.
+        """
+        rank = self._ROLE_LEVEL_RANK.get(staff_role, 2)  # default: branch_manager level
+        try:
+            for r in user.roles.filter(is_active=True):
+                scope_rank = self._SCOPE_RANK.get(getattr(r, 'default_scope', None))
+                if scope_rank is not None:
+                    rank = min(rank, scope_rank)
+        except Exception:
+            pass
+        return rank
+
     def _apply_officer_scope(self, qs):
         """
         Apply credit-officer / supervisor visibility restriction.
-        Fails closed: users without a linked Staff record see nothing unless
-        they are system admins or tenant owners.
+        Reconciles Staff.role_level with tenant Role.default_scope and uses
+        whichever is more restrictive. Fails closed for non-elevated users
+        without a linked Staff record.
         """
         lookup = self.officer_client_lookup
         if not lookup:
@@ -102,30 +136,33 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         if callable(getattr(user, 'is_owner', None)) and user.is_owner():
             return qs
 
+        staff = None
+        staff_role = None
         try:
             staff = user.staff_profile
+            if staff:
+                staff_role = getattr(staff, 'role_level', None)
         except Exception:
-            # No linked Staff record for a non-elevated user — deny access.
-            return qs.none()
+            pass
+
+        rank = self._effective_access_rank(user, staff_role)
+
+        # Rank 3 (director/global) or 2 (branch/operations) — no per-officer filter.
+        if rank >= 2:
+            return qs
+
+        # Rank 0 or 1 requires a Staff record to identify whose clients to show.
         if staff is None:
             return qs.none()
 
-        role = getattr(staff, 'role_level', None)
-
-        if role in ('branch_manager', 'director', 'operations', 'admin'):
-            return qs
-
-        if role == 'credit_officer':
+        if rank == 0:  # credit_officer / assigned_clients
             return qs.filter(Q(**{lookup: staff}))
 
-        if role == 'supervisor':
-            return qs.filter(
-                Q(**{lookup: staff}) |
-                Q(**{f'{lookup}__reports_to': staff})
-            )
-
-        # Unknown or missing role — fail closed.
-        return qs.none()
+        # rank == 1: supervisor / ajo_group
+        return qs.filter(
+            Q(**{lookup: staff}) |
+            Q(**{f'{lookup}__reports_to': staff})
+        )
 
     def list(self, request, *args, **kwargs):
         """
