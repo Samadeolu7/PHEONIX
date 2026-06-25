@@ -44,8 +44,8 @@ export default function LoanAccountFormPage() {
   const [products, setProducts] = useState<LoanProduct[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [clientSavings, setClientSavings] = useState<SavingsAccount[]>([]);
-  const [loadingProducts, setLoadingProducts] = useState(false);
-  const [loadingClients, setLoadingClients] = useState(false);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [loadingClients, setLoadingClients] = useState(true);
   const [loadingSavings, setLoadingSavings] = useState(false);
 
   const [selectedProduct, setSelectedProduct] = useState<LoanProduct | null>(null);
@@ -280,9 +280,10 @@ export default function LoanAccountFormPage() {
                     {clients.map(c => <option key={c.id} value={c.id}>{c.full_name}{c.phone_primary ? ` · ${c.phone_primary}` : ''}</option>)}
                   </select>
                 ) : (
-                  <input type="number" required min="1" value={clientId} onChange={e => setClientId(e.target.value)}
-                    placeholder="Enter client ID"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  <button type="button" onClick={loadClients}
+                    className="w-full border border-dashed border-red-300 rounded-lg px-3 py-2 text-sm text-red-500 text-left hover:bg-red-50">
+                    Failed to load clients — click to retry
+                  </button>
                 )}
                 {clientId && loadingSavings && (
                   <p className="text-xs text-gray-400 mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Loading savings accounts...</p>
@@ -302,8 +303,10 @@ export default function LoanAccountFormPage() {
                     {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.code}) -- {p.default_interest_rate}%</option>)}
                   </select>
                 ) : (
-                  <input type="number" required min="1" value={productId} onChange={e => setProductId(e.target.value)} placeholder="Product ID"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  <button type="button" onClick={loadProducts}
+                    className="w-full border border-dashed border-red-300 rounded-lg px-3 py-2 text-sm text-red-500 text-left hover:bg-red-50">
+                    Failed to load products — click to retry
+                  </button>
                 )}
               </div>
               <div>
