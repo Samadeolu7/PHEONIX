@@ -12,7 +12,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Landmark, Loader2, AlertCircle, CheckCircle, ArrowLeft,
-  Info, CreditCard, Wallet,
+  Info, CreditCard, Wallet, Search, X,
 } from 'lucide-react';
 import {
   loanService, LoanProduct, CreateLoanAccountData,
@@ -42,11 +42,18 @@ export default function LoanAccountFormPage() {
   const navigate = useNavigate();
 
   const [products, setProducts] = useState<LoanProduct[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
   const [clientSavings, setClientSavings] = useState<SavingsAccount[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
-  const [loadingClients, setLoadingClients] = useState(true);
   const [loadingSavings, setLoadingSavings] = useState(false);
+
+  // Client search combobox state
+  const [clientQuery, setClientQuery] = useState('');
+  const [clientResults, setClientResults] = useState<Client[]>([]);
+  const [clientSearching, setClientSearching] = useState(false);
+  const [clientDropdownOpen, setClientDropdownOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const clientSearchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clientComboRef = useRef<HTMLDivElement>(null);
 
   const [selectedProduct, setSelectedProduct] = useState<LoanProduct | null>(null);
   const [clientId, setClientId] = useState('');
@@ -78,17 +85,34 @@ export default function LoanAccountFormPage() {
     finally { setLoadingProducts(false); }
   }, []);
 
-  const loadClients = useCallback(async () => {
-    setLoadingClients(true);
-    try {
-      const response = await clientService.getClients({ status: 'active' });
-      const list = response?.results ?? response?.data ?? response ?? [];
-      setClients(Array.isArray(list) ? list : []);
-    } catch { setClients([]); }
-    finally { setLoadingClients(false); }
-  }, []);
+  useEffect(() => { loadProducts(); }, [loadProducts]);
 
-  useEffect(() => { loadProducts(); loadClients(); }, [loadProducts, loadClients]);
+  // Debounced client search
+  useEffect(() => {
+    if (clientSearchRef.current) clearTimeout(clientSearchRef.current);
+    if (!clientQuery.trim()) { setClientResults([]); setClientDropdownOpen(false); return; }
+    clientSearchRef.current = setTimeout(async () => {
+      setClientSearching(true);
+      try {
+        const res = await clientService.getClients({ search: clientQuery.trim(), status: 'active', page_size: 20 } as any);
+        const list: Client[] = res?.results ?? res?.data ?? res ?? [];
+        setClientResults(Array.isArray(list) ? list : []);
+        setClientDropdownOpen(true);
+      } catch { setClientResults([]); }
+      finally { setClientSearching(false); }
+    }, 300);
+  }, [clientQuery]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (clientComboRef.current && !clientComboRef.current.contains(e.target as Node)) {
+        setClientDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (!clientId) { setClientSavings([]); return; }
@@ -217,7 +241,6 @@ export default function LoanAccountFormPage() {
     );
   }
 
-  const selectedClient = clientId ? (clients.find(c => String(c.id) === clientId) ?? null) : null;
   const isWeeklyClient = selectedClient
     ? (selectedClient.client_id?.startsWith('WL') || repaymentFreq === 'weekly')
     : false;
@@ -271,20 +294,67 @@ export default function LoanAccountFormPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Client <span className="text-red-500">*</span></label>
-                {loadingClients ? (
-                  <div className="flex items-center gap-2 py-2 text-sm text-gray-500"><Loader2 className="w-4 h-4 animate-spin" /> Loading clients...</div>
-                ) : clients.length > 0 ? (
-                  <select required value={clientId} onChange={e => setClientId(e.target.value)} aria-label="Client"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                    <option value="">-- Select client --</option>
-                    {clients.map(c => <option key={c.id} value={c.id}>{c.full_name}{c.phone_primary ? ` · ${c.phone_primary}` : ''}</option>)}
-                  </select>
-                ) : (
-                  <button type="button" onClick={loadClients}
-                    className="w-full border border-dashed border-red-300 rounded-lg px-3 py-2 text-sm text-red-500 text-left hover:bg-red-50">
-                    Failed to load clients — click to retry
-                  </button>
-                )}
+                <div ref={clientComboRef} className="relative">
+                  {selectedClient ? (
+                    <div className="flex items-center justify-between border border-blue-400 rounded-lg px-3 py-2 bg-blue-50 text-sm">
+                      <span className="font-medium text-gray-900">
+                        {selectedClient.full_name}
+                        {selectedClient.phone_primary && <span className="text-gray-500 font-normal"> · {selectedClient.phone_primary}</span>}
+                      </span>
+                      <button type="button" aria-label="Clear client"
+                        onClick={() => { setSelectedClient(null); setClientId(''); setClientQuery(''); setClientResults([]); }}
+                        className="ml-2 text-gray-400 hover:text-gray-600">
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                      <input
+                        type="text"
+                        placeholder="Search by name or phone…"
+                        value={clientQuery}
+                        onChange={e => setClientQuery(e.target.value)}
+                        onFocus={() => { if (clientResults.length > 0) setClientDropdownOpen(true); }}
+                        className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                      {clientSearching && (
+                        <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-gray-400" size={14} />
+                      )}
+                    </div>
+                  )}
+
+                  {clientDropdownOpen && clientResults.length > 0 && (
+                    <ul className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg text-sm">
+                      {clientResults.map(c => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            className="w-full px-3 py-2 text-left hover:bg-blue-50 flex items-center justify-between"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={() => {
+                              setSelectedClient(c);
+                              setClientId(String(c.id));
+                              setClientQuery('');
+                              setClientDropdownOpen(false);
+                            }}
+                          >
+                            <span className="font-medium text-gray-900">{c.full_name}</span>
+                            {c.phone_primary && <span className="text-gray-400 text-xs ml-2">{c.phone_primary}</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {clientDropdownOpen && !clientSearching && clientResults.length === 0 && clientQuery.trim() && (
+                    <div className="absolute z-50 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg px-3 py-2 text-sm text-gray-500">
+                      No clients found for "{clientQuery}"
+                    </div>
+                  )}
+                </div>
+                {/* hidden required field to trigger form validation */}
+                <input type="hidden" name="client" value={clientId} required />
                 {clientId && loadingSavings && (
                   <p className="text-xs text-gray-400 mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Loading savings accounts...</p>
                 )}
