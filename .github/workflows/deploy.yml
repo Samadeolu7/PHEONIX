@@ -138,10 +138,12 @@ jobs:
               -e DJANGO_SETTINGS_MODULE=phoenix.settings \
               -e PYTHONPATH=/app/src \
               backend \
-              -c "set -e; cd /app/src; python manage.py migrate --noinput && python manage.py collectstatic --noinput && python manage.py createcachetable 2>/dev/null || true"
+              -c "set -e; cd /app/src; python manage.py migrate --noinput; python manage.py collectstatic --noinput; python manage.py createcachetable 2>/dev/null || true"
 
             echo "==> Restarting backend (migrate is already done — startup is fast)..."
-            docker compose up -d --no-deps --force-recreate backend
+            docker compose stop backend || true
+            docker compose rm -f backend || true
+            docker compose up -d --no-deps backend
 
             echo "==> Waiting for backend to pass health check..."
             BACKEND_ID=$(docker compose ps -q backend)
@@ -161,10 +163,14 @@ jobs:
             done
 
             echo "==> Restarting Celery workers and flower..."
-            docker compose up -d --no-deps --force-recreate celery_worker celery_beat flower
+            docker compose stop celery_worker celery_beat flower || true
+            docker compose rm -f celery_worker celery_beat flower || true
+            docker compose up -d --no-deps celery_worker celery_beat flower
 
             echo "==> Restarting frontend (nginx — nearly instant)..."
-            docker compose up -d --no-deps --force-recreate frontend
+            docker compose stop frontend || true
+            docker compose rm -f frontend || true
+            docker compose up -d --no-deps frontend
 
             echo "==> Removing orphaned containers..."
             docker compose up -d --remove-orphans
