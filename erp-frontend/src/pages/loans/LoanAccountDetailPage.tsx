@@ -811,19 +811,6 @@ export default function LoanAccountDetailPage() {
     }
   }
 
-  async function handleRequestDisbursement() {
-    if (!loan) return;
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await loanService.requestDisbursement(loan.id);
-      navigate(`/loans/disbursements/${loan.id}`);
-    } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setActionError(err?.detail ?? err?.message ?? 'Could not create disbursement request.');
-      setActionLoading(false);
-    }
-  }
 
   const nextInstallment = schedule
     .filter((s) => s.status === 'pending' || s.status === 'partial' || s.status === 'overdue')
@@ -950,10 +937,24 @@ export default function LoanAccountDetailPage() {
               </Link>
             )}
 
+
             {loan.status === 'approved' && (
               <button
                 type="button"
-                onClick={handleRequestDisbursement}
+                onClick={async () => {
+                  if (!loan) return;
+                  setActionLoading(true);
+                  setActionError(null);
+                  try {
+                    await loanService.requestDisbursement(loan.id);
+                    navigate(`/loans/disbursements/${loan.id}`);
+                  } catch (e: unknown) {
+                    const err = e as { detail?: string; message?: string };
+                    setActionError(err?.detail ?? err?.message ?? 'Could not create disbursement request.');
+                  } finally {
+                    setActionLoading(false);
+                  }
+                }}
                 disabled={actionLoading}
                 className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
@@ -1149,6 +1150,38 @@ export default function LoanAccountDetailPage() {
                   <p className="font-medium text-gray-900">₦{fmt(loan.insurance_amount)}</p>
                 </div>
               )}
+
+              {/* Bank Details */}
+              {(loan.client_bank_name || loan.client_bank_account_number) && (
+                <div className="border-t pt-3 mt-1">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Bank Details</p>
+                  {loan.client_bank_name && (
+                    <div className="mb-1">
+                      <p className="text-gray-500">Bank</p>
+                      <p className="font-medium text-gray-900">{loan.client_bank_name}</p>
+                    </div>
+                  )}
+                  {loan.client_bank_account_name && (
+                    <div className="mb-1">
+                      <p className="text-gray-500">Account Name</p>
+                      <p className="font-medium text-gray-900">{loan.client_bank_account_name}</p>
+                    </div>
+                  )}
+                  {loan.client_bank_account_number && (
+                    <div className="mb-1">
+                      <p className="text-gray-500">Account Number</p>
+                      <p className="font-mono font-medium text-gray-900">{loan.client_bank_account_number}</p>
+                    </div>
+                  )}
+                  {loan.client_bvn && (
+                    <div>
+                      <p className="text-gray-500">BVN</p>
+                      <p className="font-mono font-medium text-gray-900">{loan.client_bvn}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="pt-2">
                 <Link
                   to={`/clients/${loan.client}`}

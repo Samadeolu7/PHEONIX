@@ -200,7 +200,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        """Approve a pending loan application and immediately disburse it."""
+        """Approve a pending loan application (maker-checker enforced)."""
         loan = self.get_object()
 
         # Check action-level approval permission and amount limit
@@ -231,81 +231,39 @@ class LoanAccountViewSet(ScopedModelViewSet):
         except Exception:
             pass  # Fail-open during rollout; HasActionPermission also covers this
 
-        # Resolve optional disbursement account override (falls back to product default)
-        disbursement_account_id = request.data.get('disbursement_account_id')
-        disbursement_gl_account = None
-        if disbursement_account_id:
-            try:
-                from banks.models import BankAccount as _BankAccount
-                bank_acct = _BankAccount.objects.select_related('gl_account').get(pk=disbursement_account_id)
-                if not bank_acct.gl_account_id:
-                    return Response(
-                        {'detail': 'Selected bank account has no linked GL account.'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                disbursement_gl_account = bank_acct.gl_account
-            except Exception as exc:
-                return Response(
-                    {'detail': f'Invalid disbursement account: {exc}'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        from .services import apply_loan_fees
-        from django.db import transaction as _dbtx
-        warnings = []
-
         try:
-            with _dbtx.atomic():
-                loan.approve(request.user)
-
-                # Post approval-trigger fees (non-fatal)
-                _cashier_acct = None
-                if loan.product.fee_lines.filter(
-                    posting_trigger='approval', is_active=True,
-                    debit_destination__in=('cashier', 'user_choice'),
-                ).exists():
-                    try:
-                        _cashier_acct = self._resolve_cashier_account(
-                            loan, cashier_account_id=request.data.get('cashier_account_id'),
-                        )
-                    except DRFValidationError:
-                        pass
-                try:
-                    apply_loan_fees(loan, 'approval', posted_by=request.user, cashier_account=_cashier_acct)
-                except Exception as exc:
-                    warnings.append(
-                        f"Approval fees could not be posted: {exc}. Use the fee-apply endpoint to retry."
-                    )
-
-                # Disburse immediately
-                loan.disburse(disbursed_by=request.user, disbursement_account=disbursement_gl_account)
-
-                # Post disbursement-trigger fees (non-fatal)
-                if loan.product.fee_lines.filter(posting_trigger='disbursement', is_active=True).exists():
-                    _disb_cashier = None
-                    if loan.product.fee_lines.filter(
-                        posting_trigger='disbursement', is_active=True,
-                        debit_destination__in=('cashier', 'user_choice'),
-                    ).exists():
-                        try:
-                            _disb_cashier = self._resolve_cashier_account(
-                                loan, cashier_account_id=request.data.get('cashier_account_id'),
-                            )
-                        except DRFValidationError:
-                            pass
-                    try:
-                        apply_loan_fees(loan, 'disbursement', posted_by=request.user, cashier_account=_disb_cashier)
-                    except Exception as exc:
-                        warnings.append(f"Disbursement fees could not be posted: {exc}.")
-
+            loan.approve(request.user)
         except ValidationError as exc:
-            msg = exc.message if hasattr(exc, 'message') else str(exc)
-            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
-        response_data = LoanAccountDetailSerializer(loan, context={'request': request}).data
-        if warnings:
-            response_data['warnings'] = warnings
-        return Response(response_data)
+        # Post any fees configured to trigger at approval
+        from .services import apply_loan_fees
+        _needs_cashier = loan.product.fee_lines.filter(
+            posting_trigger='approval', is_active=True,
+            debit_destination__in=('cashier', 'user_choice'),
+        ).exists()
+        _cashier_acct = None
+        if _needs_cashier:
+            try:
+                _cashier_acct = self._resolve_cashier_account(
+                    loan,
+                    cashier_account_id=request.data.get('cashier_account_id'),
+                )
+            except DRFValidationError:
+                pass  # apply_loan_fees will raise its own error if cashier is missing
+        try:
+            apply_loan_fees(
+                loan, 'approval',
+                posted_by=request.user,
+                cashier_account=_cashier_acct,
+            )
+        except (ValidationError, Exception) as exc:
+            # Loan is already approved — don't reverse it, return a warning instead
+            response_data = LoanAccountDetailSerializer(loan, context={'request': request}).data
+            response_data['warnings'] = [f"Approval fees could not be posted: {exc}. Use the fee-apply endpoint to retry."]
+            return Response(response_data)
+
+        return Response(LoanAccountDetailSerializer(loan, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
@@ -1617,6 +1575,81 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
                         f"Disbursement fees could not be posted: {exc}. "
                         "Use the fee-apply endpoint to retry."
                     )
+
+        response_data = self.get_serializer(disbursement).data
+        if _fee_warnings:
+            response_data['warnings'] = _fee_warnings
+        return Response(response_data)
+
+    @action(detail=True, methods=['post'])
+    def disburse(self, request, pk=None):
+        """
+        Approve and execute a disbursement in one step (maker-checker enforced).
+
+        The person who requested the disbursement cannot be the one to disburse.
+        Body: { disbursement_account: <bank_account_pk>, notes: '' }
+        """
+        disbursement = self.get_object()
+
+        # Maker-checker: requester cannot disburse
+        if disbursement.requested_by_id and disbursement.requested_by_id == request.user.pk:
+            return Response(
+                {'detail': 'You cannot disburse a loan you requested. Another officer must process it.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if disbursement.status != 'pending_approval':
+            return Response(
+                {'detail': f"Only pending disbursements can be processed (current status: '{disbursement.status}')."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        disbursement_account_id = request.data.get('disbursement_account')
+        if not disbursement_account_id:
+            return Response(
+                {'detail': 'disbursement_account is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .services import DisbursementService, apply_loan_fees
+        from django.db import transaction as _dbtx
+
+        try:
+            with _dbtx.atomic():
+                # Approve (sets approved_by, moves to approved status internally)
+                DisbursementService.approve(disbursement, request.user)
+                # Execute immediately (GL posting + schedule generation)
+                DisbursementService.execute(
+                    disbursement=disbursement,
+                    bank_account_id=int(disbursement_account_id),
+                    disbursed_by_user=request.user,
+                    notes=request.data.get('notes', ''),
+                )
+        except ValidationError as exc:
+            msg = exc.message if hasattr(exc, 'message') else str(exc)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Post disbursement-trigger fees (non-fatal)
+        loan = disbursement.loan
+        _fee_warnings = []
+        if loan.product.fee_lines.filter(posting_trigger='disbursement', is_active=True).exists():
+            _needs_cashier = loan.product.fee_lines.filter(
+                posting_trigger='disbursement', is_active=True,
+                debit_destination__in=('cashier', 'user_choice'),
+            ).exists()
+            _cashier_acct = None
+            if _needs_cashier:
+                try:
+                    _cashier_acct = PaymentRoutingService.resolve_cashier_gl_account(
+                        request.user, owner=loan.owner, branch=loan.branch,
+                    )
+                except ValidationError as exc:
+                    _fee_warnings.append(f"Could not resolve cashier for fees: {exc}.")
+            if not _fee_warnings:
+                try:
+                    apply_loan_fees(loan, 'disbursement', posted_by=request.user, cashier_account=_cashier_acct)
+                except Exception as exc:
+                    _fee_warnings.append(f"Disbursement fees could not be posted: {exc}.")
 
         response_data = self.get_serializer(disbursement).data
         if _fee_warnings:

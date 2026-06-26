@@ -161,6 +161,10 @@ class LoanRestructureSerializer(serializers.ModelSerializer):
 class LoanAccountDetailSerializer(TenantModelSerializer):
     """Full detail serializer including Java App 1 batch fields."""
     client_name = serializers.CharField(source='client.full_name', read_only=True)
+    client_bank_name = serializers.CharField(source='client.bank_name', read_only=True)
+    client_bank_account_name = serializers.CharField(source='client.bank_account_name', read_only=True)
+    client_bank_account_number = serializers.CharField(source='client.bank_account_number', read_only=True)
+    client_bvn = serializers.CharField(source='client.bvn', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_requires_guarantor = serializers.BooleanField(source='product.requires_guarantor', read_only=True)
     product_min_guarantors = serializers.IntegerField(source='product.min_guarantors', read_only=True)
@@ -188,6 +192,8 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
         fields = [
             'id', 'loan_number',
             'client', 'client_name',
+            'client_bank_name', 'client_bank_account_name',
+            'client_bank_account_number', 'client_bvn',
             'product', 'product_name',
             'product_requires_guarantor', 'product_min_guarantors',
             # Amounts
@@ -224,7 +230,10 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'loan_number', 'client_name', 'product_name',
+            'id', 'loan_number', 'client_name',
+            'client_bank_name', 'client_bank_account_name',
+            'client_bank_account_number', 'client_bvn',
+            'product_name',
             'product_requires_guarantor', 'product_min_guarantors',
             'total_outstanding', 'total_charges', 'charges_summary',
             'total_repaid', 'interest_method', 'next_due_date', 'last_payment_date',

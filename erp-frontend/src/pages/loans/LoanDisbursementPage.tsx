@@ -21,7 +21,6 @@ import {
   CheckCircle,
   XCircle,
   ArrowLeft,
-  Clock,
   AlertTriangle,
   Send,
 } from 'lucide-react';
@@ -57,14 +56,11 @@ const LoanDisbursementPage: React.FC = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [selectedBankAccount, setSelectedBankAccount] = useState<number | ''>('');
-  const [executeNotes, setExecuteNotes] = useState('');
-  const [showExecuteForm, setShowExecuteForm] = useState(false);
+  const [disburseNotes, setDisburseNotes] = useState('');
 
-  const isApprover = selectedRole ? ['Director', 'Principal', 'Administrator'].includes(selectedRole) : false;
-  // Maker-checker: requester cannot approve their own request
+  // Maker-checker: requester cannot disburse — enforced on the backend too
   const isRequester = disbursement ? disbursement.requested_by === user?.id : false;
-  const canApprove = isApprover && !isRequester;
-  const canExecute = selectedRole ? ['Director', 'Principal', 'Administrator'].includes(selectedRole) : false;
+  const canDisburse = !isRequester;
 
   const loadData = useCallback(async () => {
     if (!loanId) return;
@@ -94,15 +90,21 @@ const LoanDisbursementPage: React.FC = () => {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const handleApprove = async () => {
-    if (!disbursement) return;
+  const handleDisburse = async () => {
+    if (!disbursement || !selectedBankAccount) {
+      showError('Please select a disbursement account');
+      return;
+    }
     try {
       setSubmitting(true);
-      const updated = await loanService.approveDisbursement(disbursement.id);
+      const updated = await loanService.disburseLoan(disbursement.id, {
+        disbursement_account: Number(selectedBankAccount),
+        notes: disburseNotes,
+      });
       setDisbursement(updated);
-      success('Disbursement approved');
+      success('Loan disbursed successfully');
     } catch (err: any) {
-      showError(err?.response?.data?.detail || 'Failed to approve disbursement');
+      showError(err?.response?.data?.detail || 'Failed to disburse loan');
     } finally {
       setSubmitting(false);
     }
@@ -121,27 +123,6 @@ const LoanDisbursementPage: React.FC = () => {
       success('Disbursement rejected');
     } catch (err: any) {
       showError(err?.response?.data?.detail || 'Failed to reject disbursement');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleExecute = async () => {
-    if (!disbursement || !selectedBankAccount) {
-      showError('Please select a disbursement account');
-      return;
-    }
-    try {
-      setSubmitting(true);
-      const updated = await loanService.executeDisbursement(disbursement.id, {
-        disbursement_account: Number(selectedBankAccount),
-        notes: executeNotes,
-      });
-      setDisbursement(updated);
-      setShowExecuteForm(false);
-      success('Loan disbursed successfully');
-    } catch (err: any) {
-      showError(err?.response?.data?.detail || 'Failed to execute disbursement');
     } finally {
       setSubmitting(false);
     }
@@ -276,122 +257,90 @@ const LoanDisbursementPage: React.FC = () => {
       </div>
 
       {/* Maker-checker notice */}
-      {d.status === 'pending_approval' && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2 text-sm text-blue-700">
+      {d.status === 'pending_approval' && isRequester && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2 text-sm text-amber-700">
           <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>Note: the person who requested this disbursement cannot approve it (maker-checker).</span>
+          <span>You requested this disbursement. Another officer must process it.</span>
         </div>
       )}
 
-      {/* Actions */}
-      {d.status === 'pending_approval' && canApprove && (
+      {/* Disburse panel */}
+      {d.status === 'pending_approval' && canDisburse && (
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
-          <h3 className="font-semibold text-gray-800">Approve or Reject</h3>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={handleApprove}
-              disabled={submitting}
-              className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
-            >
-              <CheckCircle className="w-4 h-4" />
-              Approve
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowRejectForm((v) => !v)}
-              className="flex items-center gap-2 px-5 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg transition-colors"
-            >
-              <XCircle className="w-4 h-4" />
-              Reject
-            </button>
-          </div>
-          {showRejectForm && (
-            <div className="space-y-2 pt-2">
+          <h3 className="font-semibold text-gray-800">Disburse Loan</h3>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Disbursement Account <span className="text-red-500">*</span>
+              </label>
+              <select
+                title="Disbursement account"
+                value={selectedBankAccount}
+                onChange={(e) => setSelectedBankAccount(Number(e.target.value))}
+                className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— Select bank account —</option>
+                {bankAccounts.map((ba) => (
+                  <option key={ba.id} value={ba.id}>
+                    {ba.bank_display_name || ba.bank_name} — {ba.account_number} ({ba.account_name})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
               <textarea
-                title="Rejection reason"
-                className="w-full border border-gray-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                rows={3}
-                placeholder="Rejection reason (required)…"
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
+                title="Notes"
+                className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500"
+                rows={2}
+                placeholder="Optional notes…"
+                value={disburseNotes}
+                onChange={(e) => setDisburseNotes(e.target.value)}
               />
+            </div>
+            <div className="flex gap-3">
               <button
                 type="button"
-                onClick={handleReject}
-                disabled={submitting || !rejectReason.trim()}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                onClick={handleDisburse}
+                disabled={submitting || !selectedBankAccount}
+                className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
               >
-                {submitting ? 'Submitting…' : 'Confirm Rejection'}
+                {submitting
+                  ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                  : <Send className="w-4 h-4" />
+                }
+                Disburse
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRejectForm((v) => !v)}
+                className="flex items-center gap-2 px-5 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg transition-colors"
+              >
+                <XCircle className="w-4 h-4" />
+                Reject
               </button>
             </div>
-          )}
-        </div>
-      )}
-
-      {d.status === 'approved' && canExecute && (
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
-          <h3 className="font-semibold text-gray-800">Execute Disbursement</h3>
-          {!showExecuteForm ? (
-            <button
-              type="button"
-              onClick={() => setShowExecuteForm(true)}
-              className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-            >
-              <Send className="w-4 h-4" />
-              Proceed to Disburse
-            </button>
-          ) : (
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Disbursement Account <span className="text-red-500">*</span>
-                </label>
-                <select
-                  title="Disbursement account"
-                  value={selectedBankAccount}
-                  onChange={(e) => setSelectedBankAccount(Number(e.target.value))}
-                  className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">— Select bank account —</option>
-                  {bankAccounts.map((ba) => (
-                    <option key={ba.id} value={ba.id}>
-                      {ba.bank_display_name || ba.bank_name} — {ba.account_number} ({ba.account_name})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            {showRejectForm && (
+              <div className="space-y-2 border-t pt-3">
                 <textarea
-                  title="Notes"
-                  className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500"
-                  rows={2}
-                  placeholder="Optional notes…"
-                  value={executeNotes}
-                  onChange={(e) => setExecuteNotes(e.target.value)}
+                  title="Rejection reason"
+                  className="w-full border border-gray-200 rounded-lg p-3 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                  rows={3}
+                  placeholder="Rejection reason (required)…"
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
                 />
-              </div>
-              <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={handleExecute}
-                  disabled={submitting || !selectedBankAccount}
-                  className="px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+                  onClick={handleReject}
+                  disabled={submitting || !rejectReason.trim()}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
                 >
-                  {submitting ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> : <Send className="w-4 h-4" />}
-                  Execute Disbursement
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowExecuteForm(false)}
-                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors"
-                >
-                  Cancel
+                  {submitting ? 'Submitting…' : 'Confirm Rejection'}
                 </button>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 

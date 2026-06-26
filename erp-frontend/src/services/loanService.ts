@@ -78,6 +78,10 @@ export interface ChargesSummary {
 export interface LoanAccount extends LoanAccountList {
   product_requires_guarantor: boolean;
   product_min_guarantors: number;
+  client_bank_name: string | null;
+  client_bank_account_name: string | null;
+  client_bank_account_number: string | null;
+  client_bvn: string | null;
   interest_rate: string;
   interest_method: string;
   term_months: number;
@@ -472,6 +476,13 @@ export const loanService = {
 
   async rejectDisbursement(id: number, reason: string): Promise<LoanDisbursement> {
     return api.post(`${BASE}/disbursements/${id}/reject/`, { reason });
+  },
+
+  async disburseLoan(
+    id: number,
+    data: { disbursement_account: number; notes?: string }
+  ): Promise<LoanDisbursement> {
+    return api.post(`${BASE}/disbursements/${id}/disburse/`, data);
   },
 
   // ===== LOAN PRODUCT FEES =====
