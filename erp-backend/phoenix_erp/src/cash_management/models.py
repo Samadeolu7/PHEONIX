@@ -2984,13 +2984,72 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 raise ValidationError(
                     "loan_account must be set for a loan_repayment item."
                 )
-            # record_payment creates, posts, and now returns the journal entry.
-            return self.loan_account.record_payment(
-                amount=self.amount_collected,
+            from decimal import ROUND_HALF_UP
+
+            loan = self.loan_account
+            total_outstanding = Decimal(str(loan.total_outstanding))
+            amount_collected = self.amount_collected
+
+            # Cap at overdue + next-pending dues — excess goes to client savings,
+            # not silently pre-applied to future installments.
+            overdue_due = Decimal('0.00')
+            for s in loan.repayment_schedule.filter(status__in=['overdue', 'partial']):
+                overdue_due += Decimal(str(s.total_due)) - Decimal(str(s.total_paid))
+
+            next_pending = (
+                loan.repayment_schedule
+                .filter(status='pending')
+                .order_by('due_date')
+                .first()
+            )
+            next_pending_due = (
+                Decimal(str(next_pending.total_due)) - Decimal(str(next_pending.total_paid))
+                if next_pending else Decimal('0.00')
+            )
+
+            has_schedule = loan.repayment_schedule.exists()
+            if has_schedule and (overdue_due + next_pending_due) > Decimal('0.00'):
+                payable_now = min(
+                    (overdue_due + next_pending_due).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                    total_outstanding,
+                )
+            else:
+                payable_now = total_outstanding
+
+            if total_outstanding > Decimal('0.00') and amount_collected > total_outstanding:
+                excess = (amount_collected - total_outstanding).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                payment_amount = total_outstanding
+            elif payable_now > Decimal('0.00') and amount_collected > payable_now:
+                excess = (amount_collected - payable_now).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                payment_amount = payable_now
+            else:
+                excess = Decimal('0.00')
+                payment_amount = amount_collected
+
+            je = loan.record_payment(
+                amount=payment_amount,
                 payment_account=payment_gl_account,
                 payment_date=self.sheet.collection_date,
                 received_by=user,
             )
+
+            if excess > Decimal('0.00'):
+                from savings.models import SavingsAccount as SavAcct
+                primary_savings = (
+                    SavAcct.objects
+                    .filter(client=self.client, status='active')
+                    .order_by('opened_on')
+                    .first()
+                )
+                if primary_savings:
+                    primary_savings.deposit(
+                        amount=excess,
+                        description=f"Loan overpayment credit from {loan.loan_number}",
+                        cashier_account=payment_gl_account,
+                        transacted_by=user,
+                    )
+
+            return je
 
         elif self.collection_type == 'savings_deposit':
             if not self.savings_account:

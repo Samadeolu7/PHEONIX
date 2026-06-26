@@ -1903,7 +1903,7 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
         as a single atomic operation. Uses the savings account's GL account as
         the payment_account so no cash changes hands.
         """
-        from decimal import Decimal
+        from decimal import Decimal, ROUND_HALF_UP
         from django.db import transaction as db_transaction
         from django.utils import timezone
         from .models import LoanRepaymentRequest
@@ -1938,9 +1938,41 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Cap at total outstanding to avoid overpayment error
-        total_outstanding = loan.total_outstanding
-        payment_amount = min(amount, total_outstanding)
+        # Cap at payable_now (overdue + next pending) so that no excess silently
+        # pre-pays future installments. Since the source is savings, any uncapped
+        # excess simply stays in the savings account — no additional GL movement needed.
+        total_outstanding = Decimal(str(loan.total_outstanding))
+
+        overdue_due = Decimal('0.00')
+        for s in loan.repayment_schedule.filter(status__in=['overdue', 'partial']):
+            overdue_due += Decimal(str(s.total_due)) - Decimal(str(s.total_paid))
+
+        next_pending = (
+            loan.repayment_schedule
+            .filter(status='pending')
+            .order_by('due_date')
+            .first()
+        )
+        next_pending_due = (
+            Decimal(str(next_pending.total_due)) - Decimal(str(next_pending.total_paid))
+            if next_pending else Decimal('0.00')
+        )
+
+        has_schedule = loan.repayment_schedule.exists()
+        if has_schedule and (overdue_due + next_pending_due) > Decimal('0.00'):
+            payable_now = min(
+                (overdue_due + next_pending_due).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                total_outstanding,
+            )
+        else:
+            payable_now = total_outstanding
+
+        if total_outstanding > Decimal('0.00') and amount > total_outstanding:
+            payment_amount = total_outstanding
+        elif payable_now > Decimal('0.00') and amount > payable_now:
+            payment_amount = payable_now
+        else:
+            payment_amount = amount
 
         try:
             with db_transaction.atomic():
