@@ -142,19 +142,23 @@ export const toggleSmartSavings = (
   api.post(`${BASE_ACCOUNTS}/${accountId}/toggle-smart-savings/`, { action });
 
 // Daily Collection Sheet (savings)
-export const getSavingsCollectionSheet = (params: {
+export const getSavingsCollectionSheet = async (params: {
   date?: string;
   status?: ContributionStatus;
   savings_account?: number;
   cycle?: ContributionCycle;
   product?: number;
-}): Promise<ContributionScheduleItem[]> =>
-  api.get(BASE_COLLECTION + '/', { params });
+}): Promise<ContributionScheduleItem[]> => {
+  const response = await api.get(BASE_COLLECTION + '/', { params });
+  if (Array.isArray(response)) return response;
+  return (response as { results?: ContributionScheduleItem[] })?.results ?? [];
+};
 
 export const markContributionPaid = (
   scheduleId: number,
+  cashierAccountId: number,
 ): Promise<ContributionScheduleItem> =>
-  api.post(`${BASE_COLLECTION}/${scheduleId}/mark-paid/`, {});
+  api.post(`${BASE_COLLECTION}/${scheduleId}/mark-paid/`, { cashier_account_id: cashierAccountId });
 
 export const generateScheduleForMonth = (
   year?: number,
@@ -188,8 +192,11 @@ export const createSavingsAccount = (data: CreateSavingsAccountData): Promise<Sa
   api.post(BASE_ACCOUNTS + '/', data);
 
 // Compulsory Savings Policy
-export const getCompulsorySavingsPolicies = (): Promise<CompulsorySavingsPolicy[]> =>
-  api.get(BASE_POLICY + '/');
+export const getCompulsorySavingsPolicies = async (): Promise<CompulsorySavingsPolicy[]> => {
+  const response = await api.get(BASE_POLICY + '/');
+  if (Array.isArray(response)) return response;
+  return (response as { results?: CompulsorySavingsPolicy[] })?.results ?? [];
+};
 
 export const updateCompulsorySavingsPolicy = (
   id: number,

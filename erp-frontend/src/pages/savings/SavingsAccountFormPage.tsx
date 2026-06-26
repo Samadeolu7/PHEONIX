@@ -4,14 +4,14 @@
  * The backend auto-generates the account number and creates the linked GL account.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PiggyBank, Loader2, AlertCircle, CheckCircle, ArrowLeft } from 'lucide-react';
+import { PiggyBank, Loader2, AlertCircle, CheckCircle, ArrowLeft, ChevronDown, X } from 'lucide-react';
 import {
   createSavingsAccount,
   CreateSavingsAccountData,
 } from '../../services/savingsService';
-import { clientService, Client } from '../../services/clientService';
+import { clientService, ClientOption } from '../../services/clientService';
 
 // Product type from Products API (minimal shape needed for the dropdown)
 interface SavingsProductOption {
@@ -48,8 +48,11 @@ export default function SavingsAccountFormPage() {
   const navigate = useNavigate();
 
   const [clientId, setClientId] = useState('');
-  const [clients, setClients] = useState<Client[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
   const [loadingClients, setLoadingClients] = useState(false);
+  const [clientQuery, setClientQuery] = useState('');
+  const [showClientDropdown, setShowClientDropdown] = useState(false);
+  const clientBoxRef = useRef<HTMLDivElement>(null);
   const [productId, setProductId] = useState('');
   const [products, setProducts] = useState<SavingsProductOption[]>([]);
   const [nickname, setNickname] = useState('');
@@ -81,23 +84,35 @@ export default function SavingsAccountFormPage() {
     });
   }, []);
 
-  // Load active clients for name-first selection
+  // Load all active clients for the combobox (page_size=1000 inside getClientOptions)
   useEffect(() => {
     setLoadingClients(true);
-    clientService.getClients({ status: 'active' })
-      .then((response: unknown) => {
-        const data = response as { results?: Client[]; data?: Client[] } | Client[];
-        const list = Array.isArray(data)
-          ? data
-          : (Array.isArray(data?.results) ? data.results : (Array.isArray(data?.data) ? data.data : []));
-        setClients(list);
-      })
-      .catch(() => {
-        // Keep fallback numeric input available when clients fail to load
-        setClients([]);
-      })
+    clientService.getClientOptions({ status: 'active' })
+      .then(setClients)
+      .catch(() => setClients([]))
       .finally(() => setLoadingClients(false));
   }, []);
+
+  // Close dropdown when clicking outside the combobox
+  useEffect(() => {
+    function handleOutsideClick(e: MouseEvent) {
+      if (clientBoxRef.current && !clientBoxRef.current.contains(e.target as Node)) {
+        setShowClientDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
+  const filteredClients = useMemo(() => {
+    const q = clientQuery.toLowerCase().trim();
+    if (!q) return clients;
+    return clients.filter(c =>
+      c.name.toLowerCase().includes(q) || c.client_id.toLowerCase().includes(q)
+    );
+  }, [clients, clientQuery]);
+
+  const selectedClient = clients.find(c => String(c.id) === clientId) ?? null;
 
   function handleProductChange(id: string) {
     setProductId(id);
@@ -200,37 +215,64 @@ export default function SavingsAccountFormPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">
                   Client <span className="text-red-500">*</span>
                 </label>
-                {loadingClients ? (
-                  <div className="flex items-center gap-2 py-2 text-sm text-gray-500">
-                    <Loader2 className="w-4 h-4 animate-spin" /> Loading clients…
+                {/* Hidden native input keeps form validation working */}
+                <input type="hidden" name="client" value={clientId} required />
+                <div ref={clientBoxRef} className="relative">
+                  <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-teal-400">
+                    <input
+                      type="text"
+                      value={showClientDropdown ? clientQuery : (selectedClient ? `${selectedClient.name} (${selectedClient.client_id})` : '')}
+                      onChange={e => {
+                        setClientQuery(e.target.value);
+                        setClientId('');
+                      }}
+                      onFocus={() => {
+                        setClientQuery('');
+                        setShowClientDropdown(true);
+                      }}
+                      placeholder={loadingClients ? 'Loading clients…' : '— Search client —'}
+                      className="flex-1 px-3 py-2 text-sm outline-none bg-white"
+                      autoComplete="off"
+                    />
+                    {loadingClients && <Loader2 className="w-4 h-4 animate-spin text-gray-400 mr-2" />}
+                    {selectedClient && !showClientDropdown ? (
+                      <button
+                        type="button"
+                        aria-label="Clear client selection"
+                        onClick={() => { setClientId(''); setClientQuery(''); }}
+                        className="p-2 text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-gray-400 mr-2" />
+                    )}
                   </div>
-                ) : clients.length > 0 ? (
-                  <select
-                    required
-                    value={clientId}
-                    onChange={e => setClientId(e.target.value)}
-                    aria-label="Client"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-                  >
-                    <option value="">— Select client —</option>
-                    {clients.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.full_name} ({c.client_id})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    type="number"
-                    required
-                    min="1"
-                    value={clientId}
-                    onChange={e => setClientId(e.target.value)}
-                    placeholder="Enter client"
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-                  />
-                )}
-                <p className="text-xs text-gray-400 mt-1">Select by client name (ID shown in brackets)</p>
+                  {showClientDropdown && (
+                    <div className="absolute z-50 left-0 right-0 mt-1 max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                      {filteredClients.length === 0 ? (
+                        <div className="px-3 py-2 text-sm text-gray-500">No clients found</div>
+                      ) : (
+                        filteredClients.map(c => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onMouseDown={() => {
+                              setClientId(String(c.id));
+                              setClientQuery('');
+                              setShowClientDropdown(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm hover:bg-teal-50 border-b border-gray-100 last:border-b-0 ${String(c.id) === clientId ? 'bg-teal-50 font-medium' : ''}`}
+                          >
+                            <span className="text-gray-900">{c.name}</span>
+                            <span className="ml-1.5 text-xs text-gray-400">({c.client_id})</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">Type to search by name or client ID</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">

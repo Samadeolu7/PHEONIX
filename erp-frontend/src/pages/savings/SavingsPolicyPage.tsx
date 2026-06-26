@@ -87,7 +87,10 @@ export default function SavingsPolicyPage() {
     setSaving(true);
     setError(null);
     try {
-      const created = await createCompulsorySavingsPolicy({ amount: newAmount, enabled: newEnabled });
+      const created = await createCompulsorySavingsPolicy({
+        amount: newAmount,
+        enabled: newEnabled,
+      });
       setPolicies(prev => [...prev, created]);
       setShowNew(false);
       setNewAmount('');
@@ -113,12 +116,18 @@ export default function SavingsPolicyPage() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-gray-900">Compulsory Savings Policy</h1>
-              <p className="text-xs text-gray-500">Set the mandatory contribution amount for all members</p>
+              <p className="text-xs text-gray-500">
+                Set the mandatory contribution amount for all members
+              </p>
             </div>
           </div>
           {!showNew && (
             <button
-              onClick={() => { setShowNew(true); setError(null); setSuccess(null); }}
+              onClick={() => {
+                setShowNew(true);
+                setError(null);
+                setSuccess(null);
+              }}
               className="text-sm bg-teal-600 text-white rounded-lg px-3 py-1.5 hover:bg-teal-700 transition-colors"
             >
               + New Policy
@@ -150,10 +159,14 @@ export default function SavingsPolicyPage() {
         {/* New policy form */}
         {showNew && (
           <div className="bg-white rounded-xl border border-teal-200 p-5">
-            <h2 className="text-sm font-semibold text-gray-800 mb-4">New Compulsory Savings Policy</h2>
+            <h2 className="text-sm font-semibold text-gray-800 mb-4">
+              New Compulsory Savings Policy
+            </h2>
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Contribution Amount (₦)</label>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Contribution Amount (₦)
+                </label>
                 <input
                   type="number"
                   min="0"
@@ -172,7 +185,9 @@ export default function SavingsPolicyPage() {
                   onChange={e => setNewEnabled(e.target.checked)}
                   className="rounded border-gray-300"
                 />
-                <label htmlFor="new-enabled" className="text-sm text-gray-700">Enabled</label>
+                <label htmlFor="new-enabled" className="text-sm text-gray-700">
+                  Enabled
+                </label>
               </div>
             </div>
             <div className="flex gap-2">
@@ -181,11 +196,18 @@ export default function SavingsPolicyPage() {
                 disabled={saving}
                 className="flex items-center gap-1.5 text-sm bg-teal-600 text-white rounded-lg px-4 py-2 hover:bg-teal-700 transition-colors disabled:opacity-50"
               >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                {saving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
                 Save
               </button>
               <button
-                onClick={() => { setShowNew(false); setError(null); }}
+                onClick={() => {
+                  setShowNew(false);
+                  setError(null);
+                }}
                 className="flex items-center gap-1.5 text-sm border border-gray-300 text-gray-600 rounded-lg px-4 py-2 hover:bg-gray-50 transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -196,83 +218,96 @@ export default function SavingsPolicyPage() {
         )}
 
         {/* Existing policies */}
-        {!loading && policies.map(p => (
-          <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-5">
-            {editing === p.id ? (
-              <>
-                <h2 className="text-sm font-semibold text-gray-800 mb-4">Edit Policy #{p.id}</h2>
-                <div className="grid grid-cols-2 gap-4 mb-4">
+        {!loading &&
+          policies.map(p => (
+            <div key={p.id} className="bg-white rounded-xl border border-gray-200 p-5">
+              {editing === p.id ? (
+                <>
+                  <h2 className="text-sm font-semibold text-gray-800 mb-4">Edit Policy #{p.id}</h2>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Contribution Amount (₦)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={draftAmount}
+                        onChange={e => setDraftAmount(e.target.value)}
+                        title="Contribution amount in naira"
+                        placeholder="e.g. 500.00"
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2 pt-5">
+                      <input
+                        id={`enabled-${p.id}`}
+                        type="checkbox"
+                        checked={draftEnabled}
+                        onChange={e => setDraftEnabled(e.target.checked)}
+                        className="rounded border-gray-300"
+                      />
+                      <label htmlFor={`enabled-${p.id}`} className="text-sm text-gray-700">
+                        Enabled
+                      </label>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => saveEdit(p.id)}
+                      disabled={saving}
+                      className="flex items-center gap-1.5 text-sm bg-teal-600 text-white rounded-lg px-4 py-2 hover:bg-teal-700 transition-colors disabled:opacity-50"
+                    >
+                      {saving ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      Save
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      className="flex items-center gap-1.5 text-sm border border-gray-300 text-gray-600 rounded-lg px-4 py-2 hover:bg-gray-50 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-between">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Contribution Amount (₦)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={draftAmount}
-                      onChange={e => setDraftAmount(e.target.value)}
-                      title="Contribution amount in naira"
-                      placeholder="e.g. 500.00"
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-                    />
+                    <div className="flex items-center gap-3 mb-1">
+                      <span className="text-xl font-bold text-gray-900">
+                        ₦
+                        {parseFloat(p.amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}
+                      </span>
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                          p.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                        }`}
+                      >
+                        {p.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      Policy #{p.id} &middot; Created {new Date(p.created_at).toLocaleDateString()}
+                      {p.updated_at !== p.created_at &&
+                        ` · Updated ${new Date(p.updated_at).toLocaleDateString()}`}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2 pt-5">
-                    <input
-                      id={`enabled-${p.id}`}
-                      type="checkbox"
-                      checked={draftEnabled}
-                      onChange={e => setDraftEnabled(e.target.checked)}
-                      className="rounded border-gray-300"
-                    />
-                    <label htmlFor={`enabled-${p.id}`} className="text-sm text-gray-700">Enabled</label>
-                  </div>
-                </div>
-                <div className="flex gap-2">
                   <button
-                    onClick={() => saveEdit(p.id)}
-                    disabled={saving}
-                    className="flex items-center gap-1.5 text-sm bg-teal-600 text-white rounded-lg px-4 py-2 hover:bg-teal-700 transition-colors disabled:opacity-50"
+                    onClick={() => startEdit(p)}
+                    className="flex items-center gap-1.5 text-sm border border-gray-300 text-gray-600 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
                   >
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    Save
-                  </button>
-                  <button
-                    onClick={cancelEdit}
-                    className="flex items-center gap-1.5 text-sm border border-gray-300 text-gray-600 rounded-lg px-4 py-2 hover:bg-gray-50 transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                    Cancel
+                    <Edit2 className="w-3.5 h-3.5" />
+                    Edit
                   </button>
                 </div>
-              </>
-            ) : (
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-3 mb-1">
-                    <span className="text-xl font-bold text-gray-900">
-                      ₦{parseFloat(p.amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}
-                    </span>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                      p.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {p.enabled ? 'Enabled' : 'Disabled'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400">
-                    Policy #{p.id} &middot; Created {new Date(p.created_at).toLocaleDateString()}
-                    {p.updated_at !== p.created_at && ` · Updated ${new Date(p.updated_at).toLocaleDateString()}`}
-                  </p>
-                </div>
-                <button
-                  onClick={() => startEdit(p)}
-                  className="flex items-center gap-1.5 text-sm border border-gray-300 text-gray-600 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  Edit
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          ))}
 
         {!loading && policies.length === 0 && !showNew && (
           <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
