@@ -77,38 +77,69 @@ def _score(staff) -> int:
     return total
 
 
+def _name_from_username(username: str) -> tuple[str, str]:
+    """
+    Try to extract (first, last) from a username like 'Funmilola.Ogunwole'
+    or 'simon_uche' or 'john doe'.  Returns ('', '') when parsing fails.
+    """
+    import re
+    parts = re.split(r'[.\-_ ]+', username.strip())
+    parts = [p for p in parts if p and not p.isdigit()]
+    if len(parts) >= 2:
+        return parts[0], parts[-1]
+    return '', ''
+
+
 def _find_candidate_real(stub, tenant) -> object | None:
     """
     Given a stub Staff (already linked to a user), return an unlinked Staff
-    in the same tenant that matches by email or by first+last name.
-    Returns the best candidate or None.
+    in the same tenant that matches by:
+      1. email on the Staff record
+      2. email on the linked User account
+      3. first + last name on the Staff record
+      4. first + last name parsed from the linked User's username
+    Returns the best-scoring candidate or None.
     """
     from hr.models import Staff
 
     qs = Staff.objects.filter(tenant=tenant, user__isnull=True, is_deleted=False)
-
+    seen_pks: list[int] = []
     candidates: list = []
 
-    # Match by email (strongest signal)
-    email = (getattr(stub, 'email', '') or '').strip().lower()
-    if email:
-        by_email = list(qs.filter(email__iexact=email))
-        candidates.extend(by_email)
+    def _add(new_items):
+        for item in new_items:
+            if item.pk not in seen_pks:
+                seen_pks.append(item.pk)
+                candidates.append(item)
 
-    # Match by first + last name
+    # 1. Email on the Staff record itself
+    staff_email = (getattr(stub, 'email', '') or '').strip().lower()
+    if staff_email:
+        _add(qs.filter(email__iexact=staff_email))
+
+    # 2. Email from the linked User account (covers stubs with no Staff email)
+    user = getattr(stub, 'user', None)
+    user_email = ((getattr(user, 'email', '') or '') if user else '').strip().lower()
+    if user_email and user_email != staff_email:
+        _add(qs.filter(email__iexact=user_email))
+
+    # 3. First + last name on the Staff record
     first = (getattr(stub, 'first_name', '') or '').strip()
     last  = (getattr(stub, 'last_name',  '') or '').strip()
     if first and last:
-        by_name = list(
-            qs.filter(first_name__iexact=first, last_name__iexact=last)
-            .exclude(pk__in=[c.pk for c in candidates])
-        )
-        candidates.extend(by_name)
+        _add(qs.filter(first_name__iexact=first, last_name__iexact=last))
+
+    # 4. First + last parsed from the User's username
+    #    (catches stubs created from accounts with no first/last name set)
+    if user:
+        u_first, u_last = _name_from_username(getattr(user, 'username', '') or '')
+        if u_first and u_last and (u_first.lower() != first.lower() or u_last.lower() != last.lower()):
+            _add(qs.filter(first_name__iexact=u_first, last_name__iexact=u_last))
 
     if not candidates:
         return None
 
-    # Sort: highest score first; break ties by lowest pk (older record)
+    # Sort: highest score first; break ties by lowest pk (older / imported first)
     candidates.sort(key=lambda s: (-_score(s), s.pk))
     return candidates[0]
 
