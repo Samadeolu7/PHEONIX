@@ -159,9 +159,9 @@ class OwnerBranchManager(SoftDeleteManager):
                 qs = qs.filter(_Q(branch=branch) | _Q(branch__isnull=True))
             else:
                 qs = qs.filter(branch=branch)
-        else:
-            # Non-elevated user with no branch assigned — deny all access.
-            return qs.none()
+        # No branch assigned → no additional restriction beyond tenant scope.
+        # Officer-level scoping (assigned_clients etc.) is applied separately by
+        # ScopedModelViewSet._apply_officer_scope().
 
         # NOTE: We do NOT filter by owner here.
         # The 'owner' field is for audit purposes only.
