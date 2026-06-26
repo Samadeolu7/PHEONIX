@@ -2658,7 +2658,7 @@ function App() {
                                 <Route
                                   path="/clients/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-create">
+                                    <ProtectedRoute requiredPermission="clients-create">
                                       <ClientFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2682,7 +2682,7 @@ function App() {
                                 <Route
                                   path="/clients/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-edit">
+                                    <ProtectedRoute requiredPermission="clients-edit">
                                       <ClientFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2690,7 +2690,7 @@ function App() {
                                 <Route
                                   path="/clients/import"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-import">
+                                    <ProtectedRoute requiredPermission="client-bulk-import">
                                       <ClientBulkImportPage />
                                     </ProtectedRoute>
                                   }
@@ -2698,7 +2698,7 @@ function App() {
                                 <Route
                                   path="/clients/school-fees-import"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-import">
+                                    <ProtectedRoute requiredPermission="client-bulk-import">
                                       <StudentFeeExcelImportPage />
                                     </ProtectedRoute>
                                   }
@@ -2714,7 +2714,7 @@ function App() {
                                 <Route
                                   path="/clients/registration-config"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-edit">
+                                    <ProtectedRoute requiredPermission="clients-edit">
                                       <ClientRegistrationConfigPage />
                                     </ProtectedRoute>
                                   }
@@ -4050,7 +4050,7 @@ function App() {
                                 />
 
                                 {/* ── Client Management additions ─────────────────── */}
-                                <Route path="/clients/groups" element={<ProtectedRoute requiredPermission="client-groups"><ClientGroupsPage /></ProtectedRoute>} />
+                                <Route path="/clients/groups" element={<ProtectedRoute requiredPermission="client-groups-view"><ClientGroupsPage /></ProtectedRoute>} />
                                 <Route path="/prospects" element={<ProtectedRoute requiredPermission="clients-view"><ProspectListPage /></ProtectedRoute>} />
                                 <Route path="/clients/reactivate" element={<ProtectedRoute requiredPermission="clients-view"><ReactivateClientPage /></ProtectedRoute>} />
 
