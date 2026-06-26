@@ -709,8 +709,43 @@ class LoanAccountViewSet(ScopedModelViewSet):
             try:
                 with db_transaction.atomic():
                     total_outstanding = Decimal(str(loan.total_outstanding))
-                    payment_amount = min(amount, total_outstanding)
-                    excess = amount - payment_amount
+
+                    # Mirror the payable_now logic from the individual repay action:
+                    # cap payment at overdue + next-pending dues so that any surplus
+                    # is routed to savings, not silently applied to future installments.
+                    overdue_due = Decimal('0.00')
+                    for s in loan.repayment_schedule.filter(status__in=['overdue', 'partial']):
+                        overdue_due += Decimal(str(s.total_due)) - Decimal(str(s.total_paid))
+
+                    next_pending = (
+                        loan.repayment_schedule
+                        .filter(status='pending')
+                        .order_by('due_date')
+                        .first()
+                    )
+                    next_pending_due = (
+                        Decimal(str(next_pending.total_due)) - Decimal(str(next_pending.total_paid))
+                        if next_pending else Decimal('0.00')
+                    )
+
+                    has_schedule = loan.repayment_schedule.exists()
+                    if has_schedule and (overdue_due + next_pending_due) > Decimal('0.00'):
+                        payable_now = min(
+                            (overdue_due + next_pending_due).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                            total_outstanding,
+                        )
+                    else:
+                        payable_now = total_outstanding
+
+                    if total_outstanding > Decimal('0.00') and amount > total_outstanding:
+                        excess = (amount - total_outstanding).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        payment_amount = total_outstanding
+                    elif payable_now > Decimal('0.00') and amount > payable_now:
+                        excess = (amount - payable_now).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        payment_amount = payable_now
+                    else:
+                        excess = Decimal('0.00')
+                        payment_amount = amount
 
                     description = f"Group repayment — {loan.loan_number}"
                     if bank_reference:
@@ -723,7 +758,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
                         received_by=request.user,
                     )
 
-                    if excess > Decimal('0.005'):
+                    if excess > Decimal('0.00'):
                         from savings.models import SavingsAccount as SavAcct
                         primary_savings = (
                             SavAcct.objects
@@ -733,8 +768,8 @@ class LoanAccountViewSet(ScopedModelViewSet):
                         )
                         if primary_savings:
                             primary_savings.deposit(
-                                amount=excess.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
-                                description=f"Overpayment from {loan.loan_number}",
+                                amount=excess,
+                                description=f"Loan overpayment credit from {loan.loan_number}",
                                 cashier_account=payment_account,
                                 transacted_by=request.user,
                             )
