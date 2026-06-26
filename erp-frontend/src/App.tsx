@@ -541,8 +541,9 @@ const SavingsAccountsPage = lazy(() => import('./pages/savings/SavingsAccountsPa
 // Savings Account detail page
 const SavingsAccountDetailPage = lazy(() => import('./pages/savings/SavingsAccountDetailPage'));
 
-// Savings new account form & policy
+// Savings new account form, deposit & policy
 const SavingsAccountFormPage = lazy(() => import('./pages/savings/SavingsAccountFormPage'));
+const SavingsDepositPage = lazy(() => import('./pages/savings/SavingsDepositPage'));
 const SavingsPolicyPage = lazy(() => import('./pages/savings/SavingsPolicyPage'));
 const SavingsProductConfigPage = lazy(() => import('./pages/savings/SavingsProductConfigPage'));
 const SavingsWithdrawalsPage = lazy(() => import('./pages/savings/SavingsWithdrawalsPage'));
@@ -3905,6 +3906,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="savings-accounts-create">
                                       <SavingsAccountFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Savings — Flexible deposit (all product types) */}
+                                <Route
+                                  path="/savings/deposit"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                      <SavingsDepositPage />
                                     </ProtectedRoute>
                                   }
                                 />

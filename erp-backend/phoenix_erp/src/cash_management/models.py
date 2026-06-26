@@ -3026,30 +3026,24 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 excess = Decimal('0.00')
                 payment_amount = amount_collected
 
-            je = loan.record_payment(
-                amount=payment_amount,
-                payment_account=payment_gl_account,
-                payment_date=self.sheet.collection_date,
-                received_by=user,
-            )
-
+            spillover_savings = None
             if excess > Decimal('0.00'):
                 from savings.models import SavingsAccount as SavAcct
-                primary_savings = (
+                spillover_savings = (
                     SavAcct.objects
                     .filter(client=self.client, status='active')
                     .order_by('opened_on')
                     .first()
                 )
-                if primary_savings:
-                    primary_savings.deposit(
-                        amount=excess,
-                        description=f"Loan overpayment credit from {loan.loan_number}",
-                        cashier_account=payment_gl_account,
-                        transacted_by=user,
-                    )
 
-            return je
+            return loan.record_payment(
+                amount=payment_amount,
+                payment_account=payment_gl_account,
+                payment_date=self.sheet.collection_date,
+                received_by=user,
+                spillover_savings_account=spillover_savings,
+                spillover_amount=excess if spillover_savings else Decimal('0.00'),
+            )
 
         elif self.collection_type == 'savings_deposit':
             if not self.savings_account:
@@ -3066,6 +3060,7 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 ),
                 cashier_account=payment_gl_account,
                 transacted_by=user,
+                date=self.sheet.collection_date,
             )
 
         elif self.collection_type == 'processing_fee':

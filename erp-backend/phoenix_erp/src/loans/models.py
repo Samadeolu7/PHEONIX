@@ -775,9 +775,18 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     
     @transaction.atomic
     def record_payment(self, amount: Decimal, payment_date=None,
-                       payment_account=None, received_by=None):
+                       payment_account=None, received_by=None,
+                       spillover_savings_account=None, spillover_amount=None):
         """
         Record a loan repayment and create the corresponding GL journal entry.
+
+        When spillover_savings_account and spillover_amount are provided the excess
+        is included in the SAME journal entry as a third credit line so that the
+        cashier's cash account is debited only once for the total amount received:
+
+            Dr. Cash / Bank (payment_account)         — total received (amount + spillover)
+            Cr. Loan Receivable / Income accounts     — loan portion
+            Cr. Member Savings (spillover GL account) — excess credited to savings
 
         Payments are applied in priority order: penalties → interest → fees → principal.
 
@@ -898,12 +907,13 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             created_by=received_by,
         )
 
-        # Debit: Cash received
+        # Debit: Cash received — total collected from client (loan portion + any spillover)
+        _spillover_amount = spillover_amount or Decimal('0.00')
         JournalEntryLine.objects.create(
             transaction=journal_entry,
             account=payment_account,
             side=JournalEntryLine.DEBIT,
-            amount=amount,
+            amount=amount + _spillover_amount,
         )
 
         # ── Credit entries (must collectively equal the debit) ────────────
@@ -955,6 +965,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 amount=penalty_payment,
             )
 
+        # Spillover credit — excess goes straight to the client's savings GL account
+        if spillover_savings_account and _spillover_amount > Decimal('0.00'):
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=spillover_savings_account.account,
+                side=JournalEntryLine.CREDIT,
+                amount=_spillover_amount,
+            )
+
         journal_entry.post()
 
         self.save()
@@ -988,6 +1007,24 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 'journal_entry_id': str(journal_entry.pk),
             },
         )
+
+        # Update savings metadata and audit log for the spillover credit
+        if spillover_savings_account and _spillover_amount > Decimal('0.00'):
+            spillover_savings_account.last_transaction_date = payment_date or timezone.now().date()
+            spillover_savings_account.save(update_fields=['last_transaction_date'])
+            log_financial_event(
+                FinancialAuditLog.SAVINGS_DEPOSIT,
+                acted_by=received_by,
+                record_type='SavingsAccount',
+                record_id=str(spillover_savings_account.pk),
+                amount=_spillover_amount,
+                description=f'Loan overpayment credit from {self.loan_number}',
+                extra={
+                    'savings_account_number': spillover_savings_account.account_number,
+                    'loan_number': self.loan_number,
+                    'journal_entry_id': str(journal_entry.pk),
+                },
+            )
 
         return journal_entry
 

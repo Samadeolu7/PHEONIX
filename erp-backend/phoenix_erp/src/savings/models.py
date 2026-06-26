@@ -101,7 +101,7 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     
     @transaction.atomic
     def deposit(self, amount: Decimal, description: str = "Deposit",
-                cashier_account=None, transacted_by=None):
+                cashier_account=None, transacted_by=None, date=None):
         """
         Record a member deposit and create the corresponding GL journal entry.
 
@@ -116,6 +116,9 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 Required — the teller's cash account or main bank account.
             transacted_by: The User performing the deposit (created_by on the
                 journal entry).
+            date: The effective date of the deposit. Defaults to today. Pass the
+                payment_date / collection_date when this deposit is part of a
+                larger transaction so all GL lines land on the same date.
 
         Raises:
             ValidationError: if amount is not positive or cashier_account is missing.
@@ -142,7 +145,7 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         journal_entry = JournalEntry.objects.create(
             series=series,
-            date=timezone.now().date(),
+            date=date or timezone.now().date(),
             description=description or f"Savings deposit – {self.account_number}",
             owner=self.owner,
             branch=self.branch,

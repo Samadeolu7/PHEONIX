@@ -282,12 +282,22 @@ class SavingsAccountViewSet(ScopedModelViewSet):
             )
 
         description = request.data.get('description', 'Deposit')
+        payment_date_raw = request.data.get('payment_date')
+        deposit_date = None
+        if payment_date_raw:
+            from datetime import date as dt_date
+            try:
+                deposit_date = dt_date.fromisoformat(str(payment_date_raw))
+            except ValueError:
+                pass
+
         try:
             account.deposit(
                 amount=amount,
                 description=description,
                 cashier_account=cashier_account,
                 transacted_by=request.user,
+                date=deposit_date,
             )
         except ValidationError as exc:
             return Response(

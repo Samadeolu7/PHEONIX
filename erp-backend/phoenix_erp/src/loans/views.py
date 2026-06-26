@@ -481,29 +481,27 @@ class LoanAccountViewSet(ScopedModelViewSet):
         try:
             from django.db import transaction as db_transaction
             with db_transaction.atomic():
-                loan.record_payment(
-                    amount=payment_amount,
-                    payment_date=payment_date,
-                    payment_account=payment_account,
-                    received_by=request.user,
-                )
-
+                spillover_savings = None
                 if excess > Decimal('0.00'):
                     from savings.models import SavingsAccount as SavAcct
-                    primary_savings = (
+                    spillover_savings = (
                         SavAcct.objects
                         .filter(client=loan.client, status='active')
                         .order_by('opened_on')
                         .first()
                     )
-                    if primary_savings:
-                        primary_savings.deposit(
-                            amount=excess,
-                            description=f"Loan spillover credit from {loan.loan_number}",
-                            cashier_account=payment_account,
-                            transacted_by=request.user,
-                        )
-                        overpayment_credited = excess
+
+                loan.record_payment(
+                    amount=payment_amount,
+                    payment_date=payment_date,
+                    payment_account=payment_account,
+                    received_by=request.user,
+                    spillover_savings_account=spillover_savings,
+                    spillover_amount=excess if spillover_savings else Decimal('0.00'),
+                )
+
+                if spillover_savings and excess > Decimal('0.00'):
+                    overpayment_credited = excess
 
         except ValidationError as exc:
             return Response(
@@ -747,32 +745,24 @@ class LoanAccountViewSet(ScopedModelViewSet):
                         excess = Decimal('0.00')
                         payment_amount = amount
 
-                    description = f"Group repayment — {loan.loan_number}"
-                    if bank_reference:
-                        description += f" | Ref: {bank_reference}"
+                    spillover_savings = None
+                    if excess > Decimal('0.00'):
+                        from savings.models import SavingsAccount as SavAcct
+                        spillover_savings = (
+                            SavAcct.objects
+                            .filter(client=loan.client, status='active')
+                            .order_by('opened_on')
+                            .first()
+                        )
 
                     loan.record_payment(
                         amount=payment_amount,
                         payment_date=payment_date,
                         payment_account=payment_account,
                         received_by=request.user,
+                        spillover_savings_account=spillover_savings,
+                        spillover_amount=excess if spillover_savings else Decimal('0.00'),
                     )
-
-                    if excess > Decimal('0.00'):
-                        from savings.models import SavingsAccount as SavAcct
-                        primary_savings = (
-                            SavAcct.objects
-                            .filter(client=loan.client, status='active')
-                            .order_by('opened_on')
-                            .first()
-                        )
-                        if primary_savings:
-                            primary_savings.deposit(
-                                amount=excess,
-                                description=f"Loan overpayment credit from {loan.loan_number}",
-                                cashier_account=payment_account,
-                                transacted_by=request.user,
-                            )
 
                     succeeded += 1
             except Exception as exc:

@@ -1013,6 +1013,17 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'savings-deposit',
+    title: '💰 Record Savings Deposit',
+    description:
+      'Flexible savings deposit — search any client, pick their account, and record a payment. Works for all product types (daily, weekly, monthly, smart savings).',
+    path: '/savings/deposit',
+    icon: ArrowRightLeft,
+    requiredPermission: 'savings-accounts-view',
+    moduleId: 'client-services',
+    category: 'Savings',
+  },
+  {
     id: 'savings-collection',
     title: '📋 Savings Collection',
     description:
@@ -1787,6 +1798,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     requiredPermission: 'savings-accounts-create',
     moduleId: 'savings',
     category: 'Accounts',
+    isNew: true,
+  },
+  {
+    id: 'savings-mod-deposit',
+    title: '💰 Record Savings Deposit',
+    description:
+      'Flexible deposit — search client, pick account, record payment for any savings product type.',
+    path: '/savings/deposit',
+    icon: ArrowRightLeft,
+    requiredPermission: 'savings-accounts-view',
+    moduleId: 'savings',
+    category: 'Transactions',
     isNew: true,
   },
   {

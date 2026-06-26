@@ -384,6 +384,7 @@ export const getSavingsTransactions = (
 export interface SavingsDepositPayload {
   amount: string;
   date: string;
+  cashier_account_id?: number;
   description?: string;
   payment_mode?: 'cash' | 'bank_transfer';
   bank_reference?: string;
