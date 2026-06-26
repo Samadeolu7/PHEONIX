@@ -4,7 +4,7 @@
  * Data is scoped server-side to clients assigned to the logged-in officer.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertCircle,
@@ -64,64 +64,63 @@ const PAGE_SIZE = 25;
 
 export default function SavingsAccountsPage() {
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
-  const [filtered, setFiltered] = useState<SavingsAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
 
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [cycleFilter, setCycleFilter] = useState('');
   const [page, setPage] = useState(1);
 
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setSearchInput(val);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setSearch(val);
+      setPage(1);
+    }, 300);
+  };
+
   const loadAccounts = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const params: { cycle?: ContributionCycle } = {};
-      if (cycleFilter) params.cycle = cycleFilter as ContributionCycle;
-      const data = await getSavingsAccounts(params);
-      const accountList = Array.isArray(data)
-        ? data
-        : (data as { results?: SavingsAccount[]; data?: SavingsAccount[]; items?: SavingsAccount[] })
-            .results ??
-          (data as { results?: SavingsAccount[]; data?: SavingsAccount[]; items?: SavingsAccount[] })
-            .data ??
-          (data as { results?: SavingsAccount[]; data?: SavingsAccount[]; items?: SavingsAccount[] })
-            .items ??
-          [];
-      setAccounts(accountList);
+      const data = await getSavingsAccounts({
+        cycle: cycleFilter ? (cycleFilter as ContributionCycle) : undefined,
+        status: statusFilter || undefined,
+        search: search || undefined,
+        page,
+        page_size: PAGE_SIZE,
+      });
+      if (Array.isArray(data)) {
+        setAccounts(data);
+        setTotalCount(data.length);
+      } else {
+        setAccounts(data.results ?? []);
+        setTotalCount(data.count ?? 0);
+      }
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setError(err?.detail ?? err?.message ?? 'Failed to load savings accounts.');
     } finally {
       setLoading(false);
     }
-  }, [cycleFilter]);
+  }, [cycleFilter, statusFilter, search, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [cycleFilter, statusFilter, search]);
 
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
 
-  // Client-side filter by search & status
-  useEffect(() => {
-    let result = accounts;
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(
-        (a) =>
-          a.account_number.toLowerCase().includes(q) ||
-          a.client_name.toLowerCase().includes(q),
-      );
-    }
-    if (statusFilter) {
-      result = result.filter((a) => a.status === statusFilter);
-    }
-    setFiltered(result);
-    setPage(1);
-  }, [accounts, search, statusFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -155,17 +154,17 @@ export default function SavingsAccountsPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
           <input
             type="text"
-            placeholder="Search account or client…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            placeholder="Search name, account # or client ID…"
+            value={searchInput}
+            onChange={handleSearchChange}
+            className="rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 w-64"
           />
         </div>
 
         <select
           aria-label="Filter by status"
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           {ACCOUNT_STATUSES.map((s) => (
@@ -176,7 +175,7 @@ export default function SavingsAccountsPage() {
         <select
           aria-label="Filter by contribution cycle"
           value={cycleFilter}
-          onChange={(e) => setCycleFilter(e.target.value)}
+          onChange={(e) => { setCycleFilter(e.target.value); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           {CYCLES.map((c) => (
@@ -208,7 +207,7 @@ export default function SavingsAccountsPage() {
           <div className="flex items-center justify-center py-16">
             <Loader2 size={24} className="animate-spin text-blue-600" />
           </div>
-        ) : paginated.length === 0 ? (
+        ) : accounts.length === 0 ? (
           <div className="py-16 text-center text-sm text-gray-500">
             No savings accounts found.
           </div>
@@ -228,7 +227,7 @@ export default function SavingsAccountsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {paginated.map((acc) => (
+              {accounts.map((acc) => (
                 <tr key={acc.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">
                     {acc.account_number}
@@ -274,7 +273,7 @@ export default function SavingsAccountsPage() {
         {!loading && totalPages > 1 && (
           <div className="flex items-center justify-between border-t px-4 py-3">
             <p className="text-xs text-gray-500">
-              Showing page {page} of {totalPages} ({filtered.length} total)
+              Showing page {page} of {totalPages} ({totalCount} total)
             </p>
             <div className="flex gap-2">
               <button

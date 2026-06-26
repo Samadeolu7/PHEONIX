@@ -116,15 +116,28 @@ class SavingsAccountViewSet(ScopedModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        client_id = self.request.query_params.get('client')
-        cycle = self.request.query_params.get('cycle')
-        product_id = self.request.query_params.get('product')
+        params = self.request.query_params
+        client_id = params.get('client')
+        cycle = params.get('cycle')
+        product_id = params.get('product')
+        status = params.get('status')
+        search = params.get('search', '').strip()
         if client_id:
             qs = qs.filter(client_id=client_id)
         if cycle:
             qs = qs.filter(product__contribution_cycle=cycle)
         if product_id:
             qs = qs.filter(product_id=product_id)
+        if status:
+            qs = qs.filter(status=status)
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(account_number__icontains=search)
+                | Q(client__first_name__icontains=search)
+                | Q(client__last_name__icontains=search)
+                | Q(client__client_id__icontains=search)
+            )
         return qs
 
     @action(detail=True, methods=['post'], url_path='generate-schedule')

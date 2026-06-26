@@ -89,11 +89,20 @@ const BASE_COLLECTION = '/savings/collection';
 const BASE_POLICY = '/savings/policy';
 
 // Savings Accounts
+export interface SavingsAccountsPage {
+  count: number;
+  results: SavingsAccount[];
+}
+
 export const getSavingsAccounts = (params?: {
   client?: number;
   cycle?: ContributionCycle;
   product?: number;
-}): Promise<SavingsAccount[]> =>
+  status?: string;
+  search?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<SavingsAccountsPage | SavingsAccount[]> =>
   api.get(BASE_ACCOUNTS + '/', { params });
 
 export const getSavingsAccount = (id: number): Promise<SavingsAccount> =>

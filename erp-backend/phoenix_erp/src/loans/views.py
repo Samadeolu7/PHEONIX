@@ -180,7 +180,13 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         search = params.get('search', '').strip()
         if search:
-            qs = qs.filter(loan_number__icontains=search)
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(loan_number__icontains=search)
+                | Q(client__first_name__icontains=search)
+                | Q(client__last_name__icontains=search)
+                | Q(client__client_id__icontains=search)
+            )
 
         return qs
 
