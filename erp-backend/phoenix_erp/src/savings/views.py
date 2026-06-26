@@ -113,6 +113,7 @@ class SavingsAccountViewSet(ScopedModelViewSet):
     ).prefetch_related('smart_account')
     serializer_class = SavingsAccountSerializer
     officer_client_lookup = 'client__assigned_officer'
+    officer_group_lookup = 'client__group__assigned_officer'
 
     def get_queryset(self):
         qs = super().get_queryset()

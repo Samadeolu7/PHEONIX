@@ -58,7 +58,7 @@ const MODULES = [
     icon: Users,
     path: '/client-services',
     color: 'green',
-    requiredPermissions: ['client-view', 'client-list'],
+    requiredPermissions: ['clients-view', 'client-list'],
   },
   {
     id: 'savings',
@@ -67,7 +67,7 @@ const MODULES = [
     icon: Banknote,
     path: '/savings',
     color: 'emerald',
-    requiredPermissions: ['savings-list', 'savings-create'],
+    requiredPermissions: ['savings-accounts-view', 'savings-accounts-create'],
   },
   {
     id: 'loans',
@@ -76,7 +76,7 @@ const MODULES = [
     icon: CreditCard,
     path: '/loans',
     color: 'indigo',
-    requiredPermissions: ['loans-list', 'loans-create'],
+    requiredPermissions: ['loan-accounts-view', 'loan-accounts-create'],
   },
   {
     id: 'receivable',

@@ -2625,7 +2625,7 @@ function App() {
                                 <Route
                                   path="/clients"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-list">
+                                    <ProtectedRoute requiredPermission="clients-view">
                                       <ClientListPage />
                                     </ProtectedRoute>
                                   }
@@ -3406,7 +3406,7 @@ function App() {
                                 <Route
                                   path="/client-services"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-list">
+                                    <ProtectedRoute requiredPermission="clients-view">
                                       <StudentServicesPage />
                                     </ProtectedRoute>
                                   }
@@ -3835,7 +3835,7 @@ function App() {
                                 <Route
                                   path="/loans/verification/:loanId"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-list">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view">
                                       <LoanVerificationPage />
                                     </ProtectedRoute>
                                   }
@@ -3845,7 +3845,7 @@ function App() {
                                 <Route
                                   path="/loans/disbursements/:loanId"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-disbursement-list">
+                                    <ProtectedRoute requiredPermission="loan-disbursements-view">
                                       <LoanDisbursementPage />
                                     </ProtectedRoute>
                                   }
@@ -3883,7 +3883,7 @@ function App() {
                                 <Route
                                   path="/savings/collection"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-list">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view">
                                       <SavingsCollectionPage />
                                     </ProtectedRoute>
                                   }
@@ -3893,7 +3893,7 @@ function App() {
                                 <Route
                                   path="/savings/accounts"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-list">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view">
                                       <SavingsAccountsPage />
                                     </ProtectedRoute>
                                   }
@@ -3903,7 +3903,7 @@ function App() {
                                 <Route
                                   path="/savings/accounts/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-create">
+                                    <ProtectedRoute requiredPermission="savings-accounts-create">
                                       <SavingsAccountFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3913,7 +3913,7 @@ function App() {
                                 <Route
                                   path="/savings/accounts/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-list">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view">
                                       <SavingsAccountDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3923,7 +3923,7 @@ function App() {
                                 <Route
                                   path="/savings/policy"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-list">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view">
                                       <SavingsPolicyPage />
                                     </ProtectedRoute>
                                   }
@@ -3933,7 +3933,7 @@ function App() {
                                 <Route
                                   path="/savings/withdrawals"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-list">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view">
                                       <SavingsWithdrawalsPage />
                                     </ProtectedRoute>
                                   }
@@ -3963,7 +3963,7 @@ function App() {
                                 <Route
                                   path="/loans/accounts"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-list">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view">
                                       <LoanAccountsPage />
                                     </ProtectedRoute>
                                   }
@@ -3973,7 +3973,7 @@ function App() {
                                 <Route
                                   path="/loans/accounts/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-create">
+                                    <ProtectedRoute requiredPermission="loan-accounts-create">
                                       <LoanAccountFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3983,7 +3983,7 @@ function App() {
                                 <Route
                                   path="/loans/accounts/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-list">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view">
                                       <LoanAccountDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3993,7 +3993,7 @@ function App() {
                                 <Route
                                   path="/loans/collection"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-list">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view">
                                       <LoanCollectionPage />
                                     </ProtectedRoute>
                                   }
@@ -4003,7 +4003,7 @@ function App() {
                                 <Route
                                   path="/loans/repayment-approvals"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-list">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view">
                                       <LoanRepaymentApprovalsPage />
                                     </ProtectedRoute>
                                   }
@@ -4013,7 +4013,7 @@ function App() {
                                 <Route
                                   path="/loans/products"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-list">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view">
                                       <LoanProductsPage />
                                     </ProtectedRoute>
                                   }
@@ -4023,7 +4023,7 @@ function App() {
                                 <Route
                                   path="/loans/products/:id/config"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-list">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view">
                                       <LoanProductConfigPage />
                                     </ProtectedRoute>
                                   }
@@ -4033,7 +4033,7 @@ function App() {
                                 <Route
                                   path="/loans/verification"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-list">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view">
                                       <LoanAccountsPage />
                                     </ProtectedRoute>
                                   }
@@ -4043,7 +4043,7 @@ function App() {
                                 <Route
                                   path="/loans/disbursements"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-disbursement-list">
+                                    <ProtectedRoute requiredPermission="loan-disbursements-view">
                                       <LoanAccountsPage />
                                     </ProtectedRoute>
                                   }
@@ -4051,27 +4051,27 @@ function App() {
 
                                 {/* ── Client Management additions ─────────────────── */}
                                 <Route path="/clients/groups" element={<ProtectedRoute requiredPermission="client-groups"><ClientGroupsPage /></ProtectedRoute>} />
-                                <Route path="/prospects" element={<ProtectedRoute requiredPermission="client-list"><ProspectListPage /></ProtectedRoute>} />
-                                <Route path="/clients/reactivate" element={<ProtectedRoute requiredPermission="client-list"><ReactivateClientPage /></ProtectedRoute>} />
+                                <Route path="/prospects" element={<ProtectedRoute requiredPermission="clients-view"><ProspectListPage /></ProtectedRoute>} />
+                                <Route path="/clients/reactivate" element={<ProtectedRoute requiredPermission="clients-view"><ReactivateClientPage /></ProtectedRoute>} />
 
                                 {/* ── Savings — Combined Receipt & Collection ──────── */}
-                                <Route path="/savings/combined-receipt" element={<ProtectedRoute requiredPermission="savings-list"><CombinedReceiptPage /></ProtectedRoute>} />
-                                <Route path="/savings/group-combined-receipt" element={<ProtectedRoute requiredPermission="savings-list"><GroupCombinedReceiptPage /></ProtectedRoute>} />
-                                <Route path="/savings/collection/sheet" element={<ProtectedRoute requiredPermission="savings-list"><AjoCollectionPage /></ProtectedRoute>} />
-                                <Route path="/savings/collection/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><CollectionSpreadsheetPage /></ProtectedRoute>} />
-                                <Route path="/savings/collection/multi-day" element={<ProtectedRoute requiredPermission="savings-list"><MultiDayDepositPage /></ProtectedRoute>} />
+                                <Route path="/savings/combined-receipt" element={<ProtectedRoute requiredPermission="savings-accounts-view"><CombinedReceiptPage /></ProtectedRoute>} />
+                                <Route path="/savings/group-combined-receipt" element={<ProtectedRoute requiredPermission="savings-accounts-view"><GroupCombinedReceiptPage /></ProtectedRoute>} />
+                                <Route path="/savings/collection/sheet" element={<ProtectedRoute requiredPermission="savings-accounts-view"><AjoCollectionPage /></ProtectedRoute>} />
+                                <Route path="/savings/collection/spreadsheet" element={<ProtectedRoute requiredPermission="savings-accounts-view"><CollectionSpreadsheetPage /></ProtectedRoute>} />
+                                <Route path="/savings/collection/multi-day" element={<ProtectedRoute requiredPermission="savings-accounts-view"><MultiDayDepositPage /></ProtectedRoute>} />
 
                                 {/* ── Loan & Operations Reports ────────────────────── */}
-                                <Route path="/reports/loans/debtors" element={<ProtectedRoute requiredPermission="loan-list"><DebtorsReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/loans/defaulters" element={<ProtectedRoute requiredPermission="loan-list"><DefaultersReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/loans/par" element={<ProtectedRoute requiredPermission="loan-list"><PARReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/daily-transactions" element={<ProtectedRoute requiredPermission="loan-list"><RemittanceReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/daily-summary" element={<ProtectedRoute requiredPermission="loan-list"><DailySummaryReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/clients/groups" element={<ProtectedRoute requiredPermission="client-list"><GroupReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/savings-by-product" element={<ProtectedRoute requiredPermission="savings-list"><SavingsProductReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/contributions/daily" element={<ProtectedRoute requiredPermission="savings-list"><DailyContributionReportPage /></ProtectedRoute>} />
-                                <Route path="/reports/contributions/spreadsheet" element={<ProtectedRoute requiredPermission="savings-list"><CollectionSpreadsheetPage /></ProtectedRoute>} />
-                                <Route path="/reports/summary" element={<ProtectedRoute requiredPermission="loan-list"><ReportSummaryPage /></ProtectedRoute>} />
+                                <Route path="/reports/loans/debtors" element={<ProtectedRoute requiredPermission="loan-accounts-view"><DebtorsReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/loans/defaulters" element={<ProtectedRoute requiredPermission="loan-accounts-view"><DefaultersReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/loans/par" element={<ProtectedRoute requiredPermission="loan-accounts-view"><PARReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/daily-transactions" element={<ProtectedRoute requiredPermission="loan-accounts-view"><RemittanceReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/daily-summary" element={<ProtectedRoute requiredPermission="loan-accounts-view"><DailySummaryReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/clients/groups" element={<ProtectedRoute requiredPermission="clients-view"><GroupReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/savings-by-product" element={<ProtectedRoute requiredPermission="savings-accounts-view"><SavingsProductReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/contributions/daily" element={<ProtectedRoute requiredPermission="savings-accounts-view"><DailyContributionReportPage /></ProtectedRoute>} />
+                                <Route path="/reports/contributions/spreadsheet" element={<ProtectedRoute requiredPermission="savings-accounts-view"><CollectionSpreadsheetPage /></ProtectedRoute>} />
+                                <Route path="/reports/summary" element={<ProtectedRoute requiredPermission="loan-accounts-view"><ReportSummaryPage /></ProtectedRoute>} />
 
                                 {/* ── Admin Operations ─────────────────────────────── */}
                                 <Route path="/admin/transaction-reversal" element={<ProtectedRoute requiredPermission="admin"><TransactionReversalPage /></ProtectedRoute>} />

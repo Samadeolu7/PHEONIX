@@ -314,6 +314,31 @@ class PermissionResolver:
             ).exists()
             if not any_policies:
                 return cls._legacy_mode_baseline(user)
+
+            # The role has policies for OTHER pages but none for this one.
+            # Fall back to the role's flat permission_codes list so that pages
+            # granted via the Action Permissions tab (or before the page-level
+            # policy system was set up) still work.
+            if page is not None:
+                page_code = page if isinstance(page, str) else getattr(page, 'code', None)
+                if page_code:
+                    _FLAG_SUFFIX = {
+                        'can_view': 'view', 'can_create': 'create',
+                        'can_edit': 'edit', 'can_delete': 'delete',
+                        'can_approve': 'approve', 'can_export': 'export',
+                    }
+                    merged: dict[str, bool] = {f: False for f in FLAG_NAMES}
+                    found = False
+                    for role in user.roles.filter(is_active=True, id__in=role_ids):
+                        codes = set(role.permission_codes or [])
+                        for flag, suffix in _FLAG_SUFFIX.items():
+                            if f'{page_code}-{suffix}' in codes:
+                                merged[flag] = True
+                                found = True
+                    if found:
+                        return EffectivePermission(**merged)
+
+            # No policy and no permission_codes entry — deny by default.
             return EffectivePermission()
 
         # Pick the single most specific policy per role then aggregate across roles
@@ -399,14 +424,29 @@ class PermissionResolver:
 
         overrides = cls._active_overrides(user)
 
-        # Filter overrides relevant to this target (same specificity logic as policies)
+        # Filter overrides relevant to this target (same specificity logic as policies).
+        # module/page/action may be string codes or model instances — resolve to PKs once.
+        from pages.models import Module, ModulePage, PageAction
+
+        def _resolve_pk(target, model, code_field='code'):
+            if target is None:
+                return None
+            if isinstance(target, str):
+                obj = model.objects.filter(**{code_field: target}).first()
+                return obj.pk if obj else None
+            return getattr(target, 'pk', None)
+
+        action_pk = _resolve_pk(action, PageAction)
+        page_pk   = _resolve_pk(page, ModulePage)
+        module_pk = _resolve_pk(module, Module)
+
         relevant = []
         for o in overrides:
-            if action is not None and o.action_id == getattr(action, 'id', None):
+            if action_pk is not None and o.action_id == action_pk:
                 relevant.append((3, o))
-            elif page is not None and o.page_id == getattr(page, 'id', None) and o.action_id is None:
+            elif page_pk is not None and o.page_id == page_pk and o.action_id is None:
                 relevant.append((2, o))
-            elif module is not None and o.module_id == getattr(module, 'id', None) and o.page_id is None and o.action_id is None:
+            elif module_pk is not None and o.module_id == module_pk and o.page_id is None and o.action_id is None:
                 relevant.append((1, o))
             elif o.module_id is None and o.page_id is None and o.action_id is None:
                 relevant.append((0, o))

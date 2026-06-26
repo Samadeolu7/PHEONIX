@@ -124,7 +124,7 @@ const NAV_MODULES = [
     path: '/client-services',
     icon: Users,
     description: 'Borrower profiles, KYC, loan applications, and account management',
-    requiredPermissions: ['client-view', 'classification-view', 'entitlement-list'],
+    requiredPermissions: ['clients-view', 'client-list', 'loan-accounts-view', 'savings-accounts-view', 'entitlement-list'],
   },
   {
     id: 'administration',
