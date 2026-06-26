@@ -154,14 +154,12 @@ class OwnerBranchManager(SoftDeleteManager):
         branch = getattr(user, 'branch', None)
         if branch:
             from django.db.models import Q as _Q
-            tenant_wide_flag = getattr(self.model, 'ALLOW_NULL_BRANCH_VISIBILITY', False)
-            if tenant_wide_flag:
-                qs = qs.filter(_Q(branch=branch) | _Q(branch__isnull=True))
-            else:
-                qs = qs.filter(branch=branch)
+            # NULL-branch records are tenant-wide config (e.g. fee structures, loan
+            # products imported without a branch). Always include them so every user
+            # in the branch can see shared configuration. This matches the behaviour
+            # of _build_scoped_qs in loans/views.py.
+            qs = qs.filter(_Q(branch=branch) | _Q(branch__isnull=True))
         # No branch assigned → no additional restriction beyond tenant scope.
-        # Officer-level scoping (assigned_clients etc.) is applied separately by
-        # ScopedModelViewSet._apply_officer_scope().
 
         # NOTE: We do NOT filter by owner here.
         # The 'owner' field is for audit purposes only.

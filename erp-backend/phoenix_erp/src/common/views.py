@@ -294,18 +294,10 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
                 # Tenant owners see all data within their tenant; skip branch filter
                 is_owner = callable(getattr(user, 'is_owner', None)) and user.is_owner()
                 if not is_owner:
-                    # Filter strictly by the user's branch.
-                    # NULL-branch records are NOT visible to regular staff —
-                    # only directors/owners (handled above) can see tenant-wide records.
-                    # Models that genuinely need NULL-branch visibility must declare
-                    # ALLOW_NULL_BRANCH_VISIBILITY = True on the model class.
+                    # Filter by the user's branch, always including NULL-branch records
+                    # (tenant-wide config like fee structures, loan products, etc.).
                     if hasattr(user, 'branch') and user.branch and 'branch' in field_names:
-                        model_cls = getattr(self.queryset, 'model', None)
-                        tenant_wide = getattr(model_cls, 'ALLOW_NULL_BRANCH_VISIBILITY', False)
-                        if tenant_wide:
-                            qs = qs.filter(Q(branch=user.branch) | Q(branch__isnull=True))
-                        else:
-                            qs = qs.filter(branch=user.branch)
+                        qs = qs.filter(Q(branch=user.branch) | Q(branch__isnull=True))
 
                 return self._apply_officer_scope(qs)
             except Exception:
