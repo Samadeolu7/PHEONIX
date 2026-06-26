@@ -374,6 +374,31 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
             raise serializers.ValidationError('client_type must be one of dc, wl, ml, pr')
         return normalized
 
+    def validate(self, data):
+        client_type = data.get('client_type', '')
+        group = data.get('group')
+
+        # Group is required for all active client types; prospects convert later
+        if client_type and client_type != 'pr' and not group:
+            raise serializers.ValidationError(
+                {'group': 'A group is required for dc, wl, and ml clients.'}
+            )
+
+        # Cascade assigned_officer from the group if not explicitly provided
+        if group and not data.get('assigned_officer') and group.assigned_officer_id:
+            data['assigned_officer'] = group.assigned_officer
+
+        # Fallback: assign the creating user's own staff profile
+        if not data.get('assigned_officer'):
+            request = self.context.get('request')
+            if request is not None:
+                try:
+                    data['assigned_officer'] = request.user.staff_profile
+                except Exception:
+                    pass
+
+        return data
+
 
 class ClientRegistrationConfigSerializer(TenantModelSerializer):
     registration_income_account_name = serializers.CharField(
