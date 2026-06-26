@@ -41,20 +41,26 @@ def _apply_compulsory_savings_on_disbursement(sender, instance, created, **kwarg
     from .models import CompulsorySavingsPolicy, SavingsAccount
 
     try:
-        policy = (
-            CompulsorySavingsPolicy.objects
-            .filter(owner=instance.owner, branch=instance.branch, enabled=True)
-            .first()
+        # Policies are branch/tenant config — don't filter by owner (the record's
+        # creator). A policy created by the import admin must be visible to any
+        # user in the same branch.
+        policy_qs = CompulsorySavingsPolicy.objects.filter(
+            branch=instance.branch, enabled=True,
         )
+        tenant = getattr(instance, 'tenant', None)
+        if tenant:
+            policy_qs = policy_qs.filter(tenant=tenant)
+        policy = policy_qs.first()
         if not policy or policy.amount <= 0:
             return
 
         # Find the client's first active savings account on this branch.
+        # owner is the record's creator; it may differ from the loan's owner
+        # when the loan was imported by an admin account.
         savings_account = (
             SavingsAccount.objects
             .filter(
                 client=instance.client,
-                owner=instance.owner,
                 branch=instance.branch,
                 status='active',
             )

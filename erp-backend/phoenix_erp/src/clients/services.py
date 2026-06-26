@@ -11,9 +11,16 @@ from .models import Client, ClientRegistrationConfig
 
 def get_active_registration_config(owner, branch=None) -> ClientRegistrationConfig | None:
     """
-    Resolve active config for branch first, then owner-level fallback.
+    Resolve active config for this branch first, then tenant-wide fallback.
+
+    Configs are shared tenant resources — any user in the tenant can see them
+    regardless of who created them.  The ``owner`` param is a User and is used
+    only to derive the tenant; it is NOT used as a filter condition.
     """
-    qs = ClientRegistrationConfig.objects.filter(owner=owner, is_active=True)
+    tenant = getattr(owner, 'tenant', None)
+    if not tenant:
+        return None
+    qs = ClientRegistrationConfig.objects.filter(tenant=tenant, is_active=True)
     if branch:
         cfg = qs.filter(branch=branch).order_by('-updated_at').first()
         if cfg:

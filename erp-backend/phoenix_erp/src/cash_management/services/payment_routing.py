@@ -165,10 +165,13 @@ class PaymentRoutingService:
                 'pk': cashier_account_id,
                 'account_type': Account.ASSET,
             }
-            if owner is not None:
-                filters['owner'] = owner
-            if branch is not None:
-                filters['branch'] = branch
+            # Scope by tenant only.  The cashier GL account belongs to the teller
+            # (request.user), not to loan.owner or client.owner — filtering by
+            # owner/branch from the loan would silently exclude the teller's own
+            # account when the loan was created by a different user (e.g. import admin).
+            tenant = getattr(user, 'tenant', None)
+            if tenant is not None:
+                filters['tenant'] = tenant
 
             try:
                 explicit_account = Account.objects.get(**filters)
