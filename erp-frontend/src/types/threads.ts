@@ -1,0 +1,115 @@
+// Thread system types — mirrors the Django threads app API
+
+export type ThreadStatus = 'open' | 'closed';
+
+export type ThreadReason = 'query' | 'approval' | 'dispute' | 'note' | 'other';
+
+export interface ThreadParticipantUser {
+  id: number;
+  username: string;
+  full_name: string;
+}
+
+export interface MessageReadReceiptItem {
+  participant: number;
+  participant_name: string;
+  read_at: string;
+}
+
+export interface ThreadMessageItem {
+  id: number;
+  thread: number;
+  author: number | null;
+  author_name: string;
+  body: string;
+  attachment: string | null;
+  attachment_url: string | null;
+  is_system_message: boolean;
+  created_at: string;
+  read_by: MessageReadReceiptItem[];
+}
+
+export interface ThreadParticipantItem {
+  id: number;
+  thread: number;
+  user: number;
+  user_info: ThreadParticipantUser;
+  added_by: number | null;
+  can_add_participants: boolean;
+  last_read_at: string | null;
+  has_unread: boolean;
+}
+
+export interface LinkedRecordRepr {
+  app: string;
+  model: string;
+  id: number;
+  repr: string;
+}
+
+export interface LastMessagePreview {
+  id: number;
+  body: string;
+  is_system_message: boolean;
+  author_name: string;
+  created_at: string;
+}
+
+export interface Thread {
+  id: number;
+  page: number;
+  page_url: string | null;
+  content_type: number | null;
+  object_id: number | null;
+  linked_record_repr: LinkedRecordRepr | null;
+  title: string;
+  reason: ThreadReason | '';
+  initiated_by: number;
+  initiated_by_name: string;
+  status: ThreadStatus;
+  closed_by: number | null;
+  closed_by_name: string | null;
+  closed_at: string | null;
+  participants: ThreadParticipantItem[];
+  last_message: LastMessagePreview | null;
+  unread_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ThreadWidgetSummary {
+  unread_count: number;
+  recent_threads: {
+    id: number;
+    title: string;
+    last_message_preview: string;
+    last_activity: string;
+    unread_messages: number;
+    page_url: string | null;
+    status: ThreadStatus;
+  }[];
+}
+
+export interface PageThreadConfig {
+  page_id: number;
+  title: string;
+  page_type: string;
+  is_threadable: boolean;
+  can_initiate: boolean;
+  thread: {
+    who_can_initiate?: string[];
+    auto_include_roles?: string[];
+    max_open_threads?: number;
+    require_reason?: boolean;
+  };
+}
+
+export interface CreateThreadPayload {
+  page: number;
+  content_type?: number;
+  object_id?: number;
+  reason?: ThreadReason | '';
+  participant_ids?: number[];
+}
+
+export type PanelState = 'hidden' | 'open' | 'minimised';

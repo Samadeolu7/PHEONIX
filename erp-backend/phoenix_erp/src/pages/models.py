@@ -113,7 +113,13 @@ class ModulePage(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     is_active = models.BooleanField(default=True)
     # Access control
     required_permission = models.CharField(max_length=100, blank=True)
-    
+
+    # Thread configuration
+    is_threadable = models.BooleanField(
+        default=False,
+        help_text="Allow contextual discussion threads on this page"
+    )
+
     class Meta:
         db_table = 'module_pages'
         ordering = ['module', 'order', 'title']
@@ -169,6 +175,20 @@ class ModulePage(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if not self.required_permission:
             return True
         return user.has_perm(self.required_permission)
+
+    def get_thread_config(self):
+        return self.page_config.get('thread', {})
+
+    def user_can_initiate_thread(self, user):
+        if not self.is_threadable:
+            return False
+        allowed_roles = self.get_thread_config().get('who_can_initiate', [])
+        if not allowed_roles:
+            return True
+        try:
+            return user.roles.filter(is_active=True, name__in=allowed_roles).exists()
+        except Exception:
+            return True
 
 
 class PageWidget(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

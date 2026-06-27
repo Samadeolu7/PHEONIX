@@ -3,16 +3,23 @@ import DashboardPage from '../pages/DashboardPage';
 import AccountDetailPage from '../pages/AccountsListPage';
 import DynamicModulePage from '../pages/DynamicModulePage';
 import WorkflowStatusPage from '../pages/WorkflowStatusPage';
-import AppLayout from '../components/layout/AppLayout'; // If you have it
+import AppLayout from '../components/layout/AppLayout';
+import { ThreadInboxPage } from '../components/threads/ThreadInboxPage';
 
 export const router = createBrowserRouter([
   {
     path: '/',
-    element: <AppLayout />, // Or your root layout component
+    element: <AppLayout />,
     children: [
       {
         path: '/',
         element: <DashboardPage />,
+      },
+
+      // Discussions inbox
+      {
+        path: '/threads',
+        element: <ThreadInboxPage />,
       },
 
       // Workflow status page

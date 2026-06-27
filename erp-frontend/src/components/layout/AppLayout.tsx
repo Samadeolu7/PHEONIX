@@ -3,7 +3,7 @@ import { Outlet, useNavigate, Link, useLocation } from 'react-router-dom';
 import {
   Settings, LogOut, User as UserIcon, Users, Shield,
   ChevronLeft, ChevronRight, Home, LayoutDashboard,
-  GitBranch, ChevronDown, Check, X,
+  GitBranch, ChevronDown, Check, X, MessageSquare,
 } from 'lucide-react';
 import { authService } from '../../services/authService';
 import { BRAND } from '../../constants/brand';
@@ -13,6 +13,8 @@ import { getRoleSidebarButtons } from '../../config/roleSidebarConfig';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
 import { branchService, Branch } from '../../services/branchService';
+import { ThreadProvider, useThreadContext } from '../../contexts/ThreadContext';
+import { ThreadPanel } from '../threads/ThreadPanel';
 
 // ---------------------------------------------------------------------------
 // BranchSwitcher — only rendered for director / admin / operations / owner
@@ -159,7 +161,49 @@ function BranchSwitcher() {
   );
 }
 
-export default function AppLayout() {
+function ThreadsNavItem({ collapsed, navy, gold }: { collapsed: boolean; navy: string; gold: string }) {
+  const { globalUnreadCount } = useThreadContext();
+  const location = useLocation();
+  const active = location.pathname === '/threads';
+  return (
+    <Link
+      to="/threads"
+      className="flex items-center rounded-lg px-3 py-2.5 transition-all duration-150 relative"
+      style={{
+        background: active ? `rgba(183,151,88,0.18)` : 'transparent',
+        borderLeft: active ? `3px solid ${gold}` : '3px solid transparent',
+      }}
+      title="Discussions"
+    >
+      <div className="relative flex-shrink-0">
+        <MessageSquare
+          className="w-5 h-5"
+          style={{ color: active ? gold : 'rgba(255,255,255,0.6)' }}
+        />
+        {globalUnreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
+            {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
+          </span>
+        )}
+      </div>
+      {!collapsed && (
+        <span
+          className="ml-3 text-sm font-medium whitespace-nowrap"
+          style={{ color: active ? gold : 'rgba(255,255,255,0.75)' }}
+        >
+          Discussions
+          {globalUnreadCount > 0 && (
+            <span className="ml-1.5 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full">
+              {globalUnreadCount}
+            </span>
+          )}
+        </span>
+      )}
+    </Link>
+  );
+}
+
+function AppLayoutInner() {
   const navigate = useNavigate();
   const location = useLocation();
   const { selectedRole, activeBranch, isDirectorPlus } = useAuth();
@@ -333,6 +377,11 @@ export default function AppLayout() {
               />
             ))}
           </nav>
+
+          {/* Discussions */}
+          <div className="px-3">
+            <ThreadsNavItem collapsed={collapsed} navy={navy} gold={gold} />
+          </div>
 
           {/* Admin Section */}
           {(user?.is_owner || user?.is_staff) && (
@@ -548,6 +597,17 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+
+      {/* Thread slide panel — renders fixed-positioned, mounts once at app level */}
+      <ThreadPanel />
     </div>
+  );
+}
+
+export default function AppLayout() {
+  return (
+    <ThreadProvider>
+      <AppLayoutInner />
+    </ThreadProvider>
   );
 }

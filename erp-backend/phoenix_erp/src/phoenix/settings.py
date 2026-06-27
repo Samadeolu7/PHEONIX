@@ -202,6 +202,7 @@ INSTALLED_APPS = [
     'banks',  # Bank management system
     'internal_api',  # Internal endpoints consumed by Java microservices
     'permissions',  # Granular scope-aware permission system
+    'threads',  # Contextual page-anchored discussion threads
 ]
 
 MIDDLEWARE = [

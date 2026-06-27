@@ -218,6 +218,69 @@ class ModulePageViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+    @action(detail=True, methods=['get', 'patch'], url_path='thread-config')
+    def thread_config(self, request, pk=None):
+        """
+        GET  /api/pages/module-pages/{id}/thread-config/
+             Returns current thread configuration for this page.
+
+        PATCH /api/pages/module-pages/{id}/thread-config/
+              Body: { is_threadable, who_can_initiate, auto_include_roles,
+                      max_open_threads, require_reason }
+              Directors/Principals only.
+        """
+        page = self.get_object()
+
+        if request.method == 'GET':
+            config = page.get_thread_config()
+            return Response({
+                'id': page.pk,
+                'title': page.title,
+                'page_type': page.page_type,
+                'is_threadable': page.is_threadable,
+                'thread': config,
+            })
+
+        # PATCH — Directors only
+        user = request.user
+        is_director = False
+        if getattr(user, 'is_system_admin', False):
+            is_director = True
+        elif callable(getattr(user, 'is_owner', None)) and user.is_owner():
+            is_director = True
+        else:
+            try:
+                is_director = user.roles.filter(is_active=True, default_scope='global').exists()
+            except Exception:
+                pass
+
+        if not is_director:
+            return Response(
+                {'detail': 'Only Directors can modify thread configuration.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        data = request.data
+        if 'is_threadable' in data:
+            page.is_threadable = bool(data['is_threadable'])
+
+        thread_keys = ['who_can_initiate', 'auto_include_roles', 'max_open_threads', 'require_reason']
+        config = page.page_config or {}
+        thread_cfg = config.get('thread', {})
+        for key in thread_keys:
+            if key in data:
+                thread_cfg[key] = data[key]
+        config['thread'] = thread_cfg
+        page.page_config = config
+        page.save(update_fields=['is_threadable', 'page_config', 'updated_at'])
+
+        return Response({
+            'id': page.pk,
+            'title': page.title,
+            'is_threadable': page.is_threadable,
+            'thread': thread_cfg,
+        })
+
 
 # Test the endpoint
 """
