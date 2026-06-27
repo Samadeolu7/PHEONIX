@@ -65,7 +65,7 @@ def migration_snapshot(request):
         tenant=tenant,
         branch=branch,
         is_deleted=False,
-        account_level="child",
+        account_level=Account.LEVEL_CHILD,
     ).values("name", "code", "account_type", "balance", "balance_bf")
 
     banks       = []
@@ -98,6 +98,7 @@ def migration_snapshot(request):
         SavingsAccount.objects
         .select_related("account", "client")
         .filter(tenant=tenant, branch=branch)
+        .exclude(account__balance=0)   # skip empty auto-created accounts
         .order_by("account_number")
     ):
         balance = _d(sa.account.balance if sa.account else None)
