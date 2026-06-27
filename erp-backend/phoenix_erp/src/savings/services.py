@@ -366,7 +366,15 @@ def initiate_withdrawal(
     if amount <= Decimal('0.00'):
         raise ValidationError("Withdrawal amount must be positive.")
 
-    if amount > savings_account.available_balance:
+    withdrawable = savings_account.available_balance - savings_account.minimum_balance
+    if amount > withdrawable:
+        if savings_account.minimum_balance > Decimal('0.00'):
+            raise ValidationError(
+                f"Insufficient funds: ₦{savings_account.minimum_balance:,.2f} is held as "
+                f"compulsory savings and cannot be withdrawn. "
+                f"Available for withdrawal: ₦{max(withdrawable, Decimal('0.00')):,.2f}, "
+                f"requested: ₦{amount:,.2f}."
+            )
         raise ValidationError(
             f"Insufficient funds: available ₦{savings_account.available_balance:,.2f}, "
             f"requested ₦{amount:,.2f}."

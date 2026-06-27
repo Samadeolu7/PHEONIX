@@ -4,6 +4,13 @@ savings/signals.py
 Django signals for the Savings module.
 
 Handlers:
+    _create_default_savings_account
+        When a new Client is created, automatically open a Regular Savings
+        account (product code SAV-REG) for that client.  A child GL account
+        is created under parent 2140 (Customer Savings Deposits) and a
+        SavingsAccount record is linked to it.  Failures are logged but never
+        propagate — client creation is never blocked.
+
     _apply_compulsory_savings_on_disbursement
         When a LoanAccount transitions to 'disbursed', check whether the branch
         has an enabled CompulsorySavingsPolicy.  If so, deposit the policy amount
@@ -18,12 +25,105 @@ Handlers:
         is recorded as coming from the same source.
 """
 import logging
+from decimal import Decimal
 
 from django.db import transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+_SAVINGS_PARENT_CODE = '2140'
+_DEFAULT_SAVINGS_PRODUCT_CODE = 'SAV-REG'
+
+
+@receiver(post_save, sender='clients.Client')
+def _create_default_savings_account(sender, instance, created, **kwargs):
+    """
+    Automatically open a Regular Savings account whenever a new Client is saved.
+
+    Idempotent: if the client already has an active savings account on this branch
+    (e.g. created by a management command before this signal was in place) the
+    handler exits without creating a duplicate.
+    """
+    if not created:
+        return
+
+    from products.models import Product
+    from accounts.models import Account
+    from .models import SavingsAccount
+
+    try:
+        with transaction.atomic():
+            # Find the Regular Savings product, preferring the branch-local one
+            product_qs = Product.objects.filter(
+                product_type='SAVINGS',
+                code=_DEFAULT_SAVINGS_PRODUCT_CODE,
+                is_active=True,
+            )
+            product = (
+                product_qs.filter(branch=instance.branch).first()
+                or product_qs.first()
+            )
+            if not product:
+                logger.warning(
+                    'Auto savings: no active "%s" product found; skipping for client %s.',
+                    _DEFAULT_SAVINGS_PRODUCT_CODE,
+                    instance.pk,
+                )
+                return
+
+            # Idempotency guard — skip if a savings account already exists
+            if SavingsAccount.objects.filter(
+                client=instance,
+                status='active',
+            ).exists():
+                return
+
+            # Create a child GL account under 2140 (Customer Savings Deposits)
+            gl_account = Account.create_with_parent(
+                parent_code=_SAVINGS_PARENT_CODE,
+                child_data={
+                    'name': f'Savings – {instance.full_name}',
+                    'allow_manual_entries': True,
+                    'owner': instance.owner,
+                    'branch': instance.branch,
+                    'tenant': instance.tenant,
+                    'created_by': instance.created_by,
+                },
+            )
+
+            SavingsAccount.objects.create(
+                client=instance,
+                account=gl_account,
+                product=product,
+                account_number=gl_account.code,
+                nickname=f"{instance.first_name}'s Savings",
+                status='active',
+                opened_on=timezone.now().date(),
+                interest_rate=product.interest_rate or Decimal('0.00'),
+                interest_calculation_method='monthly',
+                minimum_balance=product.minimum_amount or Decimal('0.00'),
+                owner=instance.owner,
+                branch=instance.branch,
+                tenant=instance.tenant,
+                created_by=instance.created_by,
+            )
+
+            logger.info(
+                'Auto savings: opened %s savings account %s for client %s.',
+                product.name,
+                gl_account.code,
+                instance.pk,
+            )
+
+    except Exception:
+        # Never let a savings setup failure prevent a client from being created.
+        logger.exception(
+            'Auto savings: failed to create default savings account for client %s.',
+            instance.pk,
+        )
 
 
 @receiver(post_save, sender='loans.LoanAccount')

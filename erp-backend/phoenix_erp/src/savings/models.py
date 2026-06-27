@@ -220,7 +220,14 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 "that will pay out the withdrawal."
             )
 
-        if amount > self.available_balance:
+        withdrawable = self.available_balance - self.minimum_balance
+        if amount > withdrawable:
+            if self.minimum_balance > 0:
+                raise ValidationError(
+                    f"Withdrawal would reduce balance below the required minimum of "
+                    f"₦{self.minimum_balance:,.2f} held as compulsory savings. "
+                    f"Available for withdrawal: ₦{max(withdrawable, Decimal('0.00')):,.2f}."
+                )
             raise ValidationError("Insufficient funds")
 
         from transactions.models import (

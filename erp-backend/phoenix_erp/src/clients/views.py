@@ -36,6 +36,45 @@ from .services import get_active_registration_config, collect_client_registratio
 from cash_management.services.payment_routing import PaymentRoutingService
 
 
+def _collect_compulsory_savings(client, cashier_account, transacted_by):
+    """
+    Deposit the branch compulsory savings amount into the client's active savings
+    account and lock it as minimum_balance so it cannot be withdrawn.
+
+    Silently skips if no enabled policy exists or if the client has no savings account.
+    Must be called inside an existing atomic block.
+    """
+    from savings.models import CompulsorySavingsPolicy, SavingsAccount
+
+    policy = CompulsorySavingsPolicy.objects.filter(
+        branch=client.branch, enabled=True,
+    ).order_by('-updated_at').first()
+
+    if not policy or policy.amount <= Decimal('0.00'):
+        return
+
+    savings = (
+        SavingsAccount.objects
+        .filter(client=client, status='active')
+        .order_by('opened_on')
+        .first()
+    )
+    if not savings:
+        return
+
+    savings.deposit(
+        amount=policy.amount,
+        description=f"Compulsory savings at registration – {client.client_id}",
+        cashier_account=cashier_account,
+        transacted_by=transacted_by,
+    )
+
+    # Lock the deposited amount as a non-withdrawable floor
+    if policy.amount > savings.minimum_balance:
+        savings.minimum_balance = policy.amount
+        savings.save(update_fields=['minimum_balance', 'updated_at'])
+
+
 class ClientViewSet(ScopedModelViewSet):
     """
     Universal client/student endpoint with comprehensive management capabilities.
@@ -149,6 +188,8 @@ class ClientViewSet(ScopedModelViewSet):
             except ValidationError as exc:
                 raise DRFValidationError({'detail': exc.messages})
 
+            _collect_compulsory_savings(client, cashier_account, self.request.user)
+
     @action(detail=False, methods=['get'], url_path='registration-fee-preview')
     def registration_fee_preview(self, request):
         client_type = (request.query_params.get('client_type') or '').lower()
@@ -166,12 +207,22 @@ class ClientViewSet(ScopedModelViewSet):
             )
 
         registration_fee, id_fee = config.get_fees_for_client_type(client_type)
+
+        from savings.models import CompulsorySavingsPolicy
+        policy = CompulsorySavingsPolicy.objects.filter(
+            branch=request.user.branch, enabled=True,
+        ).order_by('-updated_at').first()
+        compulsory_savings = policy.amount if policy else Decimal('0.00')
+
+        reg_fee = Decimal(str(registration_fee or 0))
+        id_fee_val = Decimal(str(id_fee or 0))
         return Response(
             {
                 'client_type': client_type,
-                'registration_fee': str(registration_fee),
-                'id_fee': str(id_fee),
-                'total': str((registration_fee or 0) + (id_fee or 0)),
+                'registration_fee': str(reg_fee),
+                'id_fee': str(id_fee_val),
+                'compulsory_savings': str(compulsory_savings),
+                'total': str(reg_fee + id_fee_val + compulsory_savings),
                 'registration_income_account': config.registration_income_account_id,
                 'id_fee_income_account': config.id_fee_income_account_id,
             }
@@ -226,6 +277,7 @@ class ClientViewSet(ScopedModelViewSet):
                 transacted_by=request.user,
                 config=config,
             )
+            _collect_compulsory_savings(client, cashier_account, request.user)
 
         return Response(ClientDetailSerializer(client, context={'request': request}).data)
     
