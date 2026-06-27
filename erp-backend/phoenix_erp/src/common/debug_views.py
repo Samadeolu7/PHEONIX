@@ -123,10 +123,20 @@ def migration_snapshot(request):
         .order_by("loan_number")
     ):
         balance = _d(la.account.balance if la.account else None)
-        # loan_number format: LOAN-<client_id>-<seq>  or  <old_loan_id>
+        # loan_number formats:
+        #   "LN-<old_pk>"         legacy migration format  → extract old_pk
+        #   "LOAN-<client_id>-N"  newer format            → extract client_id
         parts = (la.loan_number or "").split("-")
-        client_id = parts[1] if len(parts) >= 2 and parts[0] == "LOAN" else None
-        old_loan_id = la.loan_number if not client_id else None
+        if len(parts) >= 2 and parts[0] == "LN":
+            # Legacy: "LN-1028" → old_loan_id = "1028"
+            client_id = None
+            old_loan_id = parts[1]
+        elif len(parts) >= 2 and parts[0] == "LOAN":
+            client_id = parts[1]
+            old_loan_id = None
+        else:
+            client_id = None
+            old_loan_id = la.loan_number
         loans_rows.append({
             "client_id":   client_id,
             "loan_number": la.loan_number,
