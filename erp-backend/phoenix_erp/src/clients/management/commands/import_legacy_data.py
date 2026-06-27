@@ -965,6 +965,17 @@ class Command(BaseCommand):
         parent_acct = gl["SAVINGS"]          # code 2140
         sav_ob_total = Decimal("0.00")       # running total for reconciliation
 
+        # One DB query upfront for all existing account_numbers in this tenant;
+        # replaces SavingsAccount.objects.filter(...).exists() per record.
+        existing_acct_numbers = set(
+            SavingsAccount.objects.filter(
+                tenant=ctx["tenant"], branch=ctx["branch"]
+            ).values_list("account_number", flat=True)
+        )
+
+        # One DB query to seed the code sequence; subsequent codes are in-memory.
+        code_gen = self._subledger_code_generator(Account, parent_acct)
+
         for rec in savings_data:
             balance = _d(rec.get("balance"))
             client_id = rec.get("client_id", "?")
@@ -983,13 +994,12 @@ class Command(BaseCommand):
             product = sav_products.get(product_key, sav_products["N"])
             account_number = f"SAV-{client_id}-{acct_suffix}"
 
-            # Idempotency: account_number is globally unique — skip if already imported
-            if SavingsAccount.objects.filter(account_number=account_number).exists():
+            # Idempotency: check in-memory set — no DB query per record
+            if account_number in existing_acct_numbers:
                 skipped_existing += 1
                 continue
 
-            # Generate sub-ledger code PPPP-NNNNN under parent 2140
-            child_code = self._next_subledger_code(Account, parent_acct)
+            child_code = next(code_gen)
 
             child_acct = Account.objects.create(
                 code=child_code,
@@ -1105,6 +1115,19 @@ class Command(BaseCommand):
         for s in schedules_data:
             schedules_by_loan.setdefault(s["loan_id"], []).append(s)
 
+        # One query for all existing loan numbers; replaces per-record EXISTS check
+        existing_loan_numbers = set(
+            LoanAccount.objects.filter(
+                tenant=ctx["tenant"], branch=ctx["branch"]
+            ).values_list("loan_number", flat=True)
+        )
+
+        # One DB query to seed the code sequence; subsequent codes are in-memory
+        code_gen = self._subledger_code_generator(Account, parent_acct)
+
+        # Accumulate schedule rows and bulk_create at the end of the loop
+        pending_schedules: list = []
+
         for rec in loans_data:
             client = client_map.get(rec["client_id"])
             if not client:
@@ -1113,8 +1136,8 @@ class Command(BaseCommand):
 
             loan_number = f"LN-{rec['id']}"
 
-            # Idempotency — skip if already imported
-            if LoanAccount.objects.filter(loan_number=loan_number).exists():
+            # Idempotency — check in-memory set, no DB query per record
+            if loan_number in existing_loan_numbers:
                 skipped += 1
                 continue
 
@@ -1141,7 +1164,7 @@ class Command(BaseCommand):
             new_status = self._LOAN_STATUS_MAP.get(old_status, "active")
 
             # ── GL child account ─────────────────────────────────────────
-            child_code = self._next_subledger_code(Account, parent_acct)
+            child_code = next(code_gen)
             child_acct = Account.objects.create(
                 code=child_code,
                 name=f"Loan – {client.full_name} ({loan_number})",
@@ -1225,6 +1248,7 @@ class Command(BaseCommand):
             created_count += 1
 
             # ── Repayment schedule rows ──────────────────────────────────
+            # Accumulate schedule objects; bulk_create after the outer loop.
             for i, s in enumerate(
                 sorted(
                     (r for r in raw_schedules if r.get("status") != "Deleted"),
@@ -1244,14 +1268,10 @@ class Command(BaseCommand):
                 else:
                     sched_status = "pending"
 
-                # The old system stores a single amount_due with no
-                # principal/interest split.  We reconstruct a best-effort
-                # split: interest = penalty (already charged), remainder =
-                # principal.  Phoenix requires both fields.
-                interest_due = penalty   # any accrued penalty maps to interest
+                interest_due  = penalty
                 principal_due = max(Decimal("0.00"), amount_due - interest_due)
 
-                LoanRepaymentSchedule.objects.create(
+                pending_schedules.append(LoanRepaymentSchedule(
                     loan=loan_acct,
                     installment_number=i,
                     due_date=due,
@@ -1270,8 +1290,12 @@ class Command(BaseCommand):
                     tenant=ctx["tenant"],
                     branch=ctx["branch"],
                     created_by=ctx["owner"],
-                )
+                ))
                 sched_created += 1
+
+        # Flush all schedule rows in one bulk INSERT (avoids N individual INSERTs)
+        if pending_schedules:
+            LoanRepaymentSchedule.objects.bulk_create(pending_schedules, batch_size=500)
 
         self.stdout.write(
             f"    {created_count} loans created, "
@@ -1561,12 +1585,19 @@ class Command(BaseCommand):
         created_count = 0
         skipped = 0
 
+        # One query to load all existing names; replaces per-record EXISTS check
+        existing_names = set(
+            Account.objects.filter(
+                parent=parent_acct,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            ).values_list("name", flat=True)
+        )
+
         for rec in income_data:
             name = f"{rec['name']} ({rec.get('year', 'YTD')})"
-            if Account.objects.filter(
-                name=name, parent=parent_acct,
-                tenant=ctx["tenant"], branch=ctx["branch"], is_deleted=False,
-            ).exists():
+            if name in existing_names:
                 skipped += 1
                 continue
 
@@ -1608,12 +1639,18 @@ class Command(BaseCommand):
         created_count = 0
         skipped = 0
 
+        existing_names = set(
+            Account.objects.filter(
+                parent=parent_acct,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            ).values_list("name", flat=True)
+        )
+
         for rec in expense_data:
             name = f"{rec['name']} ({rec.get('year', 'YTD')})"
-            if Account.objects.filter(
-                name=name, parent=parent_acct,
-                tenant=ctx["tenant"], branch=ctx["branch"], is_deleted=False,
-            ).exists():
+            if name in existing_names:
                 skipped += 1
                 continue
 
@@ -1657,12 +1694,18 @@ class Command(BaseCommand):
         skipped = 0
         liab_bf_total = Decimal("0.00")   # running total for reconciliation
 
+        existing_names = set(
+            Account.objects.filter(
+                parent=parent_acct,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            ).values_list("name", flat=True)
+        )
+
         for rec in liability_data:
             name = f"{rec['name']} ({rec.get('year', 'YTD')})"
-            if Account.objects.filter(
-                name=name, parent=parent_acct,
-                tenant=ctx["tenant"], branch=ctx["branch"], is_deleted=False,
-            ).exists():
+            if name in existing_names:
                 skipped += 1
                 continue
 
@@ -1837,15 +1880,22 @@ class Command(BaseCommand):
             )
         )
 
-        # Sync balance_bf on every imported child account to its source value
+        # Sync balance_bf on every imported child account to its source value.
+        # bulk_update writes one UPDATE with CASE…WHEN instead of N individual UPDATEs.
+        child_accounts_to_update = []
         for account, _amount, bbf_value, _side in non_zero:
-            Account.objects.filter(pk=account.pk).update(balance_bf=bbf_value)
+            account.balance_bf = bbf_value
+            child_accounts_to_update.append(account)
+        Account.objects.bulk_update(child_accounts_to_update, ['balance_bf'], batch_size=500)
 
-        # Propagate balance_bf to parent GL accounts (balance is correct after post)
+        # Propagate balance_bf to parent GL accounts (balance is correct after post).
+        # Re-fetch parents in one query, then bulk_update.
         parent_pks = {a.parent_id for a, _, _, _ in non_zero if a.parent_id}
-        for pk in parent_pks:
-            parent_bal = Account.objects.get(pk=pk).balance
-            Account.objects.filter(pk=pk).update(balance_bf=parent_bal)
+        parent_accounts = list(Account.objects.filter(pk__in=parent_pks))
+        for p in parent_accounts:
+            p.balance_bf = p.balance
+        if parent_accounts:
+            Account.objects.bulk_update(parent_accounts, ['balance_bf'], batch_size=500)
 
         self.stdout.write(
             f"    balance_bf set for {len(non_zero)} accounts "
@@ -1892,7 +1942,15 @@ class Command(BaseCommand):
             return
 
         bank_acct_map = self._build_bank_account_map(banks_data, Account, gl, ctx)
-        suspense = self._get_suspense_account(Account, gl, ctx)
+        suspense      = self._get_suspense_account(Account, gl, ctx)
+
+        # One query to build account_number → GL Account map; replaces per-payment lookup
+        sav_gl_map: dict = {
+            sa.account_number: sa.account
+            for sa in SavingsAccount.objects.select_related('account').filter(
+                tenant=ctx["tenant"], branch=ctx["branch"],
+            )
+        }
 
         created = 0
         skipped = 0
@@ -1903,13 +1961,10 @@ class Command(BaseCommand):
             acct_suffix = "DC" if sav_type == "D" else "REG"
             account_number = f"SAV-{client_id}-{acct_suffix}"
 
-            try:
-                sav_acct = SavingsAccount.objects.get(account_number=account_number)
-            except SavingsAccount.DoesNotExist:
+            gl_sav_acct = sav_gl_map.get(account_number)
+            if gl_sav_acct is None:
                 skipped += 1
                 continue
-
-            gl_sav_acct = sav_acct.account
             bank_id     = rec.get("bank_id")
             cash_acct   = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
             amount      = _d(rec.get("amount"))
@@ -1998,7 +2053,18 @@ class Command(BaseCommand):
             return
 
         bank_acct_map = self._build_bank_account_map(banks_data, Account, gl, ctx)
-        suspense = self._get_suspense_account(Account, gl, ctx)
+        suspense      = self._get_suspense_account(Account, gl, ctx)
+
+        # Loan map is shared with Step 16 via ctx to avoid a second bulk query
+        loan_gl_map = ctx.get('_loan_gl_map')
+        if loan_gl_map is None:
+            loan_gl_map = {
+                la.loan_number: la.account
+                for la in LoanAccount.objects.select_related('account').filter(
+                    tenant=ctx["tenant"], branch=ctx["branch"],
+                )
+            }
+            ctx['_loan_gl_map'] = loan_gl_map
 
         created = 0
         skipped = 0
@@ -2010,13 +2076,10 @@ class Command(BaseCommand):
                 continue
 
             loan_number = f"LN-{loan_id}"
-            try:
-                loan_acct = LoanAccount.objects.get(loan_number=loan_number)
-            except LoanAccount.DoesNotExist:
+            gl_loan_acct = loan_gl_map.get(loan_number)
+            if gl_loan_acct is None:
                 skipped += 1
                 continue
-
-            gl_loan_acct = loan_acct.account
             bank_id  = rec.get("bank_id")
             cash_acct = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
             amount   = _d(rec.get("amount"))
@@ -2094,7 +2157,18 @@ class Command(BaseCommand):
             return
 
         bank_acct_map = self._build_bank_account_map(banks_data, Account, gl, ctx)
-        suspense = self._get_suspense_account(Account, gl, ctx)
+        suspense      = self._get_suspense_account(Account, gl, ctx)
+
+        # Reuse the loan map built (and cached) by Step 15 if available
+        loan_gl_map = ctx.get('_loan_gl_map')
+        if loan_gl_map is None:
+            loan_gl_map = {
+                la.loan_number: la.account
+                for la in LoanAccount.objects.select_related('account').filter(
+                    tenant=ctx["tenant"], branch=ctx["branch"],
+                )
+            }
+            ctx['_loan_gl_map'] = loan_gl_map
 
         created = 0
         skipped = 0
@@ -2106,13 +2180,10 @@ class Command(BaseCommand):
                 continue
 
             loan_number = f"LN-{loan_id}"
-            try:
-                loan_acct = LoanAccount.objects.get(loan_number=loan_number)
-            except LoanAccount.DoesNotExist:
+            gl_loan_acct = loan_gl_map.get(loan_number)
+            if gl_loan_acct is None:
                 skipped += 1
                 continue
-
-            gl_loan_acct = loan_acct.account
             bank_id      = rec.get("bank_id")
             cash_acct    = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
             amount       = _d(rec.get("amount"))
@@ -2183,6 +2254,17 @@ class Command(BaseCommand):
         suspense      = self._get_suspense_account(Account, gl, ctx)
         income_parent = gl["INCOME"]
 
+        # One query to build name → Account map; replaces per-payment GET
+        income_gl_map: dict = {
+            acct.name: acct
+            for acct in Account.objects.filter(
+                parent=income_parent,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            )
+        }
+
         created = 0
         skipped = 0
 
@@ -2191,15 +2273,8 @@ class Command(BaseCommand):
             income_year = rec.get("income_year", "YTD")
             account_name = f"{income_name} ({income_year})"
 
-            try:
-                income_acct = Account.objects.get(
-                    name=account_name,
-                    parent=income_parent,
-                    tenant=ctx["tenant"],
-                    branch=ctx["branch"],
-                    is_deleted=False,
-                )
-            except Account.DoesNotExist:
+            income_acct = income_gl_map.get(account_name)
+            if income_acct is None:
                 skipped += 1
                 continue
 
@@ -2267,6 +2342,16 @@ class Command(BaseCommand):
         suspense       = self._get_suspense_account(Account, gl, ctx)
         expense_parent = gl["EXPENSE"]
 
+        expense_gl_map: dict = {
+            acct.name: acct
+            for acct in Account.objects.filter(
+                parent=expense_parent,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            )
+        }
+
         created = 0
         skipped = 0
 
@@ -2275,15 +2360,8 @@ class Command(BaseCommand):
             expense_year = rec.get("expense_year", "YTD")
             account_name = f"{expense_name} ({expense_year})"
 
-            try:
-                expense_acct = Account.objects.get(
-                    name=account_name,
-                    parent=expense_parent,
-                    tenant=ctx["tenant"],
-                    branch=ctx["branch"],
-                    is_deleted=False,
-                )
-            except Account.DoesNotExist:
+            expense_acct = expense_gl_map.get(account_name)
+            if expense_acct is None:
                 skipped += 1
                 continue
 
@@ -2351,9 +2429,19 @@ class Command(BaseCommand):
             self.stdout.write("    Liability payment history already imported — skipping.")
             return
 
-        bank_acct_map     = self._build_bank_account_map(banks_data, Account, gl, ctx)
-        suspense          = self._get_suspense_account(Account, gl, ctx)
-        liability_parent  = gl["LIABILITY"]
+        bank_acct_map    = self._build_bank_account_map(banks_data, Account, gl, ctx)
+        suspense         = self._get_suspense_account(Account, gl, ctx)
+        liability_parent = gl["LIABILITY"]
+
+        liability_gl_map: dict = {
+            acct.name: acct
+            for acct in Account.objects.filter(
+                parent=liability_parent,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            )
+        }
 
         created = 0
         skipped = 0
@@ -2363,15 +2451,8 @@ class Command(BaseCommand):
             liability_year = rec.get("liability_year", "YTD")
             account_name   = f"{liability_name} ({liability_year})"
 
-            try:
-                liability_acct = Account.objects.get(
-                    name=account_name,
-                    parent=liability_parent,
-                    tenant=ctx["tenant"],
-                    branch=ctx["branch"],
-                    is_deleted=False,
-                )
-            except Account.DoesNotExist:
+            liability_acct = liability_gl_map.get(account_name)
+            if liability_acct is None:
                 skipped += 1
                 continue
 
@@ -2428,29 +2509,41 @@ class Command(BaseCommand):
         financial year).  _import_banks de-duplicates them to "GTBank",
         "GTBank-1", etc. in source pk order.  We replay that here so that
         bank_id from the payment export maps to the correct GL account.
+
+        Optimised: loads all ASSET child accounts in a single query and matches
+        them in Python, replacing the previous one-query-per-bank pattern.
+        Also caches the result in ctx['_bank_acct_map'] so the 6 calling steps
+        share one build instead of each rebuilding it.
         """
+        cached = ctx.get('_bank_acct_map')
+        if cached is not None:
+            return cached
+
         parent_acct = gl["ASSET"]
+
+        # One query for all ASSET accounts on this branch
+        existing: dict[str, object] = {
+            acct.name: acct
+            for acct in Account.objects.filter(
+                parent=parent_acct,
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                is_deleted=False,
+            )
+        }
+
         name_occurrence: dict = {}
         bank_map: dict = {}
-
         for rec in banks_data:
             base_name = rec["name"]
             occurrence = name_occurrence.get(base_name, 0)
             name_occurrence[base_name] = occurrence + 1
             account_name = base_name if occurrence == 0 else f"{base_name}-{occurrence}"
-
-            try:
-                acct = Account.objects.get(
-                    name=account_name,
-                    parent=parent_acct,
-                    tenant=ctx["tenant"],
-                    branch=ctx["branch"],
-                    is_deleted=False,
-                )
+            acct = existing.get(account_name)
+            if acct:
                 bank_map[rec["id"]] = acct
-            except Account.DoesNotExist:
-                pass
 
+        ctx['_bank_acct_map'] = bank_map
         return bank_map
 
     def _get_suspense_account(self, Account, gl, ctx):
@@ -2458,7 +2551,12 @@ class Command(BaseCommand):
         Get or create a Migration Payment Suspense account for payments whose
         source bank cannot be determined (null bank_id or bank not found in map).
         These can be investigated and reclassified after the migration.
+
+        Result is cached in ctx['_suspense'] so 6 calling steps share one DB hit.
         """
+        cached = ctx.get('_suspense')
+        if cached is not None:
+            return cached
         acct, _ = Account.objects.get_or_create(
             code="MIGS",
             tenant=ctx["tenant"],
@@ -2473,6 +2571,7 @@ class Command(BaseCommand):
                 "is_system_account": True,
             },
         )
+        ctx['_suspense'] = acct
         return acct
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -2569,9 +2668,36 @@ class Command(BaseCommand):
         return counter
 
     @staticmethod
+    def _subledger_code_generator(Account, parent_account):
+        """
+        Generator that yields sequential sub-ledger codes for parent_account
+        with ONE database query total, then advances the counter in memory.
+        This replaces per-call _next_subledger_code for batch imports.
+
+        Usage:
+            gen = Command._subledger_code_generator(Account, parent)
+            code = next(gen)   # "1150-00001", "1150-00002", …
+        """
+        prefix = f"{parent_account.code}-"
+        existing_seqs = []
+        for code in Account.objects.filter(
+            parent=parent_account,
+            code__startswith=prefix,
+        ).values_list("code", flat=True):
+            try:
+                existing_seqs.append(int(code[len(prefix):]))
+            except (ValueError, IndexError):
+                pass
+        seq = (max(existing_seqs) + 1) if existing_seqs else 1
+        while True:
+            yield f"{parent_account.code}-{seq:05d}"
+            seq += 1
+
+    @staticmethod
     def _next_subledger_code(Account, parent_account) -> str:
         """
         Generate the next available sub-ledger code for a given parent account.
+        NOTE: use _subledger_code_generator when creating many records in a loop.
 
         Format: PPPP-NNNNN
           PPPP  = parent's 4-digit GL code (e.g. '1150')

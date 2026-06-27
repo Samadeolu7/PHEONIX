@@ -272,6 +272,26 @@ class MicrofinanceDashboardStatsView(APIView):
 
         data['pending_approvals'] = pending_approvals
 
+        # ── Cashier Balance ───────────────────────────────────────────────────
+        # The logged-in user's own cash account — must be 0 at end of day.
+        try:
+            from cash_management.models import CashierAccount
+            ca = CashierAccount.objects.filter(
+                cashier=user, is_active=True, is_deleted=False
+            ).order_by('-created_at').first()
+            if ca:
+                data['cashier_balance'] = str(ca.current_balance)
+                data['cashier_account_id'] = ca.pk
+                data['cashier_account_name'] = ca.name
+            else:
+                data['cashier_balance'] = None
+                data['cashier_account_id'] = None
+                data['cashier_account_name'] = None
+        except Exception:
+            data['cashier_balance'] = None
+            data['cashier_account_id'] = None
+            data['cashier_account_name'] = None
+
         # ── Pending Tickets ───────────────────────────────────────────────────
         try:
             from tickets.models import Ticket

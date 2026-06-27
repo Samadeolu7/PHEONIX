@@ -40,6 +40,9 @@ interface DashboardStats {
   collections_this_month: string;
   total_savings: string;
   pending_approvals: number;
+  cashier_balance: string | null;
+  cashier_account_id: number | null;
+  cashier_account_name: string | null;
 }
 
 interface PARBucket {
@@ -210,6 +213,61 @@ export default function OfficerPortfolioPage() {
               linkLabel="View savings"
             />
           </div>
+
+          {/* ── Cash Account Balance ── */}
+          {stats.cashier_balance !== null && (
+            <div className={`rounded-xl p-5 mb-6 flex items-center justify-between border-l-4 shadow-sm ${
+              parseFloat(stats.cashier_balance ?? '0') !== 0
+                ? 'bg-red-50 border-red-500'
+                : 'bg-green-50 border-green-400'
+            }`}>
+              <div className="flex items-center gap-3">
+                <div className={`rounded-lg p-2 ${
+                  parseFloat(stats.cashier_balance ?? '0') !== 0
+                    ? 'bg-red-100 text-red-600'
+                    : 'bg-green-100 text-green-600'
+                }`}>
+                  <Wallet size={22} />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    My Cash Account Balance
+                    {stats.cashier_account_name && (
+                      <span className="ml-1 font-normal normal-case text-gray-400">
+                        — {stats.cashier_account_name}
+                      </span>
+                    )}
+                  </p>
+                  <p className={`text-2xl font-bold mt-0.5 ${
+                    parseFloat(stats.cashier_balance ?? '0') !== 0
+                      ? 'text-red-700'
+                      : 'text-green-700'
+                  }`}>
+                    ₦{fmt(stats.cashier_balance)}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                {parseFloat(stats.cashier_balance ?? '0') !== 0 ? (
+                  <div className="flex items-center gap-1 text-sm font-semibold text-red-600">
+                    <AlertTriangle size={16} />
+                    Must be ₦0.00 at end of day
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-sm font-semibold text-green-600">
+                    <CheckCircle size={16} />
+                    Balanced — end of day target met
+                  </div>
+                )}
+                <Link
+                  to="/treasury/cashier-accounts"
+                  className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                >
+                  View cash account <ArrowRight size={11} />
+                </Link>
+              </div>
+            </div>
+          )}
 
           {/* ── Risk & Performance Row ── */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">

@@ -28,6 +28,10 @@ import {
   Wallet,
   Building,
   Banknote,
+  CalendarDays,
+  CheckSquare,
+  ClipboardList,
+  Layers,
 } from 'lucide-react';
 import { getRoleSidebarButtons, NAV_CONFIG_ROLES } from '../../config/roleSidebarConfig';
 import { getRoleRank } from '../../types/roles';
@@ -447,18 +451,11 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
     case 'Field Officer':
       return [
         {
-          id: 'active-loans',
-          title: 'Active Loans',
-          value: s.active_loans.toLocaleString(),
-          icon: CreditCard,
-          color: 'green' as const,
-        },
-        {
           id: 'loan-book',
           title: 'My Loan Portfolio',
           value: formatNaira(s.total_loan_book),
           icon: DollarSign,
-          color: 'blue' as const,
+          color: 'green' as const,
         },
         {
           id: 'par30',
@@ -468,43 +465,58 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
           color: (s.par30_ratio ?? 0) > 5 ? 'red' as const : 'yellow' as const,
         },
         {
-          id: 'defaulting',
-          title: 'Defaulting Loans',
-          value: String(s.defaulting_loans ?? s.overdue_loans),
+          id: 'collections',
+          title: 'Collections (Month)',
+          value: formatNaira(s.collections_this_month ?? '0'),
           icon: Activity,
-          color: 'red' as const,
+          color: 'blue' as const,
+        },
+        {
+          id: 'cash-balance',
+          title: s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
+            ? '⚠ Cash Balance'
+            : 'Cash Balance',
+          value: s.cashier_balance != null ? formatNaira(s.cashier_balance) : '—',
+          icon: Wallet,
+          color: s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
+            ? 'red' as const
+            : 'green' as const,
         },
       ];
 
     default: // Officer / general
       return [
         {
-          id: 'active-loans',
-          title: 'Active Loans',
-          value: s.active_loans.toLocaleString(),
-          icon: CreditCard,
-          color: 'green' as const,
-        },
-        {
           id: 'loan-book',
           title: 'Loan Portfolio',
           value: formatNaira(s.total_loan_book),
-          icon: DollarSign,
-          color: 'blue' as const,
+          icon: CreditCard,
+          color: 'green' as const,
         },
         {
           id: 'overdue-loans',
           title: 'Overdue Loans',
           value: s.overdue_loans.toLocaleString(),
           icon: AlertTriangle,
-          color: 'red' as const,
+          color: s.overdue_loans > 0 ? 'red' as const : 'green' as const,
         },
         {
-          id: 'pending-approvals',
-          title: 'Pending Approvals',
-          value: String(s.pending_approvals),
-          icon: Clock,
-          color: 'yellow' as const,
+          id: 'collections',
+          title: 'Collections (Month)',
+          value: formatNaira(s.collections_this_month ?? '0'),
+          icon: Activity,
+          color: 'blue' as const,
+        },
+        {
+          id: 'cash-balance',
+          title: s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
+            ? '⚠ Cash Balance'
+            : 'Cash Balance',
+          value: s.cashier_balance != null ? formatNaira(s.cashier_balance) : '—',
+          icon: Wallet,
+          color: s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
+            ? 'red' as const
+            : 'green' as const,
         },
       ];
   }
@@ -555,6 +567,99 @@ const QUICK_ACTIONS = [
     permission: 'approvals-view',
   },
 ];
+
+// Role-specific quick actions for officer-level users — focused on daily field tasks
+const OFFICER_QUICK_ACTIONS: Record<string, { id: string; title: string; icon: typeof CreditCard; path: string }[]> = {
+  'Credit Officer': [
+    { id: 'loan-collection', title: 'Loan Collection', icon: CreditCard, path: '/loans/collection' },
+    { id: 'savings-deposit', title: 'Savings Deposit', icon: Banknote, path: '/savings/deposit' },
+    { id: 'new-client', title: 'New Client', icon: Users, path: '/clients/create' },
+    { id: 'new-loan', title: 'New Loan', icon: DollarSign, path: '/loans/accounts/create' },
+    { id: 'my-portfolio', title: 'My Portfolio', icon: BarChart3, path: '/reports/officer-portfolio' },
+    { id: 'defaulters', title: 'Defaulters', icon: AlertTriangle, path: '/reports/loans/defaulters' },
+  ],
+  'Loan Officer': [
+    { id: 'loan-collection', title: 'Loan Collection', icon: CreditCard, path: '/loans/collection' },
+    { id: 'savings-deposit', title: 'Savings Deposit', icon: Banknote, path: '/savings/deposit' },
+    { id: 'new-client', title: 'New Client', icon: Users, path: '/clients/create' },
+    { id: 'new-loan', title: 'New Loan', icon: DollarSign, path: '/loans/accounts/create' },
+    { id: 'my-portfolio', title: 'My Portfolio', icon: BarChart3, path: '/reports/officer-portfolio' },
+    { id: 'defaulters', title: 'Defaulters', icon: AlertTriangle, path: '/reports/loans/defaulters' },
+  ],
+  'Field Officer': [
+    { id: 'loan-collection', title: 'Loan Collection', icon: CreditCard, path: '/loans/collection' },
+    { id: 'savings-deposit', title: 'Savings Deposit', icon: Banknote, path: '/savings/deposit' },
+    { id: 'new-client', title: 'New Client', icon: Users, path: '/clients/create' },
+    { id: 'my-portfolio', title: 'My Portfolio', icon: BarChart3, path: '/reports/officer-portfolio' },
+    { id: 'defaulters', title: 'Defaulters', icon: AlertTriangle, path: '/reports/loans/defaulters' },
+  ],
+  'Finance Officer': [
+    { id: 'journal-entry', title: 'Journal Entry', icon: FileText, path: '/accounting/journal-vouchers/create' },
+    { id: 'trial-balance', title: 'Trial Balance', icon: BarChart3, path: '/reports/financial/trial-balance' },
+    { id: 'bank-accounts', title: 'Bank Accounts', icon: Building, path: '/banks/accounts' },
+    { id: 'cash-reconcil', title: 'Cash Reconciliation', icon: CheckCircle, path: '/treasury/cash-reconciliation' },
+  ],
+  'Accountant': [
+    { id: 'journal-entry', title: 'Journal Entry', icon: FileText, path: '/accounting/journal-vouchers/create' },
+    { id: 'trial-balance', title: 'Trial Balance', icon: BarChart3, path: '/reports/financial/trial-balance' },
+    { id: 'chart-of-accounts', title: 'Chart of Accounts', icon: Layers, path: '/accounts' },
+    { id: 'cash-reconcil', title: 'Cash Reconciliation', icon: CheckCircle, path: '/treasury/cash-reconciliation' },
+  ],
+  'HR Officer': [
+    { id: 'attendance', title: 'Attendance', icon: CheckSquare, path: '/hr/attendance' },
+    { id: 'leave-requests', title: 'Leave Requests', icon: CalendarDays, path: '/hr/leave-requests' },
+    { id: 'staff-list', title: 'Staff List', icon: Users, path: '/hr/staff' },
+    { id: 'payroll', title: 'Payroll', icon: DollarSign, path: '/hr/payroll' },
+  ],
+  'HR Manager': [
+    { id: 'attendance', title: 'Attendance', icon: CheckSquare, path: '/hr/attendance' },
+    { id: 'leave-requests', title: 'Leave Requests', icon: CalendarDays, path: '/hr/leave-requests' },
+    { id: 'staff-list', title: 'Staff List', icon: Users, path: '/hr/staff' },
+    { id: 'payroll', title: 'Payroll', icon: DollarSign, path: '/hr/payroll' },
+  ],
+  'Procurement Officer': [
+    { id: 'requisitions', title: 'Requisitions', icon: ClipboardList, path: '/procurement/requisitions' },
+    { id: 'purchase-orders', title: 'Purchase Orders', icon: ShoppingCart, path: '/procurement/orders' },
+    { id: 'grns', title: 'Goods Received', icon: Package, path: '/procurement/grns' },
+    { id: 'suppliers', title: 'Suppliers', icon: Building, path: '/procurement/suppliers' },
+  ],
+  'Store Officer': [
+    { id: 'items', title: 'Item Catalog', icon: Package, path: '/inventory/items' },
+    { id: 'movements', title: 'Stock Movements', icon: Activity, path: '/inventory/movements' },
+    { id: 'material-requests', title: 'Material Requests', icon: ClipboardList, path: '/inventory/material-requests' },
+    { id: 'adjustments', title: 'Adjustments', icon: CheckSquare, path: '/inventory/adjustments' },
+  ],
+};
+
+/**
+ * Returns the explicit module IDs this role is allowed to see.
+ * null = no restriction (super user shows all).
+ * This prevents lower roles from seeing irrelevant modules like Procurement,
+ * Fixed Assets, Petty Cash, Administration, etc.
+ */
+function getAllowedModuleIds(role: string): string[] | null {
+  switch (role) {
+    case 'Credit Officer':
+    case 'Loan Officer':
+    case 'Field Officer':
+    case 'Officer':
+      return ['client-services', 'loans', 'savings', 'all-access'];
+    case 'Finance Officer':
+    case 'Accountant':
+      return ['financial', 'bank', 'accounts-payable', 'all-access'];
+    case 'HR Officer':
+    case 'HR Manager':
+      return ['administration', 'all-access'];
+    case 'Procurement Officer':
+      return ['procurement', 'inventory', 'accounts-payable', 'all-access'];
+    case 'Store Officer':
+      return ['inventory', 'procurement', 'all-access'];
+    case 'Registrar':
+      return ['client-services', 'savings', 'all-access'];
+    default:
+      return null; // Directors, Principals, Administrators — unrestricted
+  }
+}
 
 interface SimplifiedRoleBasedDashboardProps {
   className?: string;
@@ -646,15 +751,18 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
   // Director and Principal bypass all permission checks
   const isSuperUser = getRoleRank(effectiveRole) >= 4;
 
-  const accessibleModules = MODULES.filter(
-    module =>
-      isSuperUser ||
-      module.requiredPermissions.length === 0 ||
-      module.requiredPermissions.some(perm => hasPermission(perm))
-  );
-  const accessibleQuickActions = isSuperUser
-    ? QUICK_ACTIONS
-    : QUICK_ACTIONS.filter(action => hasPermission(action.permission));
+  // Role-specific module restriction: officers only see what's relevant to their job
+  const allowedModuleIds = isSuperUser ? null : getAllowedModuleIds(effectiveRole);
+  const accessibleModules = MODULES.filter(module => {
+    if (allowedModuleIds !== null) return allowedModuleIds.includes(module.id);
+    // Super users: show all, no permission filtering needed
+    return true;
+  });
+
+  // Role-specific quick actions — officers get field-relevant shortcuts, not generic ERP ones
+  const officerQuickActions = OFFICER_QUICK_ACTIONS[effectiveRole];
+  const accessibleQuickActions = officerQuickActions
+    ?? (isSuperUser ? QUICK_ACTIONS : QUICK_ACTIONS.filter(a => hasPermission(a.permission)));
 
   const handleModuleClick = (path: string) => {
     navigate(path);
@@ -981,6 +1089,55 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
           style={{ background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark} 50%, transparent)` }}
         />
       </div>
+
+      {/* ── CASHIER BALANCE ALERT ────────────────────────────────────── */}
+      {liveStats.cashier_balance != null && (
+        <div
+          className="rounded-xl px-5 py-4 flex items-center justify-between gap-4"
+          style={
+            parseFloat(liveStats.cashier_balance) !== 0
+              ? { background: '#fef2f2', border: '1.5px solid #fca5a5' }
+              : { background: '#f0fdf4', border: '1.5px solid #86efac' }
+          }
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className="rounded-lg p-2"
+              style={
+                parseFloat(liveStats.cashier_balance) !== 0
+                  ? { background: '#fee2e2', color: '#dc2626' }
+                  : { background: '#dcfce7', color: '#16a34a' }
+              }
+            >
+              <Wallet className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#6b7280' }}>
+                My Cash Account Balance
+                {liveStats.cashier_account_name && (
+                  <span className="ml-1 font-normal normal-case" style={{ color: '#9ca3af' }}>
+                    — {liveStats.cashier_account_name}
+                  </span>
+                )}
+              </p>
+              <p
+                className="text-xl font-black mt-0.5"
+                style={{ color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a' }}
+              >
+                {formatNaira(liveStats.cashier_balance)}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 text-sm font-semibold flex-shrink-0"
+            style={{ color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a' }}
+          >
+            {parseFloat(liveStats.cashier_balance) !== 0
+              ? <><AlertTriangle className="w-4 h-4" /> Must be ₦0.00 at end of day</>
+              : <><CheckCircle className="w-4 h-4" /> Balanced</>
+            }
+          </div>
+        </div>
+      )}
 
       {/* ── QUICK ACTIONS: horizontal pill strip ─────────────────────── */}
       {accessibleQuickActions.length > 0 && (

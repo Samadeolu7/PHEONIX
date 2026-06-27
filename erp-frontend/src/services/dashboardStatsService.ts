@@ -38,6 +38,11 @@ export interface MicrofinanceDashboardStats {
   par30_amount?: string;
   collections_this_month?: string;
 
+  // Cashier cash account (must be 0 at end of day)
+  cashier_balance?: string | null;
+  cashier_account_id?: number | null;
+  cashier_account_name?: string | null;
+
   // Approvals & tickets
   pending_approvals: number;
   pending_tickets: number;
