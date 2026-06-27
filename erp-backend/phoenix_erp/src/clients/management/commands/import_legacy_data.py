@@ -1979,8 +1979,8 @@ class Command(BaseCommand):
         }
 
         skipped = 0
-        pending_txns: list = []
-        pending_entries: list = []  # (dr_acct, cr_acct, amount) parallel to pending_txns
+        created_txns: list = []
+        pending_entries: list = []  # (dr_acct, cr_acct, amount) parallel to created_txns
 
         for rec in savings_pmts_data:
             client_id = rec.get("client_id")
@@ -2015,17 +2015,18 @@ class Command(BaseCommand):
                 # Dr. Savings Account, Cr. Bank/Cash
                 dr_acct, cr_acct = gl_sav_acct, cash_acct
 
-            pending_txns.append(Transaction(
+            # create() (not bulk_create) so save() fires and generates reference_number
+            txn = Transaction.objects.create(
                 series=series, date=pay_date, description=description,
                 owner=ctx["owner"], branch=ctx["branch"],
                 tenant=ctx["tenant"], created_by=ctx["owner"],
-            ))
+            )
+            created_txns.append(txn)
             pending_entries.append((dr_acct, cr_acct, entry_amount))
 
-        if pending_txns:
-            Transaction.objects.bulk_create(pending_txns, batch_size=500)
+        if created_txns:
             entry_objs = []
-            for txn, (dr_acct, cr_acct, amt) in zip(pending_txns, pending_entries):
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
                 entry_objs.append(TransactionEntry(
                     transaction=txn, account=dr_acct,
                     side=TransactionEntry.DEBIT, amount=amt,
@@ -2035,9 +2036,9 @@ class Command(BaseCommand):
                     side=TransactionEntry.CREDIT, amount=amt,
                 ))
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
-            for txn in pending_txns:
+            for txn in created_txns:
                 txn.post()
-        created = len(pending_txns)
+        created = len(created_txns)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -2097,7 +2098,7 @@ class Command(BaseCommand):
             ctx['_loan_gl_map'] = loan_gl_map
 
         skipped = 0
-        pending_txns: list = []
+        created_txns: list = []
         pending_entries: list = []
 
         for rec in loan_disb_data:
@@ -2122,18 +2123,18 @@ class Command(BaseCommand):
             disb_date   = _date(rec.get("disbursement_date"))
             description = f"Loan Disbursement – {loan_number}"
 
-            pending_txns.append(Transaction(
+            txn = Transaction.objects.create(
                 series=series, date=disb_date, description=description,
                 owner=ctx["owner"], branch=ctx["branch"],
                 tenant=ctx["tenant"], created_by=ctx["owner"],
-            ))
+            )
+            created_txns.append(txn)
             # Disbursement: Dr. Loan (asset increases), Cr. Bank (cash goes out)
             pending_entries.append((gl_loan_acct, cash_acct, amount))
 
-        if pending_txns:
-            Transaction.objects.bulk_create(pending_txns, batch_size=500)
+        if created_txns:
             entry_objs = []
-            for txn, (dr_acct, cr_acct, amt) in zip(pending_txns, pending_entries):
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
                 entry_objs.append(TransactionEntry(
                     transaction=txn, account=dr_acct,
                     side=TransactionEntry.DEBIT, amount=amt,
@@ -2143,9 +2144,9 @@ class Command(BaseCommand):
                     side=TransactionEntry.CREDIT, amount=amt,
                 ))
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
-            for txn in pending_txns:
+            for txn in created_txns:
                 txn.post()
-        created = len(pending_txns)
+        created = len(created_txns)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -2205,7 +2206,7 @@ class Command(BaseCommand):
             ctx['_loan_gl_map'] = loan_gl_map
 
         skipped = 0
-        pending_txns: list = []
+        created_txns: list = []
         pending_entries: list = []
 
         for rec in loan_pmts_data:
@@ -2230,18 +2231,18 @@ class Command(BaseCommand):
             pay_date    = _date(rec.get("payment_date"))
             description = (rec.get("description") or "").strip() or "Loan Repayment"
 
-            pending_txns.append(Transaction(
+            txn = Transaction.objects.create(
                 series=series, date=pay_date, description=description,
                 owner=ctx["owner"], branch=ctx["branch"],
                 tenant=ctx["tenant"], created_by=ctx["owner"],
-            ))
+            )
+            created_txns.append(txn)
             # Repayment: Dr. Bank/Cash (money received), Cr. Loan (reduces balance)
             pending_entries.append((cash_acct, gl_loan_acct, amount))
 
-        if pending_txns:
-            Transaction.objects.bulk_create(pending_txns, batch_size=500)
+        if created_txns:
             entry_objs = []
-            for txn, (dr_acct, cr_acct, amt) in zip(pending_txns, pending_entries):
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
                 entry_objs.append(TransactionEntry(
                     transaction=txn, account=dr_acct,
                     side=TransactionEntry.DEBIT, amount=amt,
@@ -2251,9 +2252,9 @@ class Command(BaseCommand):
                     side=TransactionEntry.CREDIT, amount=amt,
                 ))
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
-            for txn in pending_txns:
+            for txn in created_txns:
                 txn.post()
-        created = len(pending_txns)
+        created = len(created_txns)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -2304,7 +2305,7 @@ class Command(BaseCommand):
         }
 
         skipped = 0
-        pending_txns: list = []
+        created_txns: list = []
         pending_entries: list = []
 
         for rec in income_pmts_data:
@@ -2327,18 +2328,18 @@ class Command(BaseCommand):
             pay_date  = _date(rec.get("payment_date"))
             description = (rec.get("description") or "").strip() or f"Income: {income_name}"
 
-            pending_txns.append(Transaction(
+            txn = Transaction.objects.create(
                 series=series, date=pay_date, description=description,
                 owner=ctx["owner"], branch=ctx["branch"],
                 tenant=ctx["tenant"], created_by=ctx["owner"],
-            ))
+            )
+            created_txns.append(txn)
             # Dr. Bank/Cash (+), Cr. Income (+)
             pending_entries.append((cash_acct, income_acct, amount))
 
-        if pending_txns:
-            Transaction.objects.bulk_create(pending_txns, batch_size=500)
+        if created_txns:
             entry_objs = []
-            for txn, (dr_acct, cr_acct, amt) in zip(pending_txns, pending_entries):
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
                 entry_objs.append(TransactionEntry(
                     transaction=txn, account=dr_acct,
                     side=TransactionEntry.DEBIT, amount=amt,
@@ -2348,9 +2349,9 @@ class Command(BaseCommand):
                     side=TransactionEntry.CREDIT, amount=amt,
                 ))
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
-            for txn in pending_txns:
+            for txn in created_txns:
                 txn.post()
-        created = len(pending_txns)
+        created = len(created_txns)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -2400,7 +2401,7 @@ class Command(BaseCommand):
         }
 
         skipped = 0
-        pending_txns: list = []
+        created_txns: list = []
         pending_entries: list = []
 
         for rec in expense_pmts_data:
@@ -2423,18 +2424,18 @@ class Command(BaseCommand):
             pay_date  = _date(rec.get("payment_date"))
             description = (rec.get("description") or "").strip() or f"Expense: {expense_name}"
 
-            pending_txns.append(Transaction(
+            txn = Transaction.objects.create(
                 series=series, date=pay_date, description=description,
                 owner=ctx["owner"], branch=ctx["branch"],
                 tenant=ctx["tenant"], created_by=ctx["owner"],
-            ))
+            )
+            created_txns.append(txn)
             # Dr. Expense (+), Cr. Bank/Cash (-)
             pending_entries.append((expense_acct, cash_acct, amount))
 
-        if pending_txns:
-            Transaction.objects.bulk_create(pending_txns, batch_size=500)
+        if created_txns:
             entry_objs = []
-            for txn, (dr_acct, cr_acct, amt) in zip(pending_txns, pending_entries):
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
                 entry_objs.append(TransactionEntry(
                     transaction=txn, account=dr_acct,
                     side=TransactionEntry.DEBIT, amount=amt,
@@ -2444,9 +2445,9 @@ class Command(BaseCommand):
                     side=TransactionEntry.CREDIT, amount=amt,
                 ))
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
-            for txn in pending_txns:
+            for txn in created_txns:
                 txn.post()
-        created = len(pending_txns)
+        created = len(created_txns)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -2500,7 +2501,7 @@ class Command(BaseCommand):
         }
 
         skipped = 0
-        pending_txns: list = []
+        created_txns: list = []
         pending_entries: list = []
 
         for rec in liability_pmts_data:
@@ -2531,17 +2532,17 @@ class Command(BaseCommand):
                 # Liability decreases (money paid back) → Dr Liability, Cr Bank
                 dr_acct, cr_acct = liability_acct, cash_acct
 
-            pending_txns.append(Transaction(
+            txn = Transaction.objects.create(
                 series=series, date=pay_date, description=description,
                 owner=ctx["owner"], branch=ctx["branch"],
                 tenant=ctx["tenant"], created_by=ctx["owner"],
-            ))
+            )
+            created_txns.append(txn)
             pending_entries.append((dr_acct, cr_acct, entry_amount))
 
-        if pending_txns:
-            Transaction.objects.bulk_create(pending_txns, batch_size=500)
+        if created_txns:
             entry_objs = []
-            for txn, (dr_acct, cr_acct, amt) in zip(pending_txns, pending_entries):
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
                 entry_objs.append(TransactionEntry(
                     transaction=txn, account=dr_acct,
                     side=TransactionEntry.DEBIT, amount=amt,
@@ -2551,9 +2552,9 @@ class Command(BaseCommand):
                     side=TransactionEntry.CREDIT, amount=amt,
                 ))
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
-            for txn in pending_txns:
+            for txn in created_txns:
                 txn.post()
-        created = len(pending_txns)
+        created = len(created_txns)
 
         self.stdout.write(
             self.style.SUCCESS(
@@ -2767,7 +2768,7 @@ class Command(BaseCommand):
         suspense      = self._get_suspense_account(Account, gl, ctx)
 
         skipped = 0
-        pending_txns: list = []
+        created_txns: list = []
         pending_entries: list = []
 
         for rec in bank_transfers_data:
@@ -2784,17 +2785,17 @@ class Command(BaseCommand):
             src_acct = bank_acct_map.get(src_bank_id, suspense) if src_bank_id else suspense
             dst_acct = bank_acct_map.get(dst_bank_id, suspense) if dst_bank_id else suspense
 
-            pending_txns.append(Transaction(
+            txn = Transaction.objects.create(
                 series=series, date=pay_date, description=description,
                 owner=ctx["owner"], branch=ctx["branch"],
                 tenant=ctx["tenant"], created_by=ctx["owner"],
-            ))
+            )
+            created_txns.append(txn)
             pending_entries.append((dst_acct, src_acct, amount))
 
-        if pending_txns:
-            Transaction.objects.bulk_create(pending_txns, batch_size=500)
+        if created_txns:
             entry_objs = []
-            for txn, (dr_acct, cr_acct, amt) in zip(pending_txns, pending_entries):
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
                 entry_objs.append(TransactionEntry(
                     transaction=txn, account=dr_acct,
                     side=TransactionEntry.DEBIT, amount=amt,
@@ -2804,9 +2805,9 @@ class Command(BaseCommand):
                     side=TransactionEntry.CREDIT, amount=amt,
                 ))
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
-            for txn in pending_txns:
+            for txn in created_txns:
                 txn.post()
-        created = len(pending_txns)
+        created = len(created_txns)
 
         self.stdout.write(
             self.style.SUCCESS(
