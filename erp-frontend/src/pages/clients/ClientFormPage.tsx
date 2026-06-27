@@ -804,49 +804,49 @@ const ClientFormPage: React.FC = () => {
                     </select>
                   </div>
 
-                  {/* Group — required for dc / wl / ml */}
-                  {['dc', 'wl', 'ml'].includes(((formData as any).client_type || '').toLowerCase()) && (
-                    <div>
-                      <label
-                        style={{
-                          display: 'block',
-                          fontSize: '0.875rem',
-                          fontWeight: 500,
-                          marginBottom: '0.5rem',
-                        }}
-                      >
-                        Group <span style={{ color: '#dc2626' }}>*</span>
-                      </label>
-                      <select
-                        value={(formData as any).group || ''}
-                        onChange={e => {
-                          const gid = e.target.value ? Number(e.target.value) : undefined;
-                          handleChange('group' as any, gid);
-                          // Auto-fill assigned_officer from the selected group
-                          if (gid) {
-                            const grp = groups.find(g => g.id === gid);
-                            if (grp?.assigned_officer) {
-                              handleChange('assigned_officer' as any, grp.assigned_officer);
-                            }
+                  {/* Group — always visible; required for dc / wl / ml */}
+                  <div>
+                    <label
+                      style={{
+                        display: 'block',
+                        fontSize: '0.875rem',
+                        fontWeight: 500,
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      Group
+                      {['dc', 'wl', 'ml'].includes(((formData as any).client_type || '').toLowerCase()) && (
+                        <span style={{ color: '#dc2626' }}> *</span>
+                      )}
+                    </label>
+                    <select
+                      value={(formData as any).group || ''}
+                      onChange={e => {
+                        const gid = e.target.value ? Number(e.target.value) : undefined;
+                        handleChange('group' as any, gid);
+                        if (gid) {
+                          const grp = groups.find(g => g.id === gid);
+                          if (grp?.assigned_officer) {
+                            handleChange('assigned_officer' as any, grp.assigned_officer);
                           }
-                        }}
-                        required
-                        style={{
-                          width: '100%',
-                          padding: '0.5rem',
-                          border: '1px solid #d1d5db',
-                          borderRadius: '0.375rem',
-                        }}
-                      >
-                        <option value="">Select group...</option>
-                        {groups.map(g => (
-                          <option key={g.id} value={g.id}>
-                            {g.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                        }
+                      }}
+                      required={['dc', 'wl', 'ml'].includes(((formData as any).client_type || '').toLowerCase())}
+                      style={{
+                        width: '100%',
+                        padding: '0.5rem',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '0.375rem',
+                      }}
+                    >
+                      <option value="">Select group...</option>
+                      {groups.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                   {/* Registration Fee Preview (non-editable) */}
                   <div>
@@ -1228,7 +1228,7 @@ const ClientFormPage: React.FC = () => {
                     />
                   </div>
 
-                  {/* Client Classification */}
+                  {/* Client Group (duplicate of the selector above — kept for visibility in this section) */}
                   <div>
                     <label
                       style={{
@@ -1238,16 +1238,24 @@ const ClientFormPage: React.FC = () => {
                         marginBottom: '0.5rem',
                       }}
                     >
-                      Classification / Group
+                      Group
+                      {['dc', 'wl', 'ml'].includes(((formData as any).client_type || '').toLowerCase()) && (
+                        <span style={{ color: '#dc2626' }}> *</span>
+                      )}
                     </label>
                     <select
-                      value={formData.classification || ''}
-                      onChange={e =>
-                        handleChange(
-                          'classification',
-                          e.target.value ? Number(e.target.value) : undefined
-                        )
-                      }
+                      value={(formData as any).group || ''}
+                      onChange={e => {
+                        const gid = e.target.value ? Number(e.target.value) : undefined;
+                        handleChange('group' as any, gid);
+                        if (gid) {
+                          const grp = groups.find(g => g.id === gid);
+                          if (grp?.assigned_officer) {
+                            handleChange('assigned_officer' as any, grp.assigned_officer);
+                          }
+                        }
+                      }}
+                      required={['dc', 'wl', 'ml'].includes(((formData as any).client_type || '').toLowerCase())}
                       style={{
                         width: '100%',
                         padding: '0.5rem',
@@ -1256,9 +1264,9 @@ const ClientFormPage: React.FC = () => {
                       }}
                     >
                       <option value="">Select group...</option>
-                      {classifications.map(c => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
+                      {groups.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
                         </option>
                       ))}
                     </select>

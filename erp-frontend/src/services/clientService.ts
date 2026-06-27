@@ -455,6 +455,7 @@ export const clientService = {
     search?: string;
     client_type?: string;
     is_active?: boolean;
+    page_size?: number;
   }): Promise<ClientGroup[]> {
     const res = await api.get('/clients/groups/', { params });
     return Array.isArray(res) ? res : (res?.results ?? []);
