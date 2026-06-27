@@ -297,6 +297,25 @@ export interface CreateLoanAccountData {
   fee_routing?: Record<string, FeeRouting>;
 }
 
+// ── Loan GL Ledger ────────────────────────────────────────────────────────────
+
+export interface LoanTransactionRow {
+  id: number;
+  date: string;
+  reference: string;
+  description: string;
+  debit: string | null;
+  credit: string | null;
+  balance: string;
+}
+
+export interface LoanTransactionPage {
+  count: number;
+  page: number;
+  page_size: number;
+  results: LoanTransactionRow[];
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 const BASE = '/loans';
@@ -536,6 +555,16 @@ export const loanService = {
 
   async getLoanStatement(id: number): Promise<LoanStatement> {
     return api.get(`${BASE}/accounts/${id}/statement/`);
+  },
+
+  async getLoanTransactions(
+    id: number,
+    page = 1,
+    pageSize = 50,
+  ): Promise<LoanTransactionPage> {
+    return api.get(`${BASE}/accounts/${id}/transactions/`, {
+      params: { page, page_size: pageSize },
+    });
   },
 
   async getPARSummary(): Promise<PARSummary> {

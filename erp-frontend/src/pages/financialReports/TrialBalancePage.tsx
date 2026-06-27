@@ -60,8 +60,8 @@ const TYPE_GROUPS = [
 
 const LEVEL_INDENT = ['pl-4', 'pl-11', 'pl-[72px]', 'pl-[100px]'] as const;
 
-const fmtAmt = (v: string) => {
-  const n = parseFloat(v);
+const fmtAmt = (v: string | number) => {
+  const n = typeof v === 'number' ? v : parseFloat(v as string);
   return isNaN(n) || n === 0
     ? ''
     : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -72,6 +72,24 @@ const fmtTotal = (v: string | number) => {
     ? '0.00'
     : Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
+
+/** Compute the net Dr/Cr columns for a single account (standard trial balance format). */
+function netBalance(acc: AccountBalance): { drAmt: number; crAmt: number } {
+  const dr = parseFloat(acc.debit || '0');
+  const cr = parseFloat(acc.credit || '0');
+  const net = dr - cr;
+  return net >= 0 ? { drAmt: net, crAmt: 0 } : { drAmt: 0, crAmt: Math.abs(net) };
+}
+
+/** Sum net Dr totals across an array of accounts (for group/grand totals). */
+function groupNetDr(accounts: AccountBalance[]): number {
+  return accounts.reduce((s, a) => s + netBalance(a).drAmt, 0);
+}
+
+/** Sum net Cr totals across an array of accounts (for group/grand totals). */
+function groupNetCr(accounts: AccountBalance[]): number {
+  return accounts.reduce((s, a) => s + netBalance(a).crAmt, 0);
+}
 const fmtDate = (d: string) => {
   if (!d) return '';
   return new Date(d).toLocaleDateString('en-GB', {
@@ -153,6 +171,7 @@ const TrialBalancePage: React.FC = () => {
     const hasChildren = acc.children && acc.children.length > 0;
     const isExpanded = expandedAccounts.has(acc.code);
     const isParent = acc.level === 'PARENT';
+    const { drAmt, crAmt } = netBalance(acc);
     return (
       <React.Fragment key={acc.code}>
         <div
@@ -188,10 +207,10 @@ const TrialBalancePage: React.FC = () => {
             {acc.name}
           </div>
           <div className="w-36 flex-shrink-0 text-right font-mono text-sm text-blue-700 tabular-nums">
-            {fmtAmt(acc.debit)}
+            {drAmt > 0 ? fmtAmt(drAmt) : ''}
           </div>
           <div className="w-36 flex-shrink-0 text-right font-mono text-sm text-rose-700 tabular-nums">
-            {fmtAmt(acc.credit)}
+            {crAmt > 0 ? fmtAmt(crAmt) : ''}
           </div>
         </div>
         {hasChildren && isExpanded && acc.children && (
@@ -286,6 +305,7 @@ const TrialBalancePage: React.FC = () => {
             <p className="font-semibold text-sm">Failed to load Trial Balance</p>
             <p className="text-xs mt-1">{error}</p>
             <button
+              type="button"
               onClick={() => refetch(filters)}
               className="mt-2 text-xs text-red-700 underline hover:no-underline"
             >
@@ -319,8 +339,8 @@ const TrialBalancePage: React.FC = () => {
               {groups.map((group, idx) => {
                 const isExpanded = expandedTypes.has(group.type);
                 const isLast = idx === groups.length - 1;
-                const groupDr = group.accounts.reduce((s, a) => s + parseFloat(a.debit || '0'), 0);
-                const groupCr = group.accounts.reduce((s, a) => s + parseFloat(a.credit || '0'), 0);
+                const gDr = groupNetDr(group.accounts);
+                const gCr = groupNetCr(group.accounts);
                 return (
                   <div
                     key={group.type}
@@ -348,10 +368,10 @@ const TrialBalancePage: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-6 text-xs font-mono">
                         <span className="text-blue-700 tabular-nums">
-                          Dr: {groupDr > 0 ? fmtTotal(groupDr) : 'â€”'}
+                          Dr: {gDr > 0 ? fmtTotal(gDr) : 'â€”'}
                         </span>
                         <span className="text-rose-700 tabular-nums">
-                          Cr: {groupCr > 0 ? fmtTotal(groupCr) : 'â€”'}
+                          Cr: {gCr > 0 ? fmtTotal(gCr) : 'â€”'}
                         </span>
                       </div>
                     </div>
@@ -366,10 +386,10 @@ const TrialBalancePage: React.FC = () => {
                           <div className="w-28 flex-shrink-0 mr-3" />
                           <div className={`flex-1 ${group.colorClass}`}>Total {group.label}</div>
                           <div className="w-36 text-right font-mono tabular-nums text-blue-800">
-                            {groupDr > 0 ? fmtTotal(groupDr) : 'â€”'}
+                            {gDr > 0 ? fmtTotal(gDr) : 'â€”'}
                           </div>
                           <div className="w-36 text-right font-mono tabular-nums text-rose-800">
-                            {groupCr > 0 ? fmtTotal(groupCr) : 'â€”'}
+                            {gCr > 0 ? fmtTotal(gCr) : 'â€”'}
                           </div>
                         </div>
                       </div>
@@ -379,18 +399,33 @@ const TrialBalancePage: React.FC = () => {
               })}
             </div>
 
-            {/* Grand totals */}
-            <div className="bg-gray-900 text-white rounded-lg px-5 py-4 flex items-center">
-              <div className="w-5 mr-2 flex-shrink-0" />
-              <div className="w-28 flex-shrink-0 mr-3" />
-              <div className="flex-1 font-bold uppercase tracking-wide text-sm">Grand Total</div>
-              <div className="w-36 text-right font-bold font-mono tabular-nums text-blue-300">
-                ₦{fmtTotal(data.totals.total_debits)}
-              </div>
-              <div className="w-36 text-right font-bold font-mono tabular-nums text-rose-300">
-                ₦{fmtTotal(data.totals.total_credits)}
-              </div>
-            </div>
+            {/* Grand totals — computed from net per-account balances */}
+            {(() => {
+              const allAccounts = groups.flatMap(g => g.accounts);
+              const grandDr = groupNetDr(allAccounts);
+              const grandCr = groupNetCr(allAccounts);
+              const diff = Math.abs(grandDr - grandCr);
+              return (
+                <div className="bg-gray-900 text-white rounded-lg px-5 py-4 flex items-center">
+                  <div className="w-5 mr-2 flex-shrink-0" />
+                  <div className="w-28 flex-shrink-0 mr-3" />
+                  <div className="flex-1 font-bold uppercase tracking-wide text-sm">
+                    Grand Total
+                    {diff > 0.005 && (
+                      <span className="ml-3 text-xs font-normal text-red-400">
+                        Difference: ₦{fmtTotal(diff)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="w-36 text-right font-bold font-mono tabular-nums text-blue-300">
+                    ₦{fmtTotal(grandDr)}
+                  </div>
+                  <div className="w-36 text-right font-bold font-mono tabular-nums text-rose-300">
+                    ₦{fmtTotal(grandCr)}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Final balance agreement line */}
             <div

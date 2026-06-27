@@ -193,13 +193,44 @@ class MicrofinanceDashboardStatsView(APIView):
                 round(float(paid / total_obligation) * 100, 1)
                 if total_obligation > 0 else 0.0
             )
+
+            # Defaulting loans (CBN classification = loss/doubtful or status=defaulted)
+            data['defaulting_loans'] = loan_qs.filter(status='defaulted').count()
+
+            # PAR30 — outstanding balance of loans > 30 days in arrears
+            active_qs = loan_qs.filter(status__in=['active', 'disbursed', 'defaulted'])
+            glp = active_qs.aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0')
+            par30_bal = active_qs.filter(
+                days_in_arrears__gte=30
+            ).aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0')
+            data['par30_ratio'] = (
+                round(float(par30_bal / glp) * 100, 2) if glp > 0 else 0.0
+            )
+            data['par30_amount'] = str(par30_bal)
+
+            # Monthly collections — repayments received this calendar month
+            try:
+                from loans.models import LoanRepaymentSchedule
+                monthly_coll = LoanRepaymentSchedule.objects.filter(
+                    loan__in=loan_qs,
+                    paid_date__year=today.year,
+                    paid_date__month=today.month,
+                ).aggregate(t=Sum('total_paid'))['t'] or Decimal('0')
+                data['collections_this_month'] = str(monthly_coll)
+            except Exception:
+                data['collections_this_month'] = '0.00'
+
         except Exception:
             data.update({
                 'active_loans': 0,
                 'total_loan_book': '0.00',
                 'total_disbursed_this_month': '0.00',
                 'overdue_loans': 0,
+                'defaulting_loans': 0,
                 'loan_repayment_rate': 0.0,
+                'par30_ratio': 0.0,
+                'par30_amount': '0.00',
+                'collections_this_month': '0.00',
             })
 
         # ── Savings ───────────────────────────────────────────────────────────

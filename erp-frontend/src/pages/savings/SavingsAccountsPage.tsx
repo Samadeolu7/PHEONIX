@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   Loader2,
@@ -13,6 +13,7 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
+  Eye,
 } from 'lucide-react';
 import {
   getSavingsAccounts,
@@ -63,6 +64,7 @@ const PAGE_SIZE = 25;
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function SavingsAccountsPage() {
+  const navigate = useNavigate();
   const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -223,12 +225,16 @@ export default function SavingsAccountsPage() {
                 <th className="px-4 py-3 text-right">Balance</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Opened</th>
-                <th className="px-4 py-3"></th>
+                <th className="px-4 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {accounts.map((acc) => (
-                <tr key={acc.id} className="hover:bg-gray-50">
+                <tr
+                  key={acc.id}
+                  className="cursor-pointer hover:bg-blue-50 transition-colors"
+                  onClick={() => navigate(`/savings/accounts/${acc.id}`)}
+                >
                   <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">
                     {acc.account_number}
                   </td>
@@ -255,11 +261,12 @@ export default function SavingsAccountsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-500">{acc.opened_on}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <Link
                       to={`/savings/accounts/${acc.id}`}
-                      className="text-xs text-blue-600 hover:underline"
+                      className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 border border-blue-200"
                     >
+                      <Eye size={11} />
                       View
                     </Link>
                   </td>

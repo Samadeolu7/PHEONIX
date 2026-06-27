@@ -32,6 +32,12 @@ export interface MicrofinanceDashboardStats {
   // Savings
   total_savings: string;
 
+  // Risk & performance (added for officer portfolio dashboard)
+  defaulting_loans?: number;
+  par30_ratio?: number;
+  par30_amount?: string;
+  collections_this_month?: string;
+
   // Approvals & tickets
   pending_approvals: number;
   pending_tickets: number;

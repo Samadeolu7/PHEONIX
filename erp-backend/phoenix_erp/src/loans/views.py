@@ -1078,6 +1078,71 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         return Response(result)
 
+    @action(detail=True, methods=['get'], url_path='transactions')
+    def transactions(self, request, pk=None):
+        """
+        Return posted GL journal entry lines for this loan account.
+        Debit entries represent disbursements/charges (increase loan balance).
+        Credit entries represent repayments (decrease loan balance).
+        Supports ?page=N&page_size=M for pagination.
+        """
+        from transactions.models import TransactionEntry, Transaction
+        from decimal import Decimal as _D
+
+        loan = self.get_object()
+        gl_account = loan.account
+
+        qs = (
+            TransactionEntry.objects
+            .filter(account=gl_account, transaction__status=Transaction.POSTED)
+            .select_related('transaction')
+            .order_by('transaction__date', 'id')
+        )
+
+        try:
+            page_size = min(int(request.query_params.get('page_size', 50)), 200)
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (TypeError, ValueError):
+            page_size, page = 50, 1
+
+        total = qs.count()
+        offset = (page - 1) * page_size
+        entries = list(qs[offset: offset + page_size])
+
+        # Compute opening balance = sum of all entries before this page
+        opening = _D('0.00')
+        if offset > 0:
+            prior = qs[:offset]
+            for e in prior:
+                if e.side == TransactionEntry.DEBIT:
+                    opening += e.amount
+                else:
+                    opening -= e.amount
+
+        running_balance = opening
+        rows = []
+        for entry in entries:
+            if entry.side == TransactionEntry.DEBIT:
+                running_balance += entry.amount
+            else:
+                running_balance -= entry.amount
+            rows.append({
+                'id': entry.id,
+                'date': entry.transaction.date,
+                'reference': entry.transaction.reference_number,
+                'description': entry.description or entry.transaction.description,
+                'debit': str(entry.amount) if entry.side == TransactionEntry.DEBIT else None,
+                'credit': str(entry.amount) if entry.side == TransactionEntry.CREDIT else None,
+                'balance': str(running_balance),
+            })
+
+        return Response({
+            'count': total,
+            'page': page,
+            'page_size': page_size,
+            'results': rows,
+        })
+
     @action(detail=False, methods=['get'], url_path='cbn-returns')
     def cbn_returns(self, request):
         """

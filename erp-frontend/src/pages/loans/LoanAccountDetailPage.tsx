@@ -21,12 +21,16 @@ import {
   UserPlus,
   Trash2,
   Users,
+  ChevronLeft,
+  ChevronRight,
+  BookOpen,
 } from 'lucide-react';
 import {
   loanService,
   LoanAccount,
   LoanGuarantor,
   LoanRepaymentSchedule,
+  LoanTransactionRow,
   RepayLoanPayload,
   RestructureLoanPayload,
 } from '../../services/loanService';
@@ -747,6 +751,11 @@ export default function LoanAccountDetailPage() {
   const [loan, setLoan] = useState<LoanAccount | null>(null);
   const [schedule, setSchedule] = useState<LoanRepaymentSchedule[]>([]);
   const [guarantors, setGuarantors] = useState<LoanGuarantor[]>([]);
+  const [ledger, setLedger] = useState<LoanTransactionRow[]>([]);
+  const [ledgerTotal, setLedgerTotal] = useState(0);
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const LEDGER_PAGE_SIZE = 25;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showRepayModal, setShowRepayModal] = useState(false);
@@ -777,6 +786,20 @@ export default function LoanAccountDetailPage() {
     }
   }, [loanId]);
 
+  const loadLedger = useCallback(async () => {
+    if (!loanId) return;
+    setLedgerLoading(true);
+    try {
+      const res = await loanService.getLoanTransactions(loanId, ledgerPage, LEDGER_PAGE_SIZE);
+      setLedger(res.results);
+      setLedgerTotal(res.count);
+    } catch {
+      // non-fatal
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, [loanId, ledgerPage]);
+
   async function handleRemoveGuarantor(guarantorId: number) {
     if (!window.confirm('Remove this guarantor from the loan?')) return;
     setRemovingGuarantorId(guarantorId);
@@ -791,9 +814,8 @@ export default function LoanAccountDetailPage() {
     }
   }
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadLedger(); }, [loadLedger]);
 
   async function handleApprove() {
     if (!loan) return;
@@ -1268,6 +1290,88 @@ export default function LoanAccountDetailPage() {
                 </div>
               ))}
             </div>
+          )}
+        </div>
+
+        {/* Loan Ledger */}
+        <div className="rounded-xl bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <div className="flex items-center gap-2">
+              <BookOpen size={16} className="text-indigo-500" />
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+                Loan Ledger
+              </h2>
+              <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                GL Entries
+              </span>
+            </div>
+            {ledgerLoading && <Loader2 size={16} className="animate-spin text-gray-400" />}
+          </div>
+
+          {ledger.length === 0 && !ledgerLoading ? (
+            <div className="py-12 text-center text-sm text-gray-400">
+              No GL entries posted yet.
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      <th className="px-4 py-3">Date</th>
+                      <th className="px-4 py-3">Reference</th>
+                      <th className="px-4 py-3">Description</th>
+                      <th className="px-4 py-3 text-right">Debit (Dr)</th>
+                      <th className="px-4 py-3 text-right">Credit (Cr)</th>
+                      <th className="px-4 py-3 text-right">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {ledger.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-2.5 text-gray-600">{fmtDate(tx.date)}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-gray-500">{tx.reference}</td>
+                        <td className="px-4 py-2.5 text-gray-700">{tx.description}</td>
+                        <td className="px-4 py-2.5 text-right text-blue-700 font-mono">
+                          {tx.debit ? `₦${fmt(tx.debit)}` : ''}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-green-700 font-mono">
+                          {tx.credit ? `₦${fmt(tx.credit)}` : ''}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-medium text-gray-900 font-mono">
+                          ₦{fmt(tx.balance)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {Math.ceil(ledgerTotal / LEDGER_PAGE_SIZE) > 1 && (
+                <div className="flex items-center justify-between border-t px-4 py-3">
+                  <p className="text-xs text-gray-500">
+                    Page {ledgerPage} of {Math.ceil(ledgerTotal / LEDGER_PAGE_SIZE)} ({ledgerTotal} entries)
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setLedgerPage((p) => Math.max(1, p - 1))}
+                      disabled={ledgerPage === 1}
+                      className="flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                    >
+                      <ChevronLeft size={12} /> Prev
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLedgerPage((p) => Math.min(Math.ceil(ledgerTotal / LEDGER_PAGE_SIZE), p + 1))}
+                      disabled={ledgerPage === Math.ceil(ledgerTotal / LEDGER_PAGE_SIZE)}
+                      className="flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                    >
+                      Next <ChevronRight size={12} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 

@@ -2096,6 +2096,32 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     category: 'Reports',
     isNew: true,
   },
+
+  // ----- Officer Portfolio Dashboard -----
+  {
+    id: 'officer-portfolio-dashboard',
+    title: '📈 My Portfolio Dashboard',
+    description:
+      'Personal KPI summary for credit officers — active portfolio, PAR30, defaulting loans, collections this month, and PAR ageing buckets',
+    path: '/reports/officer-portfolio',
+    icon: Gauge,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'loans',
+    category: 'Reports',
+    isNew: true,
+  },
+  {
+    id: 'officer-portfolio-cs',
+    title: '📈 My Portfolio Dashboard',
+    description:
+      'Personal KPI summary for credit officers — active portfolio, PAR30, defaulting loans, collections this month, and PAR ageing buckets',
+    path: '/reports/officer-portfolio',
+    icon: Gauge,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'client-services',
+    category: 'Loan Reports',
+    isNew: true,
+  },
 ];
 
 // ==========================================================================

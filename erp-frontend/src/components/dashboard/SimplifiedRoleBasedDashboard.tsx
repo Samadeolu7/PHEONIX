@@ -442,22 +442,10 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
         },
       ];
 
-    default: // Officer / general
+    case 'Credit Officer':
+    case 'Loan Officer':
+    case 'Field Officer':
       return [
-        {
-          id: 'pending-approvals',
-          title: 'Pending Approvals',
-          value: String(s.pending_approvals),
-          icon: Clock,
-          color: 'yellow' as const,
-        },
-        {
-          id: 'pending-tickets',
-          title: 'Open Tickets',
-          value: String(s.pending_tickets),
-          icon: AlertTriangle,
-          color: 'red' as const,
-        },
         {
           id: 'active-loans',
           title: 'Active Loans',
@@ -466,11 +454,57 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
           color: 'green' as const,
         },
         {
-          id: 'outstanding-fees',
-          title: 'Outstanding Fees',
-          value: formatNaira(s.outstanding_fees),
+          id: 'loan-book',
+          title: 'My Loan Portfolio',
+          value: formatNaira(s.total_loan_book),
           icon: DollarSign,
           color: 'blue' as const,
+        },
+        {
+          id: 'par30',
+          title: 'PAR30',
+          value: s.par30_ratio != null ? `${s.par30_ratio.toFixed(2)}%` : '—',
+          icon: AlertTriangle,
+          color: (s.par30_ratio ?? 0) > 5 ? 'red' as const : 'yellow' as const,
+        },
+        {
+          id: 'defaulting',
+          title: 'Defaulting Loans',
+          value: String(s.defaulting_loans ?? s.overdue_loans),
+          icon: Activity,
+          color: 'red' as const,
+        },
+      ];
+
+    default: // Officer / general
+      return [
+        {
+          id: 'active-loans',
+          title: 'Active Loans',
+          value: s.active_loans.toLocaleString(),
+          icon: CreditCard,
+          color: 'green' as const,
+        },
+        {
+          id: 'loan-book',
+          title: 'Loan Portfolio',
+          value: formatNaira(s.total_loan_book),
+          icon: DollarSign,
+          color: 'blue' as const,
+        },
+        {
+          id: 'overdue-loans',
+          title: 'Overdue Loans',
+          value: s.overdue_loans.toLocaleString(),
+          icon: AlertTriangle,
+          color: 'red' as const,
+        },
+        {
+          id: 'pending-approvals',
+          title: 'Pending Approvals',
+          value: String(s.pending_approvals),
+          icon: Clock,
+          color: 'yellow' as const,
         },
       ];
   }
@@ -588,6 +622,10 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
     overdue_invoice_count: 0,
     total_outstanding_receivables: '0.00',
     total_savings: '0.00',
+    defaulting_loans: 0,
+    par30_ratio: 0,
+    par30_amount: '0.00',
+    collections_this_month: '0.00',
     pending_approvals: 0,
     pending_tickets: 0,
     total_staff: 0,

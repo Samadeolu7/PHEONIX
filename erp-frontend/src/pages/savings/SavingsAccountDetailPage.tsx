@@ -493,7 +493,10 @@ export default function SavingsAccountDetailPage() {
         {/* Transaction Ledger */}
         <div className="rounded-xl bg-white shadow-sm">
           <div className="flex items-center justify-between border-b px-5 py-4">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Transaction Ledger</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Savings Ledger</h2>
+              <span className="rounded-full bg-teal-50 px-2 py-0.5 text-xs font-medium text-teal-700">GL Entries</span>
+            </div>
             {txLoading && <Loader2 size={16} className="animate-spin text-gray-400" />}
           </div>
 
@@ -541,6 +544,7 @@ export default function SavingsAccountDetailPage() {
                   </p>
                   <div className="flex gap-2">
                     <button
+                      type="button"
                       onClick={() => setTxPage((p) => Math.max(1, p - 1))}
                       disabled={txPage === 1}
                       className="flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
@@ -548,6 +552,7 @@ export default function SavingsAccountDetailPage() {
                       <ChevronLeft size={12} /> Prev
                     </button>
                     <button
+                      type="button"
                       onClick={() => setTxPage((p) => Math.min(txTotalPages, p + 1))}
                       disabled={txPage === txTotalPages}
                       className="flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
@@ -570,6 +575,8 @@ export default function SavingsAccountDetailPage() {
               </h2>
               <div className="flex items-center gap-2">
                 <select
+                  aria-label="Schedule month"
+                  title="Schedule month"
                   value={scheduleMonth}
                   onChange={(e) => setScheduleMonth(parseInt(e.target.value))}
                   className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
@@ -580,6 +587,8 @@ export default function SavingsAccountDetailPage() {
                 </select>
                 <input
                   type="number"
+                  title="Schedule year"
+                  placeholder="Year"
                   value={scheduleYear}
                   onChange={(e) => setScheduleYear(parseInt(e.target.value))}
                   className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none"

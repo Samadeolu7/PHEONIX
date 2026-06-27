@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   Loader2,
@@ -13,6 +13,7 @@ import {
   Search,
   ChevronLeft,
   ChevronRight,
+  Eye,
 } from 'lucide-react';
 import { loanService, LoanAccountList } from '../../services/loanService';
 
@@ -70,6 +71,7 @@ const RISK_LEVELS = [
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function LoanAccountsPage() {
+  const navigate = useNavigate();
   const [loans, setLoans] = useState<LoanAccountList[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -208,12 +210,16 @@ export default function LoanAccountsPage() {
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Risk</th>
                 <th className="px-4 py-3 text-right">Arrears</th>
-                <th className="px-4 py-3"></th>
+                <th className="px-4 py-3 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loans.map((loan) => (
-                <tr key={loan.id} className="hover:bg-gray-50">
+                <tr
+                  key={loan.id}
+                  className="cursor-pointer hover:bg-blue-50 transition-colors"
+                  onClick={() => navigate(`/loans/accounts/${loan.id}`)}
+                >
                   <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">
                     {loan.loan_number}
                   </td>
@@ -252,11 +258,12 @@ export default function LoanAccountsPage() {
                       <span className="text-gray-400">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <Link
                       to={`/loans/accounts/${loan.id}`}
-                      className="text-xs text-blue-600 hover:underline"
+                      className="inline-flex items-center gap-1 rounded-md bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 border border-blue-200"
                     >
+                      <Eye size={11} />
                       View
                     </Link>
                   </td>
