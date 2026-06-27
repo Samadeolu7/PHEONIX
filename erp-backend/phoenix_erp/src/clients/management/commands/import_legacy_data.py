@@ -152,6 +152,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("\n[DRY-RUN] No data will be written.\n"))
 
         # ── Load JSON files ───────────────────────────────────────────────────
+        staff_data          = _load(data_dir, "staff.json")   # optional — skip if absent
         groups_data         = _load(data_dir, "groups.json")
         clients_data        = _load(data_dir, "clients.json")
         savings_data        = _load(data_dir, "savings.json")
@@ -162,6 +163,7 @@ class Command(BaseCommand):
         expense_data        = _load(data_dir, "expense_accounts.json")
         liability_data      = _load(data_dir, "liability_accounts.json")
         savings_pmts_data   = _load(data_dir, "savings_payments.json")
+        smart_savings_data  = _load(data_dir, "smart_savings.json")
         inventory_data      = _load(data_dir, "inventory.json")
         loan_disb_data      = _load(data_dir, "loan_disbursements.json")
         loan_pmts_data      = _load(data_dir, "loan_payments.json")
@@ -178,6 +180,7 @@ class Command(BaseCommand):
                 f"banks={len(banks_data)}, income={len(income_data)}, "
                 f"expenses={len(expense_data)}, liabilities={len(liability_data)}, "
                 f"savings_payments={len(savings_pmts_data)}, "
+                f"smart_savings={len(smart_savings_data)}, "
                 f"inventory={len(inventory_data)}, "
                 f"loan_disbursements={len(loan_disb_data)}, "
                 f"loan_payments={len(loan_pmts_data)}, "
@@ -200,7 +203,7 @@ class Command(BaseCommand):
         try:
             with transaction.atomic():
                 # ── STEP 1: Bootstrap  ───────────────────────────────────────
-                self.stdout.write("Step 1/19  Bootstrap (Tenant → User → Branch) …")
+                self.stdout.write("Step 1/20  Bootstrap (Tenant → User → Branch) …")
                 owner, tenant, branch = self._bootstrap(
                     options, Tenant, Branch
                 )
@@ -213,19 +216,27 @@ class Command(BaseCommand):
                 )
 
                 # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────
-                self.stdout.write("Step 2/19  Chart of accounts …")
+                self.stdout.write("Step 2/20  Chart of accounts …")
                 gl = self._setup_chart_of_accounts(Account, ctx)
 
                 # ── STEP 3: Financial Products ────────────────────────────────
-                self.stdout.write("Step 3/19  Financial products …")
+                self.stdout.write("Step 3/20  Financial products …")
                 products = self._setup_products(Product, LoanProduct, gl, ctx)
 
+                # ── STEP 3.5: Staff (optional — requires staff.json) ─────────
+                if staff_data:
+                    self.stdout.write(f"Step 3.5   Staff ({len(staff_data)} records) …")
+                    from hr.models import Staff
+                    self._import_staff(staff_data, Staff, ctx)
+                else:
+                    self.stdout.write("Step 3.5   Staff — staff.json not found, skipping")
+
                 # ── STEP 4: Client Groups ─────────────────────────────────────
-                self.stdout.write("Step 4/19  Client groups …")
+                self.stdout.write("Step 4/20  Client groups …")
                 group_map = self._import_groups(groups_data, ClientGroup, ctx)
 
                 # ── STEP 5: Clients ───────────────────────────────────────────
-                self.stdout.write("Step 5/19  Clients …")
+                self.stdout.write("Step 5/20  Clients …")
                 client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
 
                 # ── STEP 6: Savings ───────────────────────────────────────────
@@ -234,40 +245,40 @@ class Command(BaseCommand):
                 # Step 12 posts these as a single balanced GL transaction.
                 ob_entries: list = []
 
-                self.stdout.write("Step 6/19  Savings accounts …")
+                self.stdout.write("Step 6/20  Savings accounts …")
                 self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 7: Loans ─────────────────────────────────────────────
-                self.stdout.write("Step 7/19  Loan accounts …")
+                self.stdout.write("Step 7/20  Loan accounts …")
                 self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 8: Banks / Cash ──────────────────────────────────────
-                self.stdout.write("Step 8/19  Bank / cash accounts …")
+                self.stdout.write("Step 8/20  Bank / cash accounts …")
                 self._import_banks(banks_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 9: Inventory ─────────────────────────────────────────
                 # Must run before Step 13 (OBE) so inventory balance_bf is captured.
-                self.stdout.write("Step 9/19  Inventory …")
+                self.stdout.write("Step 9/20  Inventory …")
                 self._import_inventory(inventory_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 10: Income ───────────────────────────────────────────
-                self.stdout.write("Step 10/19 Income accounts …")
+                self.stdout.write("Step 10/20 Income accounts …")
                 self._import_income(income_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 11: Expenses ─────────────────────────────────────────
-                self.stdout.write("Step 11/19 Expense accounts …")
+                self.stdout.write("Step 11/20 Expense accounts …")
                 self._import_expenses(expense_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 12: Liabilities ──────────────────────────────────────
-                self.stdout.write("Step 12/19 Liability accounts …")
+                self.stdout.write("Step 12/20 Liability accounts …")
                 self._import_liabilities(liability_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 13: Opening balance transaction ──────────────────────
-                self.stdout.write("Step 13/19 Opening balance transaction …")
+                self.stdout.write("Step 13/20 Opening balance transaction …")
                 self._create_opening_balance_transaction(ob_entries, Account, ctx)
 
                 # ── STEP 14: Savings payment history ──────────────────────────
-                self.stdout.write("Step 14/19 Savings payment history …")
+                self.stdout.write("Step 14/20 Savings payment history …")
                 self._import_savings_payments(
                     savings_pmts_data, banks_data, SavingsAccount, Account, gl, ctx
                 )
@@ -277,37 +288,47 @@ class Command(BaseCommand):
                 # Required because 2026-disbursed loans have opening_balance=0 and would
                 # otherwise only accumulate repayment credits (Step 16), driving the
                 # loan portfolio negative.
-                self.stdout.write("Step 15/19 Loan disbursements …")
+                self.stdout.write("Step 15/20 Loan disbursements …")
                 self._import_loan_disbursements(
                     loan_disb_data, banks_data, LoanAccount, Account, gl, ctx
                 )
 
                 # ── STEP 16: Loan payment history (repayments) ────────────────
-                self.stdout.write("Step 16/19 Loan payment history …")
+                self.stdout.write("Step 16/20 Loan payment history …")
                 self._import_loan_payments(
                     loan_pmts_data, banks_data, LoanAccount, Account, gl, ctx
                 )
 
                 # ── STEP 17: Income payment history ───────────────────────────
-                self.stdout.write("Step 17/19 Income payment history …")
+                self.stdout.write("Step 17/20 Income payment history …")
                 self._import_income_payments(
                     income_pmts_data, banks_data, Account, gl, ctx
                 )
 
                 # ── STEP 18: Expense payment history ──────────────────────────
-                self.stdout.write("Step 18/19 Expense payment history …")
+                self.stdout.write("Step 18/20 Expense payment history …")
                 self._import_expense_payments(
                     expense_pmts_data, banks_data, Account, gl, ctx
                 )
 
                 # ── STEP 19: Liability payment history ────────────────────────
-                self.stdout.write("Step 19/19 Liability payment history …")
+                self.stdout.write("Step 19/20 Liability payment history …")
                 self._import_liability_payments(
                     liability_pmts_data, banks_data, Account, gl, ctx
                 )
 
+                # ── STEP 20: Smart Savings enrolment ──────────────────────────
+                self.stdout.write("Step 20/20 Smart Savings enrolment …")
+                self._import_smart_savings(smart_savings_data, SavingsAccount, ctx)
+
         finally:
             _thread_locals.skip_account_components = False
+
+        # Post-import: link any existing User accounts to their Staff records.
+        # Runs outside the atomic block so a partial failure here doesn't roll
+        # back the entire migration.
+        self.stdout.write("Post-import  Linking User accounts to Staff records …")
+        self._link_staff_to_users(ctx["tenant"])
 
         self.stdout.write(self.style.SUCCESS("\nMigration complete!\n"))
 
@@ -499,6 +520,90 @@ class Command(BaseCommand):
 
         sav_products = {"N": sav_reg, "D": sav_dc}
 
+        # ── SavingsProduct config for SAV-DC (daily contribution + smart savings) ──
+        # Three dedicated GL accounts are required by the SavingsProduct model:
+        #   • DC Income       → first-deposit-as-income account (INCOME)
+        #   • Smart Interest  → interest expense at cycle maturity (EXPENSE)
+        #   • Smart Penalty   → penalty income on early cycle break (INCOME)
+        from savings.models import SavingsProduct as SavingsProdConfig
+        from accounts.models import Account
+
+        income_parent  = gl["INCOME"]
+        expense_parent = gl["EXPENSE"]
+
+        dc_income_acct, _ = Account.objects.get_or_create(
+            code="4200-DCINC",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                "name": "Daily Contribution Income",
+                "account_type": Account.INCOME,
+                "account_level": Account.LEVEL_CHILD,
+                "parent": income_parent,
+                "owner": ctx["owner"],
+                "created_by": ctx["owner"],
+                "is_system_account": True,
+                "balance": Decimal("0.00"),
+                "balance_bf": Decimal("0.00"),
+            },
+        )
+        smart_interest_acct, _ = Account.objects.get_or_create(
+            code="5300-SSINT",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                "name": "Smart Savings Interest Expense",
+                "account_type": Account.EXPENSE,
+                "account_level": Account.LEVEL_CHILD,
+                "parent": expense_parent,
+                "owner": ctx["owner"],
+                "created_by": ctx["owner"],
+                "is_system_account": True,
+                "balance": Decimal("0.00"),
+                "balance_bf": Decimal("0.00"),
+            },
+        )
+        smart_penalty_acct, _ = Account.objects.get_or_create(
+            code="4200-SSPNL",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                "name": "Smart Savings Penalty Income",
+                "account_type": Account.INCOME,
+                "account_level": Account.LEVEL_CHILD,
+                "parent": income_parent,
+                "owner": ctx["owner"],
+                "created_by": ctx["owner"],
+                "is_system_account": True,
+                "balance": Decimal("0.00"),
+                "balance_bf": Decimal("0.00"),
+            },
+        )
+        SavingsProdConfig.objects.get_or_create(
+            product=sav_dc,
+            defaults={
+                "is_daily_contribution": True,
+                "first_deposit_is_income": True,
+                "first_deposit_income_account": dc_income_acct,
+                "has_savings_cycle": True,
+                "cycle_length_months": 3,
+                "cycle_interest_rate": Decimal("6.00"),
+                # Penalty rate: admin should configure after migration.
+                # Old system charged reverse-DC-income (not a flat %) so there is
+                # no direct equivalent; 0 disables penalty until configured.
+                "cycle_break_penalty_rate": Decimal("0.00"),
+                "cycle_auto_renew": True,
+                "interest_expense_account": smart_interest_acct,
+                "penalty_income_account": smart_penalty_acct,
+                "withdrawal_needs_approval": True,
+                "only_account_manager_can_withdraw": False,
+                "owner": ctx["owner"],
+                "tenant": ctx["tenant"],
+                "branch": ctx["branch"],
+                "created_by": ctx["owner"],
+            },
+        )
+
         # ── Loan products ─────────────────────────────────────────────────────
         loan_products = {}
         loan_parent_account = gl.get("LOAN")
@@ -539,6 +644,153 @@ class Command(BaseCommand):
             f"loan products: {list(loan_products.keys())}"
         )
         return {"savings": sav_products, "loans": loan_products}
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 3.5 – Staff
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_staff(self, staff_data, Staff, ctx):
+        """
+        Upsert Staff records from staff.json and assign them to groups.
+
+        Expected record format:
+          {
+            "first_name": "Funmilola",
+            "last_name":  "Ogunwole",
+            "email":      "temmytemmy4sure@gmail.com",   // optional but strongly recommended
+            "phone":      "08012345678",                 // optional
+            "role_level": "credit_officer",              // assigned_clients/credit_officer/etc.
+            "group_codes": ["GRP-1", "GRP-7"]            // groups this officer manages
+          }
+        """
+        from clients.models import ClientGroup
+
+        tenant = ctx["tenant"]
+        branch = ctx["branch"]
+        owner  = ctx["owner"]
+        created_count = 0
+        linked_count  = 0
+
+        for rec in staff_data:
+            first = (rec.get("first_name") or "").strip()
+            last  = (rec.get("last_name")  or "").strip()
+            email = (rec.get("email")      or "").strip().lower()
+
+            if not first or not last:
+                self.stdout.write(
+                    self.style.WARNING(f"    Skipping staff record with missing name: {rec}")
+                )
+                continue
+
+            # Find existing Staff by email (strongest match) or name
+            staff = None
+            if email:
+                staff = Staff.objects.filter(
+                    email__iexact=email, tenant=tenant, is_deleted=False
+                ).first()
+            if not staff:
+                staff = Staff.objects.filter(
+                    first_name__iexact=first, last_name__iexact=last,
+                    tenant=tenant, is_deleted=False,
+                ).first()
+
+            if staff:
+                # Patch missing fields without overwriting existing data
+                updates = []
+                if email and not staff.email:
+                    staff.email = email
+                    updates.append("email")
+                if not staff.branch_id:
+                    staff.branch = branch
+                    updates.append("branch")
+                if updates:
+                    staff.save(update_fields=updates)
+            else:
+                staff = Staff.objects.create(
+                    first_name=first,
+                    last_name=last,
+                    email=email,
+                    tenant=tenant,
+                    branch=branch,
+                    owner=owner,
+                    role_level=rec.get("role_level", "operations"),
+                )
+                created_count += 1
+
+            # Assign staff to groups listed in group_codes
+            for code in rec.get("group_codes") or []:
+                try:
+                    grp = ClientGroup.objects.get(code=code, tenant=tenant)
+                    if grp.assigned_officer_id != staff.pk:
+                        grp.assigned_officer = staff
+                        grp.save(update_fields=["assigned_officer"])
+                except ClientGroup.DoesNotExist:
+                    self.stdout.write(
+                        self.style.WARNING(f"    Group {code!r} not found — assign manually")
+                    )
+
+        self.stdout.write(
+            f"    {created_count} created, {len(staff_data) - created_count} already existed"
+        )
+
+    def _link_staff_to_users(self, tenant):
+        """
+        For every unlinked Staff record in the tenant, try to find a User
+        with a matching email or first+last name and link them.
+        This is the post-import safety net: runs even if staff.json was absent.
+        """
+        import re
+        from hr.models import Staff
+
+        unlinked = Staff.objects.filter(tenant=tenant, user__isnull=True, is_deleted=False)
+        linked = 0
+
+        for staff in unlinked:
+            email = (staff.email or "").strip().lower()
+            first = (staff.first_name or "").strip()
+            last  = (staff.last_name  or "").strip()
+
+            user = None
+
+            # 1. Match by email
+            if email:
+                user = User.objects.filter(email__iexact=email, tenant=tenant).first()
+
+            # 2. Match by first+last name
+            if not user and first and last:
+                user = User.objects.filter(
+                    first_name__iexact=first, last_name__iexact=last, tenant=tenant
+                ).first()
+
+            # 3. Match by username parsed as Firstname.Lastname
+            if not user and first and last:
+                for u in User.objects.filter(tenant=tenant):
+                    parts = re.split(r"[.\-_ ]+", (u.username or "").strip())
+                    parts = [p for p in parts if p and not p.isdigit()]
+                    if len(parts) >= 2 and parts[0].lower() == first.lower() and parts[-1].lower() == last.lower():
+                        user = u
+                        break
+
+            if user:
+                # Make sure the user doesn't already have a different Staff linked
+                existing_staff = Staff.objects.filter(user=user, is_deleted=False).exclude(pk=staff.pk).first()
+                if existing_staff:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"    Skipped: User {user.username!r} already linked to "
+                            f"Staff pk={existing_staff.pk} — run merge_duplicate_staff to fix"
+                        )
+                    )
+                    continue
+
+                staff.user = user
+                staff.save(update_fields=["user"])
+                linked += 1
+                self.stdout.write(
+                    f"    Linked Staff pk={staff.pk} ({first} {last}) → User {user.username!r}"
+                )
+
+        self.stdout.write(f"    {linked} Staff record(s) linked to User accounts")
 
     # ══════════════════════════════════════════════════════════════════════════
     # STEP 4 – Client Groups
@@ -2222,6 +2474,77 @@ class Command(BaseCommand):
             },
         )
         return acct
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 20 – Smart Savings enrolment
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_smart_savings(self, smart_savings_data, SavingsAccount, ctx):
+        """
+        Re-enrol clients in Smart Savings using the start_date and opening_balance
+        exported from the old system.
+
+        Mapping
+        -------
+        Old SmartSavingsAccount.savings  → SavingsAccount whose account_number
+        is SAV-<client_id>-DC (DC savings created in Step 6).
+
+        Idempotency
+        -----------
+        Skips any SavingsAccount that already has a SmartSavingsAccount row.
+
+        Cycle continuity
+        ----------------
+        The exported start_date and opening_balance are written as-is so the
+        daily interest task will pick up the correct elapsed time and apply
+        interest on the right date without losing any accumulated cycle period.
+        """
+        from savings.models import SmartSavingsAccount
+
+        if not smart_savings_data:
+            self.stdout.write("    No smart savings data — skipping.")
+            return
+
+        created = 0
+        skipped = 0
+        orphan  = 0
+
+        for rec in smart_savings_data:
+            client_id = rec.get("client_id")
+            if not client_id:
+                skipped += 1
+                continue
+
+            savings_type = rec.get("savings_type", "D")
+            suffix = "DC" if savings_type == "D" else "REG"
+            account_number = f"SAV-{client_id}-{suffix}"
+
+            try:
+                sav_acct = SavingsAccount.objects.get(account_number=account_number)
+            except SavingsAccount.DoesNotExist:
+                orphan += 1
+                continue
+
+            # Idempotency: already enrolled
+            if SmartSavingsAccount.objects.filter(savings=sav_acct).exists():
+                skipped += 1
+                continue
+
+            raw_last = rec.get("last_interest_date")
+            SmartSavingsAccount.objects.create(
+                savings=sav_acct,
+                is_active=rec.get("is_active", True),
+                start_date=_date(rec.get("start_date")),
+                opening_balance=_d(rec.get("opening_balance")),
+                last_interest_date=_date(raw_last) if raw_last else None,
+            )
+            created += 1
+
+        self.stdout.write(
+            f"    {created} enrolled, "
+            f"{skipped} skipped (already enrolled / no client_id), "
+            f"{orphan} orphaned (DC savings account not found)"
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # Utility
