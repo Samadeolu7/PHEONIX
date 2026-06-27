@@ -158,7 +158,6 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=cashier_account,
             side=JournalEntryLine.DEBIT,
             amount=amount,
-            description=f"Cash received from {self.client.full_name} – deposit",
         )
 
         # Credit: Member Savings (SAVINGS/LIABILITY) — balance increases
@@ -167,7 +166,6 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=self.account,
             side=JournalEntryLine.CREDIT,
             amount=amount,
-            description=f"Savings deposit – {self.account_number}",
         )
 
         journal_entry.post()
@@ -256,7 +254,6 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=self.account,
             side=JournalEntryLine.DEBIT,
             amount=amount,
-            description=f"Savings withdrawal – {self.account_number}",
         )
 
         # Credit: Cashier / Cash account (ASSET) — cash paid out
@@ -265,7 +262,6 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=cashier_account,
             side=JournalEntryLine.CREDIT,
             amount=amount,
-            description=f"Cash paid to {self.client.full_name} – withdrawal",
         )
 
         journal_entry.post()
