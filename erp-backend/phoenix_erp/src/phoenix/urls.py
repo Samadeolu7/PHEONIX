@@ -21,9 +21,13 @@ from django.views.static import serve as serve_static
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from common.debug_views import migration_snapshot
 
 
 urlpatterns = [
+    # Temporary migration-comparison endpoint — remove after verification
+    path('api/debug/migration-snapshot/', migration_snapshot, name='migration-snapshot'),
+
     path('api/common/', include('common.urls', namespace='common')),
     path('admin/', admin.site.urls),
     

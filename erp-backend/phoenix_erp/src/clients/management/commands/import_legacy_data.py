@@ -170,6 +170,7 @@ class Command(BaseCommand):
         income_pmts_data    = _load(data_dir, "income_payments.json")
         expense_pmts_data   = _load(data_dir, "expense_payments.json")
         liability_pmts_data = _load(data_dir, "liability_payments.json")
+        bank_transfers_data = _load(data_dir, "bank_transfers.json")
 
         self.stdout.write(
             self.style.MIGRATE_HEADING(
@@ -186,7 +187,8 @@ class Command(BaseCommand):
                 f"loan_payments={len(loan_pmts_data)}, "
                 f"income_payments={len(income_pmts_data)}, "
                 f"expense_payments={len(expense_pmts_data)}, "
-                f"liability_payments={len(liability_pmts_data)}\n"
+                f"liability_payments={len(liability_pmts_data)}, "
+                f"bank_transfers={len(bank_transfers_data)}\n"
             )
         )
 
@@ -203,7 +205,7 @@ class Command(BaseCommand):
         try:
             with transaction.atomic():
                 # ── STEP 1: Bootstrap  ───────────────────────────────────────
-                self.stdout.write("Step 1/20  Bootstrap (Tenant → User → Branch) …")
+                self.stdout.write("Step 1/21  Bootstrap (Tenant → User → Branch) …")
                 owner, tenant, branch = self._bootstrap(
                     options, Tenant, Branch
                 )
@@ -216,11 +218,11 @@ class Command(BaseCommand):
                 )
 
                 # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────
-                self.stdout.write("Step 2/20  Chart of accounts …")
+                self.stdout.write("Step 2/21  Chart of accounts …")
                 gl = self._setup_chart_of_accounts(Account, ctx)
 
                 # ── STEP 3: Financial Products ────────────────────────────────
-                self.stdout.write("Step 3/20  Financial products …")
+                self.stdout.write("Step 3/21  Financial products …")
                 products = self._setup_products(Product, LoanProduct, gl, ctx)
 
                 # ── STEP 3.5: Staff (optional — requires staff.json) ─────────
@@ -232,11 +234,11 @@ class Command(BaseCommand):
                     self.stdout.write("Step 3.5   Staff — staff.json not found, skipping")
 
                 # ── STEP 4: Client Groups ─────────────────────────────────────
-                self.stdout.write("Step 4/20  Client groups …")
+                self.stdout.write("Step 4/21  Client groups …")
                 group_map = self._import_groups(groups_data, ClientGroup, ctx)
 
                 # ── STEP 5: Clients ───────────────────────────────────────────
-                self.stdout.write("Step 5/20  Clients …")
+                self.stdout.write("Step 5/21  Clients …")
                 client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
 
                 # ── STEP 6: Savings ───────────────────────────────────────────
@@ -245,40 +247,40 @@ class Command(BaseCommand):
                 # Step 12 posts these as a single balanced GL transaction.
                 ob_entries: list = []
 
-                self.stdout.write("Step 6/20  Savings accounts …")
+                self.stdout.write("Step 6/21  Savings accounts …")
                 self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 7: Loans ─────────────────────────────────────────────
-                self.stdout.write("Step 7/20  Loan accounts …")
+                self.stdout.write("Step 7/21  Loan accounts …")
                 self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 8: Banks / Cash ──────────────────────────────────────
-                self.stdout.write("Step 8/20  Bank / cash accounts …")
+                self.stdout.write("Step 8/21  Bank / cash accounts …")
                 self._import_banks(banks_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 9: Inventory ─────────────────────────────────────────
                 # Must run before Step 13 (OBE) so inventory balance_bf is captured.
-                self.stdout.write("Step 9/20  Inventory …")
+                self.stdout.write("Step 9/21  Inventory …")
                 self._import_inventory(inventory_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 10: Income ───────────────────────────────────────────
-                self.stdout.write("Step 10/20 Income accounts …")
+                self.stdout.write("Step 10/21 Income accounts …")
                 self._import_income(income_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 11: Expenses ─────────────────────────────────────────
-                self.stdout.write("Step 11/20 Expense accounts …")
+                self.stdout.write("Step 11/21 Expense accounts …")
                 self._import_expenses(expense_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 12: Liabilities ──────────────────────────────────────
-                self.stdout.write("Step 12/20 Liability accounts …")
+                self.stdout.write("Step 12/21 Liability accounts …")
                 self._import_liabilities(liability_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 13: Opening balance transaction ──────────────────────
-                self.stdout.write("Step 13/20 Opening balance transaction …")
+                self.stdout.write("Step 13/21 Opening balance transaction …")
                 self._create_opening_balance_transaction(ob_entries, Account, ctx)
 
                 # ── STEP 14: Savings payment history ──────────────────────────
-                self.stdout.write("Step 14/20 Savings payment history …")
+                self.stdout.write("Step 14/21 Savings payment history …")
                 self._import_savings_payments(
                     savings_pmts_data, banks_data, SavingsAccount, Account, gl, ctx
                 )
@@ -288,38 +290,47 @@ class Command(BaseCommand):
                 # Required because 2026-disbursed loans have opening_balance=0 and would
                 # otherwise only accumulate repayment credits (Step 16), driving the
                 # loan portfolio negative.
-                self.stdout.write("Step 15/20 Loan disbursements …")
+                self.stdout.write("Step 15/21 Loan disbursements …")
                 self._import_loan_disbursements(
                     loan_disb_data, banks_data, LoanAccount, Account, gl, ctx
                 )
 
                 # ── STEP 16: Loan payment history (repayments) ────────────────
-                self.stdout.write("Step 16/20 Loan payment history …")
+                self.stdout.write("Step 16/21 Loan payment history …")
                 self._import_loan_payments(
                     loan_pmts_data, banks_data, LoanAccount, Account, gl, ctx
                 )
 
                 # ── STEP 17: Income payment history ───────────────────────────
-                self.stdout.write("Step 17/20 Income payment history …")
+                self.stdout.write("Step 17/21 Income payment history …")
                 self._import_income_payments(
                     income_pmts_data, banks_data, Account, gl, ctx
                 )
 
                 # ── STEP 18: Expense payment history ──────────────────────────
-                self.stdout.write("Step 18/20 Expense payment history …")
+                self.stdout.write("Step 18/21 Expense payment history …")
                 self._import_expense_payments(
                     expense_pmts_data, banks_data, Account, gl, ctx
                 )
 
                 # ── STEP 19: Liability payment history ────────────────────────
-                self.stdout.write("Step 19/20 Liability payment history …")
+                self.stdout.write("Step 19/21 Liability payment history …")
                 self._import_liability_payments(
                     liability_pmts_data, banks_data, Account, gl, ctx
                 )
 
                 # ── STEP 20: Smart Savings enrolment ──────────────────────────
-                self.stdout.write("Step 20/20 Smart Savings enrolment …")
+                self.stdout.write("Step 20/21 Smart Savings enrolment …")
                 self._import_smart_savings(smart_savings_data, SavingsAccount, ctx)
+
+                # ── STEP 21: Bank transfer history ────────────────────────────
+                # Approved inter-bank cash transfers (e.g. DC Cash → MoniePoint).
+                # Without these, source banks stay over-inflated and destination
+                # banks stay under-stated.
+                self.stdout.write("Step 21/21 Bank transfer history …")
+                self._import_bank_transfers(
+                    bank_transfers_data, banks_data, Account, gl, ctx
+                )
 
         finally:
             _thread_locals.skip_account_components = False
@@ -2643,6 +2654,93 @@ class Command(BaseCommand):
             f"    {created} enrolled, "
             f"{skipped} skipped (already enrolled / no client_id), "
             f"{orphan} orphaned (DC savings account not found)"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 21 – Bank transfer history
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _import_bank_transfers(self, bank_transfers_data, banks_data, Account, gl, ctx):
+        """
+        Post each approved inter-bank cash transfer as a balanced GL journal entry.
+
+        Accounting treatment
+        --------------------
+        Transfer:  Dr. Destination Bank GL  |  Cr. Source Bank GL
+        (Cash moves from source to destination — internal movement only, no P&L impact.)
+
+        Why this step is necessary
+        --------------------------
+        The old system's PendingCashTransfer records (e.g. DC Cash → MoniePoint after
+        daily field collection) are not captured by any of the payment-history steps.
+        Omitting them leaves source accounts over-inflated (the cash-out Cr is missing)
+        and destination accounts under-stated (the cash-in Dr is missing).
+
+        Idempotency
+        -----------
+        Guarded by TransactionSeries code "BKXFR".  Re-running is safe.
+        """
+        from transactions.models import Transaction, TransactionEntry, TransactionSeries
+
+        if not bank_transfers_data:
+            self.stdout.write("    No bank transfers to post — skipping.")
+            return
+
+        series, _ = TransactionSeries.objects.get_or_create(
+            code="BKXFR",
+            defaults={"description": "Bank Transfer History Migration"},
+        )
+        if Transaction.objects.filter(
+            series=series, tenant=ctx["tenant"], branch=ctx["branch"]
+        ).exists():
+            self.stdout.write("    Bank transfer history already imported — skipping.")
+            return
+
+        bank_acct_map = self._build_bank_account_map(banks_data, Account, gl, ctx)
+        suspense      = self._get_suspense_account(Account, gl, ctx)
+
+        created = 0
+        skipped = 0
+
+        for rec in bank_transfers_data:
+            src_bank_id = rec.get("source_bank_id")
+            dst_bank_id = rec.get("destination_bank_id")
+            amount      = _d(rec.get("amount"))
+            pay_date    = _date(rec.get("payment_date"))
+            description = (rec.get("description") or "").strip() or "Inter-bank cash transfer"
+
+            if amount <= Decimal("0"):
+                skipped += 1
+                continue
+
+            src_acct = bank_acct_map.get(src_bank_id, suspense) if src_bank_id else suspense
+            dst_acct = bank_acct_map.get(dst_bank_id, suspense) if dst_bank_id else suspense
+
+            txn = Transaction.objects.create(
+                series=series,
+                date=pay_date,
+                description=description,
+                owner=ctx["owner"],
+                branch=ctx["branch"],
+                tenant=ctx["tenant"],
+                created_by=ctx["owner"],
+            )
+
+            TransactionEntry.objects.create(
+                transaction=txn, account=dst_acct,
+                side=TransactionEntry.DEBIT, amount=amount,
+            )
+            TransactionEntry.objects.create(
+                transaction=txn, account=src_acct,
+                side=TransactionEntry.CREDIT, amount=amount,
+            )
+            txn.post()
+            created += 1
+
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"    {created} bank transfer transactions posted, {skipped} skipped"
+            )
         )
 
     # ══════════════════════════════════════════════════════════════════════════
