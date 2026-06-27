@@ -201,8 +201,9 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                 # next cycle starts from maturity date (not today), to avoid drift
                 acct.last_interest_date = maturity_date
                 acct.start_date = maturity_date
-                # opening_balance for next cycle = current balance (now includes interest)
-                acct.opening_balance = savings.current_balance + interest
+                # current_balance already includes the interest credited by
+                # journal.post() above — don't add it again
+                acct.opening_balance = savings.current_balance
                 acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
 
                 processed += 1

@@ -56,6 +56,14 @@ def handle_first_deposit_income(
     if not (config.is_daily_contribution and config.first_deposit_is_income):
         return None, False
 
+    # Smart savers are exempt from the first-deposit income charge for the
+    # duration of their cycle — they accumulate instead of contributing income.
+    try:
+        if savings_account.smart_account.is_active:
+            return None, False
+    except SmartSavingsAccount.DoesNotExist:
+        pass
+
     today = deposit_date if deposit_date else timezone.now().date()
 
     # Check if any deposit already exists this month for this account
@@ -207,15 +215,20 @@ def apply_cycle_interest(savings_account: SavingsAccount, transacted_by) -> obje
         details=f"Rate: {config.cycle_interest_rate}%, Base: ₦{opening_balance:,.2f}",
     )
 
-    smart.last_interest_date = today
-    smart.is_active = not config.cycle_auto_renew
-    smart.save(update_fields=['last_interest_date', 'is_active'])
+    maturity_date = smart.maturity_date
 
     if config.cycle_auto_renew:
-        smart.start_date = today
-        smart.opening_balance = savings_account.current_balance
+        # Next cycle begins from the exact maturity date (not today) to prevent
+        # drift when the task or this service runs after the due date.
+        smart.last_interest_date = maturity_date
+        smart.start_date = maturity_date
+        smart.opening_balance = savings_account.current_balance  # post-interest
         smart.is_active = True
-        smart.save(update_fields=['start_date', 'opening_balance', 'is_active'])
+        smart.save(update_fields=['last_interest_date', 'start_date', 'opening_balance', 'is_active'])
+    else:
+        smart.last_interest_date = maturity_date
+        smart.is_active = False
+        smart.save(update_fields=['last_interest_date', 'is_active'])
 
     return journal
 
@@ -306,9 +319,13 @@ def apply_cycle_break_penalty(
         ),
     )
 
-    # Deactivate the cycle
-    smart.is_active = False
-    smart.save(update_fields=['is_active'])
+    # Reset cycle — the client stays enrolled in Smart Savings.
+    # opening_balance is set to the post-penalty balance here; _execute_withdrawal
+    # updates it again after the actual withdrawal so the new cycle starts from
+    # the final post-withdrawal balance.
+    smart.start_date = today
+    smart.opening_balance = savings_account.current_balance  # post-penalty, pre-withdrawal
+    smart.save(update_fields=['start_date', 'opening_balance'])
 
     return penalty_amount, journal
 
@@ -511,6 +528,17 @@ def _execute_withdrawal(wr: SavingsWithdrawalRequest, executed_by: User) -> None
         cashier_account=cashier,
         transacted_by=executed_by,
     )
+
+    # If a penalty reset the cycle, the opening_balance was set to the
+    # post-penalty balance. Now that the withdrawal is done, pin it to the
+    # final post-withdrawal balance so the next interest cycle is correct.
+    try:
+        smart = savings_account.smart_account
+        if smart.is_active:
+            smart.opening_balance = savings_account.current_balance
+            smart.save(update_fields=['opening_balance'])
+    except SmartSavingsAccount.DoesNotExist:
+        pass
 
     wr.status = SavingsWithdrawalRequest.STATUS_COMPLETED
     wr.journal_entry = journal
