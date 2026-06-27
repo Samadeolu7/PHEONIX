@@ -1768,6 +1768,19 @@ class ClientClassificationViewSet(ScopedModelViewSet):
     serializer_class = ClientClassificationSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
 
+    def get_queryset(self):
+        # Classifications are org-wide config — not branch-scoped.
+        user = self.request.user
+        tenant = getattr(user, 'tenant', None)
+        if not tenant:
+            return ClientClassification.objects.none()
+        qs = ClientClassification.objects.filter(tenant=tenant)
+        if hasattr(qs, 'filter'):
+            field_names = {f.name for f in ClientClassification._meta.get_fields()}
+            if 'is_deleted' in field_names:
+                qs = qs.filter(is_deleted=False)
+        return qs
+
 
 class ClientDocumentViewSet(ScopedModelViewSet):
     permission_module = 'clients'

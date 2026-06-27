@@ -41,6 +41,7 @@ const ClientFormPage: React.FC = () => {
   );
   const [feeLoading, setFeeLoading] = useState(false);
   const [staffList, setStaffList] = useState<{ id: number; name: string }[]>([]);
+  const [groups, setGroups] = useState<{ id: number; name: string; assigned_officer: number | null }[]>([]);
   const [ninWarning, setNinWarning] = useState<string | null>(null);
   const ninTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeSection, setActiveSection] = useState<'basic' | 'financial' | 'nok' | 'employment'>(
@@ -141,6 +142,20 @@ const ClientFormPage: React.FC = () => {
       const branchData = await branchService.getBranches();
       console.log(branchData);
       setBranches(branchData.results || []);
+
+      // Load groups for the group selector
+      try {
+        const groupData = await clientService.listClientGroups({ page_size: 200 });
+        setGroups(
+          (groupData as { id: number; name: string; assigned_officer: number | null }[]).map(g => ({
+            id: g.id,
+            name: g.name,
+            assigned_officer: g.assigned_officer ?? null,
+          }))
+        );
+      } catch {
+        // non-critical
+      }
 
       // Load staff list for account manager selector (BM+ roles)
       const bmRoles = ['branch_manager', 'supervisor', 'director', 'admin', 'operations'];
@@ -315,9 +330,19 @@ const ClientFormPage: React.FC = () => {
         success('Client registered successfully');
       }
       navigate('/clients');
-    } catch (err: any) {
-      setError(err.message || 'Failed to save client');
-      showError(err.message || 'Failed to save client');
+    } catch (err: unknown) {
+      const apiErr = err as { message?: string; details?: Record<string, string | string[]> };
+      // Format field-level DRF validation errors into a readable message
+      let msg = apiErr.message || 'Failed to save client';
+      if (apiErr.details && typeof apiErr.details === 'object') {
+        const fieldErrors = Object.entries(apiErr.details)
+          .filter(([k]) => k !== 'message' && k !== 'detail')
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+          .join(' | ');
+        if (fieldErrors) msg = fieldErrors;
+      }
+      setError(msg);
+      showError(msg);
     } finally {
       setLoading(false);
     }
@@ -778,6 +803,50 @@ const ClientFormPage: React.FC = () => {
                       <option value="pr">Prospect</option>
                     </select>
                   </div>
+
+                  {/* Group — required for dc / wl / ml */}
+                  {['dc', 'wl', 'ml'].includes(((formData as any).client_type || '').toLowerCase()) && (
+                    <div>
+                      <label
+                        style={{
+                          display: 'block',
+                          fontSize: '0.875rem',
+                          fontWeight: 500,
+                          marginBottom: '0.5rem',
+                        }}
+                      >
+                        Group <span style={{ color: '#dc2626' }}>*</span>
+                      </label>
+                      <select
+                        value={(formData as any).group || ''}
+                        onChange={e => {
+                          const gid = e.target.value ? Number(e.target.value) : undefined;
+                          handleChange('group' as any, gid);
+                          // Auto-fill assigned_officer from the selected group
+                          if (gid) {
+                            const grp = groups.find(g => g.id === gid);
+                            if (grp?.assigned_officer) {
+                              handleChange('assigned_officer' as any, grp.assigned_officer);
+                            }
+                          }
+                        }}
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '0.5rem',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '0.375rem',
+                        }}
+                      >
+                        <option value="">Select group...</option>
+                        {groups.map(g => (
+                          <option key={g.id} value={g.id}>
+                            {g.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Registration Fee Preview (non-editable) */}
                   <div>
