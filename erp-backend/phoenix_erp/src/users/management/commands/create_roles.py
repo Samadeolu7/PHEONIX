@@ -2,35 +2,99 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from users.models import Tenant, Role
 
-# Approval / rejection permission codes that the Administrator role is NOT allowed to perform.
-# Admin sees and can do everything Director/Principal can, EXCEPT approving or rejecting items.
-ADMIN_EXCLUDED_PERMISSIONS = [
-    "po-bulk-approve",
-    "po-approve",
+# Approval codes that Supervisor is NOT allowed to perform.
+# Supervisor sees and can initiate everything but cannot give final approval
+# on financial and sensitive HR decisions — those require Branch Manager or Director.
+SUPERVISOR_EXCLUDED_PERMISSIONS = [
+    "loan-approve",
+    "loan-reject",
+    "loan-disbursement-approve",
     "pr-approve",
     "pr-reject",
-    "return-approve",
-    "attendance-approve",
-    "leave-approve",
-    "leave-reject",
-    "payroll-approve",
-    "bonus-deduction-approve",
-    "bonus-deduction-reject",
+    "write-off-approve",
+    "bank-approve",
+    "leave-request-approve",
+    "consumption-approve",
+]
+
+# Permissions granted to Credit Officer — client, loan, and savings operations only.
+CREDIT_OFFICER_PERMISSIONS = [
+    # Clients
+    "client-list",
+    "client-create",
+    "client-edit",
+    "client-view-detail",
+    # Loans
+    "loan-list",
+    "loan-create",
+    "loan-edit",
+    "loan-view-detail",
+    "loan-disbursement-list",
+    # Savings
+    "savings-list",
+    "savings-create",
+    # Cash management
+    "cash-management-list",
+    "cash-management-create",
+    # Visibility
+    "report-list",
+    "dashboard-view",
+]
+
+# Permissions granted to Registrar — client registration and basic savings/cash only.
+REGISTRAR_PERMISSIONS = [
+    # Clients
+    "client-list",
+    "client-create",
+    "client-view-detail",
+    # Savings
+    "savings-list",
+    "savings-create",
+    # Cash management
+    "cash-management-list",
+    "cash-management-create",
+    # Visibility
+    "dashboard-view",
 ]
 
 ROLES = [
-    {"value": "Director", "label": "Director", "color": "#1e40af", "permission_codes": ["*"], "excluded_permission_codes": []},
-    {"value": "Principal", "label": "Principal", "color": "#059669", "permission_codes": ["*"], "excluded_permission_codes": []},
     {
-        "value": "Administrator",
-        "label": "Administrator",
+        "value": "Director",
+        "label": "Director",
+        "color": "#1e40af",
+        "permission_codes": ["*"],
+        "excluded_permission_codes": [],
+    },
+    {
+        "value": "Branch Manager",
+        "label": "Branch Manager",
+        "color": "#059669",
+        "permission_codes": ["*"],
+        # Branch Manager has full authority within their branch — no approval exclusions.
+        "excluded_permission_codes": [],
+    },
+    {
+        "value": "Supervisor",
+        "label": "Supervisor",
         "color": "#7c3aed",
         "permission_codes": ["*"],
-        # Administrator can do/see everything Director & Principal can, except all approvals
-        "excluded_permission_codes": ADMIN_EXCLUDED_PERMISSIONS,
+        # Supervisor can initiate and manage everything but cannot give final approvals.
+        "excluded_permission_codes": SUPERVISOR_EXCLUDED_PERMISSIONS,
     },
-    {"value": "Registrar", "label": "Registrar", "color": "#ea580c", "permission_codes": [], "excluded_permission_codes": []},
-    {"value": "Officer", "label": "Officer", "color": "#0891b2", "permission_codes": [], "excluded_permission_codes": []},
+    {
+        "value": "Credit Officer",
+        "label": "Credit Officer",
+        "color": "#0891b2",
+        "permission_codes": CREDIT_OFFICER_PERMISSIONS,
+        "excluded_permission_codes": [],
+    },
+    {
+        "value": "Registrar",
+        "label": "Registrar",
+        "color": "#ea580c",
+        "permission_codes": REGISTRAR_PERMISSIONS,
+        "excluded_permission_codes": [],
+    },
 ]
 
 
@@ -96,9 +160,8 @@ class Command(BaseCommand):
 
                     if created:
                         created_total += 1
-                        self.stdout.write(self.style.SUCCESS(f"Created role '{name}' for tenant '{tenant.slug}'"))
+                        self.stdout.write(self.style.SUCCESS(f"  Created role '{name}' for tenant '{tenant.slug}'"))
                     else:
-                        # Update description, permission_codes, and excluded_permission_codes if needed
                         updated_fields = []
                         if role.description is None or color not in (role.description or ""):
                             role.description = defaults["description"]
@@ -112,8 +175,8 @@ class Command(BaseCommand):
                         if updated_fields:
                             role.save(update_fields=updated_fields)
                             updated_total += 1
-                            self.stdout.write(self.style.SUCCESS(f"Updated role '{name}' for tenant '{tenant.slug}'"))
+                            self.stdout.write(self.style.SUCCESS(f"  Updated role '{name}' for tenant '{tenant.slug}'"))
                         else:
-                            self.stdout.write(self.style.WARNING(f"Role '{name}' already exists for tenant '{tenant.slug}'"))
+                            self.stdout.write(self.style.WARNING(f"  Role '{name}' already up-to-date for tenant '{tenant.slug}'"))
 
         self.stdout.write(self.style.SUCCESS(f"\nDone. Created: {created_total}, Updated: {updated_total}"))
