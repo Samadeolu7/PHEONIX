@@ -19,7 +19,7 @@ export const BRAND = {
   // ── Assets (relative to /public) ──────────────────────────────────────────
   logoUrl: '/KTILogo.svg',
   buildingImageUrl: '/WEB7.png',
-  leadershipBannerUrl: '/WEBB2.png',
+
 
   // ── Colour Palette (from official KTIL logo SVG) ──────────────────────────
   colors: {
