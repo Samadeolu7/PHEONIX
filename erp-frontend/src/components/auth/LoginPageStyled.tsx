@@ -414,18 +414,6 @@ const LoginPageStyled: React.FC = () => {
             <p style={S.motto}>&#8220;{BRAND.motto}&#8221;</p>
             <p style={S.tagline}>{BRAND.tagline}</p>
 
-            <div style={S.bannerWrap} className="mm-banner">
-              <img
-                src={BRAND.leadershipBannerUrl}
-                alt="Leadership"
-                style={S.bannerImg}
-                fetchpriority="high"
-                onError={e => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
-            </div>
-
             <span style={S.badge}>
               <ShieldCheck size={13} />
               &nbsp;{BRAND.govtApproved}
