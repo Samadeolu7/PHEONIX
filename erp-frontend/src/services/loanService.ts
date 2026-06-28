@@ -210,6 +210,11 @@ export interface LoanDisbursement {
   loan_number: string;
   client_name: string;
   client_phone: string;
+  // Recipient bank details for transfer execution
+  client_bank_name: string | null;
+  client_bank_account_name: string | null;
+  client_bank_account_number: string | null;
+  client_bvn: string | null;
   loan_amount: string;
   requested_by: number;
   requested_by_name: string;

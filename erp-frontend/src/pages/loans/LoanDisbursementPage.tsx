@@ -23,6 +23,10 @@ import {
   ArrowLeft,
   AlertTriangle,
   Send,
+  Copy,
+  Building2,
+  CreditCard,
+  User,
 } from 'lucide-react';
 
 import type { BankAccount } from '../../types/banks';
@@ -57,6 +61,14 @@ const LoanDisbursementPage: React.FC = () => {
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [selectedBankAccount, setSelectedBankAccount] = useState<number | ''>('');
   const [disburseNotes, setDisburseNotes] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const copyAccountNumber = (value: string) => {
+    navigator.clipboard.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   // Maker-checker: requester cannot disburse — enforced on the backend too
   const isRequester = disbursement ? disbursement.requested_by === user?.id : false;
@@ -185,19 +197,91 @@ const LoanDisbursementPage: React.FC = () => {
             <p className="text-gray-500">Phone</p>
             <p className="font-medium text-gray-900">{d.client_phone || '—'}</p>
           </div>
-          <div>
-            <p className="text-gray-500">Loan Amount</p>
-            <p className="font-semibold text-gray-900 text-base">
+          <div className="col-span-2 bg-gray-50 rounded-lg p-3 border border-gray-100">
+            <p className="text-gray-500 text-xs mb-0.5">Disbursement Amount</p>
+            <p className="font-bold text-gray-900 text-2xl">
               {d.loan_amount
                 ? `₦${parseFloat(d.loan_amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}`
                 : '—'}
             </p>
-          </div>
-          <div>
-            <p className="text-gray-500">Loan Number</p>
-            <p className="font-medium text-gray-900">{d.loan_number}</p>
+            <p className="text-xs text-gray-400 mt-0.5">Loan #{d.loan_number}</p>
           </div>
         </div>
+      </div>
+
+      {/* Recipient Bank Details — the "Pay To" information */}
+      <div className={`rounded-xl shadow-sm p-5 space-y-4 border-2 ${
+        d.client_bank_account_number
+          ? 'bg-blue-50 border-blue-200'
+          : 'bg-amber-50 border-amber-200'
+      }`}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold uppercase tracking-wide flex items-center gap-2 text-blue-800">
+            <Building2 className="w-4 h-4" />
+            Pay To — Recipient Bank Details
+          </h3>
+          {!d.client_bank_account_number && (
+            <span className="text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+              No bank details on file
+            </span>
+          )}
+        </div>
+
+        {d.client_bank_account_number ? (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* Bank name */}
+            <div className="bg-white rounded-lg border border-blue-100 p-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Building2 className="w-3.5 h-3.5 text-blue-400" />
+                <p className="text-xs text-gray-500 font-medium">Bank</p>
+              </div>
+              <p className="font-semibold text-gray-900 text-sm">{d.client_bank_name || '—'}</p>
+            </div>
+
+            {/* Account number — most important, allow copy */}
+            <div className="bg-white rounded-lg border border-blue-200 p-3 sm:col-span-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                <CreditCard className="w-3.5 h-3.5 text-blue-400" />
+                <p className="text-xs text-gray-500 font-medium">Account Number</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <p className="font-bold text-gray-900 text-lg tracking-widest font-mono">
+                  {d.client_bank_account_number}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => copyAccountNumber(d.client_bank_account_number!)}
+                  title="Copy account number"
+                  className="p-1 rounded hover:bg-blue-100 text-blue-500 hover:text-blue-700 transition-colors"
+                >
+                  {copied ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Account name */}
+            <div className="bg-white rounded-lg border border-blue-100 p-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <User className="w-3.5 h-3.5 text-blue-400" />
+                <p className="text-xs text-gray-500 font-medium">Account Name</p>
+              </div>
+              <p className="font-semibold text-gray-900 text-sm">{d.client_bank_account_name || '—'}</p>
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-amber-700">
+            The client record does not have bank details saved. Please update the client profile
+            before executing a bank transfer disbursement.
+          </div>
+        )}
+
+        {/* BVN — shown below if present */}
+        {d.client_bvn && (
+          <div className="flex items-center gap-2 pt-1 border-t border-blue-100 text-xs text-gray-500">
+            <span className="font-medium">BVN:</span>
+            <span className="font-mono tracking-wider text-gray-700">{d.client_bvn}</span>
+          </div>
+        )}
       </div>
 
       {/* Workflow Details */}
@@ -267,7 +351,35 @@ const LoanDisbursementPage: React.FC = () => {
       {/* Disburse panel */}
       {d.status === 'pending_approval' && canDisburse && (
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
-          <h3 className="font-semibold text-gray-800">Disburse Loan</h3>
+          <h3 className="font-semibold text-gray-800">Execute Disbursement</h3>
+
+          {/* Confirmation summary */}
+          <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 text-sm space-y-1">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Confirm Transfer Details</p>
+            <div className="flex justify-between">
+              <span className="text-gray-500">To:</span>
+              <span className="font-semibold text-gray-900">{d.client_name}</span>
+            </div>
+            {d.client_bank_account_number && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Account:</span>
+                <span className="font-mono font-bold text-gray-900 tracking-wider">{d.client_bank_account_number}</span>
+              </div>
+            )}
+            {d.client_bank_name && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Bank:</span>
+                <span className="font-medium text-gray-900">{d.client_bank_name}</span>
+              </div>
+            )}
+            <div className="flex justify-between border-t pt-2 mt-2">
+              <span className="text-gray-500">Amount:</span>
+              <span className="font-bold text-green-700 text-base">
+                ₦{d.loan_amount ? parseFloat(d.loan_amount).toLocaleString('en-NG', { minimumFractionDigits: 2 }) : '—'}
+              </span>
+            </div>
+          </div>
+
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">

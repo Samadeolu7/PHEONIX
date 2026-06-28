@@ -336,6 +336,11 @@ class LoanDisbursementSerializer(TenantModelSerializer):
     loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
     client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
     client_phone = serializers.CharField(source='loan.client.phone_primary', read_only=True)
+    # Recipient bank details — needed by the officer executing the transfer
+    client_bank_name = serializers.CharField(source='loan.client.bank_name', read_only=True, default=None)
+    client_bank_account_name = serializers.CharField(source='loan.client.bank_account_name', read_only=True, default=None)
+    client_bank_account_number = serializers.CharField(source='loan.client.bank_account_number', read_only=True, default=None)
+    client_bvn = serializers.CharField(source='loan.client.bvn', read_only=True, default=None)
     loan_amount = serializers.DecimalField(
         source='loan.approved_amount', max_digits=18, decimal_places=2, read_only=True
     )
@@ -386,6 +391,8 @@ class LoanDisbursementSerializer(TenantModelSerializer):
         fields = [
             'id', 'loan', 'loan_number',
             'client_name', 'client_phone', 'loan_amount',
+            'client_bank_name', 'client_bank_account_name',
+            'client_bank_account_number', 'client_bvn',
             'requested_by', 'requested_by_name',
             'status', 'requested_at',
             'approved_by', 'approved_by_name', 'approved_at',

@@ -24,6 +24,9 @@ import {
   ChevronLeft,
   ChevronRight,
   BookOpen,
+  Pencil,
+  Save,
+  Building2,
 } from 'lucide-react';
 import {
   loanService,
@@ -765,6 +768,12 @@ export default function LoanAccountDetailPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Client bank details inline edit
+  const [bankEditMode, setBankEditMode] = useState(false);
+  const [bankDraft, setBankDraft] = useState({ bank_name: '', bank_account_name: '', bank_account_number: '', bvn: '' });
+  const [bankSaving, setBankSaving] = useState(false);
+  const [bankError, setBankError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     if (!loanId) return;
     setLoading(true);
@@ -1173,36 +1182,156 @@ export default function LoanAccountDetailPage() {
                 </div>
               )}
 
-              {/* Bank Details */}
-              {(loan.client_bank_name || loan.client_bank_account_number) && (
-                <div className="border-t pt-3 mt-1">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Bank Details</p>
-                  {loan.client_bank_name && (
-                    <div className="mb-1">
+              {/* Bank Details — inline editable */}
+              <div className="border-t pt-3 mt-1">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 flex items-center gap-1">
+                    <Building2 size={12} className="text-gray-400" />
+                    Bank Details
+                  </p>
+                  {!bankEditMode && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBankDraft({
+                          bank_name: loan.client_bank_name ?? '',
+                          bank_account_name: loan.client_bank_account_name ?? '',
+                          bank_account_number: loan.client_bank_account_number ?? '',
+                          bvn: loan.client_bvn ?? '',
+                        });
+                        setBankError(null);
+                        setBankEditMode(true);
+                      }}
+                      className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+                    >
+                      <Pencil size={11} />
+                      {loan.client_bank_account_number ? 'Edit' : 'Add'}
+                    </button>
+                  )}
+                </div>
+
+                {bankEditMode ? (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-0.5">Bank Name</label>
+                      <input
+                        type="text"
+                        value={bankDraft.bank_name}
+                        onChange={e => setBankDraft(d => ({ ...d, bank_name: e.target.value }))}
+                        placeholder="e.g. Zenith Bank"
+                        className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-0.5">Account Number</label>
+                      <input
+                        type="text"
+                        value={bankDraft.bank_account_number}
+                        onChange={e => setBankDraft(d => ({ ...d, bank_account_number: e.target.value }))}
+                        placeholder="10-digit NUBAN"
+                        maxLength={10}
+                        className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-0.5">Account Name</label>
+                      <input
+                        type="text"
+                        value={bankDraft.bank_account_name}
+                        onChange={e => setBankDraft(d => ({ ...d, bank_account_name: e.target.value }))}
+                        placeholder="As registered at the bank"
+                        className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-0.5">BVN</label>
+                      <input
+                        type="text"
+                        value={bankDraft.bvn}
+                        onChange={e => setBankDraft(d => ({ ...d, bvn: e.target.value }))}
+                        placeholder="11-digit BVN"
+                        maxLength={11}
+                        className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm font-mono focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+
+                    {bankError && (
+                      <p className="flex items-center gap-1 text-xs text-red-600">
+                        <AlertCircle size={12} />
+                        {bankError}
+                      </p>
+                    )}
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        disabled={bankSaving}
+                        onClick={async () => {
+                          setBankSaving(true);
+                          setBankError(null);
+                          try {
+                            await clientService.updateClient(loan.client, {
+                              bank_name: bankDraft.bank_name || undefined,
+                              bank_account_name: bankDraft.bank_account_name || undefined,
+                              bank_account_number: bankDraft.bank_account_number || undefined,
+                              bank_verification_number: bankDraft.bvn || undefined,
+                            });
+                            setLoan(prev => prev ? {
+                              ...prev,
+                              client_bank_name: bankDraft.bank_name || null,
+                              client_bank_account_name: bankDraft.bank_account_name || null,
+                              client_bank_account_number: bankDraft.bank_account_number || null,
+                              client_bvn: bankDraft.bvn || null,
+                            } : prev);
+                            setBankEditMode(false);
+                          } catch (e: any) {
+                            setBankError(e?.detail ?? e?.message ?? 'Failed to save bank details.');
+                          } finally {
+                            setBankSaving(false);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {bankSaving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setBankEditMode(false); setBankError(null); }}
+                        className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : loan.client_bank_account_number ? (
+                  <div className="space-y-1">
+                    <div>
                       <p className="text-gray-500">Bank</p>
-                      <p className="font-medium text-gray-900">{loan.client_bank_name}</p>
+                      <p className="font-medium text-gray-900">{loan.client_bank_name || '—'}</p>
                     </div>
-                  )}
-                  {loan.client_bank_account_name && (
-                    <div className="mb-1">
-                      <p className="text-gray-500">Account Name</p>
-                      <p className="font-medium text-gray-900">{loan.client_bank_account_name}</p>
-                    </div>
-                  )}
-                  {loan.client_bank_account_number && (
-                    <div className="mb-1">
+                    <div>
                       <p className="text-gray-500">Account Number</p>
                       <p className="font-mono font-medium text-gray-900">{loan.client_bank_account_number}</p>
                     </div>
-                  )}
-                  {loan.client_bvn && (
                     <div>
-                      <p className="text-gray-500">BVN</p>
-                      <p className="font-mono font-medium text-gray-900">{loan.client_bvn}</p>
+                      <p className="text-gray-500">Account Name</p>
+                      <p className="font-medium text-gray-900">{loan.client_bank_account_name || '—'}</p>
                     </div>
-                  )}
-                </div>
-              )}
+                    {loan.client_bvn && (
+                      <div>
+                        <p className="text-gray-500">BVN</p>
+                        <p className="font-mono font-medium text-gray-900">{loan.client_bvn}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-600 flex items-center gap-1">
+                    <AlertCircle size={12} />
+                    No bank details on file — add them before disbursement.
+                  </p>
+                )}
+              </div>
 
               <div className="pt-2">
                 <Link
