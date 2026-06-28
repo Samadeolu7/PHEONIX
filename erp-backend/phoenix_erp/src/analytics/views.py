@@ -72,11 +72,19 @@ _SCOPE_RANK = {
     'global':            3,
 }
 
+# These roles are always scoped to personally-assigned clients regardless of
+# what default_scope is stored on the Role record in the database.
+_FIELD_OFFICER_ROLES = frozenset({
+    'credit officer', 'loan officer', 'field officer', 'officer', 'registrar',
+})
+
 
 def _apply_officer_scope(qs, user, client_lookup: str):
     """
     Narrow a queryset to only the records this user may see based on
-    their tenant Role.default_scope.
+    their tenant Role.default_scope.  Field officers are always pinned to
+    rank 0 (assigned_clients) by role name so that a mis-configured role
+    record cannot accidentally expose the whole branch portfolio.
     """
     if _is_global_user(user):
         return qs
@@ -88,6 +96,11 @@ def _apply_officer_scope(qs, user, client_lookup: str):
             r_rank = _SCOPE_RANK.get(s)
             if r_rank is not None and r_rank < rank:
                 rank = r_rank
+            # Force assigned-clients scope for field-level officer roles,
+            # even when default_scope is not configured on the role record.
+            role_name = (getattr(r, 'name', '') or '').lower()
+            if role_name in _FIELD_OFFICER_ROLES:
+                rank = min(rank, 0)
     except Exception:
         pass
 
@@ -236,7 +249,11 @@ class MicrofinanceDashboardStatsView(APIView):
         # ── Savings ───────────────────────────────────────────────────────────
         try:
             from savings.models import SavingsAccount
-            savings_qs = scope_qs(SavingsAccount.objects.for_user(user)).filter(status='active')
+            savings_qs = _apply_officer_scope(
+                scope_qs(SavingsAccount.objects.for_user(user)).filter(status='active'),
+                user,
+                client_lookup='client__assigned_officer',
+            )
             total_savings = savings_qs.aggregate(
                 total=Sum('account__balance')
             )['total'] or Decimal('0.00')
