@@ -341,15 +341,15 @@ const LoanDisbursementPage: React.FC = () => {
       </div>
 
       {/* Maker-checker notice */}
-      {d.status === 'pending_approval' && isRequester && (
+      {d.status === 'approved' && isRequester && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2 text-sm text-amber-700">
           <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>You requested this disbursement. Another officer must process it.</span>
+          <span>You created this loan. Another officer must execute the disbursement.</span>
         </div>
       )}
 
       {/* Disburse panel */}
-      {d.status === 'pending_approval' && canDisburse && (
+      {d.status === 'approved' && canDisburse && (
         <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
           <h3 className="font-semibold text-gray-800">Execute Disbursement</h3>
 
