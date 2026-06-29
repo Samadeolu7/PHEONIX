@@ -1683,16 +1683,9 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
         """
         disbursement = self.get_object()
 
-        # Maker-checker: requester cannot disburse
-        if disbursement.requested_by_id and disbursement.requested_by_id == request.user.pk:
+        if disbursement.status != 'approved':
             return Response(
-                {'detail': 'You cannot disburse a loan you requested. Another officer must process it.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if disbursement.status != 'pending_approval':
-            return Response(
-                {'detail': f"Only pending disbursements can be processed (current status: '{disbursement.status}')."},
+                {'detail': f"Only approved disbursements can be executed (current status: '{disbursement.status}')."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1708,9 +1701,9 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
 
         try:
             with _dbtx.atomic():
-                # Approve (sets approved_by, moves to approved status internally)
-                DisbursementService.approve(disbursement, request.user)
-                # Execute immediately (GL posting + schedule generation)
+                # Loan approval IS the disbursement approval (3-person flow).
+                # Just execute — maker-checker (creator ≠ disburser, approver ≠ disburser)
+                # is enforced inside execute_disbursement().
                 DisbursementService.execute(
                     disbursement=disbursement,
                     bank_account_id=int(disbursement_account_id),
