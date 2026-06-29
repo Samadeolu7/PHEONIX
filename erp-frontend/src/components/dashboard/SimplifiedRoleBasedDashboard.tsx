@@ -1301,7 +1301,7 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
                     color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a',
                   }}
                 >
-                  {liveStats.cashier_balance}
+                  {formatNaira(liveStats.cashier_balance)}
                 </p>
               </div>
             </div>
