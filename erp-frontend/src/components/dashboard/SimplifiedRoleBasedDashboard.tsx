@@ -462,7 +462,7 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
           title: 'PAR30',
           value: s.par30_ratio != null ? `${s.par30_ratio.toFixed(2)}%` : '—',
           icon: AlertTriangle,
-          color: (s.par30_ratio ?? 0) > 5 ? 'red' as const : 'yellow' as const,
+          color: (s.par30_ratio ?? 0) > 5 ? ('red' as const) : ('yellow' as const),
         },
         {
           id: 'collections',
@@ -473,14 +473,16 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
         },
         {
           id: 'cash-balance',
-          title: s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
-            ? '⚠ Cash Balance'
-            : 'Cash Balance',
+          title:
+            s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
+              ? '⚠ Cash Balance'
+              : 'Cash Balance',
           value: s.cashier_balance != null ? formatNaira(s.cashier_balance) : '—',
           icon: Wallet,
-          color: s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
-            ? 'red' as const
-            : 'green' as const,
+          color:
+            s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
+              ? ('red' as const)
+              : ('green' as const),
         },
       ];
 
@@ -498,7 +500,7 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
           title: 'Overdue Loans',
           value: s.overdue_loans.toLocaleString(),
           icon: AlertTriangle,
-          color: s.overdue_loans > 0 ? 'red' as const : 'green' as const,
+          color: s.overdue_loans > 0 ? ('red' as const) : ('green' as const),
         },
         {
           id: 'collections',
@@ -509,14 +511,16 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
         },
         {
           id: 'cash-balance',
-          title: s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
-            ? '⚠ Cash Balance'
-            : 'Cash Balance',
+          title:
+            s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
+              ? '⚠ Cash Balance'
+              : 'Cash Balance',
           value: s.cashier_balance != null ? formatNaira(s.cashier_balance) : '—',
           icon: Wallet,
-          color: s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
-            ? 'red' as const
-            : 'green' as const,
+          color:
+            s.cashier_balance != null && parseFloat(s.cashier_balance) !== 0
+              ? ('red' as const)
+              : ('green' as const),
         },
       ];
   }
@@ -569,64 +573,167 @@ const QUICK_ACTIONS = [
 ];
 
 // Role-specific quick actions for officer-level users — focused on daily field tasks
-const OFFICER_QUICK_ACTIONS: Record<string, { id: string; title: string; icon: typeof CreditCard; path: string }[]> = {
+const OFFICER_QUICK_ACTIONS: Record<
+  string,
+  { id: string; title: string; icon: typeof CreditCard; path: string }[]
+> = {
   'Credit Officer': [
-    { id: 'loan-collection', title: 'Loan Collection', icon: CreditCard, path: '/loans/collection' },
+    {
+      id: 'loan-collection',
+      title: 'Loan Collection',
+      icon: CreditCard,
+      path: '/loans/collection',
+    },
     { id: 'savings-deposit', title: 'Savings Deposit', icon: Banknote, path: '/savings/deposit' },
     { id: 'new-client', title: 'New Client', icon: Users, path: '/clients/create' },
     { id: 'new-loan', title: 'New Loan', icon: DollarSign, path: '/loans/accounts/create' },
-    { id: 'my-portfolio', title: 'My Portfolio', icon: BarChart3, path: '/reports/officer-portfolio' },
-    { id: 'defaulters', title: 'Defaulters', icon: AlertTriangle, path: '/reports/loans/defaulters' },
+    {
+      id: 'my-portfolio',
+      title: 'My Portfolio',
+      icon: BarChart3,
+      path: '/reports/officer-portfolio',
+    },
+    {
+      id: 'defaulters',
+      title: 'Defaulters',
+      icon: AlertTriangle,
+      path: '/reports/loans/defaulters',
+    },
   ],
   'Loan Officer': [
-    { id: 'loan-collection', title: 'Loan Collection', icon: CreditCard, path: '/loans/collection' },
+    {
+      id: 'loan-collection',
+      title: 'Loan Collection',
+      icon: CreditCard,
+      path: '/loans/collection',
+    },
     { id: 'savings-deposit', title: 'Savings Deposit', icon: Banknote, path: '/savings/deposit' },
     { id: 'new-client', title: 'New Client', icon: Users, path: '/clients/create' },
     { id: 'new-loan', title: 'New Loan', icon: DollarSign, path: '/loans/accounts/create' },
-    { id: 'my-portfolio', title: 'My Portfolio', icon: BarChart3, path: '/reports/officer-portfolio' },
-    { id: 'defaulters', title: 'Defaulters', icon: AlertTriangle, path: '/reports/loans/defaulters' },
+    {
+      id: 'my-portfolio',
+      title: 'My Portfolio',
+      icon: BarChart3,
+      path: '/reports/officer-portfolio',
+    },
+    {
+      id: 'defaulters',
+      title: 'Defaulters',
+      icon: AlertTriangle,
+      path: '/reports/loans/defaulters',
+    },
   ],
   'Field Officer': [
-    { id: 'loan-collection', title: 'Loan Collection', icon: CreditCard, path: '/loans/collection' },
+    {
+      id: 'loan-collection',
+      title: 'Loan Collection',
+      icon: CreditCard,
+      path: '/loans/collection',
+    },
     { id: 'savings-deposit', title: 'Savings Deposit', icon: Banknote, path: '/savings/deposit' },
     { id: 'new-client', title: 'New Client', icon: Users, path: '/clients/create' },
-    { id: 'my-portfolio', title: 'My Portfolio', icon: BarChart3, path: '/reports/officer-portfolio' },
-    { id: 'defaulters', title: 'Defaulters', icon: AlertTriangle, path: '/reports/loans/defaulters' },
+    {
+      id: 'my-portfolio',
+      title: 'My Portfolio',
+      icon: BarChart3,
+      path: '/reports/officer-portfolio',
+    },
+    {
+      id: 'defaulters',
+      title: 'Defaulters',
+      icon: AlertTriangle,
+      path: '/reports/loans/defaulters',
+    },
   ],
   'Finance Officer': [
-    { id: 'journal-entry', title: 'Journal Entry', icon: FileText, path: '/accounting/journal-vouchers/create' },
-    { id: 'trial-balance', title: 'Trial Balance', icon: BarChart3, path: '/reports/financial/trial-balance' },
+    {
+      id: 'journal-entry',
+      title: 'Journal Entry',
+      icon: FileText,
+      path: '/accounting/journal-vouchers/create',
+    },
+    {
+      id: 'trial-balance',
+      title: 'Trial Balance',
+      icon: BarChart3,
+      path: '/reports/financial/trial-balance',
+    },
     { id: 'bank-accounts', title: 'Bank Accounts', icon: Building, path: '/banks/accounts' },
-    { id: 'cash-reconcil', title: 'Cash Reconciliation', icon: CheckCircle, path: '/treasury/cash-reconciliation' },
+    {
+      id: 'cash-reconcil',
+      title: 'Cash Reconciliation',
+      icon: CheckCircle,
+      path: '/treasury/cash-reconciliation',
+    },
   ],
-  'Accountant': [
-    { id: 'journal-entry', title: 'Journal Entry', icon: FileText, path: '/accounting/journal-vouchers/create' },
-    { id: 'trial-balance', title: 'Trial Balance', icon: BarChart3, path: '/reports/financial/trial-balance' },
+  Accountant: [
+    {
+      id: 'journal-entry',
+      title: 'Journal Entry',
+      icon: FileText,
+      path: '/accounting/journal-vouchers/create',
+    },
+    {
+      id: 'trial-balance',
+      title: 'Trial Balance',
+      icon: BarChart3,
+      path: '/reports/financial/trial-balance',
+    },
     { id: 'chart-of-accounts', title: 'Chart of Accounts', icon: Layers, path: '/accounts' },
-    { id: 'cash-reconcil', title: 'Cash Reconciliation', icon: CheckCircle, path: '/treasury/cash-reconciliation' },
+    {
+      id: 'cash-reconcil',
+      title: 'Cash Reconciliation',
+      icon: CheckCircle,
+      path: '/treasury/cash-reconciliation',
+    },
   ],
   'HR Officer': [
     { id: 'attendance', title: 'Attendance', icon: CheckSquare, path: '/hr/attendance' },
-    { id: 'leave-requests', title: 'Leave Requests', icon: CalendarDays, path: '/hr/leave-requests' },
+    {
+      id: 'leave-requests',
+      title: 'Leave Requests',
+      icon: CalendarDays,
+      path: '/hr/leave-requests',
+    },
     { id: 'staff-list', title: 'Staff List', icon: Users, path: '/hr/staff' },
     { id: 'payroll', title: 'Payroll', icon: DollarSign, path: '/hr/payroll' },
   ],
   'HR Manager': [
     { id: 'attendance', title: 'Attendance', icon: CheckSquare, path: '/hr/attendance' },
-    { id: 'leave-requests', title: 'Leave Requests', icon: CalendarDays, path: '/hr/leave-requests' },
+    {
+      id: 'leave-requests',
+      title: 'Leave Requests',
+      icon: CalendarDays,
+      path: '/hr/leave-requests',
+    },
     { id: 'staff-list', title: 'Staff List', icon: Users, path: '/hr/staff' },
     { id: 'payroll', title: 'Payroll', icon: DollarSign, path: '/hr/payroll' },
   ],
   'Procurement Officer': [
-    { id: 'requisitions', title: 'Requisitions', icon: ClipboardList, path: '/procurement/requisitions' },
-    { id: 'purchase-orders', title: 'Purchase Orders', icon: ShoppingCart, path: '/procurement/orders' },
+    {
+      id: 'requisitions',
+      title: 'Requisitions',
+      icon: ClipboardList,
+      path: '/procurement/requisitions',
+    },
+    {
+      id: 'purchase-orders',
+      title: 'Purchase Orders',
+      icon: ShoppingCart,
+      path: '/procurement/orders',
+    },
     { id: 'grns', title: 'Goods Received', icon: Package, path: '/procurement/grns' },
     { id: 'suppliers', title: 'Suppliers', icon: Building, path: '/procurement/suppliers' },
   ],
   'Store Officer': [
     { id: 'items', title: 'Item Catalog', icon: Package, path: '/inventory/items' },
     { id: 'movements', title: 'Stock Movements', icon: Activity, path: '/inventory/movements' },
-    { id: 'material-requests', title: 'Material Requests', icon: ClipboardList, path: '/inventory/material-requests' },
+    {
+      id: 'material-requests',
+      title: 'Material Requests',
+      icon: ClipboardList,
+      path: '/inventory/material-requests',
+    },
     { id: 'adjustments', title: 'Adjustments', icon: CheckSquare, path: '/inventory/adjustments' },
   ],
 };
@@ -761,8 +868,9 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
 
   // Role-specific quick actions — officers get field-relevant shortcuts, not generic ERP ones
   const officerQuickActions = OFFICER_QUICK_ACTIONS[effectiveRole];
-  const accessibleQuickActions = officerQuickActions
-    ?? (isSuperUser ? QUICK_ACTIONS : QUICK_ACTIONS.filter(a => hasPermission(a.permission)));
+  const accessibleQuickActions =
+    officerQuickActions ??
+    (isSuperUser ? QUICK_ACTIONS : QUICK_ACTIONS.filter(a => hasPermission(a.permission)));
 
   const handleModuleClick = (path: string) => {
     navigate(path);
@@ -790,22 +898,41 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
         {/* Welcome banner skeleton */}
         <div
           className="rounded-2xl p-8"
-          style={{ background: `linear-gradient(135deg, ${BRAND.colors.navyDark}, ${BRAND.colors.navyLight})` }}
+          style={{
+            background: `linear-gradient(135deg, ${BRAND.colors.navyDark}, ${BRAND.colors.navyLight})`,
+          }}
         >
-          <div className="h-7 rounded-lg w-56 mb-3" style={{ background: 'rgba(183,151,88,0.25)' }} />
+          <div
+            className="h-7 rounded-lg w-56 mb-3"
+            style={{ background: 'rgba(183,151,88,0.25)' }}
+          />
           <div className="h-4 rounded w-80 mb-6" style={{ background: 'rgba(255,255,255,0.12)' }} />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {[1, 2, 3].map(i => (
-              <div key={i} className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.08)' }}>
-                <div className="h-3 rounded w-20 mb-2" style={{ background: 'rgba(183,151,88,0.25)' }} />
-                <div className="h-6 rounded w-14" style={{ background: 'rgba(255,255,255,0.15)' }} />
+              <div
+                key={i}
+                className="rounded-xl p-4"
+                style={{ background: 'rgba(255,255,255,0.08)' }}
+              >
+                <div
+                  className="h-3 rounded w-20 mb-2"
+                  style={{ background: 'rgba(183,151,88,0.25)' }}
+                />
+                <div
+                  className="h-6 rounded w-14"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                />
               </div>
             ))}
           </div>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map(i => (
-            <div key={i} className="bg-white rounded-xl border p-5" style={{ borderColor: BRAND.colors.border }}>
+            <div
+              key={i}
+              className="bg-white rounded-xl border p-5"
+              style={{ borderColor: BRAND.colors.border }}
+            >
               <div className="h-4 bg-gray-100 rounded w-24 mb-3" />
               <div className="h-8 bg-gray-100 rounded w-20 mb-2" />
               <div className="h-3 bg-gray-50 rounded w-16" />
@@ -821,7 +948,10 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
       <div className="flex flex-col items-center justify-center py-20">
         <div
           className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-          style={{ background: `rgba(183,151,88,0.12)`, border: `1.5px solid ${BRAND.colors.border}` }}
+          style={{
+            background: `rgba(183,151,88,0.12)`,
+            border: `1.5px solid ${BRAND.colors.border}`,
+          }}
         >
           <AlertTriangle className="w-8 h-8" style={{ color: BRAND.colors.gold }} />
         </div>
@@ -829,7 +959,8 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
           No Accessible Modules
         </h2>
         <p className="text-sm text-center max-w-sm" style={{ color: BRAND.colors.textSecondary }}>
-          Your current role doesn't have permissions to access any modules. Contact your administrator.
+          Your current role doesn't have permissions to access any modules. Contact your
+          administrator.
         </p>
       </div>
     );
@@ -858,23 +989,37 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
             {/* Gold top accent */}
             <div
               className="h-1 flex-shrink-0"
-              style={{ background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark}, ${BRAND.colors.gold})` }}
+              style={{
+                background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark}, ${BRAND.colors.gold})`,
+              }}
             />
             {/* Header */}
             <div
               className="flex items-center justify-between px-4 py-4 flex-shrink-0"
-              style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', background: BRAND.colors.navyDark }}
+              style={{
+                borderBottom: '1px solid rgba(255,255,255,0.08)',
+                background: BRAND.colors.navyDark,
+              }}
             >
               <div>
                 <p className="text-sm font-black text-white">Quick Navigation</p>
-                <p className="text-xs mt-0.5" style={{ color: BRAND.colors.gold }}>{effectiveRole}</p>
+                <p className="text-xs mt-0.5" style={{ color: BRAND.colors.gold }}>
+                  {effectiveRole}
+                </p>
               </div>
               <button
                 onClick={() => setNavOpen(false)}
                 className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(183,151,88,0.18)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.07)'; }}
+                style={{
+                  background: 'rgba(255,255,255,0.07)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(183,151,88,0.18)';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                }}
               >
                 <X className="w-4 h-4" style={{ color: 'rgba(255,255,255,0.65)' }} />
               </button>
@@ -883,7 +1028,12 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
             {/* Nav buttons */}
             <div
               className="flex-1 overflow-y-auto py-2"
-              style={{ scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' } as React.CSSProperties}
+              style={
+                {
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: 'rgba(255,255,255,0.1) transparent',
+                } as React.CSSProperties
+              }
             >
               {roleSidebarButtons.length > 0 ? (
                 roleSidebarButtons.map(btn => (
@@ -891,7 +1041,10 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
                     key={btn.id}
                     button={btn}
                     level={0}
-                    onNavigate={url => { navigate(url); setNavOpen(false); }}
+                    onNavigate={url => {
+                      navigate(url);
+                      setNavOpen(false);
+                    }}
                   />
                 ))
               ) : (
@@ -902,7 +1055,10 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
                   </p>
                   {canConfigNav && (
                     <button
-                      onClick={() => { navigate('/settings/role-navigation'); setNavOpen(false); }}
+                      onClick={() => {
+                        navigate('/settings/role-navigation');
+                        setNavOpen(false);
+                      }}
                       className="mt-4 text-xs underline"
                       style={{ color: BRAND.colors.gold }}
                     >
@@ -920,15 +1076,22 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
             >
               {canConfigNav ? (
                 <button
-                  onClick={() => { navigate('/settings/role-navigation'); setNavOpen(false); }}
+                  onClick={() => {
+                    navigate('/settings/role-navigation');
+                    setNavOpen(false);
+                  }}
                   className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold"
                   style={{
                     background: 'rgba(183,151,88,0.12)',
                     color: BRAND.colors.gold,
                     border: '1px solid rgba(183,151,88,0.25)',
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(183,151,88,0.22)'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(183,151,88,0.12)'; }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(183,151,88,0.22)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(183,151,88,0.12)';
+                  }}
                 >
                   <Settings className="w-4 h-4 flex-shrink-0" />
                   Configure Navigation
@@ -944,463 +1107,528 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
       )}
 
       <div className="space-y-6">
-
-      {/* ── HERO: split 3-col identity + 2-col KPI grid ─────────────── */}
-      <div
-        className="rounded-2xl overflow-hidden"
-        style={{
-          background: `linear-gradient(135deg, ${BRAND.colors.navyDark} 0%, ${BRAND.colors.navyPrimary} 55%, ${BRAND.colors.navyLight} 100%)`,
-          boxShadow: `0 8px 40px rgba(10,24,87,0.32)`,
-        }}
-      >
-        <div className="p-7 grid grid-cols-1 lg:grid-cols-5 gap-6">
-
-          {/* Left: identity + period progress */}
-          <div className="lg:col-span-3 flex flex-col justify-between gap-5">
-            <div>
-              {/* Role + FY badges */}
-              <div className="flex items-center gap-2 mb-4 flex-wrap">
-                <span
-                  className="text-xs font-black uppercase tracking-widest px-3 py-1 rounded-full"
-                  style={{
-                    background: 'rgba(183,151,88,0.22)',
-                    color: BRAND.colors.gold,
-                    border: '1px solid rgba(183,151,88,0.40)',
-                  }}
-                >
-                  {effectiveRole}
-                </span>
-                {liveStats.active_financial_year && (
+        {/* ── HERO: split 3-col identity + 2-col KPI grid ─────────────── */}
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{
+            background: `linear-gradient(135deg, ${BRAND.colors.navyDark} 0%, ${BRAND.colors.navyPrimary} 55%, ${BRAND.colors.navyLight} 100%)`,
+            boxShadow: `0 8px 40px rgba(10,24,87,0.32)`,
+          }}
+        >
+          <div className="p-7 grid grid-cols-1 lg:grid-cols-5 gap-6">
+            {/* Left: identity + period progress */}
+            <div className="lg:col-span-3 flex flex-col justify-between gap-5">
+              <div>
+                {/* Role + FY badges */}
+                <div className="flex items-center gap-2 mb-4 flex-wrap">
                   <span
-                    className="text-xs font-semibold px-3 py-1 rounded-full"
-                    style={{ background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.55)' }}
+                    className="text-xs font-black uppercase tracking-widest px-3 py-1 rounded-full"
+                    style={{
+                      background: 'rgba(183,151,88,0.22)',
+                      color: BRAND.colors.gold,
+                      border: '1px solid rgba(183,151,88,0.40)',
+                    }}
                   >
-                    FY {liveStats.active_financial_year}
+                    {effectiveRole}
                   </span>
-                )}
-                {/* Navigation drawer toggle */}
-                <button
-                  onClick={() => setNavOpen(true)}
-                  className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all"
-                  style={{
-                    background: 'rgba(255,255,255,0.07)',
-                    color: 'rgba(255,255,255,0.70)',
-                    border: '1px solid rgba(255,255,255,0.15)',
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.background = 'rgba(183,151,88,0.18)';
-                    e.currentTarget.style.color = BRAND.colors.gold;
-                    e.currentTarget.style.borderColor = 'rgba(183,151,88,0.40)';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
-                    e.currentTarget.style.color = 'rgba(255,255,255,0.70)';
-                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
-                  }}
+                  {liveStats.active_financial_year && (
+                    <span
+                      className="text-xs font-semibold px-3 py-1 rounded-full"
+                      style={{
+                        background: 'rgba(255,255,255,0.08)',
+                        color: 'rgba(255,255,255,0.55)',
+                      }}
+                    >
+                      FY {liveStats.active_financial_year}
+                    </span>
+                  )}
+                  {/* Navigation drawer toggle */}
+                  <button
+                    onClick={() => setNavOpen(true)}
+                    className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition-all"
+                    style={{
+                      background: 'rgba(255,255,255,0.07)',
+                      color: 'rgba(255,255,255,0.70)',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = 'rgba(183,151,88,0.18)';
+                      e.currentTarget.style.color = BRAND.colors.gold;
+                      e.currentTarget.style.borderColor = 'rgba(183,151,88,0.40)';
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
+                      e.currentTarget.style.color = 'rgba(255,255,255,0.70)';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)';
+                    }}
+                  >
+                    <Menu className="w-3.5 h-3.5" />
+                    Navigation
+                  </button>
+                </div>
+
+                {/* Large greeting */}
+                <p className="text-4xl font-black text-white leading-none">{getGreeting()},</p>
+                <p
+                  className="text-4xl font-black leading-none mt-0.5"
+                  style={{ color: BRAND.colors.gold }}
                 >
-                  <Menu className="w-3.5 h-3.5" />
-                  Navigation
-                </button>
+                  {userName.split(' ')[0]}.
+                </p>
+                <p className="text-sm mt-3" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  {new Date().toLocaleDateString('en-NG', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  })}
+                </p>
               </div>
 
-              {/* Large greeting */}
-              <p className="text-4xl font-black text-white leading-none">
-                {getGreeting()},
-              </p>
-              <p className="text-4xl font-black leading-none mt-0.5" style={{ color: BRAND.colors.gold }}>
-                {userName.split(' ')[0]}.
-              </p>
-              <p className="text-sm mt-3" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                {new Date().toLocaleDateString('en-NG', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                })}
-              </p>
+              {/* Period progress bar */}
+              <div
+                className="rounded-xl p-4"
+                style={{
+                  background: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.10)',
+                }}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <span
+                    className="text-xs font-bold uppercase tracking-wider"
+                    style={{ color: 'rgba(255,255,255,0.5)' }}
+                  >
+                    {liveStats.active_period ?? 'Current Period'}
+                  </span>
+                  <span className="text-sm font-black" style={{ color: BRAND.colors.gold }}>
+                    {liveStats.period_progress_pct}%
+                  </span>
+                </div>
+                <div
+                  className="w-full h-2 rounded-full"
+                  style={{ background: 'rgba(255,255,255,0.10)' }}
+                >
+                  <div
+                    className="h-2 rounded-full transition-all duration-700"
+                    style={{
+                      width: `${Math.min(liveStats.period_progress_pct, 100)}%`,
+                      background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark})`,
+                    }}
+                  />
+                </div>
+              </div>
             </div>
 
-            {/* Period progress bar */}
-            <div
-              className="rounded-xl p-4"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.10)',
-              }}
-            >
-              <div className="flex justify-between items-center mb-2">
-                <span
-                  className="text-xs font-bold uppercase tracking-wider"
-                  style={{ color: 'rgba(255,255,255,0.5)' }}
+            {/* Right: 2×2 KPI tiles */}
+            <div className="lg:col-span-2 grid grid-cols-2 gap-3">
+              {statsCards.map((stat, i) => {
+                const Icon = stat.icon;
+                const isPrimary = i === 0;
+                return (
+                  <div
+                    key={stat.id}
+                    className="rounded-xl p-4 flex flex-col justify-between"
+                    style={{
+                      background: isPrimary ? 'rgba(183,151,88,0.20)' : 'rgba(255,255,255,0.07)',
+                      border: isPrimary
+                        ? '1px solid rgba(183,151,88,0.40)'
+                        : '1px solid rgba(255,255,255,0.10)',
+                    }}
+                  >
+                    <Icon
+                      className="w-4 h-4 mb-3"
+                      style={{ color: isPrimary ? BRAND.colors.gold : 'rgba(255,255,255,0.40)' }}
+                    />
+                    <div>
+                      <p className="text-xl font-black text-white leading-none mb-1">
+                        {stat.value}
+                      </p>
+                      <p className="text-xs" style={{ color: 'rgba(255,255,255,0.50)' }}>
+                        {stat.title}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Gold accent line */}
+          <div
+            className="h-px"
+            style={{
+              background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark} 50%, transparent)`,
+            }}
+          />
+        </div>
+
+        {/* ── CASHIER BALANCE ALERT ────────────────────────────────────── */}
+        {liveStats.cashier_balance != null && (
+          <div
+            className="rounded-xl px-5 py-4 flex items-center justify-between gap-4"
+            style={
+              parseFloat(liveStats.cashier_balance) !== 0
+                ? { background: '#fef2f2', border: '1.5px solid #fca5a5' }
+                : { background: '#f0fdf4', border: '1.5px solid #86efac' }
+            }
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className="rounded-lg p-2"
+                style={
+                  parseFloat(liveStats.cashier_balance) !== 0
+                    ? { background: '#fee2e2', color: '#dc2626' }
+                    : { background: '#dcfce7', color: '#16a34a' }
+                }
+              >
+                <Wallet className="w-5 h-5" />
+              </div>
+              <div>
+                <p
+                  className="text-xs font-semibold uppercase tracking-wide"
+                  style={{ color: '#6b7280' }}
                 >
-                  {liveStats.active_period ?? 'Current Period'}
+                  My Cash Account Balance
+                  {liveStats.cashier_account_name && (
+                    <span className="ml-1 font-normal normal-case" style={{ color: '#9ca3af' }}>
+                      — {liveStats.cashier_account_name}
+                    </span>
+                  )}
+                </p>
+                <p
+                  className="text-xl font-black mt-0.5"
+                  style={{
+                    color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a',
+                  }}
+                >
+                  {liveStats.cashier_balance}
+                </p>
+              </div>
+            </div>
+            <div
+              className="flex items-center gap-1.5 text-sm font-semibold flex-shrink-0"
+              style={{ color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a' }}
+            >
+              {parseFloat(liveStats.cashier_balance) !== 0 ? (
+                <>
+                  <AlertTriangle className="w-4 h-4" /> Must be ₦0.00 at end of day
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4" /> Balanced
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── QUICK ACTIONS: horizontal pill strip ─────────────────────── */}
+        {accessibleQuickActions.length > 0 && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <span
+              className="text-xs font-black uppercase tracking-widest flex-shrink-0"
+              style={{ color: BRAND.colors.textSecondary }}
+            >
+              Quick Actions
+            </span>
+            <div className="w-px h-4 flex-shrink-0" style={{ background: BRAND.colors.border }} />
+            {accessibleQuickActions.map(action => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.id}
+                  onClick={() => handleActionClick(action.path)}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all duration-200 border"
+                  style={{
+                    background: '#ffffff',
+                    borderColor: BRAND.colors.border,
+                    color: BRAND.colors.navyPrimary,
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = BRAND.colors.navyPrimary;
+                    e.currentTarget.style.color = '#ffffff';
+                    e.currentTarget.style.borderColor = BRAND.colors.navyPrimary;
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(10,24,87,0.20)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = '#ffffff';
+                    e.currentTarget.style.color = BRAND.colors.navyPrimary;
+                    e.currentTarget.style.borderColor = BRAND.colors.border;
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {action.title}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── MODULES: gradient colored tiles ──────────────────────────── */}
+        <div>
+          <SectionHeader icon={Grid} title="Your Modules" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {accessibleModules.map(module => {
+              const Icon = module.icon;
+              const colors = COLOR_STYLES[module.color as keyof typeof COLOR_STYLES];
+              return (
+                <button
+                  key={module.id}
+                  onClick={() => handleModuleClick(module.path)}
+                  className="group relative rounded-2xl p-5 text-left overflow-hidden transition-all duration-300"
+                  style={{
+                    background: colors.gradient,
+                    boxShadow: `0 4px 16px ${colors.border}`,
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.transform = 'translateY(-4px) scale(1.03)';
+                    e.currentTarget.style.boxShadow = `0 14px 32px ${colors.border}`;
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.transform = 'translateY(0) scale(1)';
+                    e.currentTarget.style.boxShadow = `0 4px 16px ${colors.border}`;
+                  }}
+                >
+                  {/* Radial shine overlay */}
+                  <div
+                    className="absolute inset-0 opacity-20 pointer-events-none"
+                    style={{
+                      background:
+                        'radial-gradient(circle at top right, rgba(255,255,255,0.35), transparent 65%)',
+                    }}
+                  />
+                  <Icon
+                    className="w-6 h-6 mb-4 relative z-10"
+                    style={{ color: 'rgba(255,255,255,0.92)' }}
+                  />
+                  <h3 className="text-xs font-black text-white leading-snug relative z-10">
+                    {module.title}
+                  </h3>
+                  <ArrowRight
+                    className="w-3.5 h-3.5 mt-2 opacity-0 group-hover:opacity-70 transition-opacity relative z-10"
+                    style={{ color: '#fff' }}
+                  />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── BOTTOM SECTION: dark portfolio panel + priority queue ─────── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Portfolio overview — spans 2 cols, dark card */}
+          <div
+            className="lg:col-span-2 rounded-2xl p-6"
+            style={{
+              background: `linear-gradient(135deg, ${BRAND.colors.navyDark} 0%, ${BRAND.colors.navyPrimary} 100%)`,
+              boxShadow: '0 4px 24px rgba(10,24,87,0.22)',
+            }}
+          >
+            <p
+              className="text-xs font-black uppercase tracking-widest mb-5"
+              style={{ color: BRAND.colors.gold }}
+            >
+              Portfolio Overview
+            </p>
+
+            {/* 4 headline figures */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+              {[
+                { label: 'Loan Book', value: formatNaira(liveStats.total_loan_book) },
+                { label: 'Active Loans', value: liveStats.active_loans.toLocaleString() },
+                {
+                  label: 'Disbursed (Mo.)',
+                  value: formatNaira(liveStats.total_disbursed_this_month),
+                },
+                { label: 'Total Savings', value: formatNaira(liveStats.total_savings) },
+              ].map(item => (
+                <div key={item.label}>
+                  <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.40)' }}>
+                    {item.label}
+                  </p>
+                  <p className="text-lg font-black text-white leading-tight">{item.value}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Repayment rate */}
+            <div>
+              <div className="flex justify-between items-baseline mb-2">
+                <span
+                  className="text-xs font-bold uppercase tracking-wide"
+                  style={{ color: 'rgba(255,255,255,0.45)' }}
+                >
+                  Loan Repayment Rate
                 </span>
-                <span className="text-sm font-black" style={{ color: BRAND.colors.gold }}>
-                  {liveStats.period_progress_pct}%
+                <span className="text-2xl font-black" style={{ color: BRAND.colors.gold }}>
+                  {formatPercent(liveStats.loan_repayment_rate)}
                 </span>
               </div>
-              <div className="w-full h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.10)' }}>
+              <div
+                className="w-full h-3 rounded-full"
+                style={{ background: 'rgba(255,255,255,0.08)' }}
+              >
                 <div
-                  className="h-2 rounded-full transition-all duration-700"
+                  className="h-3 rounded-full transition-all duration-700"
                   style={{
-                    width: `${Math.min(liveStats.period_progress_pct, 100)}%`,
+                    width: `${Math.min(liveStats.loan_repayment_rate, 100)}%`,
                     background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark})`,
                   }}
                 />
               </div>
             </div>
-          </div>
 
-          {/* Right: 2×2 KPI tiles */}
-          <div className="lg:col-span-2 grid grid-cols-2 gap-3">
-            {statsCards.map((stat, i) => {
-              const Icon = stat.icon;
-              const isPrimary = i === 0;
-              return (
-                <div
-                  key={stat.id}
-                  className="rounded-xl p-4 flex flex-col justify-between"
-                  style={{
-                    background: isPrimary ? 'rgba(183,151,88,0.20)' : 'rgba(255,255,255,0.07)',
-                    border: isPrimary
-                      ? '1px solid rgba(183,151,88,0.40)'
-                      : '1px solid rgba(255,255,255,0.10)',
-                  }}
-                >
-                  <Icon
-                    className="w-4 h-4 mb-3"
-                    style={{ color: isPrimary ? BRAND.colors.gold : 'rgba(255,255,255,0.40)' }}
-                  />
-                  <div>
-                    <p className="text-xl font-black text-white leading-none mb-1">{stat.value}</p>
-                    <p className="text-xs" style={{ color: 'rgba(255,255,255,0.50)' }}>
-                      {stat.title}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Gold accent line */}
-        <div
-          className="h-px"
-          style={{ background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark} 50%, transparent)` }}
-        />
-      </div>
-
-      {/* ── CASHIER BALANCE ALERT ────────────────────────────────────── */}
-      {liveStats.cashier_balance != null && (
-        <div
-          className="rounded-xl px-5 py-4 flex items-center justify-between gap-4"
-          style={
-            parseFloat(liveStats.cashier_balance) !== 0
-              ? { background: '#fef2f2', border: '1.5px solid #fca5a5' }
-              : { background: '#f0fdf4', border: '1.5px solid #86efac' }
-          }
-        >
-          <div className="flex items-center gap-3">
-            <div
-              className="rounded-lg p-2"
-              style={
-                parseFloat(liveStats.cashier_balance) !== 0
-                  ? { background: '#fee2e2', color: '#dc2626' }
-                  : { background: '#dcfce7', color: '#16a34a' }
-              }
-            >
-              <Wallet className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#6b7280' }}>
-                My Cash Account Balance
-                {liveStats.cashier_account_name && (
-                  <span className="ml-1 font-normal normal-case" style={{ color: '#9ca3af' }}>
-                    — {liveStats.cashier_account_name}
-                  </span>
-                )}
-              </p>
-              <p
-                className="text-xl font-black mt-0.5"
-                style={{ color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a' }}
-              >
-                {formatNaira(liveStats.cashier_balance)}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 text-sm font-semibold flex-shrink-0"
-            style={{ color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a' }}
-          >
-            {parseFloat(liveStats.cashier_balance) !== 0
-              ? <><AlertTriangle className="w-4 h-4" /> Must be ₦0.00 at end of day</>
-              : <><CheckCircle className="w-4 h-4" /> Balanced</>
-            }
-          </div>
-        </div>
-      )}
-
-      {/* ── QUICK ACTIONS: horizontal pill strip ─────────────────────── */}
-      {accessibleQuickActions.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap">
-          <span
-            className="text-xs font-black uppercase tracking-widest flex-shrink-0"
-            style={{ color: BRAND.colors.textSecondary }}
-          >
-            Quick Actions
-          </span>
-          <div className="w-px h-4 flex-shrink-0" style={{ background: BRAND.colors.border }} />
-          {accessibleQuickActions.map(action => {
-            const Icon = action.icon;
-            return (
-              <button
-                key={action.id}
-                onClick={() => handleActionClick(action.path)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold transition-all duration-200 border"
-                style={{
-                  background: '#ffffff',
-                  borderColor: BRAND.colors.border,
-                  color: BRAND.colors.navyPrimary,
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.background = BRAND.colors.navyPrimary;
-                  e.currentTarget.style.color = '#ffffff';
-                  e.currentTarget.style.borderColor = BRAND.colors.navyPrimary;
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(10,24,87,0.20)';
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = '#ffffff';
-                  e.currentTarget.style.color = BRAND.colors.navyPrimary;
-                  e.currentTarget.style.borderColor = BRAND.colors.border;
-                  e.currentTarget.style.boxShadow = 'none';
-                }}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                {action.title}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── MODULES: gradient colored tiles ──────────────────────────── */}
-      <div>
-        <SectionHeader icon={Grid} title="Your Modules" />
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {accessibleModules.map(module => {
-            const Icon = module.icon;
-            const colors = COLOR_STYLES[module.color as keyof typeof COLOR_STYLES];
-            return (
-              <button
-                key={module.id}
-                onClick={() => handleModuleClick(module.path)}
-                className="group relative rounded-2xl p-5 text-left overflow-hidden transition-all duration-300"
-                style={{
-                  background: colors.gradient,
-                  boxShadow: `0 4px 16px ${colors.border}`,
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.transform = 'translateY(-4px) scale(1.03)';
-                  e.currentTarget.style.boxShadow = `0 14px 32px ${colors.border}`;
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.transform = 'translateY(0) scale(1)';
-                  e.currentTarget.style.boxShadow = `0 4px 16px ${colors.border}`;
-                }}
-              >
-                {/* Radial shine overlay */}
-                <div
-                  className="absolute inset-0 opacity-20 pointer-events-none"
-                  style={{
-                    background:
-                      'radial-gradient(circle at top right, rgba(255,255,255,0.35), transparent 65%)',
-                  }}
-                />
-                <Icon
-                  className="w-6 h-6 mb-4 relative z-10"
-                  style={{ color: 'rgba(255,255,255,0.92)' }}
-                />
-                <h3 className="text-xs font-black text-white leading-snug relative z-10">
-                  {module.title}
-                </h3>
-                <ArrowRight
-                  className="w-3.5 h-3.5 mt-2 opacity-0 group-hover:opacity-70 transition-opacity relative z-10"
-                  style={{ color: '#fff' }}
-                />
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ── BOTTOM SECTION: dark portfolio panel + priority queue ─────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-        {/* Portfolio overview — spans 2 cols, dark card */}
-        <div
-          className="lg:col-span-2 rounded-2xl p-6"
-          style={{
-            background: `linear-gradient(135deg, ${BRAND.colors.navyDark} 0%, ${BRAND.colors.navyPrimary} 100%)`,
-            boxShadow: '0 4px 24px rgba(10,24,87,0.22)',
-          }}
-        >
-          <p
-            className="text-xs font-black uppercase tracking-widest mb-5"
-            style={{ color: BRAND.colors.gold }}
-          >
-            Portfolio Overview
-          </p>
-
-          {/* 4 headline figures */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-            {[
-              { label: 'Loan Book', value: formatNaira(liveStats.total_loan_book) },
-              { label: 'Active Loans', value: liveStats.active_loans.toLocaleString() },
-              { label: 'Disbursed (Mo.)', value: formatNaira(liveStats.total_disbursed_this_month) },
-              { label: 'Total Savings', value: formatNaira(liveStats.total_savings) },
-            ].map(item => (
-              <div key={item.label}>
-                <p className="text-xs mb-1" style={{ color: 'rgba(255,255,255,0.40)' }}>
-                  {item.label}
-                </p>
-                <p className="text-lg font-black text-white leading-tight">{item.value}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Repayment rate */}
-          <div>
-            <div className="flex justify-between items-baseline mb-2">
-              <span
-                className="text-xs font-bold uppercase tracking-wide"
-                style={{ color: 'rgba(255,255,255,0.45)' }}
-              >
-                Loan Repayment Rate
-              </span>
-              <span className="text-2xl font-black" style={{ color: BRAND.colors.gold }}>
-                {formatPercent(liveStats.loan_repayment_rate)}
-              </span>
-            </div>
-            <div
-              className="w-full h-3 rounded-full"
-              style={{ background: 'rgba(255,255,255,0.08)' }}
-            >
+            {/* Overdue callout */}
+            {liveStats.overdue_loans > 0 && (
               <div
-                className="h-3 rounded-full transition-all duration-700"
+                className="mt-4 flex items-center gap-3 rounded-xl px-4 py-3"
                 style={{
-                  width: `${Math.min(liveStats.loan_repayment_rate, 100)}%`,
-                  background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark})`,
+                  background: 'rgba(220,38,38,0.12)',
+                  border: '1px solid rgba(220,38,38,0.25)',
                 }}
-              />
-            </div>
+              >
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: '#f87171' }} />
+                <span className="text-xs font-semibold" style={{ color: 'rgba(255,255,255,0.70)' }}>
+                  {liveStats.overdue_loans} overdue loan
+                  {liveStats.overdue_loans !== 1 ? 's' : ''} require attention
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* Overdue callout */}
-          {liveStats.overdue_loans > 0 && (
-            <div
-              className="mt-4 flex items-center gap-3 rounded-xl px-4 py-3"
-              style={{
-                background: 'rgba(220,38,38,0.12)',
-                border: '1px solid rgba(220,38,38,0.25)',
-              }}
-            >
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: '#f87171' }} />
-              <span className="text-xs font-semibold" style={{ color: 'rgba(255,255,255,0.70)' }}>
-                {liveStats.overdue_loans} overdue loan
-                {liveStats.overdue_loans !== 1 ? 's' : ''} require attention
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Priority queue — right col, white card */}
-        <div
-          className="rounded-2xl p-5 bg-white"
-          style={{ border: `1.5px solid ${BRAND.colors.border}` }}
-        >
-          <p
-            className="text-xs font-black uppercase tracking-widest mb-4"
-            style={{ color: BRAND.colors.navyPrimary }}
+          {/* Priority queue — right col, white card */}
+          <div
+            className="rounded-2xl p-5 bg-white"
+            style={{ border: `1.5px solid ${BRAND.colors.border}` }}
           >
-            Priority Queue
-          </p>
-          <div className="space-y-1">
-            {[
-              { label: 'Loan Approvals',    value: liveStats.pending_approvals,       icon: CheckCircle, accent: BRAND.colors.navyPrimary },
-              { label: 'Leave Requests',    value: liveStats.pending_leave_requests,  icon: Clock,       accent: '#7c3aed' },
-              { label: 'Purchase Orders',   value: liveStats.pending_purchase_orders, icon: ShoppingCart, accent: '#0d9488' },
-              { label: 'Open Tickets',      value: liveStats.pending_tickets,         icon: AlertTriangle, accent: '#dc2626' },
-              { label: 'Requisitions',      value: liveStats.pending_requisitions,    icon: FileText,    accent: BRAND.colors.goldDark },
-            ].map(item => {
-              const Icon = item.icon;
-              return (
-                <div
-                  key={item.label}
-                  className="flex items-center justify-between py-2 px-3 rounded-lg transition-colors"
-                  style={{ cursor: 'default' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#f9f7f3'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div
-                      className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
-                      style={{ background: `${item.accent}14` }}
-                    >
-                      <Icon className="w-3 h-3" style={{ color: item.accent }} />
+            <p
+              className="text-xs font-black uppercase tracking-widest mb-4"
+              style={{ color: BRAND.colors.navyPrimary }}
+            >
+              Priority Queue
+            </p>
+            <div className="space-y-1">
+              {[
+                {
+                  label: 'Loan Approvals',
+                  value: liveStats.pending_approvals,
+                  icon: CheckCircle,
+                  accent: BRAND.colors.navyPrimary,
+                },
+                {
+                  label: 'Leave Requests',
+                  value: liveStats.pending_leave_requests,
+                  icon: Clock,
+                  accent: '#7c3aed',
+                },
+                {
+                  label: 'Purchase Orders',
+                  value: liveStats.pending_purchase_orders,
+                  icon: ShoppingCart,
+                  accent: '#0d9488',
+                },
+                {
+                  label: 'Open Tickets',
+                  value: liveStats.pending_tickets,
+                  icon: AlertTriangle,
+                  accent: '#dc2626',
+                },
+                {
+                  label: 'Requisitions',
+                  value: liveStats.pending_requisitions,
+                  icon: FileText,
+                  accent: BRAND.colors.goldDark,
+                },
+              ].map(item => {
+                const Icon = item.icon;
+                return (
+                  <div
+                    key={item.label}
+                    className="flex items-center justify-between py-2 px-3 rounded-lg transition-colors"
+                    style={{ cursor: 'default' }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.background = '#f9f7f3';
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                        style={{ background: `${item.accent}14` }}
+                      >
+                        <Icon className="w-3 h-3" style={{ color: item.accent }} />
+                      </div>
+                      <span
+                        className="text-xs font-medium"
+                        style={{ color: BRAND.colors.textSecondary }}
+                      >
+                        {item.label}
+                      </span>
                     </div>
-                    <span className="text-xs font-medium" style={{ color: BRAND.colors.textSecondary }}>
-                      {item.label}
+                    <span
+                      className="text-sm font-black px-2 py-0.5 rounded-full"
+                      style={{ background: `${item.accent}14`, color: item.accent }}
+                    >
+                      {item.value}
                     </span>
                   </div>
-                  <span
-                    className="text-sm font-black px-2 py-0.5 rounded-full"
-                    style={{ background: `${item.accent}14`, color: item.accent }}
-                  >
-                    {item.value}
-                  </span>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* ── CLIENT SUMMARY: 4-tile strip ─────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {[
-          { label: 'Total Clients',  value: liveStats.total_clients.toLocaleString(),        icon: Users },
-          { label: 'Active Clients', value: liveStats.active_clients.toLocaleString(),       icon: CheckCircle },
-          { label: 'New This Month', value: liveStats.new_clients_this_month.toLocaleString(), icon: TrendingUp },
-          { label: 'Total Staff',    value: liveStats.total_staff.toLocaleString(),           icon: Users },
-        ].map(item => {
-          const Icon = item.icon;
-          return (
-            <div
-              key={item.label}
-              className="rounded-xl px-4 py-4 bg-white flex items-center gap-4"
-              style={{ border: `1.5px solid ${BRAND.colors.border}` }}
-            >
+        {/* ── CLIENT SUMMARY: 4-tile strip ─────────────────────────────── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            {
+              label: 'Total Clients',
+              value: liveStats.total_clients.toLocaleString(),
+              icon: Users,
+            },
+            {
+              label: 'Active Clients',
+              value: liveStats.active_clients.toLocaleString(),
+              icon: CheckCircle,
+            },
+            {
+              label: 'New This Month',
+              value: liveStats.new_clients_this_month.toLocaleString(),
+              icon: TrendingUp,
+            },
+            { label: 'Total Staff', value: liveStats.total_staff.toLocaleString(), icon: Users },
+          ].map(item => {
+            const Icon = item.icon;
+            return (
               <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-                style={{ background: 'rgba(10,24,87,0.06)' }}
+                key={item.label}
+                className="rounded-xl px-4 py-4 bg-white flex items-center gap-4"
+                style={{ border: `1.5px solid ${BRAND.colors.border}` }}
               >
-                <Icon className="w-4 h-4" style={{ color: BRAND.colors.navyPrimary }} />
-              </div>
-              <div className="min-w-0">
-                <p
-                  className="text-xl font-black leading-none mb-0.5 truncate"
-                  style={{ color: BRAND.colors.navyPrimary }}
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: 'rgba(10,24,87,0.06)' }}
                 >
-                  {item.value}
-                </p>
-                <p className="text-xs truncate" style={{ color: BRAND.colors.textSecondary }}>
-                  {item.label}
-                </p>
+                  <Icon className="w-4 h-4" style={{ color: BRAND.colors.navyPrimary }} />
+                </div>
+                <div className="min-w-0">
+                  <p
+                    className="text-xl font-black leading-none mb-0.5 truncate"
+                    style={{ color: BRAND.colors.navyPrimary }}
+                  >
+                    {item.value}
+                  </p>
+                  <p className="text-xs truncate" style={{ color: BRAND.colors.textSecondary }}>
+                    {item.label}
+                  </p>
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
-
+            );
+          })}
+        </div>
       </div>
     </>
   );
@@ -1413,11 +1641,17 @@ function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: 
     <div className="flex items-center gap-3 mb-4">
       <div
         className="w-7 h-7 rounded-lg flex items-center justify-center"
-        style={{ background: `${BRAND.colors.navyPrimary}0e`, border: `1px solid ${BRAND.colors.border}` }}
+        style={{
+          background: `${BRAND.colors.navyPrimary}0e`,
+          border: `1px solid ${BRAND.colors.border}`,
+        }}
       >
         <Icon className="w-3.5 h-3.5" style={{ color: BRAND.colors.navyPrimary }} />
       </div>
-      <h2 className="text-sm font-bold uppercase tracking-widest" style={{ color: BRAND.colors.navyPrimary }}>
+      <h2
+        className="text-sm font-bold uppercase tracking-widest"
+        style={{ color: BRAND.colors.navyPrimary }}
+      >
         {title}
       </h2>
       <div className="flex-1 h-px" style={{ background: BRAND.colors.border }} />
@@ -1428,8 +1662,12 @@ function SectionHeader({ icon: Icon, title }: { icon: React.ElementType; title: 
 function PortfolioRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between items-center py-1">
-      <span className="text-xs font-medium" style={{ color: BRAND.colors.textSecondary }}>{label}</span>
-      <span className="text-sm font-bold" style={{ color: BRAND.colors.navyPrimary }}>{value}</span>
+      <span className="text-xs font-medium" style={{ color: BRAND.colors.textSecondary }}>
+        {label}
+      </span>
+      <span className="text-sm font-bold" style={{ color: BRAND.colors.navyPrimary }}>
+        {value}
+      </span>
     </div>
   );
 }
