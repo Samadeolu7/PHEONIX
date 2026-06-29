@@ -299,9 +299,9 @@ class MicrofinanceDashboardStatsView(APIView):
             if ca:
                 data['cashier_balance'] = str(ca.balance)
             else:
-                data['cashier_balance'] = '0.00'
+                data['cashier_balance'] = 'No cashier account'
         except Exception:
-            data['cashier_balance'] = '0.00'
+            data['cashier_balance'] = 'error'
                 
         # ── Pending Tickets ───────────────────────────────────────────────────
         try:
