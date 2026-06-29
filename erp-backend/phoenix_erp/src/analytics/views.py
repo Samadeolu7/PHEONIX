@@ -294,14 +294,14 @@ class MicrofinanceDashboardStatsView(APIView):
         try:
             from accounts.models import Account
             ca = Account.objects.filter(
-                owner=user, is_active=True, is_deleted=False, is_cashier_bank=True
+                owner=user, is_deleted=False, is_cashier_bank=True
             ).order_by('-created_at').first()
             if ca:
                 data['cashier_balance'] = str(ca.balance)
             else:
-                data['cashier_balance'] = '0.00'
+                data['cashier_balance'] = 'No cashier account'
         except Exception:
-            data['cashier_balance'] = '0.00'
+            data['cashier_balance'] = 'error'
                 
         # ── Pending Tickets ───────────────────────────────────────────────────
         try:
