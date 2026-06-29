@@ -1768,6 +1768,11 @@ class LoanDisbursement(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 "The person who approved disbursement cannot also execute it "
                 "(maker-checker violation)."
             )
+        if disbursed_by_user.pk == self.requested_by_id:
+            raise ValidationError(
+                "The person who created the disbursement request cannot also execute it "
+                "(maker-checker violation)."
+            )
         acct = disbursement_account or self.disbursement_account
         self.loan.disburse(
             disbursement_date=disbursement_date,

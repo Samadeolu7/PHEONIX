@@ -29,14 +29,16 @@ def _handle_loan_account_post_save(sender, instance, created, **kwargs):
             },
         )
 
-    # On approval: auto-create a LoanDisbursement request
+    # On approval: auto-create a LoanDisbursement request.
+    # The loan creator is the disbursement creator so the loan approver can
+    # also serve as the disbursement approver (3-person flow: creator → approver → disburser).
     if not created and instance.status == 'approved':
         LoanDisbursement.objects.get_or_create(
             loan=instance,
             defaults={
-                'requested_by': instance.approved_by or instance.owner,
+                'requested_by': instance.created_by or instance.owner,
                 'owner': instance.owner,
                 'branch': instance.branch,
-                'created_by': instance.approved_by or instance.created_by,
+                'created_by': instance.created_by or instance.approved_by,
             },
         )

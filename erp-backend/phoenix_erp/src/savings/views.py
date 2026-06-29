@@ -19,6 +19,8 @@ from .models import (
     SmartSavingsAccount,
     SmartSavingsEvent,
     CompulsorySavingsPolicy,
+    SavingsWithdrawalRequest,
+    WithdrawalApprovalStep,
 )
 from .serializers import (
     SavingsAccountSerializer,
@@ -27,6 +29,14 @@ from .serializers import (
     SmartSavingsEventSerializer,
     CompulsorySavingsPolicySerializer,
     SavingsGoalSerializer,
+    SavingsWithdrawalRequestSerializer,
+    WithdrawalApprovalActionSerializer,
+    WithdrawalApprovalStepSerializer,
+)
+from .services import (
+    initiate_withdrawal,
+    process_withdrawal_approval,
+    disburse_withdrawal,
 )
 
 
@@ -532,15 +542,11 @@ class CompulsorySavingsPolicyViewSet(ScopedModelViewSet):
 # Savings product configuration view
 # ---------------------------------------------------------------------------
 
-from .models import SavingsProduct, WithdrawalApprovalTier, SavingsWithdrawalRequest, WithdrawalApprovalStep
+from .models import SavingsProduct, WithdrawalApprovalTier
 from .serializers import (
     SavingsProductSerializer,
     WithdrawalApprovalTierSerializer,
-    SavingsWithdrawalRequestSerializer,
-    WithdrawalApprovalActionSerializer,
-    WithdrawalApprovalStepSerializer,
 )
-from .services import initiate_withdrawal, process_withdrawal_approval
 
 
 class SavingsProductConfigViewSet(ScopedModelViewSet):
@@ -589,18 +595,22 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
     """
     Withdrawal request management.
 
-    POST  /api/savings/withdrawals/           — initiate a new request
-    GET   /api/savings/withdrawals/           — list (branch-scoped; directors see all)
-    GET   /api/savings/withdrawals/pending/   — steps pending MY approval
-    POST  /api/savings/withdrawals/{id}/approve_step/ — approve/reject a step
-    POST  /api/savings/withdrawals/{id}/cancel/       — cancel (before approvals)
+    POST  /api/savings/withdrawals/                    — initiate a new request
+    GET   /api/savings/withdrawals/                    — list (branch-scoped; directors see all)
+    GET   /api/savings/withdrawals/pending/            — steps pending MY approval
+    GET   /api/savings/withdrawals/pending-disburse/   — fully approved, awaiting disburse
+    POST  /api/savings/withdrawals/{id}/approve-step/  — approve/reject a step
+    POST  /api/savings/withdrawals/{id}/disburse/      — release funds (3rd maker-checker role)
+    POST  /api/savings/withdrawals/{id}/cancel/        — cancel (before approvals)
     """
     officer_client_lookup = 'savings_account__client__assigned_officer'
     queryset = SavingsWithdrawalRequest.objects.select_related(
         'savings_account__client',
         'savings_account__product',
         'requested_by',
+        'disbursed_by',
         'applied_tier',
+        'destination_bank_account__bank',
     ).prefetch_related('approval_steps')
     serializer_class = SavingsWithdrawalRequestSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
@@ -742,6 +752,37 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
         wr = self.get_object()
         try:
             wr.cancel(request.user)
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=400)
+        return Response(
+            SavingsWithdrawalRequestSerializer(wr, context={'request': request}).data
+        )
+
+    @action(detail=False, methods=['get'], url_path='pending-disburse')
+    def pending_disburse(self, request):
+        """
+        List fully-approved withdrawal requests waiting for a disburser (3rd person).
+        """
+        qs = self.get_queryset().filter(
+            status=SavingsWithdrawalRequest.STATUS_APPROVED,
+        )
+        return Response(
+            SavingsWithdrawalRequestSerializer(qs, many=True, context={'request': request}).data
+        )
+
+    @action(detail=True, methods=['post'], url_path='disburse')
+    def disburse(self, request, pk=None):
+        """
+        Disburse a fully-approved withdrawal request.
+
+        The disburser must be a different person from both the creator (requested_by)
+        and all approvers (3-person maker-checker: creator → approver → disburser).
+
+        No request body required; the cashier/bank account was set at request creation.
+        """
+        wr = self.get_object()
+        try:
+            disburse_withdrawal(wr, request.user)
         except Exception as exc:
             return Response({'detail': str(exc)}, status=400)
         return Response(

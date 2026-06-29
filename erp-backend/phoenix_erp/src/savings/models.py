@@ -885,6 +885,16 @@ class SavingsWithdrawalRequest(TimeStampedModel, BranchScopedModel, SoftDeleteMo
         related_name='savings_withdrawal_requests',
     )
 
+    # Set when the disburser (3rd role) releases funds — after full approval
+    disbursed_by = models.ForeignKey(
+        'users.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='disbursed_withdrawals',
+        help_text="The user who physically released funds (must differ from creator and all approvers).",
+    )
+    disbursed_at = models.DateTimeField(null=True, blank=True)
+
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
 

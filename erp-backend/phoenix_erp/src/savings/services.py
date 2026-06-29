@@ -497,11 +497,50 @@ def process_withdrawal_approval(
     ).count()
 
     if wr.is_fully_approved:
-        _execute_withdrawal(wr, approver)
+        # All approvals collected — move to fully_approved so a separate disburser
+        # (3rd person, different from creator and all approvers) can release the funds.
+        wr.status = SavingsWithdrawalRequest.STATUS_APPROVED
+        wr.save(update_fields=['approvals_received', 'status', 'updated_at'])
     else:
         wr.status = SavingsWithdrawalRequest.STATUS_PARTIAL
         wr.save(update_fields=['approvals_received', 'status', 'updated_at'])
 
+    return wr
+
+
+def disburse_withdrawal(wr: SavingsWithdrawalRequest, disbursed_by: User) -> SavingsWithdrawalRequest:
+    """
+    Third-role disbursement: a user different from the creator AND all approvers
+    physically releases the funds.
+
+    Enforces the 3-person maker-checker rule:
+      1. requested_by (creator)  ≠ 2. approver(s)  ≠ 3. disbursed_by (disburser)
+    """
+    if wr.status != SavingsWithdrawalRequest.STATUS_APPROVED:
+        raise ValidationError(
+            "Withdrawal must be fully approved before it can be disbursed."
+        )
+
+    # Creator ≠ disburser
+    if disbursed_by.pk == wr.requested_by_id:
+        raise ValidationError(
+            "The person who created the withdrawal request cannot also disburse it "
+            "(maker-checker violation)."
+        )
+
+    # No approver may disburse
+    approver_ids = set(
+        wr.approval_steps
+        .filter(status=WithdrawalApprovalStep.STATUS_APPROVED)
+        .values_list('approver_id', flat=True)
+    )
+    if disbursed_by.pk in approver_ids:
+        raise ValidationError(
+            "An approver of this withdrawal request cannot also disburse it "
+            "(maker-checker violation)."
+        )
+
+    _execute_withdrawal(wr, disbursed_by)
     return wr
 
 
@@ -540,9 +579,12 @@ def _execute_withdrawal(wr: SavingsWithdrawalRequest, executed_by: User) -> None
     except SmartSavingsAccount.DoesNotExist:
         pass
 
+    from django.utils import timezone as tz
     wr.status = SavingsWithdrawalRequest.STATUS_COMPLETED
     wr.journal_entry = journal
-    wr.save(update_fields=['status', 'journal_entry', 'approvals_received', 'updated_at'])
+    wr.disbursed_by = executed_by
+    wr.disbursed_at = tz.now()
+    wr.save(update_fields=['status', 'journal_entry', 'disbursed_by', 'disbursed_at', 'approvals_received', 'updated_at'])
 
 
 # ---------------------------------------------------------------------------
