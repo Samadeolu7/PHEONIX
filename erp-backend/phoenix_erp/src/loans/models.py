@@ -594,21 +594,16 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if self.status != 'pending':
             raise ValidationError("Only pending loans can be approved")
 
-        # Guarantor requirement: block approval if product requires guarantors.
-        # Only 'approved' guarantors count — pending guarantors have not been verified.
+        # Guarantor requirement: block approval if product requires guarantors
         if self.product.requires_guarantor:
             min_required = self.product.min_guarantors or 1
-            approved_count = self.guarantors.filter(status='approved').count()
-            if approved_count < min_required:
-                pending_count = self.guarantors.filter(status='pending').count()
-                detail = (
-                    f"This loan product requires at least {min_required} approved guarantor(s). "
-                    f"{approved_count} approved"
+            linked = self.guarantors.filter(status__in=['pending', 'approved']).count()
+            if linked < min_required:
+                raise ValidationError(
+                    f"This loan product requires at least {min_required} guarantor(s) before approval. "
+                    f"{linked} guarantor(s) are currently linked. "
+                    "Please add the required guarantors first."
                 )
-                if pending_count:
-                    detail += f", {pending_count} still pending approval"
-                detail += ". Please ensure all required guarantors are approved before approving the loan."
-                raise ValidationError(detail)
 
         # Maker-checker: the person who created the loan cannot approve it
         if self.created_by_id and user.pk == self.created_by_id:
