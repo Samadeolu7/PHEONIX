@@ -1,6 +1,8 @@
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, extend_schema_view
+from django.db.models import Sum
+
 from common.views import ScopedModelViewSet
 
 from .models import Account, Period, BalanceSheetSnapshot
@@ -26,7 +28,9 @@ from decimal import Decimal
 from automations.models import FormSchema, WorkflowTemplate
 from pages.models import Module, ModulePage
 from accounts.models import Account, AccountCategory
+from .models import Account as AccountModel
 from products.models import Product
+from .serializers import AccountSerializer, AccountReadSerializer
 
 @extend_schema_view(
     list=extend_schema(
@@ -68,19 +72,25 @@ class AccountViewSet(ScopedModelViewSet):
     """
     permission_module = 'accounts'
     permission_page = 'chart-of-accounts'
-    queryset = Account.objects.select_related('parent').all()
+    queryset = (
+    Account.objects
+    .select_related("parent")
+    .exclude(account_type__in=(Account.SAVINGS, Account.LOAN))
+)
     serializer_class = AccountSerializer
-    
-    def get_serializer_class(self):
-        """Use a lightweight serializer for read/list endpoints to avoid heavy lookups.
+    READ_ACTIONS = {
+    "list",
+    "retrieve",
+    "parents",
+    "parent_accounts",
+    "children_summary",
+}   
 
-        Writes (create/update/partial_update) keep using the full `AccountSerializer`.
-        """
-        # Use a local import to avoid circular imports at module import time
-        if self.action in ('list', 'retrieve', 'parents', 'parent_accounts', 'children_summary'):
-            from .serializers import AccountReadSerializer
+    def get_serializer_class(self):
+        if self.action in self.READ_ACTIONS:
             return AccountReadSerializer
         return AccountSerializer
+
     filterset_fields = ['account_type', 'account_level']
     search_fields = ['name', 'code']
     ordering_fields = ['code', 'name', 'balance', 'created_at']
@@ -105,27 +115,36 @@ class AccountViewSet(ScopedModelViewSet):
         
         # Get all child accounts — use all_objects.for_owner to avoid tenant-thread-local
         # filtering differences between model reverse relations and request-scoped queries.
-        from .models import Account as AccountModel
-        # Ensure thread-local tenant matches request user for manager filtering
-        try:
-            from common.managers import set_current_tenant
-            if getattr(request.user, 'tenant', None) is not None:
-                set_current_tenant(request.user.tenant)
-        except Exception:
-            pass
+        # from .models import Account as AccountModel
+        # # Ensure thread-local tenant matches request user for manager filtering
+        # try:
+        #     from common.managers import set_current_tenant
+        #     if getattr(request.user, 'tenant', None) is not None:
+        #         set_current_tenant(request.user.tenant)
+        # except Exception:
+        #     pass
 
         # In the 4-digit FIRS scheme children are linked via FK (e.g. parent 1100 → children 1101, 1102 …).
         # Use the parent FK relationship which is always correct.
         try:
-            children = AccountModel.all_objects.filter(parent_id=account.id).order_by('code')
+            children = (
+                AccountModel.all_objects
+                .filter(parent_id=account.id)
+                .select_related("parent")
+                .order_by("code")
+            )
+
+            summary = children.aggregate(
+                total_balance=Sum("balance")
+            )
         except Exception:
             children = AccountModel.objects.none()
         
         # Calculate total balance
-        total_balance = sum(child.balance for child in children)
+        total_balance = summary["total_balance"] or Decimal("0")
         
         # Serialize children
-        serializer = self.get_serializer(children, many=True)
+        children = list(children)
         
         return Response({
             'parent_account': {
@@ -134,9 +153,9 @@ class AccountViewSet(ScopedModelViewSet):
                 'name': account.name,
                 'account_type': account.get_account_type_display(),
             },
-            'children': serializer.data,
+            'children': children,
             'summary': {
-                'total_children': children.count(),
+                'total_children': len(children),
                 'total_balance': total_balance,
             }
         }, status=status.HTTP_200_OK)
