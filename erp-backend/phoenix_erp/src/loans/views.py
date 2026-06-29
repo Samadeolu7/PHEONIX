@@ -807,10 +807,10 @@ class LoanAccountViewSet(ScopedModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            # Rejected or cancelled — re-open it so the officer can try again.
+            # Rejected or cancelled — re-open for BM re-approval.
+            # Keep requested_by as the original loan creator; reset approval fields.
             tenant, branch = _resolve_scope(request.user, loan)
             existing.status = 'pending_approval'
-            existing.requested_by = request.user
             existing.rejection_reason = ''
             existing.approved_by = None
             existing.approved_at = None
@@ -821,7 +821,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             if existing.branch is None and branch:
                 existing.branch = branch
             update_fields = [
-                'status', 'requested_by', 'rejection_reason',
+                'status', 'rejection_reason',
                 'approved_by', 'approved_at', 'notes', 'tenant', 'branch', 'updated_at',
             ]
             existing.save(update_fields=update_fields)
@@ -830,10 +830,12 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 status=status.HTTP_200_OK,
             )
 
+        # Fallback: signal should have created this at loan approval, but create
+        # manually if missing. requested_by is always the loan creator.
         tenant, branch = _resolve_scope(request.user, loan)
         disbursement = LoanDisbursement.objects.create(
             loan=loan,
-            requested_by=request.user,
+            requested_by=loan.created_by or request.user,
             notes=request.data.get('notes', ''),
             owner=request.user,
             branch=branch,
