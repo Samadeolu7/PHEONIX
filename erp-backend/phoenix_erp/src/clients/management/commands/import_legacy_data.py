@@ -52,6 +52,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import F
 
 User = get_user_model()
 
@@ -2146,6 +2147,12 @@ class Command(BaseCommand):
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
             for txn in created_txns:
                 txn.post()
+            # Sync outstanding_principal with the posted disbursement so
+            # LoanAccount.outstanding_principal stays in sync with Account.balance.
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
+                LoanAccount.objects.filter(account=dr_acct).update(
+                    outstanding_principal=F('outstanding_principal') + amt
+                )
         created = len(created_txns)
 
         self.stdout.write(
@@ -2254,6 +2261,12 @@ class Command(BaseCommand):
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
             for txn in created_txns:
                 txn.post()
+            # Sync outstanding_principal with the posted repayment so
+            # LoanAccount.outstanding_principal stays in sync with Account.balance.
+            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
+                LoanAccount.objects.filter(account=cr_acct).update(
+                    outstanding_principal=F('outstanding_principal') - amt
+                )
         created = len(created_txns)
 
         self.stdout.write(

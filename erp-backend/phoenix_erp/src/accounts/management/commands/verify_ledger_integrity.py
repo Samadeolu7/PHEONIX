@@ -95,9 +95,9 @@ class Command(BaseCommand):
             )['total'] or Decimal('0.00')
             
             # Calculate expected balance based on account type
-            if account.account_type in [Account.ASSET, Account.EXPENSE]:
+            if account.account_type in [Account.ASSET, Account.EXPENSE, Account.LOAN]:
                 computed_balance = dr_total - cr_total
-            else:  # LIABILITY, EQUITY, INCOME
+            else:  # LIABILITY, EQUITY, INCOME, SAVINGS
                 computed_balance = cr_total - dr_total
             
             # Check for mismatch (allow 1 cent tolerance for rounding)
