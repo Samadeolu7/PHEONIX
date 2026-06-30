@@ -705,6 +705,12 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         # Calculate repayment schedule (calls self.save() internally)
         self._generate_repayment_schedule()
 
+        # Set outstanding interest from schedule totals
+        total_interest = self.repayment_schedule.aggregate(
+            total=Sum('interest_due')
+        )['total'] or Decimal('0')
+        self.outstanding_interest = total_interest
+
         # Set first payment and maturity dates
         if self.repayment_schedule.exists():
             first_schedule = self.repayment_schedule.first()
@@ -1357,11 +1363,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         # Regenerate schedule from outstanding principal
         self._generate_repayment_schedule()
 
-        # Update maturity/first payment dates from new schedule
+        # Recalculate outstanding interest from new pending schedule
         new_schedules = self.repayment_schedule.filter(
             status='pending'
         ).order_by('due_date')
         if new_schedules.exists():
+            total_interest = new_schedules.aggregate(
+                total=Sum('interest_due')
+            )['total'] or Decimal('0')
+            self.outstanding_interest = total_interest
             self.first_payment_date = new_schedules.first().due_date
             self.maturity_date = new_schedules.last().due_date
 
