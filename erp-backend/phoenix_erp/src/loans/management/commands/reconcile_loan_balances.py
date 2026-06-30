@@ -115,7 +115,8 @@ class Command(BaseCommand):
         self.stdout.write(f"\nTotal correction needed: {total_correction:>+14,.2f}")
 
     def _run_diagnosis(self, loans, discrepancies, tenant_id, branch_id):
-        from accounts.models import Account, TransactionEntry
+        from accounts.models import Account
+        from transactions.models import TransactionEntry
 
         self.stdout.write("\n" + "=" * 60)
         self.stdout.write("ROOT CAUSE DIAGNOSIS")
