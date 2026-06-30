@@ -1999,3 +1999,78 @@ class ProspectPublicRegistrationView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class GuarantorViewSet(ScopedModelViewSet):
+    """
+    CRUD for standalone Guarantor profiles (NOT Client records).
+    A guarantor can later be promoted to a full Client.
+    """
+    permission_module = 'clients'
+    permission_page = 'clients'
+    queryset = Guarantor.objects.all()
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return GuarantorCreateSerializer
+        return GuarantorSerializer
+
+    def perform_create(self, serializer):
+        serializer.save(
+            owner=self.request.user,
+            branch=self.request.user.branch,
+            tenant=self.request.user.tenant,
+        )
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search) |
+                Q(phone__icontains=search)
+            )
+        return qs
+
+    @action(detail=True, methods=['post'])
+    def convert_to_client(self, request, pk=None):
+        """Promote this Guarantor profile to a full Client record."""
+        guarantor = self.get_object()
+        if guarantor.converted_to_client_id:
+            return Response(
+                {'detail': 'This guarantor has already been converted to a client.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.db import transaction
+        with transaction.atomic():
+            client = Client(
+                first_name=guarantor.first_name,
+                middle_name=guarantor.middle_name or '',
+                last_name=guarantor.last_name,
+                phone_primary=guarantor.phone or '',
+                email=guarantor.email or '',
+                gender=guarantor.gender or '',
+                occupation=guarantor.occupation or '',
+                address_street=guarantor.address or '',
+                nin=guarantor.nin or '',
+                date_of_birth=guarantor.date_of_birth,
+                usage_context='financial',
+                status='active',
+                owner=guarantor.owner,
+                branch=guarantor.branch,
+                tenant=guarantor.tenant,
+            )
+            client.save()
+            guarantor.converted_to_client = client
+            guarantor.save(update_fields=['converted_to_client'])
+
+        serializer = GuarantorConversionSerializer({
+            'guarantor_id': guarantor.pk,
+            'client_id': client.pk,
+            'client_id_display': client.client_id,
+            'message': f'Guarantor "{guarantor.full_name}" converted to Client {client.client_id}.',
+        })
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

@@ -1,6 +1,6 @@
 from django.contrib import admin, messages
 from django.db import transaction
-from .models import Client, ClientNote
+from .models import Client, ClientNote, Guarantor
 
 
 def fix_orphaned_clients(modeladmin, request, queryset):
@@ -59,4 +59,13 @@ class ClientAdmin(admin.ModelAdmin):
 
 
 admin.site.register(ClientNote)
+
+
+@admin.register(Guarantor)
+class GuarantorAdmin(admin.ModelAdmin):
+    list_display = ('full_name', 'phone', 'nin', 'branch', 'converted_to_client', 'created_at')
+    list_filter = ('branch', 'created_at')
+    search_fields = ('first_name', 'last_name', 'phone', 'nin')
+    raw_id_fields = ('converted_to_client',)
+    readonly_fields = ('created_at', 'updated_at')
 

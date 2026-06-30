@@ -159,12 +159,17 @@ export type GuarantorStatus = 'pending' | 'approved' | 'rejected';
 export interface LoanGuarantor {
   id: number;
   loan: number;
-  guarantor: number;           // Client PK
+  guarantor: number | null;           // Client PK (legacy)
+  guarantor_person: number | null;    // Guarantor profile PK (new)
   guarantor_name: string;
-  guarantor_client_id: string;
-  guarantor_phone: string;
+  guarantor_client_id: string | null;
+  guarantor_phone: string | null;
   guarantor_occupation: string | null;
   guarantor_address: string | null;
+  guarantor_person_name: string | null;
+  guarantor_person_phone: string | null;
+  guarantor_person_occupation: string | null;
+  guarantor_person_address: string | null;
   guaranteed_amount: string;
   status: GuarantorStatus;
   approval_date: string | null;
@@ -174,7 +179,8 @@ export interface LoanGuarantor {
 
 export interface AddGuarantorPayload {
   loan: number;
-  guarantor: number;
+  guarantor?: number;
+  guarantor_person?: number;
   guaranteed_amount: string;
 }
 

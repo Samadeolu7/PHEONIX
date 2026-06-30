@@ -69,30 +69,53 @@ class LoanCollateralSerializer(TenantModelSerializer):
 
 class LoanGuarantorSerializer(TenantModelSerializer):
     # Read-only display fields pulled from the guarantor Client record
-    guarantor_name = serializers.CharField(source='guarantor.full_name', read_only=True)
-    guarantor_client_id = serializers.CharField(source='guarantor.client_id', read_only=True)
-    guarantor_phone = serializers.CharField(source='guarantor.phone_primary', read_only=True)
-    guarantor_occupation = serializers.CharField(source='guarantor.occupation', read_only=True, default=None)
-    guarantor_address = serializers.CharField(source='guarantor.address_street', read_only=True, default=None)
+    guarantor_name = serializers.CharField(read_only=True)
+    guarantor_client_id = serializers.CharField(read_only=True)
+    guarantor_phone = serializers.CharField(read_only=True, default=None)
+    guarantor_occupation = serializers.CharField(read_only=True, default=None)
+    guarantor_address = serializers.CharField(read_only=True, default=None)
+
+    # Read-only display fields pulled from the Guarantor profile
+    guarantor_person_name = serializers.CharField(source='guarantor_person.full_name', read_only=True, default=None)
+    guarantor_person_phone = serializers.CharField(source='guarantor_person.phone', read_only=True, default=None)
+    guarantor_person_occupation = serializers.CharField(source='guarantor_person.occupation', read_only=True, default=None)
+    guarantor_person_address = serializers.CharField(source='guarantor_person.address', read_only=True, default=None)
 
     class Meta:
         model = LoanGuarantor
         fields = [
-            'id', 'loan', 'guarantor',
+            'id', 'loan',
+            'guarantor', 'guarantor_person',
             'guarantor_name', 'guarantor_client_id', 'guarantor_phone',
             'guarantor_occupation', 'guarantor_address',
+            'guarantor_person_name', 'guarantor_person_phone',
+            'guarantor_person_occupation', 'guarantor_person_address',
             'guaranteed_amount', 'status', 'approval_date',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'guarantor_name', 'guarantor_client_id', 'guarantor_phone',
+            'id',
+            'guarantor_name', 'guarantor_client_id', 'guarantor_phone',
             'guarantor_occupation', 'guarantor_address',
+            'guarantor_person_name', 'guarantor_person_phone',
+            'guarantor_person_occupation', 'guarantor_person_address',
             'approval_date', 'created_at', 'updated_at',
         ]
 
     def validate(self, attrs):
         loan = attrs.get('loan') or (self.instance.loan if self.instance else None)
         guarantor = attrs.get('guarantor') or (self.instance.guarantor if self.instance else None)
+        guarantor_person = attrs.get('guarantor_person') or (self.instance.guarantor_person if self.instance else None)
+
+        # Exactly one of guarantor / guarantor_person must be set
+        if not guarantor and not guarantor_person:
+            raise serializers.ValidationError(
+                'Either a Client (guarantor) or a Guarantor profile (guarantor_person) must be set.'
+            )
+        if guarantor and guarantor_person:
+            raise serializers.ValidationError(
+                'Only one of guarantor or guarantor_person may be set, not both.'
+            )
 
         if guarantor and loan:
             if guarantor.pk == loan.client_id:
@@ -106,13 +129,69 @@ class LoanGuarantorSerializer(TenantModelSerializer):
             if self.instance:
                 conflict_qs = conflict_qs.exclude(pk=self.instance.pk)
             if conflict_qs.exists():
+                name = guarantor.full_name
                 raise serializers.ValidationError(
                     {'guarantor': (
-                        f"{guarantor.full_name} is already an active guarantor on another loan "
+                        f"{name} is already an active guarantor on another loan "
                         "and cannot be used until that loan is closed."
                     )}
                 )
+
+        if guarantor_person and loan:
+            # Borrowers cannot be their own guarantor — via client record
+            if hasattr(guarantor_person, 'converted_to_client') and guarantor_person.converted_to_client_id:
+                if guarantor_person.converted_to_client_id == loan.client_id:
+                    raise serializers.ValidationError(
+                        {'guarantor_person': "A borrower cannot be their own guarantor."}
+                    )
+            # Check the guarantor person's active loan guarantees
+            conflict_qs = LoanGuarantor.objects.filter(
+                guarantor_person=guarantor_person,
+                loan__status__in=LoanGuarantor.ACTIVE_LOAN_STATUSES,
+            )
+            if self.instance:
+                conflict_qs = conflict_qs.exclude(pk=self.instance.pk)
+            if conflict_qs.exists():
+                name = guarantor_person.full_name
+                raise serializers.ValidationError(
+                    {'guarantor_person': (
+                        f"{name} is already an active guarantor on another loan "
+                        "and cannot be used until that loan is closed."
+                    )}
+                )
+
+        # Compute the display name from whichever FK is set
+        if guarantor:
+            attrs['_display_name'] = guarantor.full_name
+            attrs['_display_client_id'] = getattr(guarantor, 'client_id', None)
+            attrs['_display_phone'] = getattr(guarantor, 'phone_primary', None) or ''
+            attrs['_display_occupation'] = getattr(guarantor, 'occupation', None) or ''
+            attrs['_display_address'] = getattr(guarantor, 'address_street', None) or ''
+        elif guarantor_person:
+            attrs['_display_name'] = guarantor_person.full_name
+            attrs['_display_client_id'] = None
+            attrs['_display_phone'] = getattr(guarantor_person, 'phone', None) or ''
+            attrs['_display_occupation'] = getattr(guarantor_person, 'occupation', None) or ''
+            attrs['_display_address'] = getattr(guarantor_person, 'address', None) or ''
+
         return attrs
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Populate display fields from whichever FK is set (safe even if FK is stale)
+        if instance.guarantor_id:
+            data['guarantor_name'] = getattr(instance.guarantor, 'full_name', None)
+            data['guarantor_client_id'] = getattr(instance.guarantor, 'client_id', None)
+            data['guarantor_phone'] = getattr(instance.guarantor, 'phone_primary', None)
+            data['guarantor_occupation'] = getattr(instance.guarantor, 'occupation', None)
+            data['guarantor_address'] = getattr(instance.guarantor, 'address_street', None)
+        elif instance.guarantor_person_id:
+            data['guarantor_name'] = getattr(instance.guarantor_person, 'full_name', None)
+            data['guarantor_client_id'] = None
+            data['guarantor_phone'] = getattr(instance.guarantor_person, 'phone', None)
+            data['guarantor_occupation'] = getattr(instance.guarantor_person, 'occupation', None)
+            data['guarantor_address'] = getattr(instance.guarantor_person, 'address', None)
+        return data
 
 
 class LoanAccountListSerializer(TenantModelSerializer):

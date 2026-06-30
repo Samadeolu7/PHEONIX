@@ -38,6 +38,7 @@ import {
   RestructureLoanPayload,
 } from '../../services/loanService';
 import { clientService, ClientOption } from '../../services/clientService';
+import { guarantorService, GuarantorProfile } from '../../services/guarantorService';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
 
@@ -490,20 +491,32 @@ interface AddGuarantorModalProps {
   onSuccess: () => void;
 }
 
+type SearchResultType = 'client' | 'guarantor';
+
+interface SearchResult {
+  type: SearchResultType;
+  id: number;
+  name: string;
+  phone: string;
+  label: string;
+}
+
 function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProps) {
   const [mode, setMode] = useState<GuarantorMode>('search');
 
   // Search-existing state
   const [search, setSearch] = useState('');
-  const [clients, setClients] = useState<ClientOption[]>([]);
-  const [clientsLoading, setClientsLoading] = useState(false);
-  const [selectedClient, setSelectedClient] = useState<ClientOption | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
 
-  // New-person state
+  // New-person state — maps to GuarantorCreateSerializer
   const [newPerson, setNewPerson] = useState({
-    first_name: '', last_name: '', phone_primary: '',
+    first_name: '', last_name: '',
+    middle_name: '',
+    phone: '',
     gender: '' as 'male' | 'female' | 'other' | '',
-    occupation: '', address_street: '',
+    occupation: '', address: '',
   });
 
   // Shared state
@@ -515,15 +528,34 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
   useEffect(() => {
     if (mode !== 'search') return;
     const timer = setTimeout(async () => {
-      if (!search.trim()) { setClients([]); return; }
-      setClientsLoading(true);
+      if (!search.trim()) { setSearchResults([]); return; }
+      setSearchLoading(true);
       try {
-        const opts = await clientService.getClientOptions({ search: search.trim(), status: 'active' } as any);
-        setClients(opts);
+        const [clients, guarantors] = await Promise.all([
+          clientService.getClientOptions({ search: search.trim(), status: 'active' } as any),
+          guarantorService.getGuarantors({ search: search.trim() }),
+        ]);
+        const results: SearchResult[] = [
+          ...(Array.isArray(clients) ? clients : clients?.results ?? []).map((c: any) => ({
+            type: 'client' as const,
+            id: c.id,
+            name: c.name || c.full_name || '',
+            phone: c.phone_primary || '',
+            label: 'Client',
+          })),
+          ...guarantors.map(g => ({
+            type: 'guarantor' as const,
+            id: g.id,
+            name: g.full_name,
+            phone: g.phone || '',
+            label: 'Guarantor',
+          })),
+        ];
+        setSearchResults(results);
       } catch {
-        setClients([]);
+        setSearchResults([]);
       } finally {
-        setClientsLoading(false);
+        setSearchLoading(false);
       }
     }, 350);
     return () => clearTimeout(timer);
@@ -542,38 +574,43 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
     setSubmitting(true);
     setError(null);
     try {
-      let clientId: number;
-      let clientName: string;
+      let personName: string;
+      let payload: { loan: number; guarantor?: number; guarantor_person?: number; guaranteed_amount: string };
 
       if (mode === 'search') {
-        if (!selectedClient) { setError('Select a person first.'); setSubmitting(false); return; }
-        clientId = selectedClient.id;
-        clientName = selectedClient.name;
+        if (!selectedResult) { setError('Select a person first.'); setSubmitting(false); return; }
+        personName = selectedResult.name;
+        if (selectedResult.type === 'client') {
+          payload = { loan: loanId, guarantor: selectedResult.id, guaranteed_amount: guaranteedAmount };
+        } else {
+          payload = { loan: loanId, guarantor_person: selectedResult.id, guaranteed_amount: guaranteedAmount };
+        }
       } else {
-        const { first_name, last_name, phone_primary, gender, occupation, address_street } = newPerson;
-        if (!first_name || !last_name || !phone_primary || !gender) {
-          setError('First name, last name, phone and gender are required.');
+        const { first_name, last_name, phone, gender } = newPerson;
+        if (!first_name || !last_name) {
+          setError('First name and last name are required.');
           setSubmitting(false);
           return;
         }
-        const created = await clientService.createClient({
-          first_name, last_name, phone_primary,
-          gender: gender as 'male' | 'female' | 'other',
-          occupation: occupation || undefined,
-          address_street: address_street || undefined,
-          usage_context: 'financial' as any,
-          status: 'active',
+        const created = await guarantorService.createGuarantor({
+          first_name,
+          last_name,
+          middle_name: newPerson.middle_name || undefined,
+          phone: phone || undefined,
+          gender: gender || undefined,
+          occupation: newPerson.occupation || undefined,
+          address: newPerson.address || undefined,
         });
-        clientId = created.id;
-        clientName = created.full_name;
+        personName = created.full_name;
+        payload = { loan: loanId, guarantor_person: created.id, guaranteed_amount: guaranteedAmount };
       }
 
-      await loanService.addGuarantor({ loan: loanId, guarantor: clientId, guaranteed_amount: guaranteedAmount });
-      setSuccessName(clientName);
+      await loanService.addGuarantor(payload);
+      setSuccessName(personName);
     } catch (e: unknown) {
       const err = e as any;
-      const msg = err?.guarantor?.[0] ?? err?.phone_primary?.[0] ?? err?.non_field_errors?.[0]
-        ?? err?.detail ?? err?.message ?? 'Failed to add guarantor.';
+      const msg = err?.guarantor?.[0] ?? err?.guarantor_person?.[0] ?? err?.phone?.[0]
+        ?? err?.non_field_errors?.[0] ?? err?.detail ?? err?.message ?? 'Failed to add guarantor.';
       setError(msg);
       setSubmitting(false);
     }
@@ -625,7 +662,7 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === 'search' ? (
-            /* ── Search existing ── */
+            /* ── Search existing — searches both Clients and Guarantor profiles ── */
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
                 Search by name or phone <span className="text-red-500">*</span>
@@ -633,30 +670,39 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
               <input
                 type="text"
                 value={search}
-                onChange={e => { setSearch(e.target.value); setSelectedClient(null); }}
+                onChange={e => { setSearch(e.target.value); setSelectedResult(null); }}
                 placeholder="Type a name or phone number…"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
               />
-              {clientsLoading && (
+              {searchLoading && (
                 <p className="mt-1 flex items-center gap-1 text-xs text-gray-400">
                   <Loader2 size={11} className="animate-spin" /> Searching…
                 </p>
               )}
-              {!clientsLoading && clients.length > 0 && !selectedClient && (
+              {!searchLoading && searchResults.length > 0 && !selectedResult && (
                 <ul className="mt-1 max-h-44 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-                  {clients.map(c => (
-                    <li key={c.id}>
+                  {searchResults.map(r => (
+                    <li key={`${r.type}-${r.id}`}>
                       <button type="button"
-                        onClick={() => { setSelectedClient(c); setSearch(c.name); setClients([]); }}
+                        onClick={() => { setSelectedResult(r); setSearch(r.name); setSearchResults([]); }}
                         className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-purple-50">
-                        <span className="font-medium text-gray-900">{c.name}</span>
-                        <span className="text-xs text-gray-400 capitalize">{c.status}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900">{r.name}</span>
+                          <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${
+                            r.type === 'client'
+                              ? 'bg-blue-50 text-blue-600'
+                              : 'bg-purple-50 text-purple-600'
+                          }`}>
+                            {r.label}
+                          </span>
+                        </div>
+                        {r.phone && <span className="text-xs text-gray-400">{r.phone}</span>}
                       </button>
                     </li>
                   ))}
                 </ul>
               )}
-              {!clientsLoading && search.trim() && clients.length === 0 && !selectedClient && (
+              {!searchLoading && search.trim() && searchResults.length === 0 && !selectedResult && (
                 <p className="mt-1 text-xs text-gray-400">
                   No match found.{' '}
                   <button type="button" onClick={() => setMode('new')}
@@ -665,11 +711,18 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
                   </button>
                 </p>
               )}
-              {selectedClient && (
+              {selectedResult && (
                 <div className="mt-2 flex items-center gap-2 rounded-lg bg-purple-50 px-3 py-2 text-sm">
                   <UserCheck size={14} className="text-purple-600" />
-                  <span className="font-medium text-purple-900">{selectedClient.name}</span>
-                  <button type="button" onClick={() => { setSelectedClient(null); setSearch(''); }}
+                  <span className="font-medium text-purple-900">{selectedResult.name}</span>
+                  <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${
+                    selectedResult.type === 'client'
+                      ? 'bg-blue-50 text-blue-600'
+                      : 'bg-purple-50 text-purple-600'
+                  }`}>
+                    {selectedResult.label}
+                  </span>
+                  <button type="button" onClick={() => { setSelectedResult(null); setSearch(''); }}
                     className="ml-auto text-gray-400 hover:text-gray-600">
                     <X size={14} />
                   </button>
@@ -677,7 +730,7 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
               )}
             </div>
           ) : (
-            /* ── Register new person ── */
+            /* ── Register new person — creates a Guarantor profile (not a Client) ── */
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -704,8 +757,8 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
                   <label className="mb-1 block text-xs font-medium text-gray-700">
                     Phone <span className="text-red-500">*</span>
                   </label>
-                  <input type="tel" value={newPerson.phone_primary}
-                    onChange={e => setPerson('phone_primary', e.target.value)}
+                  <input type="tel" value={newPerson.phone}
+                    onChange={e => setPerson('phone', e.target.value)}
                     placeholder="08012345678"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500" />
                 </div>
@@ -732,8 +785,8 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-700">Home Address</label>
-                <input type="text" value={newPerson.address_street}
-                  onChange={e => setPerson('address_street', e.target.value)}
+                <input type="text" value={newPerson.address}
+                  onChange={e => setPerson('address', e.target.value)}
                   placeholder="Street address"
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500" />
               </div>

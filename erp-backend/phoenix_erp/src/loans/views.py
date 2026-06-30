@@ -1450,7 +1450,9 @@ class LoanCollateralViewSet(ScopedModelViewSet):
 
 
 class LoanGuarantorViewSet(ScopedModelViewSet):
-    queryset = LoanGuarantor.objects.all()
+    queryset = LoanGuarantor.objects.select_related(
+        'guarantor', 'guarantor_person', 'loan'
+    ).all()
     serializer_class = LoanGuarantorSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     officer_client_lookup = 'loan__client__assigned_officer'
@@ -1460,6 +1462,9 @@ class LoanGuarantorViewSet(ScopedModelViewSet):
         loan_id = self.request.query_params.get('loan')
         if loan_id:
             qs = qs.filter(loan_id=loan_id)
+        guarantor_person = self.request.query_params.get('guarantor_person')
+        if guarantor_person:
+            qs = qs.filter(guarantor_person_id=guarantor_person)
         return qs
 
 

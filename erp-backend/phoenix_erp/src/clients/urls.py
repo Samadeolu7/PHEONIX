@@ -5,6 +5,7 @@ from .views import (
     ClientDocumentViewSet, ClientRelationshipViewSet, ClientNoteViewSet,
     ClientGroupViewSet,
     ClientRegistrationConfigViewSet,
+    GuarantorViewSet,
     ProspectPublicRegistrationView,
 )
 from .views_statement import ClientStatementViewSet
@@ -18,6 +19,7 @@ router.register(r'notes', ClientNoteViewSet, basename='clientnote')
 router.register(r'statements', ClientStatementViewSet, basename='client-statement')
 router.register(r'groups', ClientGroupViewSet, basename='clientgroup')
 router.register(r'registration-configs', ClientRegistrationConfigViewSet, basename='client-registration-config')
+router.register(r'guarantors', GuarantorViewSet, basename='guarantor')
 
 app_name = 'clients'
 
