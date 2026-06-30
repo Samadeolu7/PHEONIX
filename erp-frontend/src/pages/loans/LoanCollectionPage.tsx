@@ -29,6 +29,8 @@ import {
 } from '../../services/loanService';
 import { clientService, ClientGroup } from '../../services/clientService';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
+import { BankAccount } from '../../types/banks';
+import { bankService } from '../../services/bankService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -71,9 +73,15 @@ function NormalCollectionPanel() {
   const [paymentMode, setPaymentMode] = useState<'cash' | 'bank_transfer'>('cash');
   const [bankReference, setBankReference] = useState('');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [selectedBankId, setSelectedBankId] = useState<number | ''>('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<{ message: string; overpayment?: string } | null>(null);
+
+  useEffect(() => {
+    bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
+  }, []);
 
   const doSearch = useCallback(async () => {
     if (!search.trim()) return;
@@ -130,9 +138,15 @@ function NormalCollectionPanel() {
       setSubmitError('Please enter a valid amount.');
       return;
     }
-    if (paymentMode === 'bank_transfer' && !bankReference.trim()) {
-      setSubmitError('Bank reference is required for bank transfer payments.');
-      return;
+    if (paymentMode === 'bank_transfer') {
+      if (typeof selectedBankId !== 'number') {
+        setSubmitError('Please select a destination bank account.');
+        return;
+      }
+      if (!bankReference.trim()) {
+        setSubmitError('Bank reference is required for bank transfer payments.');
+        return;
+      }
     }
     setSubmitting(true);
     setSubmitError(null);
@@ -141,6 +155,7 @@ function NormalCollectionPanel() {
         amount,
         payment_date: paymentDate,
         payment_mode: paymentMode,
+        bank_account_id: paymentMode === 'bank_transfer' ? selectedBankId : undefined,
         bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
       };
       const result = await loanService.repayLoan(selectedLoan.id, payload);
@@ -382,22 +397,42 @@ function NormalCollectionPanel() {
               </div>
 
               {paymentMode === 'bank_transfer' && (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Bank Reference <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={bankReference}
-                    onChange={(e) => setBankReference(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-                    placeholder="e.g. TRF/20240617/1234567"
-                    required={paymentMode === 'bank_transfer'}
-                  />
-                  <p className="mt-1 text-xs text-gray-400">
-                    Transaction reference from the bank notification — used for reconciliation
-                  </p>
-                </div>
+                <>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Destination Bank Account <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={selectedBankId}
+                      onChange={e => setSelectedBankId(e.target.value ? Number(e.target.value) : '')}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                      required
+                    >
+                      <option value="">Select bank account</option>
+                      {bankAccounts.map(b => (
+                        <option key={b.id} value={b.id}>
+                          {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Bank Reference <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={bankReference}
+                      onChange={(e) => setBankReference(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                      placeholder="e.g. TRF/20240617/1234567"
+                      required={paymentMode === 'bank_transfer'}
+                    />
+                    <p className="mt-1 text-xs text-gray-400">
+                      Transaction reference from the bank notification — used for reconciliation
+                    </p>
+                  </div>
+                </>
               )}
 
               {submitError && (
@@ -445,8 +480,14 @@ function GroupCollectionPanel() {
   const [sheetError, setSheetError] = useState<string | null>(null);
 
   const [paymentMode, setPaymentMode] = useState<'cash' | 'bank_transfer'>('cash');
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [selectedBankId, setSelectedBankId] = useState<number | ''>('');
   const [bankReference, setBankReference] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
+  }, []);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitResult, setSubmitResult] = useState<{ succeeded: number; failed: { loan_account_id: number; error: string }[] } | null>(null);
 
@@ -480,9 +521,15 @@ function GroupCollectionPanel() {
 
   async function handlePostAll(e: React.FormEvent) {
     e.preventDefault();
-    if (paymentMode === 'bank_transfer' && !bankReference.trim()) {
-      setSubmitError('Bank reference is required for bank transfer payments.');
-      return;
+    if (paymentMode === 'bank_transfer') {
+      if (typeof selectedBankId !== 'number') {
+        setSubmitError('Please select a destination bank account.');
+        return;
+      }
+      if (!bankReference.trim()) {
+        setSubmitError('Bank reference is required for bank transfer payments.');
+        return;
+      }
     }
     const payments: BulkRepayPayment[] = rows
       .filter((r) => parseFloat(amounts[r.loan_account_id] ?? '0') > 0)
@@ -503,6 +550,7 @@ function GroupCollectionPanel() {
       const result = await loanService.bulkRepay({
         payments,
         payment_mode: paymentMode,
+        bank_account_id: paymentMode === 'bank_transfer' ? selectedBankId : undefined,
         bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
       });
       setSubmitResult(result);
@@ -654,19 +702,39 @@ function GroupCollectionPanel() {
               </div>
 
               {paymentMode === 'bank_transfer' && (
-                <div className="flex-1">
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Bank Reference <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={bankReference}
-                    onChange={(e) => setBankReference(e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-                    placeholder="e.g. TRF/20240617/1234567"
-                    required={paymentMode === 'bank_transfer'}
-                  />
-                </div>
+                <>
+                  <div className="flex-1">
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Destination Bank Account <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={selectedBankId}
+                      onChange={e => setSelectedBankId(e.target.value ? Number(e.target.value) : '')}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                      required
+                    >
+                      <option value="">Select bank account</option>
+                      {bankAccounts.map(b => (
+                        <option key={b.id} value={b.id}>
+                          {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Bank Reference <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={bankReference}
+                      onChange={(e) => setBankReference(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                      placeholder="e.g. TRF/20240617/1234567"
+                      required={paymentMode === 'bank_transfer'}
+                    />
+                  </div>
+                </>
               )}
 
               <div className="flex gap-3">

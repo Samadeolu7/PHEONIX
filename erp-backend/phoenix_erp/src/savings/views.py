@@ -778,11 +778,27 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
         The disburser must be a different person from both the creator (requested_by)
         and all approvers (3-person maker-checker: creator → approver → disburser).
 
-        No request body required; the cashier/bank account was set at request creation.
+        Request body:
+            destination_bank_account (int): FK of the BankAccount to credit.
         """
         wr = self.get_object()
+
+        destination_bank = None
+        if request.data.get('destination_bank_account'):
+            from banks.models import BankAccount
+            try:
+                destination_bank = BankAccount.objects.get(pk=request.data['destination_bank_account'])
+            except Exception:
+                return Response({'detail': 'destination_bank_account not found.'}, status=400)
+
+        if not destination_bank:
+            return Response(
+                {'detail': 'A destination bank account is required for disbursement.'},
+                status=400,
+            )
+
         try:
-            disburse_withdrawal(wr, request.user)
+            disburse_withdrawal(wr, request.user, destination_bank_account=destination_bank)
         except Exception as exc:
             return Response({'detail': str(exc)}, status=400)
         return Response(

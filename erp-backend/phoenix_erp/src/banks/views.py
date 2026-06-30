@@ -784,12 +784,23 @@ class BankTransferViewSet(ScopedModelViewSet):
         """Approve transfer (first approval)"""
         transfer = self.get_object()
         
-        # Validate user is account manager
-        if transfer.destination_bank_account.account_manager != request.user:
-            return Response(
-                {'error': 'Only the account manager can approve this transfer'},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        # Check approval permission based on source type
+        if transfer.source_type == 'bank':
+            # Bank-to-bank transfers require director approval
+            staff = getattr(request.user, 'staff_profile', None)
+            role = getattr(staff, 'role_level', None) if staff else None
+            if role not in ('director', 'admin'):
+                return Response(
+                    {'error': 'Only directors can approve bank-to-bank transfers'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        else:
+            # Cashier-to-bank transfers require destination account manager
+            if transfer.destination_bank_account.account_manager != request.user:
+                return Response(
+                    {'error': 'Only the destination account manager can approve this transfer'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
         
         serializer = BankTransferActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -811,6 +822,22 @@ class BankTransferViewSet(ScopedModelViewSet):
     def second_approve(self, request, pk=None):
         """Second approval for dual approval transfers"""
         transfer = self.get_object()
+        
+        # Same role check as first approval
+        if transfer.source_type == 'bank':
+            staff = getattr(request.user, 'staff_profile', None)
+            role = getattr(staff, 'role_level', None) if staff else None
+            if role not in ('director', 'admin'):
+                return Response(
+                    {'error': 'Only directors can approve bank-to-bank transfers'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        else:
+            if transfer.destination_bank_account.account_manager != request.user:
+                return Response(
+                    {'error': 'Only the destination account manager can approve this transfer'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
         
         serializer = BankTransferActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

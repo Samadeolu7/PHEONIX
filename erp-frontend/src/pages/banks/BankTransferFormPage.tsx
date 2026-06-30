@@ -2,12 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, X } from 'lucide-react';
 import bankService from '../../services/bankService';
+import { cashierAccountService } from '../../services/treasuryService';
 import type { BankAccount, CreateBankTransferRequest } from '../../types/banks';
+import type { CashierAccount } from '../../types/treasury';
 
 const DECIMAL_INPUT_REGEX = /^\d{0,16}(?:\.\d{0,2})?$/;
 
 const BankTransferFormPage: React.FC = () => {
   const navigate = useNavigate();
+  const [sourceType, setSourceType] = useState<'bank' | 'cashier'>('bank');
   const [formData, setFormData] = useState<CreateBankTransferRequest>({
     source_type: 'bank',
     source_bank_account: undefined,
@@ -18,6 +21,7 @@ const BankTransferFormPage: React.FC = () => {
     transfer_date: new Date().toISOString().split('T')[0],
   });
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [cashierAccounts, setCashierAccounts] = useState<CashierAccount[]>([]);
   const [destinationAccounts, setDestinationAccounts] = useState<BankAccount[]>([]);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -33,12 +37,25 @@ const BankTransferFormPage: React.FC = () => {
 
   const loadAccounts = async () => {
     try {
-      // Load bank accounts
-      const banks = await bankService.listBankAccounts({ is_active: true });
+      const [banks, cashiers] = await Promise.all([
+        bankService.listBankAccounts({ is_active: true }),
+        cashierAccountService.getActive(),
+      ]);
       setBankAccounts(banks);
+      setCashierAccounts(cashiers);
     } catch (err: any) {
       console.error('Failed to load accounts:', err);
     }
+  };
+
+  const handleSourceTypeChange = (st: 'bank' | 'cashier') => {
+    setSourceType(st);
+    setFormData({
+      ...formData,
+      source_type: st,
+      source_bank_account: undefined,
+      source_cashier_account: undefined,
+    });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -53,9 +70,14 @@ const BankTransferFormPage: React.FC = () => {
     setError(null);
 
     try {
-      // Validate
-      if (!formData.source_bank_account) {
-        throw new Error('Please select a source bank account');
+      if (sourceType === 'bank') {
+        if (!formData.source_bank_account) {
+          throw new Error('Please select a source bank account');
+        }
+      } else {
+        if (!formData.source_cashier_account) {
+          throw new Error('Please select a source cashier account');
+        }
       }
       if (!formData.destination_bank_account) {
         throw new Error('Please select a destination account');
@@ -64,13 +86,11 @@ const BankTransferFormPage: React.FC = () => {
         throw new Error('Please enter a valid amount');
       }
 
-      // Create transfer
       const transfer = await bankService.createBankTransfer({
         ...formData,
         attachment,
       } as any);
 
-      // Navigate to transfer detail or list
       navigate(`/banks/transfers/${transfer.id}`);
     } catch (err: any) {
       setError(err.message || 'Failed to create transfer');
@@ -102,36 +122,78 @@ const BankTransferFormPage: React.FC = () => {
             </div>
           )}
 
+          {/* Source Type */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Source Type</label>
+            <div className="flex gap-4">
+              {(['bank', 'cashier'] as const).map(st => (
+                <label key={st} className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="radio"
+                    name="sourceType"
+                    value={st}
+                    checked={sourceType === st}
+                    onChange={() => handleSourceTypeChange(st)}
+                    className="accent-blue-600"
+                  />
+                  <span className="text-sm text-gray-700 capitalize">{st === 'bank' ? 'Bank Account' : 'Cashier Account'}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
           {/* Source Account */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Source Bank Account *
+              Source {sourceType === 'bank' ? 'Bank' : 'Cashier'} Account *
             </label>
-            <select
-              required
-              value={formData.source_bank_account || ''}
-              onChange={e =>
-                setFormData({
-                  ...formData,
-                  source_bank_account: Number(e.target.value),
-                })
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Select source account...</option>
-              {bankAccounts.map(acc => (
-                <option key={acc.id} value={acc.id}>
-                  {acc.account_name} ({acc.account_number}) - ₦
-                  {parseFloat(acc.current_balance).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </option>
-              ))}
-            </select>
+            {sourceType === 'bank' ? (
+              <select
+                required
+                value={formData.source_bank_account || ''}
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    source_bank_account: Number(e.target.value),
+                  })
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">Select source account...</option>
+                {bankAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.account_name} ({acc.account_number}) - {acc.bank_name} - ₦
+                    {parseFloat(acc.current_balance).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                required
+                value={formData.source_cashier_account || ''}
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    source_cashier_account: Number(e.target.value),
+                  })
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">Select source cashier account...</option>
+                {cashierAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.name} ({acc.code}) - ₦
+                    {parseFloat(acc.balance || '0').toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Destination Account */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Destination Account *
+              Destination Bank Account *
             </label>
             <select
               required

@@ -397,9 +397,6 @@ def initiate_withdrawal(
             f"requested ₦{amount:,.2f}."
         )
 
-    if not (cashier_account or destination_bank_account):
-        raise ValidationError("Either a cashier account or a destination bank account is required.")
-
     # ── Resolve tier ─────────────────────────────────────────────────────────
     tier = _resolve_tier(savings_account.owner, amount)
     if tier is None:
@@ -508,7 +505,11 @@ def process_withdrawal_approval(
     return wr
 
 
-def disburse_withdrawal(wr: SavingsWithdrawalRequest, disbursed_by: User) -> SavingsWithdrawalRequest:
+def disburse_withdrawal(
+    wr: SavingsWithdrawalRequest,
+    disbursed_by: User,
+    destination_bank_account=None,
+) -> SavingsWithdrawalRequest:
     """
     Third-role disbursement: a user different from the creator AND all approvers
     physically releases the funds.
@@ -520,6 +521,9 @@ def disburse_withdrawal(wr: SavingsWithdrawalRequest, disbursed_by: User) -> Sav
         raise ValidationError(
             "Withdrawal must be fully approved before it can be disbursed."
         )
+
+    if not destination_bank_account:
+        raise ValidationError("A destination bank account is required for disbursement.")
 
     # Creator ≠ disburser
     if disbursed_by.pk == wr.requested_by_id:
@@ -540,14 +544,22 @@ def disburse_withdrawal(wr: SavingsWithdrawalRequest, disbursed_by: User) -> Sav
             "(maker-checker violation)."
         )
 
-    _execute_withdrawal(wr, disbursed_by)
+    _execute_withdrawal(wr, disbursed_by, destination_bank_account=destination_bank_account)
     return wr
 
 
-def _execute_withdrawal(wr: SavingsWithdrawalRequest, executed_by: User) -> None:
+def _execute_withdrawal(
+    wr: SavingsWithdrawalRequest,
+    executed_by: User,
+    destination_bank_account=None,
+) -> None:
     """
     Physically move money: create GL journal entry, then mark request completed.
     Also applies cycle-break penalty BEFORE the withdrawal if applicable.
+
+    Args:
+        destination_bank_account: BankAccount chosen by the disburser at payout time.
+            Takes precedence over the one stored on the request (which may be None).
     """
     savings_account = wr.savings_account
 
@@ -557,9 +569,10 @@ def _execute_withdrawal(wr: SavingsWithdrawalRequest, executed_by: User) -> None
     )
 
     # Actual GL withdrawal via SavingsAccount.withdraw()
+    bank_acc = destination_bank_account or wr.destination_bank_account
     cashier = wr.cashier_account
-    if cashier is None and wr.destination_bank_account:
-        cashier = wr.destination_bank_account.gl_account
+    if cashier is None and bank_acc:
+        cashier = bank_acc.gl_account
 
     journal = savings_account.withdraw(
         amount=wr.amount,

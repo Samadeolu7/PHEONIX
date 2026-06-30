@@ -102,8 +102,7 @@ export const getSavingsAccounts = (params?: {
   search?: string;
   page?: number;
   page_size?: number;
-}): Promise<SavingsAccountsPage | SavingsAccount[]> =>
-  api.get(BASE_ACCOUNTS + '/', { params });
+}): Promise<SavingsAccountsPage | SavingsAccount[]> => api.get(BASE_ACCOUNTS + '/', { params });
 
 export const getSavingsAccount = (id: number): Promise<SavingsAccount> =>
   api.get(`${BASE_ACCOUNTS}/${id}/`);
@@ -156,7 +155,7 @@ export const getSavingsCollectionSheet = async (params: {
 
 export const markContributionPaid = (
   scheduleId: number,
-  cashierAccountId: number,
+  cashierAccountId: number
 ): Promise<ContributionScheduleItem> =>
   api.post(`${BASE_COLLECTION}/${scheduleId}/mark-paid/`, { cashier_account_id: cashierAccountId });
 
@@ -201,13 +200,11 @@ export const getCompulsorySavingsPolicies = async (): Promise<CompulsorySavingsP
 export const updateCompulsorySavingsPolicy = (
   id: number,
   data: Partial<Pick<CompulsorySavingsPolicy, 'amount' | 'enabled'>>
-): Promise<CompulsorySavingsPolicy> =>
-  api.patch(`${BASE_POLICY}/${id}/`, data);
+): Promise<CompulsorySavingsPolicy> => api.patch(`${BASE_POLICY}/${id}/`, data);
 
 export const createCompulsorySavingsPolicy = (
   data: Pick<CompulsorySavingsPolicy, 'amount' | 'enabled'>
-): Promise<CompulsorySavingsPolicy> =>
-  api.post(BASE_POLICY + '/', data);
+): Promise<CompulsorySavingsPolicy> => api.post(BASE_POLICY + '/', data);
 
 // ── New types for product-driven configuration ─────────────────────────────
 
@@ -304,34 +301,46 @@ const BASE_WITHDRAWALS = '/savings/withdrawals';
 export const getSavingsProductConfig = (productId: number): Promise<SavingsProductConfig[]> =>
   api.get(BASE_PRODUCT_CONFIGS + '/', { params: { product: productId } });
 
-export const createSavingsProductConfig = (data: Partial<SavingsProductConfig>): Promise<SavingsProductConfig> =>
-  api.post(BASE_PRODUCT_CONFIGS + '/', data);
+export const createSavingsProductConfig = (
+  data: Partial<SavingsProductConfig>
+): Promise<SavingsProductConfig> => api.post(BASE_PRODUCT_CONFIGS + '/', data);
 
-export const updateSavingsProductConfig = (id: number, data: Partial<SavingsProductConfig>): Promise<SavingsProductConfig> =>
-  api.patch(`${BASE_PRODUCT_CONFIGS}/${id}/`, data);
+export const updateSavingsProductConfig = (
+  id: number,
+  data: Partial<SavingsProductConfig>
+): Promise<SavingsProductConfig> => api.patch(`${BASE_PRODUCT_CONFIGS}/${id}/`, data);
 
 // Withdrawal Approval Tiers
-export const getWithdrawalTiers = (params?: { is_active?: boolean }): Promise<WithdrawalApprovalTier[]> => {
+export const getWithdrawalTiers = (params?: {
+  is_active?: boolean;
+}): Promise<WithdrawalApprovalTier[]> => {
   const res = api.get(BASE_WITHDRAWAL_TIERS + '/', { params });
-  return res.then((r: any) => Array.isArray(r) ? r : (r?.results ?? []));
+  return res.then((r: any) => (Array.isArray(r) ? r : (r?.results ?? [])));
 };
 
-export const createWithdrawalTier = (data: Partial<WithdrawalApprovalTier>): Promise<WithdrawalApprovalTier> =>
-  api.post(BASE_WITHDRAWAL_TIERS + '/', data);
+export const createWithdrawalTier = (
+  data: Partial<WithdrawalApprovalTier>
+): Promise<WithdrawalApprovalTier> => api.post(BASE_WITHDRAWAL_TIERS + '/', data);
 
-export const updateWithdrawalTier = (id: number, data: Partial<WithdrawalApprovalTier>): Promise<WithdrawalApprovalTier> =>
-  api.patch(`${BASE_WITHDRAWAL_TIERS}/${id}/`, data);
+export const updateWithdrawalTier = (
+  id: number,
+  data: Partial<WithdrawalApprovalTier>
+): Promise<WithdrawalApprovalTier> => api.patch(`${BASE_WITHDRAWAL_TIERS}/${id}/`, data);
 
 export const deleteWithdrawalTier = (id: number): Promise<void> =>
   api.delete(`${BASE_WITHDRAWAL_TIERS}/${id}/`);
 
 // Withdrawal Requests
-export const initiateWithdrawal = (data: InitiateWithdrawalData): Promise<SavingsWithdrawalRequest> =>
-  api.post(BASE_WITHDRAWALS + '/', data);
+export const initiateWithdrawal = (
+  data: InitiateWithdrawalData
+): Promise<SavingsWithdrawalRequest> => api.post(BASE_WITHDRAWALS + '/', data);
 
-export const getWithdrawals = (params?: { savings_account?: number; status?: string }): Promise<SavingsWithdrawalRequest[]> => {
+export const getWithdrawals = (params?: {
+  savings_account?: number;
+  status?: string;
+}): Promise<SavingsWithdrawalRequest[]> => {
   const res = api.get(BASE_WITHDRAWALS + '/', { params });
-  return res.then((r: any) => Array.isArray(r) ? r : (r?.results ?? []));
+  return res.then((r: any) => (Array.isArray(r) ? r : (r?.results ?? [])));
 };
 
 export const getWithdrawal = (id: number): Promise<SavingsWithdrawalRequest> =>
@@ -339,7 +348,7 @@ export const getWithdrawal = (id: number): Promise<SavingsWithdrawalRequest> =>
 
 export const getPendingMyApproval = (): Promise<SavingsWithdrawalRequest[]> => {
   const res = api.get(`${BASE_WITHDRAWALS}/pending/`);
-  return res.then((r: any) => Array.isArray(r) ? r : (r?.results ?? []));
+  return res.then((r: any) => (Array.isArray(r) ? r : (r?.results ?? [])));
 };
 
 export const approveWithdrawalStep = (
@@ -350,6 +359,12 @@ export const approveWithdrawalStep = (
 
 export const cancelWithdrawal = (id: number): Promise<SavingsWithdrawalRequest> =>
   api.post(`${BASE_WITHDRAWALS}/${id}/cancel/`, {});
+
+export const disburseWithdrawal = (
+  id: number,
+  data: { destination_bank_account: number }
+): Promise<SavingsWithdrawalRequest> =>
+  api.post(`${BASE_WITHDRAWALS}/${id}/disburse/`, data);
 
 // ── Savings Account Transaction Ledger ─────────────────────────────────────
 
@@ -373,7 +388,7 @@ export interface SavingsTransactionPage {
 export const getSavingsTransactions = (
   accountId: number,
   page = 1,
-  pageSize = 50,
+  pageSize = 50
 ): Promise<SavingsTransactionPage> =>
   api.get(`${BASE_ACCOUNTS}/${accountId}/transactions/`, {
     params: { page, page_size: pageSize },
@@ -403,6 +418,5 @@ export interface SavingsDepositResult {
 
 export const depositToSavings = (
   accountId: number,
-  data: SavingsDepositPayload,
-): Promise<SavingsDepositResult> =>
-  api.post(`${BASE_ACCOUNTS}/${accountId}/deposit/`, data);
+  data: SavingsDepositPayload
+): Promise<SavingsDepositResult> => api.post(`${BASE_ACCOUNTS}/${accountId}/deposit/`, data);

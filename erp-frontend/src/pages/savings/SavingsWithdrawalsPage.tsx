@@ -26,6 +26,7 @@ import {
   Layers,
   BellRing,
   Settings2,
+  Landmark,
 } from 'lucide-react';
 import {
   SavingsWithdrawalRequest,
@@ -35,11 +36,14 @@ import {
   getWithdrawals,
   approveWithdrawalStep,
   cancelWithdrawal,
+  disburseWithdrawal,
   getWithdrawalTiers,
   createWithdrawalTier,
   updateWithdrawalTier,
   deleteWithdrawalTier,
 } from '../../services/savingsService';
+import { BankAccount } from '../../types/banks';
+import { bankService } from '../../services/bankService';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -169,16 +173,107 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
   );
 }
 
+// ── Sub-component: Disbursement modal ────────────────────────────────────────
+
+interface DisburseModalProps {
+  withdrawal: SavingsWithdrawalRequest;
+  onDone: (updated: SavingsWithdrawalRequest) => void;
+  onClose: () => void;
+}
+
+function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [selectedBankId, setSelectedBankId] = useState<number | ''>('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (typeof selectedBankId !== 'number') { setError('Please select a destination bank account.'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await disburseWithdrawal(withdrawal.id, {
+        destination_bank_account: selectedBankId,
+      });
+      onDone(updated);
+    } catch (e: any) {
+      setError(e?.message ?? e?.detail ?? 'Disbursement failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+        <div className="p-5 border-b border-gray-100">
+          <h3 className="text-base font-semibold text-gray-900">Disburse Withdrawal</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {withdrawal.client_name} — ₦{fmt(withdrawal.amount)}
+          </p>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Destination Bank Account *
+            </label>
+            <select
+              value={selectedBankId}
+              onChange={e => setSelectedBankId(e.target.value ? Number(e.target.value) : '')}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+              required
+            >
+              <option value="">Select bank account</option>
+              {bankAccounts.map(b => (
+                <option key={b.id} value={b.id}>
+                  {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-700 text-white text-sm py-2 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Landmark className="w-4 h-4" />}
+              Disburse
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Sub-component: Withdrawal row with expandable steps ─────────────────────
 
 interface WithdrawalRowProps {
   wr: SavingsWithdrawalRequest;
   onApprove?: (wr: SavingsWithdrawalRequest) => void;
   onCancel?: (wr: SavingsWithdrawalRequest) => void;
+  onDisburse?: (wr: SavingsWithdrawalRequest) => void;
   showApproveButton?: boolean;
 }
 
-function WithdrawalRow({ wr, onApprove, onCancel, showApproveButton }: WithdrawalRowProps) {
+function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, showApproveButton }: WithdrawalRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
@@ -235,6 +330,15 @@ function WithdrawalRow({ wr, onApprove, onCancel, showApproveButton }: Withdrawa
                 className="text-xs text-gray-500 border border-gray-200 px-2.5 py-1 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-50"
               >
                 {cancelling ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Cancel'}
+              </button>
+            )}
+            {wr.status === 'fully_approved' && (
+              <button
+                onClick={() => onDisburse?.(wr)}
+                className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1 rounded-lg transition-colors"
+              >
+                <Landmark className="w-3 h-3 inline mr-1" />
+                Disburse
               </button>
             )}
             <button
@@ -510,6 +614,7 @@ export default function SavingsWithdrawalsPage() {
   const [pendingLoading, setPendingLoading] = useState(false);
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [approveTarget, setApproveTarget] = useState<SavingsWithdrawalRequest | null>(null);
+  const [disburseTarget, setDisburseTarget] = useState<SavingsWithdrawalRequest | null>(null);
 
   // All withdrawals
   const [allWithdrawals, setAllWithdrawals] = useState<SavingsWithdrawalRequest[]>([]);
@@ -568,12 +673,13 @@ export default function SavingsWithdrawalsPage() {
   useEffect(() => { if (activeTab === 'all') loadAll(); }, [activeTab, loadAll]);
   useEffect(() => { if (activeTab === 'tiers') loadTiers(); }, [activeTab, loadTiers]);
 
-  // Update a withdrawal in state after approval action
+  // Update a withdrawal in state after approval / disbursement action
   const patchWithdrawal = (updated: SavingsWithdrawalRequest) => {
     setPendingApprovals(prev => prev.filter(w => w.id !== updated.id || 
       (updated.status !== 'completed' && updated.status !== 'rejected')));
     setAllWithdrawals(prev => prev.map(w => w.id === updated.id ? updated : w));
     setApproveTarget(null);
+    setDisburseTarget(null);
   };
 
   // Tiers handlers
@@ -781,6 +887,7 @@ export default function SavingsWithdrawalsPage() {
                         wr={wr}
                         showApproveButton={false}
                         onCancel={updated => setAllWithdrawals(prev => prev.map(w => w.id === updated.id ? updated : w))}
+                        onDisburse={setDisburseTarget}
                       />
                     ))}
                   </tbody>
@@ -934,6 +1041,15 @@ export default function SavingsWithdrawalsPage() {
           withdrawal={approveTarget}
           onDone={patchWithdrawal}
           onClose={() => setApproveTarget(null)}
+        />
+      )}
+
+      {/* Disburse modal */}
+      {disburseTarget && (
+        <DisburseModal
+          withdrawal={disburseTarget}
+          onDone={patchWithdrawal}
+          onClose={() => setDisburseTarget(null)}
         />
       )}
     </div>

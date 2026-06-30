@@ -38,6 +38,8 @@ import {
   RestructureLoanPayload,
 } from '../../services/loanService';
 import { clientService, ClientOption } from '../../services/clientService';
+import { BankAccount } from '../../types/banks';
+import { bankService } from '../../services/bankService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -111,6 +113,12 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [spilloverCredited, setSpilloverCredited] = useState('0.00');
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [selectedBankId, setSelectedBankId] = useState<number | ''>('');
+
+  useEffect(() => {
+    bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
+  }, []);
 
   const enteredAmount = parseFloat(amount) || 0;
   const previewSpillover = Math.max(0, enteredAmount - totalCurrentlyDue);
@@ -121,9 +129,15 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
       setError('Please enter a valid amount.');
       return;
     }
-    if (paymentMode === 'bank_transfer' && !bankReference.trim()) {
-      setError('Bank reference is required for bank transfer payments.');
-      return;
+    if (paymentMode === 'bank_transfer') {
+      if (typeof selectedBankId !== 'number') {
+        setError('Please select a destination bank account.');
+        return;
+      }
+      if (!bankReference.trim()) {
+        setError('Bank reference is required for bank transfer payments.');
+        return;
+      }
     }
     setSubmitting(true);
     setError(null);
@@ -132,6 +146,7 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
         amount: amount,
         payment_date: paymentDate,
         payment_mode: paymentMode,
+        bank_account_id: paymentMode === 'bank_transfer' ? selectedBankId : undefined,
         bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
       };
       const result = await loanService.repayLoan(loan.id, payload);
@@ -255,22 +270,42 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
             </div>
 
             {paymentMode === 'bank_transfer' && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Bank Reference <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={bankReference}
-                  onChange={(e) => setBankReference(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="e.g. TRF/20240617/1234567"
-                  required={paymentMode === 'bank_transfer'}
-                />
-                <p className="mt-1 text-xs text-gray-400">
-                  Transaction reference from bank notification / statement
-                </p>
-              </div>
+              <>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Destination Bank Account <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={selectedBankId}
+                    onChange={e => setSelectedBankId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    required
+                  >
+                    <option value="">Select bank account</option>
+                    {bankAccounts.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Bank Reference <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={bankReference}
+                    onChange={(e) => setBankReference(e.target.value)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="e.g. TRF/20240617/1234567"
+                    required={paymentMode === 'bank_transfer'}
+                  />
+                  <p className="mt-1 text-xs text-gray-400">
+                    Transaction reference from bank notification / statement
+                  </p>
+                </div>
+              </>
             )}
 
             {error && (
