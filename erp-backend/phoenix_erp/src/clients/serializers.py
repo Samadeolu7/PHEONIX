@@ -9,6 +9,7 @@ from clients.models import (
     ClientGroup,
     CustomerAuditLog,
     ClientRegistrationConfig,
+    Guarantor,
 )
 
 
@@ -496,6 +497,60 @@ class ClientGroupListSerializer(TenantModelSerializer):
         if obj.assigned_officer_id is None:
             return None
         return getattr(obj.assigned_officer, 'full_name', None) or str(obj.assigned_officer)
+
+
+class GuarantorSerializer(TenantModelSerializer):
+    """Serializer for standalone Guarantor profiles (not Clients)."""
+    full_name = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = Guarantor
+        fields = [
+            'id', 'first_name', 'middle_name', 'last_name', 'full_name',
+            'nin', 'image', 'phone', 'email', 'gender', 'date_of_birth',
+            'occupation', 'address',
+            'converted_to_client',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'full_name', 'converted_to_client',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        extra_kwargs = {
+            'image': {'required': False, 'allow_null': True},
+        }
+
+    def validate_image(self, value):
+        if value and value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError('Image size must be less than 5MB')
+        if value and not value.content_type.startswith('image/'):
+            raise serializers.ValidationError('Only image files are allowed')
+        return value
+
+
+class GuarantorCreateSerializer(TenantModelSerializer):
+    """Minimal serializer for creating a guarantor from the loan application form."""
+
+    class Meta:
+        model = Guarantor
+        fields = [
+            'first_name', 'middle_name', 'last_name',
+            'nin', 'image', 'phone', 'gender', 'occupation', 'address',
+        ]
+        extra_kwargs = {
+            'first_name': {'required': True},
+            'last_name': {'required': True},
+            'nin': {'required': False},
+            'image': {'required': False, 'allow_null': True},
+        }
+
+
+class GuarantorConversionSerializer(serializers.Serializer):
+    """Returned when a Guarantor is promoted to a Client."""
+    guarantor_id = serializers.IntegerField(read_only=True)
+    client_id = serializers.IntegerField(read_only=True)
+    client_id_display = serializers.CharField(read_only=True)
+    message = serializers.CharField(read_only=True)
 
 
 class CustomerAuditLogSerializer(serializers.ModelSerializer):

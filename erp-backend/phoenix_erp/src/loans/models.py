@@ -14,7 +14,7 @@ from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
 from accounts.models import Account
 from products.models import Product
-from clients.models import Client
+from clients.models import Client, Guarantor
 
 
 class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
@@ -1553,18 +1553,30 @@ class LoanCollateral(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
 class LoanGuarantor(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """
-    Guarantor for loan
+    Guarantor for loan — links to either a Client (legacy) or a Guarantor profile.
     """
     loan = models.ForeignKey(
         LoanAccount,
         on_delete=models.CASCADE,
         related_name='guarantors'
     )
-    
+
+    # Legacy FK — existing records point here (a Client record created for the guarantor).
     guarantor = models.ForeignKey(
         Client,
         on_delete=models.PROTECT,
         related_name='guaranteed_loans',
+        null=True,  # ← made nullable so new records can use guarantor_person instead
+        blank=True,
+    )
+
+    # New FK — standalone Guarantor profile (does NOT inflate client numbers).
+    guarantor_person = models.ForeignKey(
+        Guarantor,
+        on_delete=models.PROTECT,
+        related_name='loan_guarantees',
+        null=True,
+        blank=True,
     )
 
     guaranteed_amount = models.DecimalField(
@@ -1592,32 +1604,60 @@ class LoanGuarantor(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     ACTIVE_LOAN_STATUSES = ['pending', 'approved', 'disbursed', 'active']
 
     class Meta:
-        unique_together = [('loan', 'guarantor')]
+        unique_together = [('loan', 'guarantor'), ('loan', 'guarantor_person')]
+        indexes = [
+            models.Index(fields=['guarantor_person']),
+        ]
 
     def clean(self):
         from django.core.exceptions import ValidationError
-        if self.guarantor_id and self.loan_id:
-            if self.guarantor_id == self.loan.client_id:
+
+        # Exactly one of guarantor / guarantor_person must be set
+        if not self.guarantor_id and not self.guarantor_person_id:
+            raise ValidationError(
+                "Either a Client (guarantor) or a Guarantor profile (guarantor_person) must be set."
+            )
+
+        g = self.effective_guarantor
+        if g and self.loan_id:
+            if hasattr(g, 'pk') and self.loan.client_id == g.pk and self.guarantor_id:
                 raise ValidationError(
                     "A borrower cannot be their own guarantor."
                 )
             # Block guarantor already serving on another active loan
-            conflict = LoanGuarantor.objects.filter(
-                guarantor_id=self.guarantor_id,
-                loan__status__in=self.ACTIVE_LOAN_STATUSES,
-            ).exclude(pk=self.pk).exists()
+            if self.guarantor_id:
+                conflict = LoanGuarantor.objects.filter(
+                    guarantor_id=self.guarantor_id,
+                    loan__status__in=self.ACTIVE_LOAN_STATUSES,
+                ).exclude(pk=self.pk).exists()
+            elif self.guarantor_person_id:
+                conflict = LoanGuarantor.objects.filter(
+                    guarantor_person_id=self.guarantor_person_id,
+                    loan__status__in=self.ACTIVE_LOAN_STATUSES,
+                ).exclude(pk=self.pk).exists()
+            else:
+                conflict = False
             if conflict:
+                name = self.guarantor.full_name if self.guarantor_id else self.guarantor_person.full_name
                 raise ValidationError(
-                    f"{self.guarantor.full_name} is already an active guarantor "
+                    f"{name} is already an active guarantor "
                     "on another loan and cannot be used until that loan is closed."
                 )
+
+    @property
+    def effective_guarantor(self):
+        """Return the linked person — either the Client or the Guarantor."""
+        return self.guarantor or self.guarantor_person
 
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.guarantor.full_name} for {self.loan.loan_number}"
+        name = self.guarantor.full_name if self.guarantor_id else (
+            self.guarantor_person.full_name if self.guarantor_person_id else 'N/A'
+        )
+        return f"{name} for {self.loan.loan_number}"
 
 
 class LoanVerificationRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

@@ -767,6 +767,82 @@ class ClientRelationship(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             raise ValidationError('End date must be after start date')
         super().save(*args, **kwargs)
 
+class Guarantor(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Standalone guarantor profile — NOT a Client record, so it does not
+    inflate client numbers.  A guarantor can later be promoted to a full
+    Client via the convert-to-client endpoint.
+
+    NIN is globally unique across both Guarantor and Client tables so that
+    one person cannot be both a client and a guarantor under different IDs.
+    """
+    first_name = models.CharField(max_length=100)
+    middle_name = models.CharField(max_length=100, blank=True, default='')
+    last_name = models.CharField(max_length=100)
+
+    # NIN — globally unique across both Guarantor and Client
+    nin = models.CharField(
+        max_length=11,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        validators=[validate_nin],
+        help_text='National Identification Number (11 digits). Must be globally unique across clients and guarantors.',
+    )
+
+    image = models.ImageField(
+        upload_to='guarantors/images/',
+        blank=True, null=True,
+        help_text="Guarantor photograph",
+    )
+
+    phone = models.CharField(max_length=20, blank=True, default='')
+    email = models.EmailField(blank=True, null=True)
+    gender = models.CharField(
+        max_length=10,
+        choices=[('male', 'Male'), ('female', 'Female'), ('other', 'Other')],
+        blank=True, default='',
+    )
+    date_of_birth = models.DateField(null=True, blank=True)
+    occupation = models.CharField(max_length=200, blank=True, default='')
+    address = models.TextField(blank=True, default='')
+
+    # When a guarantor is promoted to a full client, this FK is populated.
+    converted_to_client = models.ForeignKey(
+        'Client',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='guarantor_profiles',
+        help_text='Client record created when this guarantor was promoted.',
+    )
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['last_name', 'first_name']
+        indexes = [
+            models.Index(fields=['nin']),
+            models.Index(fields=['last_name', 'first_name']),
+        ]
+
+    @property
+    def full_name(self):
+        parts = [self.first_name]
+        if self.middle_name:
+            parts.append(self.middle_name)
+        parts.append(self.last_name)
+        return ' '.join(parts)
+
+    @property
+    def name(self):
+        return self.full_name
+
+    def __str__(self):
+        return f"{self.full_name} (Guarantor #{self.pk})"
+
+
 class ClientNote(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """
     Track important notes and interactions with clients

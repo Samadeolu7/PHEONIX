@@ -21,7 +21,7 @@ from common.views import ScopedModelViewSet
 from .models import (
     Client, ClientClassification, ClientDocument, 
     ClientRelationship, ClientNote, ClientGroup, CustomerAuditLog,
-    ClientRegistrationConfig,
+    ClientRegistrationConfig, Guarantor,
 )
 from .serializers import (
     ClientListSerializer, ClientDetailSerializer, ClientCreateUpdateSerializer,
@@ -31,6 +31,7 @@ from .serializers import (
     CustomerAuditLogSerializer,
     ClientRegistrationConfigSerializer,
     ProspectPublicRegistrationSerializer,
+    GuarantorSerializer, GuarantorCreateSerializer, GuarantorConversionSerializer,
 )
 from .services import get_active_registration_config, collect_client_registration_fees
 from cash_management.services.payment_routing import PaymentRoutingService
