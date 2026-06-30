@@ -214,6 +214,12 @@ class Command(BaseCommand):
         # 6. Compare opening posted vs opening expected
         expected_opening = sum(olb - diff for _, _, olb, diff in discrepancies
                                if diff > 0 and (olb - diff) != 0)
+        total_correction = sum(diff for _, _, _, diff in discrepancies)
+        total_olb = sum(olb for _, _, olb, _ in discrepancies)
+        total_gl = sum(gl for _, gl, _, _ in discrepancies)
+        self.stdout.write(f"\n[6] Expected opening balance (from OLB): {expected_opening:>14,.2f}")
+        self.stdout.write(f"    Total correction needed:                 {total_correction:>+14,.2f}")
+
         self.stdout.write(
             f"\n[6] The net understatement ({total_olb - total_gl:,.2f}) "
             f"is {'likely due to the opening' if ob_dr == 0 else 'NOT due to missing opening entries'} "
