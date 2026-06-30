@@ -8,25 +8,30 @@ This command is the second half of the two-step migration:
   2. Copy that directory to the Phoenix server, then run this command.
 
 What it does (in order)
------------------------
-  Step 1  Bootstrap  – create Tenant, admin User, Branch if they do not already exist.
-  Step 2  Chart of Accounts  – create the parent (GL) Account records needed for each account type.
-  Step 3  Financial Products  – create minimal Product / LoanProduct records.
-  Step 4  Client Groups  – re-create all Ajo / standing groups.
-  Step 5  Clients  – create every client with:
-              • external_id  = old client_id  (e.g. WL0001)
-              • client_id    = new Phoenix ID  (e.g. WL-00001)
-              • client_type  mapped from old type codes
-  Step 6  Savings accounts  – create SavingsAccount + child SAVINGS Account (with opening balance).
-  Step 7  Loans  – create LoanAccount + child LOAN Account (outstanding balance only).
-  Step 8  Banks / Cash  – create child ASSET Accounts for each bank/cash record.
-  Step 9  Income Accounts  – create child INCOME Accounts.
-  Step 10 Expense Accounts  – create child EXPENSE Accounts.
-  Step 11 Liability Accounts  – create child LIABILITY Accounts.
+----------------------
+  Step 1   Bootstrap  – create Tenant, admin User, Branch if they do not already exist.
+  Step 2   Chart of Accounts  – create the parent (GL) Account records needed for each account type.
+  Step 3   Financial Products  – create minimal Product / LoanProduct records.
+  Step 4   Client Groups  – re-create all Ajo / standing groups.
+  Step 5   Clients  – create every client with:
+               • external_id  = old client_id  (e.g. WL0001)
+               • client_id    = new Phoenix ID  (e.g. WL-00001)
+               • client_type  mapped from old type codes
+  Step 6   Savings accounts  – create SavingsAccount + child SAVINGS Account (OBE: current balance).
+  Step 7   Loans  – create LoanAccount + child LOAN Account (OBE: current balance).
+  Step 8   Banks / Cash  – create child ASSET Accounts (OBE: current balance).
+  Step 9   Inventory  – create InventoryItem/Stock records (OBE: current value).
+  Step 10  Income Accounts  – create child INCOME Accounts (OBE: current balance).
+  Step 11  Expense Accounts  – create child EXPENSE Accounts (OBE: current balance).
+  Step 12  Liability Accounts  – create child LIABILITY Accounts (OBE: current balance).
+  Step 13  Opening Balance Equity  – post a single balanced journal entry absorbing
+           every account's current balance, with any imbalance swept to OBE.
 
 Key design decisions
 --------------------
 * No transaction history is migrated – only the current balance figures.
+* Every account's current balance is set directly via OBE (Opening Balance Equity)
+  in a single journal entry.  No historical payment flows are replayed.
 * Accounts are created with the balance set directly on creation (new records have no PK yet,
   so Phoenix's balance-protection guard does not apply).
 * The command is idempotent: re-running it will skip any record that already exists
@@ -52,7 +57,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
-from django.db.models import F
+
 
 User = get_user_model()
 
@@ -141,7 +146,7 @@ class Command(BaseCommand):
             raise CommandError(f"Data directory not found: {data_dir}")
 
         # ── lazy imports (avoids import-time circular deps) ──────────────────
-        from accounts.models import Account, AccountCategory
+        from accounts.models import Account
         from branches.models import Branch
         from clients.models import Client, ClientGroup
         from loans.models import LoanAccount, LoanProduct
@@ -163,15 +168,8 @@ class Command(BaseCommand):
         income_data         = _load(data_dir, "income_accounts.json")
         expense_data        = _load(data_dir, "expense_accounts.json")
         liability_data      = _load(data_dir, "liability_accounts.json")
-        savings_pmts_data   = _load(data_dir, "savings_payments.json")
         smart_savings_data  = _load(data_dir, "smart_savings.json")
         inventory_data      = _load(data_dir, "inventory.json")
-        loan_disb_data      = _load(data_dir, "loan_disbursements.json")
-        loan_pmts_data      = _load(data_dir, "loan_payments.json")
-        income_pmts_data    = _load(data_dir, "income_payments.json")
-        expense_pmts_data   = _load(data_dir, "expense_payments.json")
-        liability_pmts_data = _load(data_dir, "liability_payments.json")
-        bank_transfers_data = _load(data_dir, "bank_transfers.json")
 
         self.stdout.write(
             self.style.MIGRATE_HEADING(
@@ -181,15 +179,8 @@ class Command(BaseCommand):
                 f"schedules={len(schedules_data)}, "
                 f"banks={len(banks_data)}, income={len(income_data)}, "
                 f"expenses={len(expense_data)}, liabilities={len(liability_data)}, "
-                f"savings_payments={len(savings_pmts_data)}, "
                 f"smart_savings={len(smart_savings_data)}, "
-                f"inventory={len(inventory_data)}, "
-                f"loan_disbursements={len(loan_disb_data)}, "
-                f"loan_payments={len(loan_pmts_data)}, "
-                f"income_payments={len(income_pmts_data)}, "
-                f"expense_payments={len(expense_pmts_data)}, "
-                f"liability_payments={len(liability_pmts_data)}, "
-                f"bank_transfers={len(bank_transfers_data)}\n"
+                f"inventory={len(inventory_data)}\n"
             )
         )
 
@@ -206,7 +197,7 @@ class Command(BaseCommand):
         try:
             with transaction.atomic():
                 # ── STEP 1: Bootstrap  ───────────────────────────────────────
-                self.stdout.write("Step 1/21  Bootstrap (Tenant → User → Branch) …")
+                self.stdout.write("Step 1/14  Bootstrap (Tenant → User → Branch) …")
                 owner, tenant, branch = self._bootstrap(
                     options, Tenant, Branch
                 )
@@ -219,11 +210,11 @@ class Command(BaseCommand):
                 )
 
                 # ── STEP 2: Chart of Accounts (parent GL accounts) ────────────
-                self.stdout.write("Step 2/21  Chart of accounts …")
+                self.stdout.write("Step 2/14  Chart of accounts …")
                 gl = self._setup_chart_of_accounts(Account, ctx)
 
                 # ── STEP 3: Financial Products ────────────────────────────────
-                self.stdout.write("Step 3/21  Financial products …")
+                self.stdout.write("Step 3/14  Financial products …")
                 products = self._setup_products(Product, LoanProduct, gl, ctx)
 
                 # ── STEP 3.5: Staff (optional — requires staff.json) ─────────
@@ -235,103 +226,54 @@ class Command(BaseCommand):
                     self.stdout.write("Step 3.5   Staff — staff.json not found, skipping")
 
                 # ── STEP 4: Client Groups ─────────────────────────────────────
-                self.stdout.write("Step 4/21  Client groups …")
+                self.stdout.write("Step 4/14  Client groups …")
                 group_map = self._import_groups(groups_data, ClientGroup, ctx)
 
                 # ── STEP 5: Clients ───────────────────────────────────────────
-                self.stdout.write("Step 5/21  Clients …")
+                self.stdout.write("Step 5/14  Clients …")
                 client_map = self._import_clients(clients_data, Client, ClientGroup, group_map, ctx)
 
                 # ── STEP 6: Savings ───────────────────────────────────────────
                 # ob_entries: (account, balance, balance_bf, "DR"|"CR") for
                 # every child account with a non-zero imported balance.
-                # Step 12 posts these as a single balanced GL transaction.
+                # Step 13 posts these as a single balanced GL transaction.
                 ob_entries: list = []
 
-                self.stdout.write("Step 6/21  Savings accounts …")
+                self.stdout.write("Step 6/14  Savings accounts …")
                 self._import_savings(savings_data, SavingsAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 7: Loans ─────────────────────────────────────────────
-                self.stdout.write("Step 7/21  Loan accounts …")
+                self.stdout.write("Step 7/14  Loan accounts …")
                 self._import_loans(loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries)
 
                 # ── STEP 8: Banks / Cash ──────────────────────────────────────
-                self.stdout.write("Step 8/21  Bank / cash accounts …")
+                self.stdout.write("Step 8/14  Bank / cash accounts …")
                 self._import_banks(banks_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 9: Inventory ─────────────────────────────────────────
                 # Must run before Step 13 (OBE) so inventory balance_bf is captured.
-                self.stdout.write("Step 9/21  Inventory …")
+                self.stdout.write("Step 9/14  Inventory …")
                 self._import_inventory(inventory_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 10: Income ───────────────────────────────────────────
-                self.stdout.write("Step 10/21 Income accounts …")
+                self.stdout.write("Step 10/14 Income accounts …")
                 self._import_income(income_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 11: Expenses ─────────────────────────────────────────
-                self.stdout.write("Step 11/21 Expense accounts …")
+                self.stdout.write("Step 11/14 Expense accounts …")
                 self._import_expenses(expense_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 12: Liabilities ──────────────────────────────────────
-                self.stdout.write("Step 12/21 Liability accounts …")
+                self.stdout.write("Step 12/14 Liability accounts …")
                 self._import_liabilities(liability_data, Account, gl, ctx, ob_entries)
 
                 # ── STEP 13: Opening balance transaction ──────────────────────
-                self.stdout.write("Step 13/21 Opening balance transaction …")
+                self.stdout.write("Step 13/14 Opening balance transaction …")
                 self._create_opening_balance_transaction(ob_entries, Account, ctx)
 
-                # ── STEP 14: Savings payment history ──────────────────────────
-                self.stdout.write("Step 14/21 Savings payment history …")
-                self._import_savings_payments(
-                    savings_pmts_data, banks_data, SavingsAccount, Account, gl, ctx
-                )
-
-                # ── STEP 15: Loan disbursement history (new loans issued this year) ──
-                # Posts: Dr. Loan child account, Cr. Bank (money going out to borrowers).
-                # Required because 2026-disbursed loans have opening_balance=0 and would
-                # otherwise only accumulate repayment credits (Step 16), driving the
-                # loan portfolio negative.
-                self.stdout.write("Step 15/21 Loan disbursements …")
-                self._import_loan_disbursements(
-                    loan_disb_data, banks_data, LoanAccount, Account, gl, ctx
-                )
-
-                # ── STEP 16: Loan payment history (repayments) ────────────────
-                self.stdout.write("Step 16/21 Loan payment history …")
-                self._import_loan_payments(
-                    loan_pmts_data, banks_data, LoanAccount, Account, gl, ctx
-                )
-
-                # ── STEP 17: Income payment history ───────────────────────────
-                self.stdout.write("Step 17/21 Income payment history …")
-                self._import_income_payments(
-                    income_pmts_data, banks_data, Account, gl, ctx
-                )
-
-                # ── STEP 18: Expense payment history ──────────────────────────
-                self.stdout.write("Step 18/21 Expense payment history …")
-                self._import_expense_payments(
-                    expense_pmts_data, banks_data, Account, gl, ctx
-                )
-
-                # ── STEP 19: Liability payment history ────────────────────────
-                self.stdout.write("Step 19/21 Liability payment history …")
-                self._import_liability_payments(
-                    liability_pmts_data, banks_data, Account, gl, ctx
-                )
-
-                # ── STEP 20: Smart Savings enrolment ──────────────────────────
-                self.stdout.write("Step 20/21 Smart Savings enrolment …")
+                # ── STEP 14: Smart Savings enrolment ──────────────────────────
+                self.stdout.write("Step 14/14 Smart Savings enrolment …")
                 self._import_smart_savings(smart_savings_data, SavingsAccount, ctx)
-
-                # ── STEP 21: Bank transfer history ────────────────────────────
-                # Approved inter-bank cash transfers (e.g. DC Cash → MoniePoint).
-                # Without these, source banks stay over-inflated and destination
-                # banks stay under-stated.
-                self.stdout.write("Step 21/21 Bank transfer history …")
-                self._import_bank_transfers(
-                    bank_transfers_data, banks_data, Account, gl, ctx
-                )
 
         finally:
             _thread_locals.skip_account_components = False
@@ -1035,10 +977,10 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            ob_amount = _d(rec.get("opening_balance", rec.get("balance")))
-            if ob_amount:
-                ob_entries.append((child_acct, ob_amount, ob_amount, 'CR'))
-                sav_ob_total += ob_amount
+            cur_balance = _d(rec.get("balance"))
+            if cur_balance:
+                ob_entries.append((child_acct, cur_balance, cur_balance, 'CR'))
+                sav_ob_total += cur_balance
 
             SavingsAccount.objects.create(
                 client=client,
@@ -1060,7 +1002,7 @@ class Command(BaseCommand):
             f"    {created_count} created, "
             f"{skipped_existing} already existed, "
             f"{orphan_count} orphaned (client not found)\n"
-            f"    ► Total savings opening balance (CR)  : {sav_ob_total:>14,.2f}"
+            f"    ► Total savings OBE balance (CR)      : {sav_ob_total:>14,.2f}"
         )
         if orphan_ids:
             self.stdout.write(
@@ -1199,10 +1141,10 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            ob_amount = _d(rec.get("opening_balance", rec.get("balance")))
-            if ob_amount:
-                ob_entries.append((child_acct, ob_amount, ob_amount, 'DR'))
-                loan_ob_total += ob_amount
+            cur_balance = _d(rec.get("balance"))
+            if cur_balance:
+                ob_entries.append((child_acct, cur_balance, cur_balance, 'DR'))
+                loan_ob_total += cur_balance
 
             # ── Compute arrears from schedule rows before creating the account
             raw_schedules = schedules_by_loan.get(rec["id"], [])
@@ -1324,7 +1266,7 @@ class Command(BaseCommand):
             f"    {created_count} loans created, "
             f"{sched_created} schedule installments created, "
             f"{skipped} skipped\n"
-            f"    ► Total loan opening balance (DR)     : {loan_ob_total:>14,.2f}"
+            f"    ► Total loan OBE balance (DR)         : {loan_ob_total:>14,.2f}"
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1391,12 +1333,9 @@ class Command(BaseCommand):
                 skipped_existing += 1
                 continue
 
-            # opening_balance = pre-year balance (before 2026 payment flows).
-            # After Steps 13/14 post savings/loan flows through this account
-            # the GL balance will arrive at the correct current balance.
-            # Falls back to full balance for old exports without opening_balance.
-            ob_amount = _d(rec.get("opening_balance", rec.get("balance")))
-            bal_bf    = _d(rec.get("balance_bf"))
+            # Use current balance directly — no history steps to replay.
+            # This sets the GL to the correct final state in a single OBE entry.
+            cur_balance = _d(rec.get("balance"))
             acct = Account.objects.create(
                 code=str(code_counter),
                 name=account_name,
@@ -1408,18 +1347,18 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            if ob_amount:
-                ob_entries.append((acct, ob_amount, bal_bf, 'DR'))
-                bank_ob_total += ob_amount
+            if cur_balance:
+                ob_entries.append((acct, cur_balance, cur_balance, 'DR'))
+                bank_ob_total += cur_balance
                 self.stdout.write(
-                    f"    {account_name:<40} ob={ob_amount:>12,.2f}  curr={_d(rec.get('balance')):>12,.2f}"
+                    f"    {account_name:<40} obe={cur_balance:>12,.2f}"
                 )
             code_counter += 1
             created_count += 1
 
         self.stdout.write(
             f"    {created_count} created, {skipped_existing} already existed\n"
-            f"    ► Total bank opening balance (DR)     : {bank_ob_total:>14,.2f}"
+            f"    ► Total bank OBE balance (DR)         : {bank_ob_total:>14,.2f}"
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1628,7 +1567,7 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            bal_bf = _d(rec.get("balance_bf"))
+            cur_balance = _d(rec.get("balance"))
             acct = Account.objects.create(
                 code=str(code_counter),
                 name=name,
@@ -1640,10 +1579,8 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            # Use balance_bf (= 0 for annual accounts) — Step 15 posts each
-            # 2026 payment and drives the balance to the current figure.
-            if bal_bf:
-                ob_entries.append((acct, bal_bf, bal_bf, 'CR'))
+            if cur_balance:
+                ob_entries.append((acct, cur_balance, cur_balance, 'CR'))
             code_counter += 1
             created_count += 1
 
@@ -1681,7 +1618,7 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            bal_bf = _d(rec.get("balance_bf"))
+            cur_balance = _d(rec.get("balance"))
             acct = Account.objects.create(
                 code=str(code_counter),
                 name=name,
@@ -1693,8 +1630,8 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            if bal_bf:
-                ob_entries.append((acct, bal_bf, bal_bf, 'DR'))
+            if cur_balance:
+                ob_entries.append((acct, cur_balance, cur_balance, 'DR'))
             code_counter += 1
             created_count += 1
 
@@ -1736,8 +1673,7 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            bal_bf  = _d(rec.get("balance_bf"))
-            bal_cur = _d(rec.get("balance"))
+            cur_balance = _d(rec.get("balance"))
             acct = Account.objects.create(
                 code=str(code_counter),
                 name=name,
@@ -1749,19 +1685,18 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            # balance_bf = outstanding liability balance at the start of the year.
             self.stdout.write(
-                f"    {rec['name']:<40} bf={bal_bf:>12,.2f}  curr={bal_cur:>12,.2f}"
+                f"    {rec['name']:<40} obe={cur_balance:>12,.2f}"
             )
-            if bal_bf:
-                ob_entries.append((acct, bal_bf, bal_bf, 'CR'))
-                liab_bf_total += bal_bf
+            if cur_balance:
+                ob_entries.append((acct, cur_balance, cur_balance, 'CR'))
+                liab_bf_total += cur_balance
             code_counter += 1
             created_count += 1
 
         self.stdout.write(
             f"    {created_count} created, {skipped} skipped\n"
-            f"    ► Total liability opening balance (CR): {liab_bf_total:>14,.2f}"
+            f"    ► Total liability OBE balance (CR)    : {liab_bf_total:>14,.2f}"
         )
 
 
@@ -2057,8 +1992,13 @@ class Command(BaseCommand):
 
         Accounting treatment
         --------------------
-        Disbursement:  Dr. Loan Account  |  Cr. Bank/Cash
-        (Dr. increases the outstanding loan asset; Cr. reflects cash going out.)
+        Disbursement:  Dr. Loan Account (total = principal + interest)
+                       Cr. Bank/Cash         (principal only — actual cash outflow)
+                       Cr. Interest Income   (interest portion)
+
+        This separates the loan asset from the interest income so the GL
+        reflects proper double-entry accounting rather than lumping
+        everything into a single loan balance.
 
         This is the counterpart to opening_balance=0 for 2026-disbursed loans.
         Without it, Step 15 repayment credits accumulate with no matching debit,
@@ -2087,6 +2027,24 @@ class Command(BaseCommand):
         bank_acct_map = self._build_bank_account_map(banks_data, Account, gl, ctx)
         suspense      = self._get_suspense_account(Account, gl, ctx)
 
+        # Interest income account — child of the INCOME parent
+        interest_income_acct, _ = Account.objects.get_or_create(
+            code="4200-LNINT",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                "name": "Loan Interest Income",
+                "account_type": Account.INCOME,
+                "account_level": Account.LEVEL_CHILD,
+                "parent": gl["INCOME"],
+                "owner": ctx["owner"],
+                "created_by": ctx["owner"],
+                "is_system_account": True,
+                "balance": Decimal("0.00"),
+                "balance_bf": Decimal("0.00"),
+            },
+        )
+
         # Loan map is shared with Step 16 via ctx to avoid a second bulk query
         loan_gl_map = ctx.get('_loan_gl_map')
         if loan_gl_map is None:
@@ -2113,11 +2071,14 @@ class Command(BaseCommand):
             if gl_loan_acct is None:
                 skipped += 1
                 continue
-            bank_id  = rec.get("bank_id")
-            cash_acct = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
-            amount   = _d(rec.get("amount"))
+            bank_id      = rec.get("bank_id")
+            cash_acct    = bank_acct_map.get(bank_id, suspense) if bank_id else suspense
 
-            if amount <= Decimal("0"):
+            principal   = _d(rec.get("amount"))
+            total       = _d(rec.get("initial_balance", rec.get("amount")))
+            interest    = max(total - principal, Decimal("0.00"))
+
+            if total <= Decimal("0"):
                 skipped += 1
                 continue
 
@@ -2130,29 +2091,27 @@ class Command(BaseCommand):
                 tenant=ctx["tenant"], created_by=ctx["owner"],
             )
             created_txns.append(txn)
-            # Disbursement: Dr. Loan (asset increases), Cr. Bank (cash goes out)
-            pending_entries.append((gl_loan_acct, cash_acct, amount))
+            pending_entries.append((gl_loan_acct, cash_acct, interest_income_acct, total, principal, interest))
 
         if created_txns:
             entry_objs = []
-            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
+            for txn, (dr_acct, bank_acct, inc_acct, total, principal, interest) in zip(created_txns, pending_entries):
                 entry_objs.append(TransactionEntry(
                     transaction=txn, account=dr_acct,
-                    side=TransactionEntry.DEBIT, amount=amt,
+                    side=TransactionEntry.DEBIT, amount=total,
                 ))
                 entry_objs.append(TransactionEntry(
-                    transaction=txn, account=cr_acct,
-                    side=TransactionEntry.CREDIT, amount=amt,
+                    transaction=txn, account=bank_acct,
+                    side=TransactionEntry.CREDIT, amount=principal,
                 ))
+                if interest > Decimal("0.00"):
+                    entry_objs.append(TransactionEntry(
+                        transaction=txn, account=inc_acct,
+                        side=TransactionEntry.CREDIT, amount=interest,
+                    ))
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
             for txn in created_txns:
                 txn.post()
-            # Sync outstanding_principal with the posted disbursement so
-            # LoanAccount.outstanding_principal stays in sync with Account.balance.
-            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
-                LoanAccount.objects.filter(account=dr_acct).update(
-                    outstanding_principal=F('outstanding_principal') + amt
-                )
         created = len(created_txns)
 
         self.stdout.write(
@@ -2261,12 +2220,6 @@ class Command(BaseCommand):
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
             for txn in created_txns:
                 txn.post()
-            # Sync outstanding_principal with the posted repayment so
-            # LoanAccount.outstanding_principal stays in sync with Account.balance.
-            for txn, (dr_acct, cr_acct, amt) in zip(created_txns, pending_entries):
-                LoanAccount.objects.filter(account=cr_acct).update(
-                    outstanding_principal=F('outstanding_principal') - amt
-                )
         created = len(created_txns)
 
         self.stdout.write(
