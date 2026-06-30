@@ -112,7 +112,7 @@ class Command(BaseCommand):
             raise CommandError("No superuser found to author correction entries.")
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code="BAL-RECON",
+            code="RECON",
             defaults={"description": "Loan Balance Reconciliation"},
         )
 
