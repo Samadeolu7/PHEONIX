@@ -448,7 +448,8 @@ class AFinancialStatementServiceTestCase(TestCase):
         """Test transactions are filtered by date range"""
         today = date.today()
         
-        # Get balance for last 15 days only (should exclude older transactions)
+        # Get balance for last 15 days only (excludes older transactions from period
+        # but carries forward their net effect as the opening balance)
         balance_data = self.service._calculate_account_balance(
             self.cash_account,
             today - timedelta(days=15),
@@ -456,11 +457,12 @@ class AFinancialStatementServiceTestCase(TestCase):
             include_children=False
         )
         
-        # Only the salary payment (3,000 CR) should be included
-        # Initial capital (10,000 DR) was 30 days ago - excluded
-        self.assertEqual(Decimal(balance_data['debit']), Decimal('0.00'))
+        # Opening balance (entries before 15-day window): DR 10,000 (capital)
+        # Period entries (last 15 days): CR 3,000 (salary payment)
+        # Expected: debit=10,000, credit=3,000, balance=7,000
+        self.assertEqual(Decimal(balance_data['debit']), Decimal('10000.00'))
         self.assertEqual(Decimal(balance_data['credit']), Decimal('3000.00'))
-        self.assertEqual(Decimal(balance_data['balance']), Decimal('-3000.00'))
+        self.assertEqual(Decimal(balance_data['balance']), Decimal('7000.00'))
     
     def test_trial_balance_generation(self):
         """Test trial balance report generation"""

@@ -494,9 +494,41 @@ class FinancialStatementService:
         is_debit_normal = account.account_type in [Account.ASSET, Account.EXPENSE, Account.LOAN]
 
         if start_date:
-            # Date-range view: balance brought forward + posted period entries.
-            # balance_bf is the pre-period opening balance set during period close.
-            bbf = account.balance_bf
+            # Date-range view: dynamically computed opening balance + posted period entries.
+            # Instead of relying on the static balance_bf (which is only updated during
+            # year-end close or import), we compute the actual opening balance at start_date
+            # by summing all posted entries before that date.
+            entries_before = TransactionEntry.objects.filter(
+                account=account,
+                transaction__is_deleted=False,
+                posted=True,
+                transaction__date__lt=start_date,
+            )
+            if self.branch:
+                entries_before = entries_before.filter(transaction__branch=self.branch)
+            elif hasattr(self.owner, 'tenant') and self.owner.tenant:
+                entries_before = entries_before.filter(transaction__tenant=self.owner.tenant)
+
+            before_debit = entries_before.filter(side=TransactionEntry.DEBIT).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+            before_credit = entries_before.filter(side=TransactionEntry.CREDIT).aggregate(
+                total=Sum('amount')
+            )['total'] or Decimal('0.00')
+
+            # Net opening balance at start_date
+            if is_debit_normal:
+                bbf = Decimal(str(before_debit)) - Decimal(str(before_credit))
+            else:
+                bbf = Decimal(str(before_credit)) - Decimal(str(before_debit))
+
+            # Split opening balance into its debit/credit component based on account type
+            if is_debit_normal:
+                bbf_debit = max(bbf, Decimal('0.00'))
+                bbf_credit = max(-bbf, Decimal('0.00'))
+            else:
+                bbf_credit = max(bbf, Decimal('0.00'))
+                bbf_debit = max(-bbf, Decimal('0.00'))
 
             # Posted entries in the requested period
             entries = TransactionEntry.objects.filter(
@@ -517,14 +549,6 @@ class FinancialStatementService:
             period_credit = entries.filter(side=TransactionEntry.CREDIT).aggregate(
                 total=Sum('amount')
             )['total'] or Decimal('0.00')
-
-            # Split BBF into its debit/credit component based on account type
-            if is_debit_normal:
-                bbf_debit = max(bbf, Decimal('0.00'))
-                bbf_credit = max(-bbf, Decimal('0.00'))
-            else:
-                bbf_credit = max(bbf, Decimal('0.00'))
-                bbf_debit = max(-bbf, Decimal('0.00'))
 
             total_debit = bbf_debit + Decimal(str(period_debit))
             total_credit = bbf_credit + Decimal(str(period_credit))
