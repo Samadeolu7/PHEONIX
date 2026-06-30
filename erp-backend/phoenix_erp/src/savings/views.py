@@ -330,7 +330,7 @@ class SavingsAccountViewSet(ScopedModelViewSet):
 
         qs = (
             TransactionEntry.objects
-            .filter(account=gl_account, transaction__status=Transaction.POSTED)
+            .filter(account=gl_account, transaction__approved=True)
             .select_related('transaction')
             .order_by('-transaction__date', '-id')
         )

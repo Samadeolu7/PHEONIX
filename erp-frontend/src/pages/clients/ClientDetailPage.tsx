@@ -31,8 +31,8 @@ import {
 } from 'lucide-react';
 import { clientService, Client } from '../../services/clientService';
 import { invoiceService, Invoice } from '../../services/invoiceService';
-import { loanService } from '../../services/loanService';
-import { getSavingsAccounts } from '../../services/savingsService';
+import { loanService, LoanTransactionRow } from '../../services/loanService';
+import { getSavingsAccounts, getSavingsTransactions, SavingsTransactionRow } from '../../services/savingsService';
 import { useDomainLabels } from '../../contexts/DomainLabelContext';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -55,6 +55,12 @@ const ClientDetailPage: React.FC = () => {
   const [loansLoading, setLoansLoading] = useState(false);
   const [savings, setSavings] = useState<any[]>([]);
   const [savingsLoading, setSavingsLoading] = useState(false);
+  const [expandedLoanId, setExpandedLoanId] = useState<number | null>(null);
+  const [loanLedgers, setLoanLedgers] = useState<Record<number, LoanTransactionRow[]>>({});
+  const [loanLedgerLoading, setLoanLedgerLoading] = useState<number | null>(null);
+  const [expandedSavingsId, setExpandedSavingsId] = useState<number | null>(null);
+  const [savingsLedgers, setSavingsLedgers] = useState<Record<number, SavingsTransactionRow[]>>({});
+  const [savingsLedgerLoading, setSavingsLedgerLoading] = useState<number | null>(null);
 
   const isBmPlus = ['branch_manager', 'supervisor', 'director', 'admin', 'operations'].includes(selectedRole || '');
 
@@ -110,6 +116,42 @@ const ClientDetailPage: React.FC = () => {
       setSavingsLoading(false);
     }
   };
+
+  async function toggleLoanLedger(loanId: number) {
+    if (expandedLoanId === loanId) {
+      setExpandedLoanId(null);
+      return;
+    }
+    setExpandedLoanId(loanId);
+    if (loanLedgers[loanId]) return;
+    setLoanLedgerLoading(loanId);
+    try {
+      const data = await loanService.getLoanTransactions(loanId, 1, 50);
+      setLoanLedgers(prev => ({ ...prev, [loanId]: data.results }));
+    } catch {
+      setLoanLedgers(prev => ({ ...prev, [loanId]: [] }));
+    } finally {
+      setLoanLedgerLoading(null);
+    }
+  }
+
+  async function toggleSavingsLedger(accountId: number) {
+    if (expandedSavingsId === accountId) {
+      setExpandedSavingsId(null);
+      return;
+    }
+    setExpandedSavingsId(accountId);
+    if (savingsLedgers[accountId]) return;
+    setSavingsLedgerLoading(accountId);
+    try {
+      const data = await getSavingsTransactions(accountId, 1, 50);
+      setSavingsLedgers(prev => ({ ...prev, [accountId]: data.results }));
+    } catch {
+      setSavingsLedgers(prev => ({ ...prev, [accountId]: [] }));
+    } finally {
+      setSavingsLedgerLoading(null);
+    }
+  }
 
   useEffect(() => {
     if (!id) return;
@@ -1144,44 +1186,99 @@ const ClientDetailPage: React.FC = () => {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
                 <thead style={{ background: '#f9fafb' }}>
                   <tr>
-                    {['Loan #', 'Product', 'Applied', 'Approved', 'Outstanding', 'Status', 'Disbursed', ''].map(h => (
+                    {['Loan #', 'Product', 'Applied', 'Approved', 'Outstanding', 'Status', 'Disbursed', '', ''].map(h => (
                       <th key={h} style={{ padding: '0.75rem 1rem', textAlign: h === 'Applied' || h === 'Approved' || h === 'Outstanding' ? 'right' : 'left', fontWeight: 600, color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {loans.map((loan: any, idx: number) => (
-                    <tr
-                      key={loan.id}
-                      onClick={() => navigate(`/loans/accounts/${loan.id}`)}
-                      style={{ borderTop: idx > 0 ? '1px solid #f3f4f6' : undefined, cursor: 'pointer', transition: 'background 0.15s' }}
-                      onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: '#7c3aed' }}>{loan.loan_number || loan.account_number || `LN-${loan.id}`}</td>
-                      <td style={{ padding: '0.875rem 1rem', color: '#374151' }}>{loan.product_name || loan.product || '—'}</td>
-                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', color: '#374151' }}>{loan.requested_amount ? `₦${Number(loan.requested_amount).toLocaleString()}` : '—'}</td>
-                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', color: '#374151' }}>{loan.approved_amount ? `₦${Number(loan.approved_amount).toLocaleString()}` : '—'}</td>
-                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: 600, color: Number(loan.outstanding_principal || loan.outstanding_balance || 0) > 0 ? '#dc2626' : '#10b981' }}>
-                        {loan.outstanding_principal != null || loan.outstanding_balance != null
-                          ? `₦${Number(loan.outstanding_principal ?? loan.outstanding_balance).toLocaleString()}`
-                          : '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <span style={{
-                          padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: 600,
-                          background: loan.status === 'active' ? '#d1fae5' : loan.status === 'overdue' ? '#fee2e2' : loan.status === 'paid_off' ? '#dbeafe' : '#f3f4f6',
-                          color: loan.status === 'active' ? '#065f46' : loan.status === 'overdue' ? '#991b1b' : loan.status === 'paid_off' ? '#1e40af' : '#4b5563',
-                          textTransform: 'capitalize',
-                        }}>
-                          {(loan.status || '—').replace(/_/g, ' ')}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: '#6b7280' }}>{loan.disbursement_date ? new Date(loan.disbursement_date).toLocaleDateString() : '—'}</td>
-                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
-                        <ChevronRight size={16} color="#9ca3af" />
-                      </td>
-                    </tr>
+                    <React.Fragment key={loan.id}>
+                      <tr
+                        style={{ borderTop: idx > 0 ? '1px solid #f3f4f6' : undefined, cursor: 'pointer', transition: 'background 0.15s' }}
+                        onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: '#7c3aed' }}>{loan.loan_number || loan.account_number || `LN-${loan.id}`}</td>
+                        <td style={{ padding: '0.875rem 1rem', color: '#374151' }}>{loan.product_name || loan.product || '—'}</td>
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right', color: '#374151' }}>{loan.requested_amount ? `₦${Number(loan.requested_amount).toLocaleString()}` : '—'}</td>
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right', color: '#374151' }}>{loan.approved_amount ? `₦${Number(loan.approved_amount).toLocaleString()}` : '—'}</td>
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: 600, color: Number(loan.outstanding_principal || loan.outstanding_balance || 0) > 0 ? '#dc2626' : '#10b981' }}>
+                          {loan.outstanding_principal != null || loan.outstanding_balance != null
+                            ? `₦${Number(loan.outstanding_principal ?? loan.outstanding_balance).toLocaleString()}`
+                            : '—'}
+                        </td>
+                        <td style={{ padding: '0.875rem 1rem' }}>
+                          <span style={{
+                            padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: 600,
+                            background: loan.status === 'active' ? '#d1fae5' : loan.status === 'overdue' ? '#fee2e2' : loan.status === 'paid_off' ? '#dbeafe' : '#f3f4f6',
+                            color: loan.status === 'active' ? '#065f46' : loan.status === 'overdue' ? '#991b1b' : loan.status === 'paid_off' ? '#1e40af' : '#4b5563',
+                            textTransform: 'capitalize',
+                          }}>
+                            {(loan.status || '—').replace(/_/g, ' ')}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.875rem 1rem', color: '#6b7280' }}>{loan.disbursement_date ? new Date(loan.disbursement_date).toLocaleDateString() : '—'}</td>
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate(`/loans/accounts/${loan.id}`); }}
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '0.375rem', cursor: 'pointer', color: '#374151', whiteSpace: 'nowrap' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#e5e7eb')}
+                            onMouseLeave={e => (e.currentTarget.style.background = '#f3f4f6')}
+                          >
+                            View
+                          </button>
+                        </td>
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleLoanLedger(loan.id); }}
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: expandedLoanId === loan.id ? '#ede9fe' : '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '0.375rem', cursor: 'pointer', color: expandedLoanId === loan.id ? '#6d28d9' : '#374151', whiteSpace: 'nowrap' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#e5e7eb')}
+                            onMouseLeave={e => (e.currentTarget.style.background = expandedLoanId === loan.id ? '#ede9fe' : '#f3f4f6')}
+                          >
+                            {expandedLoanId === loan.id ? 'Hide Ledger' : 'Ledger'}
+                          </button>
+                        </td>
+                      </tr>
+                      {expandedLoanId === loan.id && (
+                        <tr>
+                          <td colSpan={9} style={{ padding: 0, background: '#fafafa' }}>
+                            {loanLedgerLoading === loan.id ? (
+                              <div style={{ padding: '1.5rem', textAlign: 'center', color: '#6b7280', fontSize: '0.875rem' }}>Loading ledger…</div>
+                            ) : !loanLedgers[loan.id] || loanLedgers[loan.id].length === 0 ? (
+                              <div style={{ padding: '1.5rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.875rem' }}>No transactions found</div>
+                            ) : (
+                              <div style={{ padding: '0 1rem 1rem' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                                  <thead>
+                                    <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Date</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Reference</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Description</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>Debit</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>Credit</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>Balance</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {loanLedgers[loan.id].map((tx: LoanTransactionRow) => (
+                                      <tr key={tx.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                        <td style={{ padding: '0.4rem 0.75rem', color: '#374151' }}>{tx.date ? new Date(tx.date).toLocaleDateString() : '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', color: '#6b7280', fontFamily: 'monospace', fontSize: '0.75rem' }}>{tx.reference || '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', color: '#374151' }}>{tx.description || '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', textAlign: 'right', color: '#dc2626' }}>{tx.debit ? `₦${Number(tx.debit).toLocaleString()}` : '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', textAlign: 'right', color: '#10b981' }}>{tx.credit ? `₦${Number(tx.credit).toLocaleString()}` : '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', textAlign: 'right', fontWeight: 600, color: '#374151' }}>₦{Number(tx.balance).toLocaleString()}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
@@ -1255,40 +1352,95 @@ const ClientDetailPage: React.FC = () => {
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
                 <thead style={{ background: '#f9fafb' }}>
                   <tr>
-                    {['Account #', 'Product', 'Balance', 'Status', 'Opened', ''].map(h => (
+                    {['Account #', 'Product', 'Balance', 'Status', 'Opened', '', ''].map(h => (
                       <th key={h} style={{ padding: '0.75rem 1rem', textAlign: h === 'Balance' ? 'right' : 'left', fontWeight: 600, color: '#6b7280', fontSize: '0.75rem', textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {savings.map((acct: any, idx: number) => (
-                    <tr
-                      key={acct.id}
-                      onClick={() => navigate(`/savings/accounts/${acct.id}`)}
-                      style={{ borderTop: idx > 0 ? '1px solid #f3f4f6' : undefined, cursor: 'pointer', transition: 'background 0.15s' }}
-                      onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
-                      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: '#0891b2' }}>{acct.account_number || `SAV-${acct.id}`}</td>
-                      <td style={{ padding: '0.875rem 1rem', color: '#374151' }}>{acct.product_name || acct.product || '—'}</td>
-                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>
-                        {acct.current_balance != null ? `₦${Number(acct.current_balance).toLocaleString()}` : acct.balance != null ? `₦${Number(acct.balance).toLocaleString()}` : '—'}
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem' }}>
-                        <span style={{
-                          padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: 600,
-                          background: acct.status === 'active' ? '#d1fae5' : acct.status === 'dormant' ? '#fef3c7' : '#f3f4f6',
-                          color: acct.status === 'active' ? '#065f46' : acct.status === 'dormant' ? '#92400e' : '#4b5563',
-                          textTransform: 'capitalize',
-                        }}>
-                          {acct.status || '—'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.875rem 1rem', color: '#6b7280' }}>{acct.opened_on ? new Date(acct.opened_on).toLocaleDateString() : acct.created_at ? new Date(acct.created_at).toLocaleDateString() : '—'}</td>
-                      <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
-                        <ChevronRight size={16} color="#9ca3af" />
-                      </td>
-                    </tr>
+                    <React.Fragment key={acct.id}>
+                      <tr
+                        style={{ borderTop: idx > 0 ? '1px solid #f3f4f6' : undefined, cursor: 'pointer', transition: 'background 0.15s' }}
+                        onMouseEnter={e => (e.currentTarget.style.background = '#f9fafb')}
+                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <td style={{ padding: '0.875rem 1rem', fontWeight: 600, color: '#0891b2' }}>{acct.account_number || `SAV-${acct.id}`}</td>
+                        <td style={{ padding: '0.875rem 1rem', color: '#374151' }}>{acct.product_name || acct.product || '—'}</td>
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: 600, color: '#10b981' }}>
+                          {acct.current_balance != null ? `₦${Number(acct.current_balance).toLocaleString()}` : acct.balance != null ? `₦${Number(acct.balance).toLocaleString()}` : '—'}
+                        </td>
+                        <td style={{ padding: '0.875rem 1rem' }}>
+                          <span style={{
+                            padding: '0.2rem 0.6rem', borderRadius: '1rem', fontSize: '0.75rem', fontWeight: 600,
+                            background: acct.status === 'active' ? '#d1fae5' : acct.status === 'dormant' ? '#fef3c7' : '#f3f4f6',
+                            color: acct.status === 'active' ? '#065f46' : acct.status === 'dormant' ? '#92400e' : '#4b5563',
+                            textTransform: 'capitalize',
+                          }}>
+                            {acct.status || '—'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.875rem 1rem', color: '#6b7280' }}>{acct.opened_on ? new Date(acct.opened_on).toLocaleDateString() : acct.created_at ? new Date(acct.created_at).toLocaleDateString() : '—'}</td>
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate(`/savings/accounts/${acct.id}`); }}
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '0.375rem', cursor: 'pointer', color: '#374151', whiteSpace: 'nowrap' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#e5e7eb')}
+                            onMouseLeave={e => (e.currentTarget.style.background = '#f3f4f6')}
+                          >
+                            View
+                          </button>
+                        </td>
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right' }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleSavingsLedger(acct.id); }}
+                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: expandedSavingsId === acct.id ? '#ccfbf1' : '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '0.375rem', cursor: 'pointer', color: expandedSavingsId === acct.id ? '#0f766e' : '#374151', whiteSpace: 'nowrap' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#e5e7eb')}
+                            onMouseLeave={e => (e.currentTarget.style.background = expandedSavingsId === acct.id ? '#ccfbf1' : '#f3f4f6')}
+                          >
+                            {expandedSavingsId === acct.id ? 'Hide Ledger' : 'Ledger'}
+                          </button>
+                        </td>
+                      </tr>
+                      {expandedSavingsId === acct.id && (
+                        <tr>
+                          <td colSpan={7} style={{ padding: 0, background: '#fafafa' }}>
+                            {savingsLedgerLoading === acct.id ? (
+                              <div style={{ padding: '1.5rem', textAlign: 'center', color: '#6b7280', fontSize: '0.875rem' }}>Loading ledger…</div>
+                            ) : !savingsLedgers[acct.id] || savingsLedgers[acct.id].length === 0 ? (
+                              <div style={{ padding: '1.5rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.875rem' }}>No transactions found</div>
+                            ) : (
+                              <div style={{ padding: '0 1rem 1rem' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                                  <thead>
+                                    <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Date</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Reference</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Description</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>Debit</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>Credit</th>
+                                      <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right', fontWeight: 600, color: '#6b7280' }}>Balance</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {savingsLedgers[acct.id].map((tx: SavingsTransactionRow) => (
+                                      <tr key={tx.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                                        <td style={{ padding: '0.4rem 0.75rem', color: '#374151' }}>{tx.date ? new Date(tx.date).toLocaleDateString() : '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', color: '#6b7280', fontFamily: 'monospace', fontSize: '0.75rem' }}>{tx.reference || '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', color: '#374151' }}>{tx.description || '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', textAlign: 'right', color: '#dc2626' }}>{tx.debit ? `₦${Number(tx.debit).toLocaleString()}` : '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', textAlign: 'right', color: '#10b981' }}>{tx.credit ? `₦${Number(tx.credit).toLocaleString()}` : '—'}</td>
+                                        <td style={{ padding: '0.4rem 0.75rem', textAlign: 'right', fontWeight: 600, color: '#374151' }}>₦{Number(tx.balance).toLocaleString()}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
