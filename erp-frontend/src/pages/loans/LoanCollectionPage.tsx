@@ -13,9 +13,11 @@ import {
   CreditCard,
   DollarSign,
   Loader2,
+  MapPin,
   PiggyBank,
   Search,
   Users,
+  WifiOff,
   X,
 } from 'lucide-react';
 import {
@@ -26,6 +28,8 @@ import {
   GroupCollectionRow,
   BulkRepayPayment,
   LoanRepaymentRequest,
+  OfflinePaymentRecord,
+  OfflinePaymentPayload,
 } from '../../services/loanService';
 import { clientService, ClientGroup } from '../../services/clientService';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
@@ -1102,9 +1106,575 @@ function SavingsDebitPanel() {
   );
 }
 
+// ── Offline Collection Panel ────────────────────────────────────────────────
+
+interface GeoLocation {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+}
+
+const PAYMENT_MODE_LABELS: Record<string, string> = {
+  cash: 'Cash',
+  mobile_money: 'Mobile Money',
+  bank_transfer: 'Bank Transfer',
+};
+
+const STATUS_BADGE: Record<string, string> = {
+  pending:  'bg-yellow-100 text-yellow-700',
+  posted:   'bg-green-100 text-green-700',
+  rejected: 'bg-red-100 text-red-700',
+  approved: 'bg-blue-100 text-blue-700',
+};
+
+function OfflineCollectionPanel() {
+  // ── loan search ──
+  const [search, setSearch] = useState('');
+  const [results, setResults] = useState<LoanAccountList[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedLoan, setSelectedLoan] = useState<LoanAccountList | null>(null);
+  const [schedule, setSchedule] = useState<LoanRepaymentSchedule[]>([]);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+
+  // ── payment form ──
+  const [amount, setAmount] = useState('');
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentMode, setPaymentMode] = useState<'cash' | 'mobile_money' | 'bank_transfer'>('cash');
+  const [bankReference, setBankReference] = useState('');
+  const [notes, setNotes] = useState('');
+
+  // ── location ──
+  const [location, setLocation] = useState<GeoLocation | null>(null);
+  const [locationAddress, setLocationAddress] = useState('');
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  // ── submission ──
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState<OfflinePaymentRecord | null>(null);
+
+  // ── history ──
+  const [history, setHistory] = useState<OfflinePaymentRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  useEffect(() => {
+    loadHistory();
+  }, []);
+
+  async function loadHistory() {
+    setHistoryLoading(true);
+    try {
+      const recs = await loanService.listOfflinePayments();
+      setHistory(recs);
+    } catch {
+      // Non-critical — silently ignore
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  const doSearch = useCallback(async () => {
+    if (!search.trim()) return;
+    setSearching(true);
+    setResults([]);
+    try {
+      const [r1, r2, r3] = await Promise.all([
+        loanService.listLoans({ search: search.trim(), status: 'active' }),
+        loanService.listLoans({ search: search.trim(), status: 'disbursed' }),
+        loanService.listLoans({ search: search.trim(), status: 'defaulted' }),
+      ]);
+      const i1 = Array.isArray(r1) ? r1 : (r1?.results ?? []);
+      const i2 = Array.isArray(r2) ? r2 : (r2?.results ?? []);
+      const i3 = Array.isArray(r3) ? r3 : (r3?.results ?? []);
+      setResults([...i1, ...i2, ...i3]);
+    } catch {
+      setSubmitError('Search failed.');
+    } finally {
+      setSearching(false);
+    }
+  }, [search]);
+
+  async function selectLoan(loan: LoanAccountList) {
+    setSelectedLoan(loan);
+    setResults([]);
+    setScheduleLoading(true);
+    try {
+      const s = await loanService.getLoanSchedule(loan.id);
+      setSchedule(s);
+      const next = s.find(r => r.status === 'overdue' || r.status === 'partial' || r.status === 'pending');
+      if (next) {
+        const rem = parseFloat(next.total_due) - parseFloat(next.total_paid);
+        if (rem > 0) setAmount(rem.toFixed(2));
+      }
+    } catch {
+      setSchedule([]);
+    } finally {
+      setScheduleLoading(false);
+    }
+  }
+
+  function captureLocation() {
+    if (!navigator.geolocation) {
+      setLocationError('Geolocation is not supported by this browser.');
+      return;
+    }
+    setLocationLoading(true);
+    setLocationError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy,
+        });
+        setLocationLoading(false);
+      },
+      (err) => {
+        setLocationError(`Location unavailable: ${err.message}`);
+        setLocationLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedLoan) return;
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) {
+      setSubmitError('Enter a valid positive amount.');
+      return;
+    }
+    if ((paymentMode === 'mobile_money' || paymentMode === 'bank_transfer') && !bankReference.trim()) {
+      setSubmitError('Reference / transaction ID is required for this payment mode.');
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const payload: OfflinePaymentPayload = {
+        loan: selectedLoan.id,
+        amount,
+        payment_date: paymentDate,
+        payment_mode: paymentMode,
+        bank_reference: bankReference || undefined,
+        notes: notes || undefined,
+        latitude: location?.latitude ?? null,
+        longitude: location?.longitude ?? null,
+        location_accuracy: location?.accuracy ?? null,
+        location_address: locationAddress || undefined,
+      };
+      const rec = await loanService.createOfflinePayment(payload);
+      setSubmitted(rec);
+      loadHistory();
+    } catch (err: any) {
+      setSubmitError(err?.detail ?? err?.message ?? 'Submission failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function resetForm() {
+    setSubmitted(null);
+    setSelectedLoan(null);
+    setSchedule([]);
+    setAmount('');
+    setSearch('');
+    setBankReference('');
+    setNotes('');
+    setLocation(null);
+    setLocationAddress('');
+    setLocationError(null);
+    setSubmitError(null);
+  }
+
+  const unpaid = schedule.filter(s => s.status === 'overdue' || s.status === 'pending' || s.status === 'partial');
+  const totalDue = unpaid.reduce((sum, s) => sum + parseFloat(s.total_due) - parseFloat(s.total_paid), 0);
+
+  if (submitted) {
+    return (
+      <div className="mx-auto max-w-lg rounded-xl border border-green-200 bg-green-50 p-8 text-center">
+        <CheckCircle className="mx-auto mb-4 text-green-600" size={48} />
+        <h2 className="mb-2 text-xl font-bold text-green-800">Payment Recorded</h2>
+        <p className="mb-1 text-sm text-green-700">
+          Record <strong>#{submitted.id}</strong> is pending supervisor approval.
+        </p>
+        <div className="my-4 rounded-lg bg-white p-4 text-left text-sm shadow-sm">
+          <div className="flex justify-between py-1">
+            <span className="text-gray-500">Client</span>
+            <span className="font-medium text-gray-900">{submitted.client_name}</span>
+          </div>
+          <div className="flex justify-between py-1">
+            <span className="text-gray-500">Loan</span>
+            <span className="font-medium text-gray-900">{submitted.loan_number}</span>
+          </div>
+          <div className="flex justify-between py-1">
+            <span className="text-gray-500">Amount</span>
+            <span className="font-medium text-gray-900">₦{fmt(submitted.amount)}</span>
+          </div>
+          <div className="flex justify-between py-1">
+            <span className="text-gray-500">Mode</span>
+            <span className="font-medium text-gray-900">{PAYMENT_MODE_LABELS[submitted.payment_mode] ?? submitted.payment_mode}</span>
+          </div>
+          {submitted.latitude && (
+            <div className="flex justify-between py-1">
+              <span className="text-gray-500">Location</span>
+              <span className="font-medium text-gray-900 flex items-center gap-1">
+                <MapPin size={12} className="text-green-600" />
+                {submitted.latitude}, {submitted.longitude}
+              </span>
+            </div>
+          )}
+        </div>
+        <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-700 text-left mb-4">
+          <strong>Awaiting approval.</strong> The GL will only post after a supervisor reviews this record.
+        </div>
+        <button
+          type="button"
+          onClick={resetForm}
+          className="rounded-lg bg-green-600 px-6 py-2 text-sm font-medium text-white hover:bg-green-700"
+        >
+          Record Another
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Info banner */}
+      <div className="flex items-start gap-3 rounded-xl bg-blue-50 p-4 text-sm text-blue-800">
+        <WifiOff size={16} className="mt-0.5 flex-shrink-0" />
+        <div>
+          <p className="font-medium">Field Payment Recording</p>
+          <p className="text-blue-700 text-xs mt-0.5">
+            Record cash or mobile money collected from a borrower at their location.
+            The transaction is queued for supervisor approval before posting to the GL.
+          </p>
+        </div>
+      </div>
+
+      {/* Step 1: Find Loan */}
+      <div className="rounded-xl bg-white p-5 shadow-sm">
+        <h3 className="mb-3 text-sm font-semibold text-gray-700">Step 1 — Find Loan</h3>
+
+        {selectedLoan ? (
+          <div className="flex items-start justify-between rounded-lg bg-blue-50 p-4">
+            <div>
+              <p className="font-medium text-blue-900">{selectedLoan.client_name}</p>
+              <p className="text-xs text-blue-700">{selectedLoan.loan_number}</p>
+              <p className="mt-1 text-xs text-gray-600">Outstanding: ₦{fmt(selectedLoan.outstanding_principal)}</p>
+            </div>
+            <button type="button" aria-label="Clear" onClick={resetForm} className="text-blue-400 hover:text-blue-600">
+              <X size={16} />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && doSearch()}
+                  placeholder="Search by loan number or client name…"
+                  className="w-full rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={doSearch}
+                disabled={searching || !search.trim()}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {searching ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                Search
+              </button>
+            </div>
+            {results.length > 0 && (
+              <div className="mt-3 divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200">
+                {results.map(loan => (
+                  <button
+                    key={loan.id}
+                    type="button"
+                    onClick={() => selectLoan(loan)}
+                    className="flex w-full items-center justify-between px-4 py-3 text-left text-sm hover:bg-blue-50"
+                  >
+                    <div>
+                      <span className="font-medium text-gray-900">{loan.loan_number}</span>
+                      <span className="ml-2 text-gray-500">{loan.client_name}</span>
+                    </div>
+                    <div className="text-right text-xs text-gray-500">
+                      Outstanding: ₦{fmt(loan.outstanding_principal)}
+                      {loan.days_in_arrears > 0 && <div className="text-red-600">{loan.days_in_arrears}d overdue</div>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Step 2: Outstanding summary */}
+      {selectedLoan && !scheduleLoading && unpaid.length > 0 && (
+        <div className="rounded-xl bg-white shadow-sm overflow-hidden">
+          <div className="border-b px-5 py-3 text-sm font-semibold text-gray-700">Outstanding Installments</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <th className="px-4 py-2">#</th>
+                  <th className="px-4 py-2">Due Date</th>
+                  <th className="px-4 py-2 text-right">Remaining</th>
+                  <th className="px-4 py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {unpaid.slice(0, 3).map(row => (
+                  <tr key={row.id} className={row.status === 'overdue' ? 'bg-red-50' : ''}>
+                    <td className="px-4 py-2 text-gray-700">{row.installment_number}</td>
+                    <td className={`px-4 py-2 ${row.status === 'overdue' ? 'text-red-700 font-medium' : 'text-gray-700'}`}>{fmtDate(row.due_date)}</td>
+                    <td className="px-4 py-2 text-right font-semibold text-gray-900">₦{fmt(parseFloat(row.total_due) - parseFloat(row.total_paid))}</td>
+                    <td className="px-4 py-2">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${SCHEDULE_STATUS_BADGE[row.status] ?? 'bg-gray-100 text-gray-600'}`}>{row.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t bg-gray-50">
+                  <td colSpan={2} className="px-4 py-2 text-xs font-semibold text-gray-700 text-right">Total Due</td>
+                  <td className="px-4 py-2 text-right font-bold text-gray-900">₦{fmt(totalDue)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Payment form */}
+      {selectedLoan && (
+        <form onSubmit={handleSubmit} className="rounded-xl bg-white p-5 shadow-sm space-y-4">
+          <h3 className="text-sm font-semibold text-gray-700">Step 2 — Record Payment</h3>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Amount Collected (₦) <span className="text-red-500">*</span></label>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                required
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                placeholder="0.00"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Collection Date <span className="text-red-500">*</span></label>
+              <input
+                type="date"
+                title="Collection date"
+                value={paymentDate}
+                onChange={e => setPaymentDate(e.target.value)}
+                required
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+              />
+            </div>
+          </div>
+
+          {/* Payment mode */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Payment Mode</label>
+            <div className="flex flex-wrap gap-4">
+              {(['cash', 'mobile_money', 'bank_transfer'] as const).map(mode => (
+                <label key={mode} className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="radio"
+                    name="offlineMode"
+                    value={mode}
+                    checked={paymentMode === mode}
+                    onChange={() => setPaymentMode(mode)}
+                    className="accent-green-600"
+                  />
+                  <span className="text-sm text-gray-700">{PAYMENT_MODE_LABELS[mode]}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {(paymentMode === 'mobile_money' || paymentMode === 'bank_transfer') && (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Transaction Reference <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={bankReference}
+                onChange={e => setBankReference(e.target.value)}
+                required={paymentMode !== 'cash'}
+                placeholder="e.g. USSD confirmation code or bank reference"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+              />
+            </div>
+          )}
+
+          {/* Location capture */}
+          <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MapPin size={14} className="text-gray-500" />
+                <span className="text-sm font-medium text-gray-700">GPS Location</span>
+                <span className="text-xs text-gray-400">(recommended)</span>
+              </div>
+              {!location && (
+                <button
+                  type="button"
+                  onClick={captureLocation}
+                  disabled={locationLoading}
+                  className="flex items-center gap-1.5 rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                >
+                  {locationLoading ? <Loader2 size={12} className="animate-spin" /> : <MapPin size={12} />}
+                  Capture Location
+                </button>
+              )}
+              {location && (
+                <button
+                  type="button"
+                  onClick={() => { setLocation(null); setLocationAddress(''); }}
+                  className="text-xs text-gray-400 hover:text-gray-600"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {locationError && (
+              <p className="text-xs text-amber-600 flex items-center gap-1">
+                <AlertCircle size={12} /> {locationError}
+              </p>
+            )}
+
+            {location && (
+              <div className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <CheckCircle size={12} /> Location captured
+                </div>
+                <p className="mt-1 font-mono text-green-700">
+                  {location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}
+                  {' '}<span className="text-green-500">(±{Math.round(location.accuracy)}m)</span>
+                </p>
+                <div className="mt-2">
+                  <input
+                    type="text"
+                    value={locationAddress}
+                    onChange={e => setLocationAddress(e.target.value)}
+                    placeholder="Optional: type a description or landmark…"
+                    className="w-full rounded border border-green-200 bg-white px-2 py-1 text-xs focus:outline-none"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">Notes (optional)</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              rows={2}
+              placeholder="e.g. client paid at their shop, cash counted in front of witness"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+            />
+          </div>
+
+          <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-700">
+            <strong>Pending approval.</strong> This record will be reviewed by a supervisor before the GL is updated.
+          </div>
+
+          {submitError && (
+            <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle size={14} /> {submitError}
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {submitting ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
+              Submit for Approval
+            </button>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="rounded-lg border border-gray-300 px-5 py-2 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Recent offline records */}
+      <div className="rounded-xl bg-white shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between border-b px-5 py-3">
+          <h3 className="text-sm font-semibold text-gray-700">My Offline Records</h3>
+          <button type="button" onClick={loadHistory} className="text-xs text-blue-600 hover:underline">Refresh</button>
+        </div>
+        {historyLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 size={20} className="animate-spin text-blue-600" />
+          </div>
+        ) : history.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-400">No offline payment records yet.</p>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {history.slice(0, 10).map(rec => (
+              <div key={rec.id} className="px-5 py-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-medium text-gray-900">{rec.client_name}</span>
+                    <span className="ml-2 text-xs text-gray-500">{rec.loan_number}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-gray-900">₦{fmt(rec.amount)}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${STATUS_BADGE[rec.status] ?? 'bg-gray-100 text-gray-600'}`}>{rec.status}</span>
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center gap-3 text-xs text-gray-400">
+                  <span>{rec.payment_date}</span>
+                  <span>{PAYMENT_MODE_LABELS[rec.payment_mode] ?? rec.payment_mode}</span>
+                  {rec.latitude && (
+                    <span className="flex items-center gap-0.5 text-green-600">
+                      <MapPin size={10} /> GPS
+                    </span>
+                  )}
+                  {rec.status === 'rejected' && rec.rejection_reason && (
+                    <span className="text-red-500">Rejected: {rec.rejection_reason}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────
 
-type Tab = 'normal' | 'group' | 'savings';
+type Tab = 'normal' | 'group' | 'savings' | 'offline';
 
 export default function LoanCollectionPage() {
   const [activeTab, setActiveTab] = useState<Tab>('normal');
@@ -1132,6 +1702,7 @@ export default function LoanCollectionPage() {
             { key: 'normal',  label: 'Individual',       icon: CreditCard  },
             { key: 'group',   label: 'Group Collection', icon: Users       },
             { key: 'savings', label: 'Savings Debit',    icon: PiggyBank   },
+            { key: 'offline', label: 'Field Collection', icon: WifiOff     },
           ] as { key: Tab; label: string; icon: React.ElementType }[]).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -1154,6 +1725,7 @@ export default function LoanCollectionPage() {
         {activeTab === 'normal' && <NormalCollectionPanel />}
         {activeTab === 'group' && <GroupCollectionPanel />}
         {activeTab === 'savings' && <SavingsDebitPanel />}
+        {activeTab === 'offline' && <OfflineCollectionPanel />}
       </div>
     </div>
   );

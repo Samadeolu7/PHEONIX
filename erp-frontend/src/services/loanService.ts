@@ -441,6 +441,28 @@ export const loanService = {
     return api.post(`${BASE}/repayment-requests/${id}/reject/`, { rejection_reason });
   },
 
+  // ===== OFFLINE PAYMENT RECORDS (field collection) =====
+
+  async createOfflinePayment(data: OfflinePaymentPayload): Promise<OfflinePaymentRecord> {
+    return api.post(`${BASE}/offline-payments/`, data);
+  },
+
+  async listOfflinePayments(params?: { status?: string }): Promise<OfflinePaymentRecord[]> {
+    const res = await api.get(`${BASE}/offline-payments/`, { params });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  async approveOfflinePayment(
+    id: number,
+    data?: { cashier_account_id?: number; bank_account_id?: number }
+  ): Promise<OfflinePaymentRecord> {
+    return api.post(`${BASE}/offline-payments/${id}/approve/`, data ?? {});
+  },
+
+  async rejectOfflinePayment(id: number, rejection_reason: string): Promise<OfflinePaymentRecord> {
+    return api.post(`${BASE}/offline-payments/${id}/reject/`, { rejection_reason });
+  },
+
   // ===== COLLATERAL =====
 
   async listCollateral(loanId: number): Promise<LoanCollateral[]> {
@@ -780,4 +802,47 @@ export interface ContractualInterestSummary {
   interest_receivable: string;
   interest_suspended_loans: number;
   interest_at_risk: string;
+}
+
+// ── Offline payment types ──────────────────────────────────────────────────
+
+export interface OfflinePaymentPayload {
+  loan: number;
+  amount: string;
+  payment_date: string;
+  payment_mode: 'cash' | 'mobile_money' | 'bank_transfer';
+  bank_reference?: string;
+  notes?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_accuracy?: number | null;
+  location_address?: string;
+}
+
+export interface OfflinePaymentRecord {
+  id: number;
+  loan: number;
+  loan_number: string;
+  client_name: string;
+  amount: string;
+  payment_date: string;
+  payment_mode: 'cash' | 'mobile_money' | 'bank_transfer';
+  bank_reference: string;
+  notes: string;
+  latitude: string | null;
+  longitude: string | null;
+  location_accuracy: string | null;
+  location_address: string;
+  recorded_by: number | null;
+  recorded_by_name: string | null;
+  status: 'pending' | 'approved' | 'rejected' | 'posted';
+  reviewed_by: number | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string;
+  journal_entry: number | null;
+  owner: number;
+  branch: number;
+  created_at: string;
+  updated_at: string;
 }

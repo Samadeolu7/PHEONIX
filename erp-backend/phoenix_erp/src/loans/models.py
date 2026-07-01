@@ -2363,3 +2363,109 @@ class LoanRepaymentRequest(TimeStampedModel, BranchScopedModel):
             f"RepayRequest #{self.pk} — {self.loan.loan_number} "
             f"₦{self.amount} ({self.status})"
         )
+
+
+class OfflinePaymentRecord(TimeStampedModel, BranchScopedModel):
+    """
+    Cash / mobile-money payment collected by a credit officer in the field.
+    Location is captured at the time of recording. The GL only posts after a
+    supervisor or director approves.
+
+    Workflow:
+      1. Credit officer records payment on their device (status='pending').
+         No GL movement.  Lat/lon captured by browser geolocation.
+      2. Supervisor/Director approves → supplies a payment GL account and
+         calls approve/; loan.record_payment() posts the journal entry.
+      3. Supervisor/Director rejects  → status='rejected', no GL movement.
+    """
+
+    STATUS_PENDING  = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    STATUS_POSTED   = 'posted'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING,  'Pending Approval'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+        (STATUS_POSTED,   'Posted'),
+    ]
+
+    PAYMENT_MODE_CASH   = 'cash'
+    PAYMENT_MODE_MOBILE = 'mobile_money'
+    PAYMENT_MODE_BANK   = 'bank_transfer'
+
+    PAYMENT_MODE_CHOICES = [
+        (PAYMENT_MODE_CASH,   'Cash'),
+        (PAYMENT_MODE_MOBILE, 'Mobile Money'),
+        (PAYMENT_MODE_BANK,   'Bank Transfer'),
+    ]
+
+    loan = models.ForeignKey(
+        LoanAccount,
+        on_delete=models.CASCADE,
+        related_name='offline_payment_records',
+    )
+    # Snapshot fields so approvers see the same info even if the loan changes
+    client_name = models.CharField(max_length=200)
+    loan_number = models.CharField(max_length=50)
+
+    amount = models.DecimalField(max_digits=18, decimal_places=2)
+    payment_date = models.DateField()
+    payment_mode = models.CharField(
+        max_length=20, choices=PAYMENT_MODE_CHOICES, default=PAYMENT_MODE_CASH
+    )
+    bank_reference = models.CharField(max_length=100, blank=True)
+    notes = models.TextField(blank=True)
+
+    # ── Location capture ──────────────────────────────────────────────────
+    latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    location_accuracy = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text='GPS accuracy radius in metres',
+    )
+    location_address = models.CharField(
+        max_length=500, blank=True,
+        help_text='Reverse-geocoded human-readable address (optional)',
+    )
+
+    # ── Workflow ──────────────────────────────────────────────────────────
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='offline_payment_records',
+    )
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='reviewed_offline_payment_records',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+    journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='offline_payment_record_journals',
+    )
+
+    objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return (
+            f"OfflinePmt #{self.pk} — {self.loan_number} "
+            f"₦{self.amount} ({self.status})"
+        )

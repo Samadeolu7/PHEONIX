@@ -16,6 +16,7 @@ from common.views import ScopedModelViewSet
 from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest, LoanRestructure,
+    OfflinePaymentRecord,
 )
 from .serializers import (
     LoanProductSerializer,
@@ -23,6 +24,7 @@ from .serializers import (
     LoanRepaymentScheduleSerializer, LoanCollateralSerializer, LoanGuarantorSerializer,
     LoanVerificationRequestSerializer, LoanDisbursementSerializer,
     LoanRepaymentRequestSerializer, LoanRestructureSerializer,
+    OfflinePaymentRecordSerializer,
 )
 from .utils import LoanVerifier
 from cash_management.services.payment_routing import PaymentRoutingService
@@ -2166,4 +2168,185 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
 
         return Response(
             LoanRepaymentRequestSerializer(req, context={'request': request}).data,
+        )
+
+
+class OfflinePaymentRecordViewSet(ScopedModelViewSet):
+    """
+    Credit-officer field collection with GPS location capture.
+
+    POST /api/loans/offline-payments/              — officer submits (status='pending')
+    GET  /api/loans/offline-payments/              — list (filter ?status=pending|posted|rejected)
+    POST /api/loans/offline-payments/:id/approve/  — supervisor posts GL
+    POST /api/loans/offline-payments/:id/reject/   — supervisor rejects
+    """
+    queryset = OfflinePaymentRecord.objects.select_related(
+        'loan', 'loan__client', 'recorded_by', 'reviewed_by',
+    ).all()
+    serializer_class = OfflinePaymentRecordSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+    officer_client_lookup = 'loan__client__assigned_officer'
+
+    def get_queryset(self):
+        qs = OfflinePaymentRecord.objects.select_related(
+            'loan', 'loan__client', 'recorded_by', 'reviewed_by',
+        ).all()
+        qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
+        qs = self._apply_officer_scope(qs)
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+
+    def perform_create(self, serializer):
+        """Auto-populate snapshot fields and set recorded_by."""
+        loan = serializer.validated_data['loan']
+        tenant, branch = _resolve_scope(self.request.user, loan)
+        serializer.save(
+            recorded_by=self.request.user,
+            owner=tenant,
+            branch=branch,
+            client_name=loan.client.full_name if loan.client else '',
+            loan_number=loan.loan_number,
+        )
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """
+        Supervisor approves: resolves payment GL account and posts
+        loan.record_payment() atomically.
+
+        For cash payments, pass optional cashier_account_id;
+        for bank_transfer / mobile_money, pass bank_account_id.
+        """
+        from decimal import Decimal, ROUND_HALF_UP
+        from django.db import transaction as db_transaction
+        from django.utils import timezone
+        from accounts.models import Account as GlAccount
+
+        rec = self.get_object()
+
+        if rec.status != OfflinePaymentRecord.STATUS_PENDING:
+            return Response(
+                {'detail': f"Record is already '{rec.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        loan = rec.loan
+        if loan.status not in ('active', 'disbursed', 'defaulted'):
+            return Response(
+                {'detail': f"Loan is '{loan.status}' — cannot record repayment."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── Resolve payment GL account ────────────────────────────────────
+        if rec.payment_mode == OfflinePaymentRecord.PAYMENT_MODE_CASH:
+            cashier_account_id = request.data.get('cashier_account_id')
+            try:
+                payment_account = PaymentRoutingService.resolve_cashier_gl_account(
+                    request.user,
+                    owner=loan.owner,
+                    branch=loan.branch,
+                    cashier_account_id=cashier_account_id,
+                )
+            except ValidationError as exc:
+                return Response(
+                    {'detail': str(exc.message if hasattr(exc, 'message') else exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            bank_account_id = request.data.get('bank_account_id')
+            if not bank_account_id:
+                return Response(
+                    {'detail': 'bank_account_id is required for mobile_money / bank_transfer approvals.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                payment_account = GlAccount.objects.get(pk=bank_account_id)
+            except GlAccount.DoesNotExist:
+                return Response({'detail': 'GL account not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # ── Cap payment at what is currently payable ──────────────────────
+        amount = rec.amount
+        total_outstanding = Decimal(str(loan.total_outstanding))
+
+        overdue_due = Decimal('0.00')
+        for s in loan.repayment_schedule.filter(status__in=['overdue', 'partial']):
+            overdue_due += Decimal(str(s.total_due)) - Decimal(str(s.total_paid))
+
+        next_pending = (
+            loan.repayment_schedule
+            .filter(status='pending')
+            .order_by('due_date')
+            .first()
+        )
+        next_pending_due = (
+            Decimal(str(next_pending.total_due)) - Decimal(str(next_pending.total_paid))
+            if next_pending else Decimal('0.00')
+        )
+
+        has_schedule = loan.repayment_schedule.exists()
+        if has_schedule and (overdue_due + next_pending_due) > Decimal('0.00'):
+            payable_now = min(
+                (overdue_due + next_pending_due).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                total_outstanding,
+            )
+        else:
+            payable_now = total_outstanding
+
+        if total_outstanding > Decimal('0.00') and amount > total_outstanding:
+            payment_amount = total_outstanding
+        elif payable_now > Decimal('0.00') and amount > payable_now:
+            payment_amount = payable_now
+        else:
+            payment_amount = amount
+
+        try:
+            with db_transaction.atomic():
+                journal = loan.record_payment(
+                    amount=payment_amount,
+                    payment_date=rec.payment_date,
+                    payment_account=payment_account,
+                    received_by=request.user,
+                )
+
+                rec.status = OfflinePaymentRecord.STATUS_POSTED
+                rec.reviewed_by = request.user
+                rec.reviewed_at = timezone.now()
+                rec.journal_entry = journal
+                rec.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'journal_entry'])
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            OfflinePaymentRecordSerializer(rec, context={'request': request}).data,
+        )
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        from django.utils import timezone
+
+        rec = self.get_object()
+
+        if rec.status != OfflinePaymentRecord.STATUS_PENDING:
+            return Response(
+                {'detail': f"Record is already '{rec.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        rejection_reason = request.data.get('rejection_reason', '').strip()
+        if not rejection_reason:
+            return Response(
+                {'detail': 'rejection_reason is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        rec.status = OfflinePaymentRecord.STATUS_REJECTED
+        rec.reviewed_by = request.user
+        rec.reviewed_at = timezone.now()
+        rec.rejection_reason = rejection_reason
+        rec.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+
+        return Response(
+            OfflinePaymentRecordSerializer(rec, context={'request': request}).data,
         )

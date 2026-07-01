@@ -6,7 +6,7 @@ from .models import (
     LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement,
     LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
-    LoanRepaymentRequest, LoanRestructure, 
+    LoanRepaymentRequest, LoanRestructure, OfflinePaymentRecord,
 )
 
 
@@ -598,6 +598,36 @@ class LoanRepaymentRequestSerializer(TenantModelSerializer):
         read_only_fields = [
             'id', 'loan_number', 'client_name', 'savings_account_number',
             'requested_by', 'requested_by_name',
+            'status', 'reviewed_by', 'reviewed_by_name',
+            'reviewed_at', 'rejection_reason', 'journal_entry',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+
+
+class OfflinePaymentRecordSerializer(TenantModelSerializer):
+    recorded_by_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
+
+    def get_recorded_by_name(self, obj):
+        return obj.recorded_by.get_full_name() if obj.recorded_by else None
+
+    def get_reviewed_by_name(self, obj):
+        return obj.reviewed_by.get_full_name() if obj.reviewed_by else None
+
+    class Meta:
+        model = OfflinePaymentRecord
+        fields = [
+            'id', 'loan', 'loan_number', 'client_name',
+            'amount', 'payment_date', 'payment_mode', 'bank_reference', 'notes',
+            'latitude', 'longitude', 'location_accuracy', 'location_address',
+            'recorded_by', 'recorded_by_name',
+            'status', 'reviewed_by', 'reviewed_by_name',
+            'reviewed_at', 'rejection_reason', 'journal_entry',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'loan_number', 'client_name',
+            'recorded_by', 'recorded_by_name',
             'status', 'reviewed_by', 'reviewed_by_name',
             'reviewed_at', 'rejection_reason', 'journal_entry',
             'owner', 'branch', 'created_at', 'updated_at',
