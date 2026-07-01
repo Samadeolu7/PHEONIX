@@ -651,13 +651,7 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                         'amount': f'Insufficient balance in bank account. Available: {available}'
                     })
         
-        # Validate cashiers can only transfer to cashier collection accounts
-        if self.source_type == 'cashier':
-            if not self.destination_bank_account.is_cashier_collection_account:
-                raise ValidationError({
-                    'destination_bank_account': 'Cashiers can only transfer to designated cashier collection accounts. '
-                                               'Please contact your administrator to enable this account for cashier collections.'
-                })
+        # Cashiers may transfer to any active bank account — no collection-account restriction.
     
     def save(self, *args, **kwargs):
         """Auto-generate transfer number"""
