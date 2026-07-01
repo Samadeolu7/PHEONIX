@@ -99,8 +99,8 @@ export default function LoanAccountsPage() {
       setLoans(results);
       setTotalCount(count);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Failed to load loan accounts.');
+      const data = (e as any)?.response?.data;
+      setError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load loan accounts.');
     } finally {
       setLoading(false);
     }

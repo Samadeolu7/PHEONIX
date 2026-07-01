@@ -40,8 +40,8 @@ export default function LoanProductsPage() {
       const data = await loanService.listProducts(activeOnly ? { is_active: true } : undefined);
       setProducts(data);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Failed to load loan products.');
+      const data = (e as any)?.response?.data;
+      setError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load loan products.');
     } finally {
       setLoading(false);
     }

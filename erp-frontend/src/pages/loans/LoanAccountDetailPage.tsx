@@ -5,6 +5,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   AlertCircle,
   ArrowLeft,
@@ -158,8 +159,10 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
         onSuccess();
       }, 2000);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Failed to record repayment.');
+      const data = (e as any)?.response?.data;
+      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to record repayment.';
+      setError(msg);
+      toast.error(msg);
       setSubmitting(false);
     }
   }
@@ -382,8 +385,10 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
       setSuccess(true);
       setTimeout(() => { onSuccess(); }, 1200);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Restructure failed.');
+      const data = (e as any)?.response?.data;
+      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Restructure failed.';
+      setError(msg);
+      toast.error(msg);
       setSubmitting(false);
     }
   }
@@ -876,8 +881,8 @@ export default function LoanAccountDetailPage() {
       setSchedule(scheduleData);
       setGuarantors(guarantorData);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Failed to load loan details.');
+      const data = (e as any)?.response?.data;
+      setError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load loan details.');
     } finally {
       setLoading(false);
     }
@@ -904,8 +909,10 @@ export default function LoanAccountDetailPage() {
       await loanService.deleteGuarantor(guarantorId);
       setGuarantors(prev => prev.filter(g => g.id !== guarantorId));
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setActionError(err?.detail ?? err?.message ?? 'Failed to remove guarantor.');
+      const data = (e as any)?.response?.data;
+      const msg = data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to remove guarantor.';
+      setActionError(msg);
+      toast.error(msg);
     } finally {
       setRemovingGuarantorId(null);
     }
@@ -923,8 +930,10 @@ export default function LoanAccountDetailPage() {
       await loanService.approveLoan(loan.id);
       await load();
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setActionError(err?.detail ?? err?.message ?? 'Approval failed.');
+      const data = (e as any)?.response?.data;
+      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Approval failed.';
+      setActionError(msg);
+      toast.error(msg);
     } finally {
       setActionLoading(false);
     }
@@ -1068,8 +1077,10 @@ export default function LoanAccountDetailPage() {
                     await loanService.requestDisbursement(loan.id);
                     navigate(`/loans/disbursements/${loan.id}`);
                   } catch (e: unknown) {
-                    const err = e as { detail?: string; message?: string };
-                    setActionError(err?.detail ?? err?.message ?? 'Could not create disbursement request.');
+                    const data = (e as any)?.response?.data;
+                    const msg = data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Could not create disbursement request.';
+                    setActionError(msg);
+                    toast.error(msg);
                   } finally {
                     setActionLoading(false);
                   }

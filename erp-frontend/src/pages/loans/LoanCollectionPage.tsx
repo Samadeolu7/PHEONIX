@@ -6,6 +6,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   AlertCircle,
   ArrowLeft,
@@ -106,8 +107,8 @@ function NormalCollectionPanel() {
       const items3 = Array.isArray(res3) ? res3 : (res3?.results ?? []);
       setResults([...items, ...items2, ...items3]);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setSearchError(err?.detail ?? err?.message ?? 'Search failed.');
+      const data = (e as any)?.response?.data;
+      setSearchError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Search failed.');
     } finally {
       setSearching(false);
     }
@@ -173,8 +174,10 @@ function NormalCollectionPanel() {
       setAmount('');
       setBankReference('');
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setSubmitError(err?.detail ?? err?.message ?? 'Repayment failed.');
+      const data = (e as any)?.response?.data;
+      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Repayment failed.';
+      setSubmitError(msg);
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }
@@ -516,8 +519,8 @@ function GroupCollectionPanel() {
       data.forEach((r) => { initial[r.loan_account_id] = r.remaining; });
       setAmounts(initial);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setSheetError(err?.detail ?? err?.message ?? 'Failed to load collection sheet.');
+      const data = (e as any)?.response?.data;
+      setSheetError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load collection sheet.');
     } finally {
       setSheetLoading(false);
     }
@@ -561,8 +564,10 @@ function GroupCollectionPanel() {
       setRows([]);
       setAmounts({});
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setSubmitError(err?.detail ?? err?.message ?? 'Bulk repayment failed.');
+      const data = (e as any)?.response?.data;
+      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Bulk repayment failed.';
+      setSubmitError(msg);
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }
