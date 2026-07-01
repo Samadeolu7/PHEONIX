@@ -46,7 +46,10 @@ export const ThreadWidget: React.FC = () => {
 
   const handleThreadClick = (thread: ThreadWidgetSummary['recent_threads'][number]) => {
     if (thread.page_url) {
-      navigate(thread.page_url);
+      // Use SPA navigation and pass the thread ID so the destination page can auto-open the panel
+      navigate(thread.page_url, { state: { openThreadId: thread.id } });
+    } else {
+      navigate('/threads');
     }
   };
 

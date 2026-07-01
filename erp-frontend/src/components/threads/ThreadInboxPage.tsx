@@ -47,18 +47,13 @@ export const ThreadInboxPage: React.FC = () => {
       const params: Record<string, any> = {};
       if (activeTab === 'unread') params.unread = true;
       if (activeTab === 'closed') params.status = 'closed';
-      if (activeTab === 'mine' || activeTab === 'started' || activeTab === 'all') {
-        params.status = 'open';
-      }
+      if (activeTab === 'mine') params.status = 'open';
+      if (activeTab === 'started') { params.status = 'open'; params.initiated_by = 'me'; }
+      // 'all' → no status filter (returns all threads the user can see)
       if (search) params.search = search;
 
       const data = await threadService.list(params);
-
-      let filtered = data;
-      if (activeTab === 'started') {
-        filtered = data.filter(t => t.initiated_by === user?.id);
-      }
-      setThreads(filtered);
+      setThreads(data);
     } catch {
       setThreads([]);
     } finally {
@@ -79,7 +74,8 @@ export const ThreadInboxPage: React.FC = () => {
 
   const handleOpenThread = (thread: Thread) => {
     if (thread.page_url) {
-      navigate(thread.page_url);
+      // Navigate to the page and pass thread ID so the toggle button can auto-open the panel
+      navigate(thread.page_url, { state: { openThreadId: thread.id, pageId: thread.page } });
     }
   };
 
@@ -122,7 +118,6 @@ export const ThreadInboxPage: React.FC = () => {
             placeholder="Search discussions…"
             value={searchInput}
             onChange={e => setSearchInput(e.target.value)}
-            onBlur={() => setSearch(searchInput)}
             className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0a1857] placeholder-gray-400"
           />
         </div>

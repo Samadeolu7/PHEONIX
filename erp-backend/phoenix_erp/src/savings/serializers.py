@@ -232,6 +232,21 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
     client_bvn = serializers.CharField(
         source='savings_account.client.bvn', read_only=True, default=None
     )
+    # Account context for the approval modal
+    account_current_balance = serializers.SerializerMethodField()
+    account_minimum_balance = serializers.DecimalField(
+        source='savings_account.minimum_balance',
+        max_digits=18, decimal_places=2, read_only=True,
+    )
+    account_status = serializers.CharField(
+        source='savings_account.status', read_only=True
+    )
+    product_name = serializers.CharField(
+        source='savings_account.product.name', read_only=True
+    )
+    applied_tier_name = serializers.CharField(
+        source='applied_tier.tier_name', read_only=True, default=None
+    )
     requested_by_name = serializers.SerializerMethodField()
     disbursed_by_name = serializers.SerializerMethodField()
 
@@ -246,6 +261,8 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             'id', 'savings_account', 'account_number', 'client_name',
             'client_phone', 'client_bank_name', 'client_bank_account_name',
             'client_bank_account_number', 'client_bvn',
+            'account_current_balance', 'account_minimum_balance',
+            'account_status', 'product_name', 'applied_tier_name',
             'requested_by', 'requested_by_name',
             'amount', 'description', 'status',
             'required_approvals', 'approvals_received',
@@ -259,6 +276,8 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             'id', 'account_number', 'client_name',
             'client_phone', 'client_bank_name', 'client_bank_account_name',
             'client_bank_account_number', 'client_bvn',
+            'account_current_balance', 'account_minimum_balance',
+            'account_status', 'product_name', 'applied_tier_name',
             'requested_by_name',
             'status', 'required_approvals', 'approvals_received',
             'applied_tier', 'journal_entry', 'steps',
@@ -266,6 +285,12 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             'disbursed_by', 'disbursed_by_name', 'disbursed_at',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
+
+    def get_account_current_balance(self, obj):
+        try:
+            return str(obj.savings_account.current_balance)
+        except Exception:
+            return None
 
     def get_requested_by_name(self, obj):
         if obj.requested_by_id:

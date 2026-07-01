@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 class CashierAccountViewSet(viewsets.ModelViewSet):
     permission_module = 'cash-management'
     permission_page = 'cashier-accounts'
-    queryset = CashierAccount.objects.all()
+    queryset = CashierAccount.objects.select_related('account__parent', 'cashier', 'branch').all()
     serializer_class = CashierAccountSerializer
     permission_classes = [permissions.IsAuthenticated]
     

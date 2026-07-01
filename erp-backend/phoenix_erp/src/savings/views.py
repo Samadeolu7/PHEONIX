@@ -607,6 +607,7 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
     queryset = SavingsWithdrawalRequest.objects.select_related(
         'savings_account__client',
         'savings_account__product',
+        'savings_account__account',   # needed for current_balance property
         'requested_by',
         'disbursed_by',
         'applied_tier',
@@ -688,51 +689,48 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
     @action(detail=False, methods=['get'], url_path='pending')
     def pending_my_approval(self, request):
         """
-        Return full withdrawal REQUEST objects where this user has a pending
-        approval step and belongs to the required approver role for that tier.
+        Return full withdrawal REQUEST objects where the current user has a
+        pending approval step and belongs to the required role for that tier.
+
+        Uses the viewset's own queryset (proper tenant/branch scope + all
+        select_related / prefetch_related) so no additional DB round-trips
+        are needed when iterating.
         """
         user = request.user
         user_groups = set(user.groups.values_list('name', flat=True))
 
-        # Fetch pending steps the user has not yet responded to
-        steps = WithdrawalApprovalStep.objects.filter(
-            status=WithdrawalApprovalStep.STATUS_PENDING,
-            withdrawal_request__status__in=[
+        # Fetch in-progress requests that still have at least one pending step.
+        # The .distinct() is required because the JOIN via approval_steps can
+        # produce duplicate rows when a request has multiple steps.
+        qs = self.get_queryset().filter(
+            status__in=[
                 SavingsWithdrawalRequest.STATUS_PENDING,
                 SavingsWithdrawalRequest.STATUS_PARTIAL,
             ],
-        ).select_related(
-            'withdrawal_request__savings_account__client',
-            'withdrawal_request__applied_tier',
-        )
+            approval_steps__status=WithdrawalApprovalStep.STATUS_PENDING,
+        ).distinct()
 
-        # Branch-scope unless director
-        if not user.has_perm('savings.view_all_branches'):
-            steps = steps.filter(withdrawal_request__branch=user.branch)
+        eligible = []
+        for wr in qs:
+            # wr.approval_steps.all() uses the prefetch cache on get_queryset(),
+            # so this loop does NOT issue additional DB queries.
+            steps = list(wr.approval_steps.all())
 
-        # Keep only steps the user is eligible to act on (role check)
-        eligible_wr_ids = []
-        seen = set()
-        for step in steps:
-            wr = step.withdrawal_request
-            if wr.pk in seen:
+            # Skip if this user has already responded to any step on this request
+            if any(
+                s.approver_id == user.pk and s.status != WithdrawalApprovalStep.STATUS_PENDING
+                for s in steps
+            ):
                 continue
-            # Skip if this user already approved a step on this request
-            already_approved = wr.approval_steps.filter(
-                status=WithdrawalApprovalStep.STATUS_APPROVED,
-                approver=user,
-            ).exists()
-            if already_approved:
-                continue
+
+            # Check tier eligibility
             tier = wr.applied_tier
             allowed = set(tier.approver_roles) if tier and tier.approver_roles else set()
             if not allowed or (allowed & user_groups):
-                eligible_wr_ids.append(wr.pk)
-                seen.add(wr.pk)
+                eligible.append(wr)
 
-        qs = self.get_queryset().filter(pk__in=eligible_wr_ids)
         return Response(
-            SavingsWithdrawalRequestSerializer(qs, many=True, context={'request': request}).data
+            SavingsWithdrawalRequestSerializer(eligible, many=True, context={'request': request}).data
         )
 
     @action(detail=True, methods=['post'], url_path='approve-step')

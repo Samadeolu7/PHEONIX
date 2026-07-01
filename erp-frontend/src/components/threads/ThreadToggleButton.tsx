@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { MessageSquare } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useThreadContext } from '../../contexts/ThreadContext';
@@ -24,6 +25,7 @@ export const ThreadToggleButton: React.FC<Props> = ({
   className,
 }) => {
   const { openPanel, panelState, activeTarget, closePanel } = useThreadContext();
+  const location = useLocation();
 
   const [isThreadable, setIsThreadable] = useState<boolean | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -44,7 +46,6 @@ export const ThreadToggleButton: React.FC<Props> = ({
         setIsThreadable(cfg.is_threadable);
 
         if (cfg.is_threadable) {
-          // Load threads for this record to compute unread + open
           return threadService.list({
             page_id: pageId,
             ...(objectId ? { object_id: objectId } : {}),
@@ -64,10 +65,18 @@ export const ThreadToggleButton: React.FC<Props> = ({
         if (!cancelled) setLoading(false);
       });
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [pageId, objectId]);
+
+  // Auto-open panel when navigated here from inbox/widget with a specific thread ID
+  useEffect(() => {
+    const state = location.state as { openThreadId?: number; pageId?: number } | null;
+    if (state?.openThreadId && state?.pageId === pageId && isThreadable) {
+      openPanel({ pageId, contentTypeId, objectId, recordLabel, threadId: state.openThreadId });
+      // Clear the navigation state so re-renders don't re-trigger
+      window.history.replaceState({}, '');
+    }
+  }, [location.state, pageId, isThreadable, contentTypeId, objectId, recordLabel, openPanel]);
 
   if (loading || !isThreadable) return null;
 

@@ -46,6 +46,7 @@ class CashierAccountSerializer(serializers.ModelSerializer):
     parent_account_code = serializers.SerializerMethodField()
     branch_name = serializers.SerializerMethodField()
     needs_reconciliation = serializers.SerializerMethodField()
+    current_balance = serializers.SerializerMethodField()
     
     class Meta:
         model = CashierAccount
@@ -60,7 +61,7 @@ class CashierAccountSerializer(serializers.ModelSerializer):
             'branch', 'branch_name', 'needs_reconciliation',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'account', 'current_balance', 'last_reconciled_at', 'last_reconciled_by', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'account', 'last_reconciled_at', 'last_reconciled_by', 'created_at', 'updated_at']
         extra_kwargs = {
             'account': {'required': False, 'allow_null': True},
             'cashier': {'required': False, 'allow_null': True}
@@ -84,6 +85,15 @@ class CashierAccountSerializer(serializers.ModelSerializer):
     def get_branch_name(self, obj):
         return obj.branch.name if obj.branch else None
     
+    def get_current_balance(self, obj):
+        """Always read live balance from the linked GL account."""
+        if obj.account_id:
+            try:
+                return str(obj.account.balance)
+            except Exception:
+                pass
+        return str(obj.current_balance)
+
     def get_needs_reconciliation(self, obj):
         """Check if cashier needs end-of-day reconciliation"""
         if not obj.is_active or obj.is_suspended:

@@ -105,21 +105,111 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
     }
   };
 
+  const pendingStep = withdrawal.approval_steps?.find(s => s.status === 'pending');
+  const withdrawable = withdrawal.account_current_balance != null && withdrawal.account_minimum_balance != null
+    ? parseFloat(withdrawal.account_current_balance) - parseFloat(withdrawal.account_minimum_balance)
+    : null;
+
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-        <div className="p-5 border-b border-gray-100">
-          <h3 className="text-base font-semibold text-gray-900">Review Withdrawal</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {withdrawal.client_name} — ₦{fmt(withdrawal.amount)}
-          </p>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="p-5 border-b border-gray-100 flex items-start justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">Review Withdrawal Request</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Step {pendingStep?.step_number ?? '?'} of {withdrawal.required_approvals} — {withdrawal.account_number}
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded-full text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+
+        {/* Amount banner */}
+        <div className="px-5 py-4 bg-yellow-50 border-b border-yellow-100">
+          <p className="text-xs text-yellow-700 font-medium uppercase tracking-wide">Withdrawal Amount</p>
+          <p className="text-2xl font-bold text-yellow-900">₦{fmt(withdrawal.amount)}</p>
+          {withdrawal.description && (
+            <p className="text-sm text-yellow-800 mt-1 italic">"{withdrawal.description}"</p>
+          )}
+        </div>
+
+        {/* Withdrawal details */}
+        <div className="px-5 pt-4 pb-2">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            {/* Client */}
+            <div className="col-span-2 bg-gray-50 rounded-lg p-3 border border-gray-100">
+              <p className="text-xs text-gray-400 mb-0.5">Client</p>
+              <p className="font-semibold text-gray-900">{withdrawal.client_name}</p>
+              {withdrawal.client_phone && <p className="text-xs text-gray-500">{withdrawal.client_phone}</p>}
+            </div>
+            {/* Product */}
+            {withdrawal.product_name && (
+              <div className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                <p className="text-xs text-gray-400 mb-0.5">Product</p>
+                <p className="font-medium text-gray-800">{withdrawal.product_name}</p>
+              </div>
+            )}
+            {/* Tier */}
+            <div className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+              <p className="text-xs text-gray-400 mb-0.5">Approval Tier</p>
+              <p className="font-medium text-gray-800">{withdrawal.applied_tier_name ?? 'Default (1 approver)'}</p>
+            </div>
+            {/* Current balance */}
+            {withdrawal.account_current_balance != null && (
+              <div className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                <p className="text-xs text-gray-400 mb-0.5">Current Balance</p>
+                <p className="font-semibold text-gray-900">₦{fmt(withdrawal.account_current_balance)}</p>
+              </div>
+            )}
+            {/* Withdrawable */}
+            {withdrawable != null && (
+              <div className={`rounded-lg p-3 border ${
+                parseFloat(withdrawal.amount) > withdrawable
+                  ? 'bg-red-50 border-red-200'
+                  : 'bg-green-50 border-green-200'
+              }`}>
+                <p className="text-xs text-gray-400 mb-0.5">Available to Withdraw</p>
+                <p className={`font-semibold ${
+                  parseFloat(withdrawal.amount) > withdrawable ? 'text-red-700' : 'text-green-700'
+                }`}>₦{fmt(withdrawable)}</p>
+                {parseFloat(withdrawal.amount) > withdrawable && (
+                  <p className="text-xs text-red-600 mt-0.5">Requested exceeds available!</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Approval steps audit trail */}
+        {withdrawal.approval_steps?.length > 0 && (
+          <div className="mx-5 mb-4 rounded-lg border border-gray-200 overflow-hidden">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-3 py-2 bg-gray-50 border-b border-gray-200">Approval Chain</p>
+            <div className="divide-y divide-gray-100">
+              {withdrawal.approval_steps.map(s => (
+                <div key={s.id} className="px-3 py-2 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400">Step {s.step_number}</span>
+                    <span className={`px-2 py-0.5 rounded-full font-medium ${
+                      s.status === 'approved' ? 'bg-green-100 text-green-700'
+                      : s.status === 'rejected' ? 'bg-red-100 text-red-700'
+                      : 'bg-yellow-100 text-yellow-700'
+                    }`}>{s.status.charAt(0).toUpperCase() + s.status.slice(1)}</span>
+                  </div>
+                  <span className="text-gray-500">{s.approver_name ?? (s.status === 'pending' ? 'Awaiting approver' : '—')}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="px-5 pb-5 space-y-4">
           {error && (
             <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
           )}
           <div>
-            <p className="text-sm font-medium text-gray-700 mb-2">Decision</p>
+            <p className="text-sm font-medium text-gray-700 mb-2">Your Decision</p>
             <div className="flex gap-3">
               <button
                 type="button"
@@ -146,7 +236,7 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Comment (optional)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Comment {approved === false ? '(required for rejection)' : '(optional)'}</label>
             <textarea
               value={comment}
               onChange={e => setComment(e.target.value)}
@@ -162,7 +252,7 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
               className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 rounded-lg transition-colors disabled:opacity-50"
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Submit
+              Submit Decision
             </button>
             <button
               type="button"
@@ -170,7 +260,7 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
               aria-label="Close"
               className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
-              <X className="w-4 h-4" />
+              Cancel
             </button>
           </div>
         </form>
@@ -403,6 +493,11 @@ function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, showApproveButton 
         <td className="px-4 py-3">
           <div className="font-medium text-gray-900 text-sm">{wr.client_name ?? '—'}</div>
           <div className="text-xs text-gray-400">{wr.account_number}</div>
+          {wr.description && (
+            <div className="text-xs text-gray-500 mt-0.5 italic truncate max-w-[180px]" title={wr.description}>
+              "{wr.description}"
+            </div>
+          )}
         </td>
         <td className="px-4 py-3 text-right text-sm font-medium text-gray-800">
           ₦{fmt(wr.amount)}

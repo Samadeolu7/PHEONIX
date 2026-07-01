@@ -164,6 +164,7 @@ class ModulePage(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 )
         
         # Add more validation for other page types as needed
+        self.validate_thread_config()
         return True
     
     def user_can_access(self, user):
@@ -178,6 +179,32 @@ class ModulePage(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     def get_thread_config(self):
         return self.page_config.get('thread', {})
+
+    def validate_thread_config(self):
+        """Validate the optional 'thread' sub-object in page_config."""
+        config = self.page_config or {}
+        thread = config.get('thread')
+        if not thread:
+            return  # No thread config — that's fine
+        if not isinstance(thread, dict):
+            raise ValidationError("page_config.thread must be a JSON object.")
+        valid_keys = {'who_can_initiate', 'auto_include_roles', 'max_open_threads', 'require_reason'}
+        unknown = set(thread.keys()) - valid_keys
+        if unknown:
+            raise ValidationError(
+                f"Unknown key(s) in page_config.thread: {', '.join(sorted(unknown))}. "
+                f"Valid keys: {', '.join(sorted(valid_keys))}."
+            )
+        for list_key in ('who_can_initiate', 'auto_include_roles'):
+            val = thread.get(list_key)
+            if val is not None and not isinstance(val, list):
+                raise ValidationError(f"page_config.thread.{list_key} must be a list of strings.")
+        max_open = thread.get('max_open_threads')
+        if max_open is not None and (not isinstance(max_open, int) or max_open < 0):
+            raise ValidationError("page_config.thread.max_open_threads must be a non-negative integer.")
+        req_reason = thread.get('require_reason')
+        if req_reason is not None and not isinstance(req_reason, bool):
+            raise ValidationError("page_config.thread.require_reason must be a boolean.")
 
     def user_can_initiate_thread(self, user):
         if not self.is_threadable:

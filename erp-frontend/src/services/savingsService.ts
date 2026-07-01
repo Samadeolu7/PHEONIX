@@ -272,6 +272,12 @@ export interface SavingsWithdrawalRequest {
   client_bank_account_name?: string | null;
   client_bank_account_number?: string | null;
   client_bvn?: string | null;
+  // Account context for approval decisions
+  account_current_balance?: string | null;
+  account_minimum_balance?: string | null;
+  account_status?: string | null;
+  product_name?: string | null;
+  applied_tier_name?: string | null;
   requested_by: number;
   requested_by_name?: string;
   amount: string;

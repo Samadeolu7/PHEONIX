@@ -22,7 +22,7 @@ const REASON_LABELS: Record<ThreadReason, string> = {
 };
 
 export const ThreadPanel: React.FC = () => {
-  const { panelState, activeTarget, activeThread, openPanel, minimisePanel, closePanel, setActiveThread } =
+  const { panelState, activeTarget, activeThread, openPanel, minimisePanel, restorePanel, closePanel, setActiveThread } =
     useThreadContext();
   const { user } = useAuth();
 
@@ -40,22 +40,27 @@ export const ThreadPanel: React.FC = () => {
 
   // Participant management
   const [showParticipantManager, setShowParticipantManager] = useState(false);
-  const [addUserId, setAddUserId] = useState<number | ''>('');
+  const [participantSearch, setParticipantSearch] = useState('');
+  const [participantSuggestions, setParticipantSuggestions] = useState<{ id: number; username: string; full_name: string }[]>([]);
   const [participantError, setParticipantError] = useState('');
 
   // Create thread flow
   const [creating, setCreating] = useState(false);
   const [createReason, setCreateReason] = useState<ThreadReason | ''>('');
-  const [createParticipantIds, setCreateParticipantIds] = useState<number[]>([]);
+  const [createParticipants, setCreateParticipants] = useState<{ id: number; full_name: string }[]>([]);
+  const [createSearch, setCreateSearch] = useState('');
+  const [createSearchResults, setCreateSearchResults] = useState<{ id: number; username: string; full_name: string }[]>([]);
   const [createError, setCreateError] = useState('');
 
   // Message input
   const { draft, setDraft, clearDraft } = useThreadDraft(selectedThreadId);
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [attachFile, setAttachFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Poll ref
+  // Poll ref — keeps running even when minimised so the badge stays fresh
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastMsgIdRef = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -104,9 +109,9 @@ export const ThreadPanel: React.FC = () => {
       .finally(() => setLoadingMsgs(false));
   }, [selectedThreadId]);
 
-  // ── Polling for new messages ───────────────────────────────────────────────
+  // ── Polling for new messages — runs even when minimised ──────────────────
   useEffect(() => {
-    if (panelState !== 'open' || !selectedThreadId) {
+    if (panelState === 'hidden' || !selectedThreadId) {
       if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
@@ -117,7 +122,10 @@ export const ThreadPanel: React.FC = () => {
         if (newMsgs.length) {
           setMessages(prev => [...prev, ...newMsgs]);
           lastMsgIdRef.current = newMsgs[newMsgs.length - 1].id;
-          threadService.markRead(selectedThreadId).catch(() => {});
+          // Only mark read when the panel is fully open
+          if (panelState === 'open') {
+            threadService.markRead(selectedThreadId).catch(() => {});
+          }
         }
       } catch {
         // silent
@@ -138,14 +146,15 @@ export const ThreadPanel: React.FC = () => {
   const handleSend = useCallback(async () => {
     if (!selectedThreadId || (!draft.trim() && !attachFile)) return;
     setSending(true);
+    setSendError('');
     try {
       const msg = await threadService.postMessage(selectedThreadId, draft.trim(), attachFile ?? undefined);
       setMessages(prev => [...prev, msg]);
       lastMsgIdRef.current = msg.id;
       clearDraft();
       setAttachFile(null);
-    } catch {
-      // silent — user sees the input still has their text
+    } catch (e: any) {
+      setSendError(e?.response?.data?.detail ?? 'Failed to send. Try again.');
     } finally {
       setSending(false);
     }
@@ -158,6 +167,19 @@ export const ThreadPanel: React.FC = () => {
     }
   };
 
+  // ── User search for participant picker ───────────────────────────────────
+  const searchParticipantUsers = useCallback(async (q: string) => {
+    if (q.length < 2) { setParticipantSuggestions([]); return; }
+    const results = await threadService.searchUsers(q).catch(() => []);
+    setParticipantSuggestions(results);
+  }, []);
+
+  const searchCreateUsers = useCallback(async (q: string) => {
+    if (q.length < 2) { setCreateSearchResults([]); return; }
+    const results = await threadService.searchUsers(q).catch(() => []);
+    setCreateSearchResults(results);
+  }, []);
+
   // ── Create new thread ─────────────────────────────────────────────────────
   const handleCreateThread = useCallback(async () => {
     if (!activeTarget) return;
@@ -168,28 +190,40 @@ export const ThreadPanel: React.FC = () => {
         content_type: activeTarget.contentTypeId,
         object_id: activeTarget.objectId,
         reason: createReason || undefined,
-        participant_ids: createParticipantIds,
+        participant_ids: createParticipants.map(p => p.id),
       });
       setThreads(prev => [thread, ...prev]);
       setSelectedThreadId(thread.id);
       setCreating(false);
       setCreateReason('');
+      setCreateParticipants([]);
+      setCreateSearch('');
     } catch (e: any) {
-      setCreateError(e?.message ?? 'Failed to create thread.');
+      setCreateError(e?.response?.data?.detail ?? e?.message ?? 'Failed to create thread.');
     }
-  }, [activeTarget, createReason, createParticipantIds]);
+  }, [activeTarget, createReason, createParticipants]);
 
   // ── Close / Reopen thread ─────────────────────────────────────────────────
   const handleClose = useCallback(async () => {
     if (!selectedThreadId) return;
-    const updated = await threadService.close(selectedThreadId);
-    setThreads(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+    setActionError('');
+    try {
+      const updated = await threadService.close(selectedThreadId);
+      setThreads(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+    } catch (e: any) {
+      setActionError(e?.response?.data?.detail ?? 'Failed to close thread.');
+    }
   }, [selectedThreadId]);
 
   const handleReopen = useCallback(async () => {
     if (!selectedThreadId) return;
-    const updated = await threadService.reopen(selectedThreadId);
-    setThreads(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+    setActionError('');
+    try {
+      const updated = await threadService.reopen(selectedThreadId);
+      setThreads(prev => prev.map(t => (t.id === updated.id ? updated : t)));
+    } catch (e: any) {
+      setActionError(e?.response?.data?.detail ?? 'Failed to reopen thread.');
+    }
   }, [selectedThreadId]);
 
   // ── Not visible ───────────────────────────────────────────────────────────
@@ -197,11 +231,17 @@ export const ThreadPanel: React.FC = () => {
 
   // ── Minimised tab ─────────────────────────────────────────────────────────
   if (panelState === 'minimised') {
-    const unreadCount = selectedThread?.unread_count ?? 0;
+    // Count unread from live message list (updated by background poll)
+    const unreadCount = messages.filter(
+      msg => !msg.is_system_message && selectedThread &&
+        (selectedThread.participants.find(p => p.user === user?.id)?.last_read_at
+          ? new Date(msg.created_at) > new Date(selectedThread.participants.find(p => p.user === user?.id)!.last_read_at!)
+          : true)
+    ).length || selectedThread?.unread_count || 0;
     const draftPending = draft.trim().length > 0;
     return (
       <button
-        onClick={() => openPanel(activeTarget!)}
+        onClick={restorePanel}
         title="Restore thread panel"
         className="fixed right-0 top-1/2 -translate-y-1/2 z-40 flex flex-col items-center gap-1
                    bg-[#0a1857] text-white py-4 px-2 rounded-l-xl shadow-lg hover:bg-[#0d1f6b]
@@ -390,31 +430,42 @@ export const ThreadPanel: React.FC = () => {
                 </li>
               ))}
             </ul>
-            <div className="flex gap-2">
+            {/* User search for adding participants */}
+            <div className="relative">
               <input
-                type="number"
-                placeholder="User ID"
-                value={addUserId}
-                onChange={e => setAddUserId(e.target.value ? Number(e.target.value) : '')}
-                className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
+                type="text"
+                placeholder="Search by name or username…"
+                value={participantSearch}
+                onChange={e => { setParticipantSearch(e.target.value); searchParticipantUsers(e.target.value); }}
+                className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
               />
-              <button
-                onClick={async () => {
-                  if (!addUserId) return;
-                  setParticipantError('');
-                  try {
-                    const p = await threadService.addParticipant(selectedThread.id, Number(addUserId));
-                    setThreads(prev => prev.map(t => t.id === selectedThread.id
-                      ? { ...t, participants: [...t.participants, p] }
-                      : t
-                    ));
-                    setAddUserId('');
-                  } catch { setParticipantError('Failed to add participant.'); }
-                }}
-                className="px-2 py-1 bg-[#0a1857] text-white text-xs rounded hover:bg-[#0d1f6b]"
-              >
-                Add
-              </button>
+              {participantSuggestions.length > 0 && (
+                <ul className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto">
+                  {participantSuggestions.map(u => (
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setParticipantError('');
+                          setParticipantSearch('');
+                          setParticipantSuggestions([]);
+                          try {
+                            const p = await threadService.addParticipant(selectedThread.id, u.id);
+                            setThreads(prev => prev.map(t => t.id === selectedThread.id
+                              ? { ...t, participants: [...t.participants, p] }
+                              : t
+                            ));
+                          } catch { setParticipantError('Failed to add participant.'); }
+                        }}
+                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
+                      >
+                        <span className="font-medium">{u.full_name}</span>{' '}
+                        <span className="text-gray-400">@{u.username}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             {participantError && <p className="text-xs text-red-600">{participantError}</p>}
           </div>
@@ -442,18 +493,63 @@ export const ThreadPanel: React.FC = () => {
           {creating && (
             <div className="space-y-3">
               <p className="text-sm font-medium text-gray-700">New discussion</p>
-              {requiresReason && (
-                <select
-                  value={createReason}
-                  onChange={e => setCreateReason(e.target.value as ThreadReason | '')}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0a1857]"
-                >
-                  <option value="">Select reason (optional)</option>
-                  {(Object.entries(REASON_LABELS) as [ThreadReason, string][]).map(([k, v]) => (
-                    <option key={k} value={k}>{v}</option>
-                  ))}
-                </select>
-              )}
+              <select
+                value={createReason}
+                onChange={e => setCreateReason(e.target.value as ThreadReason | '')}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0a1857]"
+              >
+                <option value="">Select reason (optional)</option>
+                {(Object.entries(REASON_LABELS) as [ThreadReason, string][]).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+              {/* Participant picker */}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Tag participants (optional)</p>
+                {createParticipants.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-1">
+                    {createParticipants.map(p => (
+                      <span key={p.id} className="flex items-center gap-1 bg-[#0a1857]/10 text-[#0a1857] text-xs px-2 py-0.5 rounded-full">
+                        {p.full_name}
+                        <button onClick={() => setCreateParticipants(prev => prev.filter(x => x.id !== p.id))}>
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Search by name or username…"
+                    value={createSearch}
+                    onChange={e => { setCreateSearch(e.target.value); searchCreateUsers(e.target.value); }}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
+                  />
+                  {createSearchResults.length > 0 && (
+                    <ul className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto">
+                      {createSearchResults.map(u => (
+                        <li key={u.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!createParticipants.find(p => p.id === u.id)) {
+                                setCreateParticipants(prev => [...prev, { id: u.id, full_name: u.full_name }]);
+                              }
+                              setCreateSearch('');
+                              setCreateSearchResults([]);
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
+                          >
+                            <span className="font-medium">{u.full_name}</span>{' '}
+                            <span className="text-gray-400">@{u.username}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
               {createError && (
                 <p className="text-xs text-red-600">{createError}</p>
               )}
@@ -465,7 +561,7 @@ export const ThreadPanel: React.FC = () => {
                   Create
                 </button>
                 <button
-                  onClick={() => setCreating(false)}
+                  onClick={() => { setCreating(false); setCreateSearch(''); setCreateSearchResults([]); setCreateParticipants([]); }}
                   className="px-3 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Cancel
@@ -487,6 +583,8 @@ export const ThreadPanel: React.FC = () => {
                   key={msg.id}
                   message={msg}
                   isOwn={msg.author === user?.id}
+                  onUpdated={updated => setMessages(prev => prev.map(m => m.id === updated.id ? updated : m))}
+                  onDeleted={id => setMessages(prev => prev.filter(m => m.id !== id))}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -497,6 +595,9 @@ export const ThreadPanel: React.FC = () => {
         {/* ── Footer: message input ── */}
         {selectedThread && !creating && (
           <div className="border-t border-gray-200 px-4 py-3">
+            {actionError && (
+              <p className="text-xs text-red-600 mb-1">{actionError}</p>
+            )}
             {isClosed ? (
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-500 flex items-center gap-1">
@@ -528,6 +629,9 @@ export const ThreadPanel: React.FC = () => {
                     placeholder="Type a message… (Enter to send)"
                     rows={2}
                     className="flex-1 resize-none border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0a1857] placeholder-gray-400"
+                  />
+                </div>
+                {sendError && <p className="text-xs text-red-600 mt-1">{sendError}</p>
                   />
                   <div className="flex flex-col gap-1">
                     <button

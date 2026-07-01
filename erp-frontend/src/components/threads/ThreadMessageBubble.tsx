@@ -107,6 +107,8 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
               value={editBody}
               onChange={e => setEditBody(e.target.value)}
               rows={2}
+              placeholder="Edit your message…"
+              aria-label="Edit message"
               className="w-full border border-[#0a1857] rounded-lg px-2 py-1 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#0a1857]"
               autoFocus
             />
