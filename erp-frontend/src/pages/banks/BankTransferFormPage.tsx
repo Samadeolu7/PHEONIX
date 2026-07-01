@@ -36,16 +36,14 @@ const BankTransferFormPage: React.FC = () => {
   }, [formData.source_bank_account, bankAccounts]);
 
   const loadAccounts = async () => {
-    try {
-      const [banks, cashiers] = await Promise.all([
-        bankService.listBankAccounts({ is_active: true }),
-        cashierAccountService.getActive(),
-      ]);
-      setBankAccounts(banks);
-      setCashierAccounts(cashiers);
-    } catch (err: any) {
-      console.error('Failed to load accounts:', err);
-    }
+    const [banksResult, cashiersResult] = await Promise.allSettled([
+      bankService.listBankAccounts({ is_active: true }),
+      cashierAccountService.getActive(),
+    ]);
+    if (banksResult.status === 'fulfilled') setBankAccounts(banksResult.value);
+    else console.error('Failed to load bank accounts:', banksResult.reason);
+    if (cashiersResult.status === 'fulfilled') setCashierAccounts(cashiersResult.value);
+    else console.error('Failed to load cashier accounts:', cashiersResult.reason);
   };
 
   const handleSourceTypeChange = (st: 'bank' | 'cashier') => {
@@ -182,8 +180,8 @@ const BankTransferFormPage: React.FC = () => {
                 <option value="">Select source cashier account...</option>
                 {cashierAccounts.map(acc => (
                   <option key={acc.id} value={acc.id}>
-                    {acc.name} ({acc.code}) - ₦
-                    {parseFloat(acc.balance || '0').toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {acc.name} ({acc.account_number}) - ₦
+                    {parseFloat(acc.current_balance || '0').toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </option>
                 ))}
               </select>

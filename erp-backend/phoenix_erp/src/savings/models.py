@@ -917,6 +917,11 @@ class SavingsWithdrawalRequest(TimeStampedModel, BranchScopedModel, SoftDeleteMo
 
     def cancel(self, user):
         """Cancel before any approvals have been collected."""
+        if self.status not in (self.STATUS_PENDING, self.STATUS_PARTIAL):
+            raise ValidationError(
+                f"Cannot cancel a request with status '{self.get_status_display()}'. "
+                "Only pending or partially-approved requests can be cancelled."
+            )
         if self.approvals_received > 0:
             raise ValidationError("Cannot cancel a request that has already received approvals.")
         self.status = self.STATUS_CANCELLED

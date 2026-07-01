@@ -371,6 +371,12 @@ def initiate_withdrawal(
     except SavingsProduct.DoesNotExist:
         config = None
 
+    # ── Account status check ──────────────────────────────────────────────────
+    if savings_account.status in ('frozen', 'closed'):
+        raise ValidationError(
+            f"Cannot initiate a withdrawal on a {savings_account.status} account."
+        )
+
     # ── Permission check ─────────────────────────────────────────────────────
     if config and config.only_account_manager_can_withdraw:
         client_manager = savings_account.client.account_manager
@@ -379,11 +385,11 @@ def initiate_withdrawal(
                 "Only the client's account manager may initiate a withdrawal on this product."
             )
 
-    # ── Balance check ─────────────────────────────────────────────────────────
+    # ── Balance check (holds-aware) ───────────────────────────────────────────
     if amount <= Decimal('0.00'):
         raise ValidationError("Withdrawal amount must be positive.")
 
-    withdrawable = savings_account.available_balance - savings_account.minimum_balance
+    withdrawable = savings_account.calculate_available_balance() - savings_account.minimum_balance
     if amount > withdrawable:
         if savings_account.minimum_balance > Decimal('0.00'):
             raise ValidationError(
@@ -462,6 +468,23 @@ def process_withdrawal_approval(
 
     if step.status != WithdrawalApprovalStep.STATUS_PENDING:
         raise ValidationError("This approval step has already been decided.")
+
+    # Creator may not also be an approver
+    if approver.pk == wr.requested_by_id:
+        raise ValidationError(
+            "The person who created the withdrawal request cannot also approve it "
+            "(maker-checker violation)."
+        )
+
+    # Same user may not approve more than one step on the same request
+    already_approved_by_user = wr.approval_steps.filter(
+        status=WithdrawalApprovalStep.STATUS_APPROVED,
+        approver=approver,
+    ).exists()
+    if already_approved_by_user:
+        raise ValidationError(
+            "You have already approved a step on this withdrawal request."
+        )
 
     # Eligibility: approver must belong to one of the tier's approver_roles
     if wr.applied_tier:

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   X, Minus, MessageSquare, Send, Paperclip, Plus,
-  ChevronDown, Lock, Unlock, Users,
+  ChevronDown, Lock, Unlock, Users, UserPlus, UserX,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useThreadContext } from '../../contexts/ThreadContext';
@@ -37,6 +37,11 @@ export const ThreadPanel: React.FC = () => {
   // Messages for selected thread
   const [messages, setMessages] = useState<ThreadMessageItem[]>([]);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+
+  // Participant management
+  const [showParticipantManager, setShowParticipantManager] = useState(false);
+  const [addUserId, setAddUserId] = useState<number | ''>('');
+  const [participantError, setParticipantError] = useState('');
 
   // Create thread flow
   const [creating, setCreating] = useState(false);
@@ -331,6 +336,13 @@ export const ThreadPanel: React.FC = () => {
                 </div>
               )}
             </div>
+            <button
+              onClick={() => setShowParticipantManager(v => !v)}
+              title="Manage participants"
+              className="ml-1 p-1 rounded hover:bg-gray-200 text-gray-400 transition-colors"
+            >
+              <UserPlus className="w-3 h-3" />
+            </button>
             {isClosed && (
               <span className="ml-auto text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full flex items-center gap-1">
                 <Lock className="w-2.5 h-2.5" /> Closed
@@ -341,6 +353,70 @@ export const ThreadPanel: React.FC = () => {
                 <Unlock className="w-2.5 h-2.5" /> Open
               </span>
             )}
+          </div>
+        )}
+
+        {/* ── Participant manager ── */}
+        {selectedThread && showParticipantManager && (
+          <div className="border-b border-gray-100 px-4 py-3 bg-gray-50 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-gray-700">Participants ({selectedThread.participants.length})</p>
+              <button
+                onClick={() => setShowParticipantManager(false)}
+                className="text-xs text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+            <ul className="space-y-1 max-h-32 overflow-y-auto">
+              {selectedThread.participants.map(p => (
+                <li key={p.id} className="flex items-center justify-between text-xs text-gray-600">
+                  <span>{p.user_info.full_name}</span>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await threadService.removeParticipant(p.id);
+                        setThreads(prev => prev.map(t => t.id === selectedThread.id
+                          ? { ...t, participants: t.participants.filter(x => x.id !== p.id) }
+                          : t
+                        ));
+                      } catch { setParticipantError('Failed to remove participant.'); }
+                    }}
+                    className="text-red-400 hover:text-red-600"
+                    title="Remove participant"
+                  >
+                    <UserX className="w-3 h-3" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                placeholder="User ID"
+                value={addUserId}
+                onChange={e => setAddUserId(e.target.value ? Number(e.target.value) : '')}
+                className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
+              />
+              <button
+                onClick={async () => {
+                  if (!addUserId) return;
+                  setParticipantError('');
+                  try {
+                    const p = await threadService.addParticipant(selectedThread.id, Number(addUserId));
+                    setThreads(prev => prev.map(t => t.id === selectedThread.id
+                      ? { ...t, participants: [...t.participants, p] }
+                      : t
+                    ));
+                    setAddUserId('');
+                  } catch { setParticipantError('Failed to add participant.'); }
+                }}
+                className="px-2 py-1 bg-[#0a1857] text-white text-xs rounded hover:bg-[#0d1f6b]"
+              >
+                Add
+              </button>
+            </div>
+            {participantError && <p className="text-xs text-red-600">{participantError}</p>}
           </div>
         )}
 
@@ -366,7 +442,7 @@ export const ThreadPanel: React.FC = () => {
           {creating && (
             <div className="space-y-3">
               <p className="text-sm font-medium text-gray-700">New discussion</p>
-              {(requiresReason || true) && (
+              {requiresReason && (
                 <select
                   value={createReason}
                   onChange={e => setCreateReason(e.target.value as ThreadReason | '')}

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MessageSquare, RefreshCw, ExternalLink } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { threadService } from '../../services/threadService';
@@ -18,6 +19,7 @@ function timeAgo(isoString: string): string {
 }
 
 export const ThreadWidget: React.FC = () => {
+  const navigate = useNavigate();
   const { openPanel, setGlobalUnreadCount } = useThreadContext();
   const [summary, setSummary] = useState<ThreadWidgetSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,10 +45,8 @@ export const ThreadWidget: React.FC = () => {
   }, [fetchSummary]);
 
   const handleThreadClick = (thread: ThreadWidgetSummary['recent_threads'][number]) => {
-    // Parse page URL to extract pageId / objectId if available
-    // Just open the inbox page if no page_url is available
     if (thread.page_url) {
-      window.location.href = thread.page_url;
+      navigate(thread.page_url);
     }
   };
 

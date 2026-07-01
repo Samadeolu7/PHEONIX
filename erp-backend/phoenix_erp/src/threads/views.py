@@ -7,9 +7,12 @@ from rest_framework.exceptions import ValidationError, PermissionDenied
 
 from common.views import ScopedModelViewSet
 from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt
+from django.core.paginator import Paginator
+from rest_framework.parsers import MultiPartParser, FormParser
 from .serializers import (
     ThreadSerializer, ThreadCreateSerializer,
     ThreadParticipantSerializer, ThreadMessageSerializer,
+    ThreadMessageUpdateSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,11 +50,37 @@ class ThreadViewSet(ScopedModelViewSet):
     queryset = Thread.objects.all()
     serializer_class = ThreadSerializer
     skip_action_permission = True
+    PAGE_SIZE = 50
 
     def get_serializer_class(self):
         if self.action == 'create':
             return ThreadCreateSerializer
         return ThreadSerializer
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = request.query_params.get('page', 1)
+        page_size = request.query_params.get('page_size', self.PAGE_SIZE)
+        try:
+            page = int(page)
+            page_size = min(int(page_size), 100)
+        except (ValueError, TypeError):
+            page = 1
+            page_size = self.PAGE_SIZE
+
+        paginator = Paginator(queryset, page_size)
+        try:
+            page_obj = paginator.page(page)
+        except Exception:
+            return Response({'results': [], 'total': 0, 'page': 1, 'pages': 0})
+
+        serializer = self.get_serializer(page_obj.object_list, many=True)
+        return Response({
+            'results': serializer.data,
+            'total': paginator.count,
+            'page': page,
+            'pages': paginator.num_pages,
+        })
 
     def get_queryset(self):
         user = self.request.user
@@ -59,7 +88,9 @@ class ThreadViewSet(ScopedModelViewSet):
 
         qs = Thread.objects.filter(tenant=tenant, is_deleted=False).select_related(
             'page', 'initiated_by', 'closed_by', 'content_type'
-        ).prefetch_related('participants__user', 'messages')
+        ).prefetch_related(
+            'participants__user', 'participants__user__roles',
+        )
 
         # Directors see all; everyone else sees only threads they're in
         if not _is_director(user):
@@ -74,6 +105,20 @@ class ThreadViewSet(ScopedModelViewSet):
             qs = qs.filter(object_id=params['object_id'], content_type_id=params['content_type'])
         if params.get('branch') and _is_director(user):
             qs = qs.filter(branch_id=params['branch'])
+        # Unread filter: only threads where the current user has unread messages
+        if params.get('unread'):
+            unread_qs = ThreadParticipant.objects.filter(
+                user=user, is_deleted=False, thread__in=qs,
+            )
+            unread_ids = []
+            for up in unread_qs.select_related('thread').prefetch_related('thread__messages'):
+                msg_qs = up.thread.messages.filter(is_system_message=False, is_deleted=False)
+                if up.last_read_at:
+                    msg_qs = msg_qs.filter(created_at__gt=up.last_read_at)
+                if msg_qs.exists():
+                    unread_ids.append(up.thread_id)
+            qs = qs.filter(pk__in=unread_ids)
+
         if params.get('search'):
             qs = qs.filter(messages__body__icontains=params['search'], messages__is_deleted=False).distinct()
 
@@ -325,13 +370,67 @@ class ThreadViewSet(ScopedModelViewSet):
 
 # ── ThreadMessage ViewSet ─────────────────────────────────────────────────────
 
+MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024  # 10 MB
+ALLOWED_ATTACHMENT_TYPES = [
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/plain', 'text/csv',
+]
+
+
+def _validate_attachment(file):
+    if file.size > MAX_ATTACHMENT_SIZE:
+        raise ValidationError(
+            {'attachment': f'File size exceeds {MAX_ATTACHMENT_SIZE // (1024*1024)} MB limit.'}
+        )
+    if file.content_type not in ALLOWED_ATTACHMENT_TYPES:
+        raise ValidationError(
+            {'attachment': f'File type "{file.content_type}" is not allowed.'}
+        )
+
+
 class ThreadMessageViewSet(ScopedModelViewSet):
     permission_module = 'threads'
     permission_page = 'thread-messages'
     queryset = ThreadMessage.objects.all()
     serializer_class = ThreadMessageSerializer
     skip_action_permission = True
-    http_method_names = ['get', 'post', 'head', 'options']
+    parser_classes = [MultiPartParser, FormParser]
+    PAGE_SIZE = 100
+
+    def get_serializer_class(self):
+        if self.action in ('update', 'partial_update'):
+            return ThreadMessageUpdateSerializer
+        return ThreadMessageSerializer
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = request.query_params.get('page', 1)
+        page_size = request.query_params.get('page_size', self.PAGE_SIZE)
+        try:
+            page = int(page)
+            page_size = min(int(page_size), 200)
+        except (ValueError, TypeError):
+            page = 1
+            page_size = self.PAGE_SIZE
+
+        paginator = Paginator(queryset, page_size)
+        try:
+            page_obj = paginator.page(page)
+        except Exception:
+            return Response({'results': [], 'total': 0, 'page': 1, 'pages': 0})
+
+        serializer = self.get_serializer(page_obj.object_list, many=True)
+        return Response({
+            'results': serializer.data,
+            'total': paginator.count,
+            'page': page,
+            'pages': paginator.num_pages,
+        })
 
     def get_queryset(self):
         user = self.request.user
@@ -340,7 +439,9 @@ class ThreadMessageViewSet(ScopedModelViewSet):
         qs = ThreadMessage.objects.filter(
             thread__tenant=tenant,
             is_deleted=False,
-        ).select_related('author').prefetch_related('read_receipts__participant')
+        ).select_related('author').prefetch_related(
+            'read_receipts__participant',
+        )
 
         thread_id = self.request.query_params.get('thread')
         if thread_id:
@@ -374,9 +475,30 @@ class ThreadMessageViewSet(ScopedModelViewSet):
             if not is_participant:
                 raise PermissionDenied('You are not a participant in this thread.')
 
+        attachment = self.request.FILES.get('attachment')
+        if attachment:
+            _validate_attachment(attachment)
+
         serializer.save(author=user, tenant=tenant)
-        # Touch thread updated_at so ordering stays correct
         Thread.objects.filter(pk=thread.pk).update(updated_at=timezone.now())
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        user = self.request.user
+        if instance.author != user and not _is_director(user):
+            raise PermissionDenied('Only the author or a Director can edit this message.')
+        if instance.is_system_message:
+            raise ValidationError({'detail': 'System messages cannot be edited.'})
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        user = self.request.user
+        if instance.author != user and not _is_director(user):
+            raise PermissionDenied('Only the author or a Director can delete this message.')
+        if instance.is_system_message:
+            raise ValidationError({'detail': 'System messages cannot be deleted.'})
+        instance.is_deleted = True
+        instance.save(update_fields=['is_deleted'])
 
 
 # ── ThreadParticipant ViewSet ─────────────────────────────────────────────────
@@ -409,6 +531,54 @@ class ThreadParticipantViewSet(ScopedModelViewSet):
             )
 
         return qs.distinct()
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = request.query_params.get('page', 1)
+        page_size = request.query_params.get('page_size', 50)
+        try:
+            page = int(page)
+            page_size = min(int(page_size), 100)
+        except (ValueError, TypeError):
+            page = 1
+            page_size = 50
+
+        paginator = Paginator(queryset, page_size)
+        try:
+            page_obj = paginator.page(page)
+        except Exception:
+            return Response({'results': [], 'total': 0, 'page': 1, 'pages': 0})
+
+        # Compute has_unread in bulk to avoid N+1 queries
+        participants = list(page_obj.object_list)
+        thread_ids = {p.thread_id for p in participants}
+        threads_map = {}
+        for tid in thread_ids:
+            try:
+                thread = Thread.objects.get(pk=tid)
+                threads_map[tid] = thread
+            except Thread.DoesNotExist:
+                pass
+
+        for p in participants:
+            thread = threads_map.get(p.thread_id)
+            if not thread:
+                p._has_unread = False
+                continue
+            msgs = list(thread.messages.filter(is_deleted=False).only('created_at', 'is_system_message'))
+            if p.last_read_at:
+                unread = [m for m in msgs if not m.is_system_message and m.created_at > p.last_read_at]
+            else:
+                unread = [m for m in msgs if not m.is_system_message]
+            p._has_unread = bool(unread)
+
+        serializer = self.get_serializer(participants, many=True)
+        return Response({
+            'results': serializer.data,
+            'total': paginator.count,
+            'page': page,
+            'pages': paginator.num_pages,
+        })
 
     def perform_create(self, serializer):
         user = self.request.user

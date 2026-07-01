@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MessageSquare, Search, ExternalLink, RefreshCw, Lock, Unlock } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { threadService } from '../../services/threadService';
 import { useThreadContext } from '../../contexts/ThreadContext';
+import { useAuth } from '../../contexts/AuthContext';
 import type { Thread } from '../../types/threads';
 
 type TabKey = 'mine' | 'unread' | 'started' | 'closed' | 'all';
@@ -31,6 +33,8 @@ function formatDate(iso: string): string {
 
 export const ThreadInboxPage: React.FC = () => {
   const { openPanel } = useThreadContext();
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>('mine');
   const [threads, setThreads] = useState<Thread[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,9 +56,7 @@ export const ThreadInboxPage: React.FC = () => {
 
       let filtered = data;
       if (activeTab === 'started') {
-        const userData = localStorage.getItem('user');
-        const userId = userData ? JSON.parse(userData).id : null;
-        filtered = data.filter(t => t.initiated_by === userId);
+        filtered = data.filter(t => t.initiated_by === user?.id);
       }
       setThreads(filtered);
     } catch {
@@ -77,7 +79,7 @@ export const ThreadInboxPage: React.FC = () => {
 
   const handleOpenThread = (thread: Thread) => {
     if (thread.page_url) {
-      window.location.href = thread.page_url;
+      navigate(thread.page_url);
     }
   };
 

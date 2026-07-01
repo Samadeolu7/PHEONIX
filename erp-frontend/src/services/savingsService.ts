@@ -267,6 +267,11 @@ export interface SavingsWithdrawalRequest {
   savings_account: number;
   account_number?: string;
   client_name?: string;
+  client_phone?: string | null;
+  client_bank_name?: string | null;
+  client_bank_account_name?: string | null;
+  client_bank_account_number?: string | null;
+  client_bvn?: string | null;
   requested_by: number;
   requested_by_name?: string;
   amount: string;
@@ -276,8 +281,14 @@ export interface SavingsWithdrawalRequest {
   description: string;
   cashier_account: number | null;
   destination_bank_account: number | null;
+  destination_bank_name?: string | null;
+  destination_account_number?: string | null;
+  destination_account_name?: string | null;
   applied_tier: number | null;
   journal_entry: number | null;
+  disbursed_by?: number | null;
+  disbursed_by_name?: string | null;
+  disbursed_at?: string | null;
   created_at: string;
   updated_at: string;
   approval_steps: WithdrawalApprovalStep[];
@@ -335,12 +346,25 @@ export const initiateWithdrawal = (
   data: InitiateWithdrawalData
 ): Promise<SavingsWithdrawalRequest> => api.post(BASE_WITHDRAWALS + '/', data);
 
+export interface WithdrawalListPage {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: SavingsWithdrawalRequest[];
+}
+
 export const getWithdrawals = (params?: {
   savings_account?: number;
   status?: string;
-}): Promise<SavingsWithdrawalRequest[]> => {
+  page?: number;
+  page_size?: number;
+}): Promise<WithdrawalListPage> => {
   const res = api.get(BASE_WITHDRAWALS + '/', { params });
-  return res.then((r: any) => (Array.isArray(r) ? r : (r?.results ?? [])));
+  return res.then((r: any) =>
+    Array.isArray(r)
+      ? { count: r.length, next: null, previous: null, results: r }
+      : { count: r?.count ?? 0, next: r?.next ?? null, previous: r?.previous ?? null, results: r?.results ?? r ?? [] }
+  );
 };
 
 export const getWithdrawal = (id: number): Promise<SavingsWithdrawalRequest> =>
@@ -348,6 +372,11 @@ export const getWithdrawal = (id: number): Promise<SavingsWithdrawalRequest> =>
 
 export const getPendingMyApproval = (): Promise<SavingsWithdrawalRequest[]> => {
   const res = api.get(`${BASE_WITHDRAWALS}/pending/`);
+  return res.then((r: any) => (Array.isArray(r) ? r : (r?.results ?? [])));
+};
+
+export const getPendingDisburse = (): Promise<SavingsWithdrawalRequest[]> => {
+  const res = api.get(`${BASE_WITHDRAWALS}/pending-disburse/`);
   return res.then((r: any) => (Array.isArray(r) ? r : (r?.results ?? [])));
 };
 

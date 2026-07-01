@@ -1,9 +1,10 @@
 /**
  * Savings Withdrawals Page
- * Three tabs:
- *   1. My Approvals  — steps waiting for the current user to approve/reject
- *   2. All Withdrawals — browse all requests (branch-scoped; directors see all)
- *   3. Approval Tiers  — configure global tiered approval rules
+ * Four tabs:
+ *   1. My Approvals      — requests awaiting the current user's approval step
+ *   2. Pending Disburse  — fully-approved requests waiting for a disburser
+ *   3. All Withdrawals   — browse all requests (branch-scoped; directors see all)
+ *   4. Approval Tiers    — configure global tiered approval rules
  *
  * Route: /savings/withdrawals
  */
@@ -27,12 +28,17 @@ import {
   BellRing,
   Settings2,
   Landmark,
+  Building2,
+  Send,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   SavingsWithdrawalRequest,
   WithdrawalApprovalTier,
   WithdrawalStatus,
   getPendingMyApproval,
+  getPendingDisburse,
   getWithdrawals,
   approveWithdrawalStep,
   cancelWithdrawal,
@@ -208,45 +214,136 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
     }
   };
 
+  const hasClientBankDetails = !!(withdrawal.client_bank_account_number);
+
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-        <div className="p-5 border-b border-gray-100">
-          <h3 className="text-base font-semibold text-gray-900">Disburse Withdrawal</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {withdrawal.client_name} — ₦{fmt(withdrawal.amount)}
-          </p>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="p-5 border-b border-gray-100 flex items-start justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">Disburse Withdrawal</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {withdrawal.account_number} — Requested by {withdrawal.requested_by_name ?? '—'}
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded-full text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
         </div>
+
+        {/* Amount summary */}
+        <div className="px-5 py-4 bg-teal-50 border-b border-teal-100 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-teal-600 font-medium uppercase tracking-wide">Withdrawal Amount</p>
+            <p className="text-2xl font-bold text-teal-800">₦{fmt(withdrawal.amount)}</p>
+            <p className="text-xs text-teal-600 mt-0.5">{withdrawal.client_name}</p>
+          </div>
+          {withdrawal.client_phone && (
+            <p className="text-sm text-teal-700">{withdrawal.client_phone}</p>
+          )}
+        </div>
+
+        {/* Client bank details — Pay To */}
+        <div className={`mx-5 mt-4 rounded-xl border-2 p-4 ${
+          hasClientBankDetails
+            ? 'bg-blue-50 border-blue-200'
+            : 'bg-amber-50 border-amber-200'
+        }`}>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-blue-800 flex items-center gap-1.5">
+              <Building2 className="w-3.5 h-3.5" />
+              Pay To — Member Bank Details
+            </h4>
+            {!hasClientBankDetails && (
+              <span className="text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+                No bank details on file
+              </span>
+            )}
+          </div>
+          {hasClientBankDetails ? (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-white rounded-lg border border-blue-100 p-2.5">
+                <p className="text-xs text-gray-400 mb-0.5">Bank</p>
+                <p className="text-sm font-semibold text-gray-900">{withdrawal.client_bank_name || '—'}</p>
+              </div>
+              <div className="bg-white rounded-lg border border-blue-100 p-2.5">
+                <p className="text-xs text-gray-400 mb-0.5">Account Name</p>
+                <p className="text-sm font-semibold text-gray-900">{withdrawal.client_bank_account_name || '—'}</p>
+              </div>
+              <div className="bg-white rounded-lg border border-blue-100 p-2.5">
+                <p className="text-xs text-gray-400 mb-0.5">Account Number</p>
+                <p className="text-sm font-mono font-bold text-gray-900 tracking-wider">{withdrawal.client_bank_account_number}</p>
+              </div>
+              {withdrawal.client_bvn && (
+                <div className="col-span-3 flex items-center gap-2 pt-1 border-t border-blue-100 text-xs text-gray-500">
+                  <span className="font-medium">BVN:</span>
+                  <span className="font-mono tracking-wider text-gray-700">{withdrawal.client_bvn}</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-amber-600">Update the member's profile with bank details before disbursing via bank transfer.</p>
+          )}
+        </div>
+
+        {/* Confirmation summary */}
+        <div className="mx-5 mt-3 rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm space-y-1">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Confirm Transfer Details</p>
+          <div className="flex justify-between">
+            <span className="text-gray-500">To:</span>
+            <span className="font-semibold text-gray-900">{withdrawal.client_name}</span>
+          </div>
+          {withdrawal.client_bank_account_number && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Account:</span>
+              <span className="font-mono font-bold text-gray-900 tracking-wider">{withdrawal.client_bank_account_number}</span>
+            </div>
+          )}
+          {withdrawal.client_bank_name && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Bank:</span>
+              <span className="font-medium text-gray-900">{withdrawal.client_bank_name}</span>
+            </div>
+          )}
+          <div className="flex justify-between border-t pt-2 mt-2">
+            <span className="text-gray-500">Amount:</span>
+            <span className="font-bold text-teal-700 text-base">₦{fmt(withdrawal.amount)}</span>
+          </div>
+        </div>
+
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {error && (
             <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
           )}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Destination Bank Account *
+            <label htmlFor="disburse-bank-select" className="block text-sm font-medium text-gray-700 mb-1">
+              Destination Bank Account (Organisation) *
             </label>
             <select
+              id="disburse-bank-select"
               value={selectedBankId}
               onChange={e => setSelectedBankId(e.target.value ? Number(e.target.value) : '')}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
               required
             >
-              <option value="">Select bank account</option>
+              <option value="">Select disbursement bank account</option>
               {bankAccounts.map(b => (
                 <option key={b.id} value={b.id}>
                   {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
                 </option>
               ))}
             </select>
+            <p className="text-xs text-gray-400 mt-1">The organisation's bank account funds will be deducted from.</p>
           </div>
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
               disabled={saving}
-              className="flex-1 flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-700 text-white text-sm py-2 rounded-lg transition-colors disabled:opacity-50"
+              className="flex-1 flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-700 text-white text-sm py-2.5 rounded-lg transition-colors disabled:opacity-50"
             >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Landmark className="w-4 h-4" />}
-              Disburse
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              Confirm Disbursement
             </button>
             <button
               type="button"
@@ -254,7 +351,7 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
               aria-label="Close"
               className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
-              <X className="w-4 h-4" />
+              Cancel
             </button>
           </div>
         </form>
@@ -276,14 +373,16 @@ interface WithdrawalRowProps {
 function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, showApproveButton }: WithdrawalRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
 
   const handleCancel = async () => {
     setCancelling(true);
+    setCancelError(null);
     try {
       const updated = await cancelWithdrawal(wr.id);
       onCancel?.(updated);
-    } catch {
-      // silent
+    } catch (e: any) {
+      setCancelError(e?.detail ?? e?.message ?? 'Cancel failed.');
     } finally {
       setCancelling(false);
     }
@@ -291,6 +390,15 @@ function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, showApproveButton 
 
   return (
     <>
+      {cancelError && (
+        <tr>
+          <td colSpan={7} className="px-4 py-1">
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-1.5 flex items-center gap-1">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" /> {cancelError}
+            </div>
+          </td>
+        </tr>
+      )}
       <tr className="hover:bg-gray-50 transition-colors">
         <td className="px-4 py-3">
           <div className="font-medium text-gray-900 text-sm">{wr.client_name ?? '—'}</div>
@@ -604,7 +712,9 @@ function TierForm({ initial, onSaved, onCancel }: TierFormProps) {
 
 // ── Main page ────────────────────────────────────────────────────────────────
 
-type Tab = 'my_approvals' | 'all' | 'tiers';
+type Tab = 'my_approvals' | 'pending_disburse' | 'all' | 'tiers';
+
+const PAGE_SIZE = 25;
 
 export default function SavingsWithdrawalsPage() {
   const [activeTab, setActiveTab] = useState<Tab>('my_approvals');
@@ -616,8 +726,15 @@ export default function SavingsWithdrawalsPage() {
   const [approveTarget, setApproveTarget] = useState<SavingsWithdrawalRequest | null>(null);
   const [disburseTarget, setDisburseTarget] = useState<SavingsWithdrawalRequest | null>(null);
 
+  // Pending disburse
+  const [pendingDisburse, setPendingDisburse] = useState<SavingsWithdrawalRequest[]>([]);
+  const [pendingDisburseLoading, setPendingDisburseLoading] = useState(false);
+  const [pendingDisburseError, setPendingDisburseError] = useState<string | null>(null);
+
   // All withdrawals
   const [allWithdrawals, setAllWithdrawals] = useState<SavingsWithdrawalRequest[]>([]);
+  const [allTotal, setAllTotal] = useState(0);
+  const [allPage, setAllPage] = useState(1);
   const [allLoading, setAllLoading] = useState(false);
   const [allError, setAllError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
@@ -643,18 +760,36 @@ export default function SavingsWithdrawalsPage() {
     }
   }, []);
 
+  const loadPendingDisburse = useCallback(async () => {
+    setPendingDisburseLoading(true);
+    setPendingDisburseError(null);
+    try {
+      const data = await getPendingDisburse();
+      setPendingDisburse(data);
+    } catch (e: any) {
+      setPendingDisburseError(e?.message ?? 'Failed to load pending disbursements.');
+    } finally {
+      setPendingDisburseLoading(false);
+    }
+  }, []);
+
   const loadAll = useCallback(async () => {
     setAllLoading(true);
     setAllError(null);
     try {
-      const data = await getWithdrawals(statusFilter ? { status: statusFilter } : undefined);
-      setAllWithdrawals(data);
+      const page = await getWithdrawals({
+        ...(statusFilter ? { status: statusFilter } : {}),
+        page: allPage,
+        page_size: PAGE_SIZE,
+      });
+      setAllWithdrawals(page.results);
+      setAllTotal(page.count);
     } catch (e: any) {
       setAllError(e?.message ?? 'Failed to load withdrawals.');
     } finally {
       setAllLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, allPage]);
 
   const loadTiers = useCallback(async () => {
     setTiersLoading(true);
@@ -670,13 +805,23 @@ export default function SavingsWithdrawalsPage() {
   }, []);
 
   useEffect(() => { loadPending(); }, [loadPending]);
+  useEffect(() => { if (activeTab === 'pending_disburse') loadPendingDisburse(); }, [activeTab, loadPendingDisburse]);
   useEffect(() => { if (activeTab === 'all') loadAll(); }, [activeTab, loadAll]);
   useEffect(() => { if (activeTab === 'tiers') loadTiers(); }, [activeTab, loadTiers]);
+  // Reset to page 1 when filter changes
+  useEffect(() => { setAllPage(1); }, [statusFilter]);
 
   // Update a withdrawal in state after approval / disbursement action
   const patchWithdrawal = (updated: SavingsWithdrawalRequest) => {
-    setPendingApprovals(prev => prev.filter(w => w.id !== updated.id || 
-      (updated.status !== 'completed' && updated.status !== 'rejected')));
+    // Remove from pending-approval list whenever the user has acted on it
+    // (status changed away from pending, or they approved one step)
+    setPendingApprovals(prev => prev.filter(w => w.id !== updated.id));
+    // Remove from pending-disburse list when completed or rejected
+    setPendingDisburse(prev =>
+      ['completed', 'rejected', 'cancelled'].includes(updated.status)
+        ? prev.filter(w => w.id !== updated.id)
+        : prev.map(w => w.id === updated.id ? updated : w)
+    );
     setAllWithdrawals(prev => prev.map(w => w.id === updated.id ? updated : w));
     setApproveTarget(null);
     setDisburseTarget(null);
@@ -721,7 +866,7 @@ export default function SavingsWithdrawalsPage() {
 
       <div className="max-w-6xl mx-auto px-6 py-6">
         {/* Tab bar */}
-        <div className="flex gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit">
+        <div className="flex flex-wrap gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit">
           <button
             onClick={() => setActiveTab('my_approvals')}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -736,6 +881,22 @@ export default function SavingsWithdrawalsPage() {
               <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${
                 activeTab === 'my_approvals' ? 'bg-yellow-400 text-white' : 'bg-red-100 text-red-700'
               }`}>{pendingApprovals.length}</span>
+            )}
+          </button>
+          <button
+            onClick={() => { setActiveTab('pending_disburse'); }}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              activeTab === 'pending_disburse'
+                ? 'bg-teal-600 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            <Send className="w-4 h-4" />
+            Pending Disburse
+            {pendingDisburse.length > 0 && (
+              <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${
+                activeTab === 'pending_disburse' ? 'bg-teal-400 text-white' : 'bg-teal-100 text-teal-700'
+              }`}>{pendingDisburse.length}</span>
             )}
           </button>
           <button
@@ -826,6 +987,96 @@ export default function SavingsWithdrawalsPage() {
           </div>
         )}
 
+        {/* ── TAB: PENDING DISBURSE ── */}
+        {activeTab === 'pending_disburse' && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs text-gray-500">
+                Fully-approved requests awaiting disbursement. You must be a different person from the requester and all approvers.
+              </p>
+              <button
+                onClick={loadPendingDisburse}
+                disabled={pendingDisburseLoading}
+                className="flex items-center gap-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
+              >
+                <RefreshCw className={`w-4 h-4 ${pendingDisburseLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+
+            {pendingDisburseError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 mb-4 text-sm text-red-700">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" /> {pendingDisburseError}
+              </div>
+            )}
+
+            {pendingDisburseLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin text-teal-500" />
+              </div>
+            ) : pendingDisburse.length === 0 ? (
+              <div className="bg-white rounded-xl border border-dashed border-gray-300 p-14 text-center">
+                <Send className="w-9 h-9 text-gray-300 mx-auto mb-3" />
+                <p className="text-sm text-gray-500 font-medium">No requests awaiting disbursement</p>
+                <p className="text-xs text-gray-400 mt-1">Fully-approved withdrawals will appear here.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Client</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Bank Details</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Amount</th>
+                      <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Progress</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Requested By</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Date</th>
+                      <th className="px-4 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {pendingDisburse.map(wr => (
+                      <tr key={wr.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="font-medium text-gray-900 text-sm">{wr.client_name ?? '—'}</div>
+                          <div className="text-xs text-gray-400">{wr.account_number}</div>
+                          {wr.client_phone && <div className="text-xs text-gray-400">{wr.client_phone}</div>}
+                        </td>
+                        <td className="px-4 py-3">
+                          {wr.client_bank_account_number ? (
+                            <div>
+                              <div className="text-xs font-mono font-semibold text-gray-800">{wr.client_bank_account_number}</div>
+                              <div className="text-xs text-gray-500">{wr.client_bank_name}</div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">No bank details</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm font-medium text-gray-800">₦{fmt(wr.amount)}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className="text-xs text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">
+                            {wr.approvals_received}/{wr.required_approvals} approved
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-600">{wr.requested_by_name ?? '—'}</td>
+                        <td className="px-4 py-3 text-xs text-gray-400">{new Date(wr.created_at).toLocaleDateString()}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => setDisburseTarget(wr)}
+                            className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+                          >
+                            <Send className="w-3.5 h-3.5" /> Disburse
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── TAB: ALL WITHDRAWALS ── */}
         {activeTab === 'all' && (
           <div>
@@ -867,6 +1118,7 @@ export default function SavingsWithdrawalsPage() {
                 <p className="text-sm text-gray-500">No withdrawal requests found.</p>
               </div>
             ) : (
+              <>
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
@@ -893,6 +1145,31 @@ export default function SavingsWithdrawalsPage() {
                   </tbody>
                 </table>
               </div>
+              {/* Pagination */}
+              {allTotal > PAGE_SIZE && (
+                <div className="flex items-center justify-between mt-3 text-sm text-gray-600">
+                  <span>{((allPage - 1) * PAGE_SIZE) + 1}–{Math.min(allPage * PAGE_SIZE, allTotal)} of {allTotal}</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setAllPage(p => Math.max(1, p - 1))}
+                      disabled={allPage === 1}
+                      className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setAllPage(p => p + 1)}
+                      disabled={allPage * PAGE_SIZE >= allTotal}
+                      className="p-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+              </>
             )}
           </div>
         )}

@@ -15,6 +15,7 @@ import { api } from '../../services/api';
 import { branchService, Branch } from '../../services/branchService';
 import { ThreadProvider, useThreadContext } from '../../contexts/ThreadContext';
 import { ThreadPanel } from '../threads/ThreadPanel';
+import { ErrorBoundary } from '../error/ErrorBoundary';
 
 // ---------------------------------------------------------------------------
 // BranchSwitcher — only rendered for director / admin / operations / owner
@@ -599,7 +600,9 @@ function AppLayoutInner() {
       </div>
 
       {/* Thread slide panel — renders fixed-positioned, mounts once at app level */}
-      <ThreadPanel />
+      <ErrorBoundary showRetry showHome={false}>
+        <ThreadPanel />
+      </ErrorBoundary>
     </div>
   );
 }

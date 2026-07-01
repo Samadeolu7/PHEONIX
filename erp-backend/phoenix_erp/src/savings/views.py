@@ -687,33 +687,52 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='pending')
     def pending_my_approval(self, request):
-        """Return withdrawal steps pending the current user's approval."""
+        """
+        Return full withdrawal REQUEST objects where this user has a pending
+        approval step and belongs to the required approver role for that tier.
+        """
         user = request.user
         user_groups = set(user.groups.values_list('name', flat=True))
 
-        # Get steps this user is eligible to approve
+        # Fetch pending steps the user has not yet responded to
         steps = WithdrawalApprovalStep.objects.filter(
             status=WithdrawalApprovalStep.STATUS_PENDING,
             withdrawal_request__status__in=[
                 SavingsWithdrawalRequest.STATUS_PENDING,
                 SavingsWithdrawalRequest.STATUS_PARTIAL,
             ],
-        ).select_related('withdrawal_request__savings_account__client')
+        ).select_related(
+            'withdrawal_request__savings_account__client',
+            'withdrawal_request__applied_tier',
+        )
 
-        # Filter by branch unless director
+        # Branch-scope unless director
         if not user.has_perm('savings.view_all_branches'):
             steps = steps.filter(withdrawal_request__branch=user.branch)
 
-        # Filter by approver role eligibility
-        eligible_steps = []
+        # Keep only steps the user is eligible to act on (role check)
+        eligible_wr_ids = []
+        seen = set()
         for step in steps:
-            tier = step.withdrawal_request.applied_tier
+            wr = step.withdrawal_request
+            if wr.pk in seen:
+                continue
+            # Skip if this user already approved a step on this request
+            already_approved = wr.approval_steps.filter(
+                status=WithdrawalApprovalStep.STATUS_APPROVED,
+                approver=user,
+            ).exists()
+            if already_approved:
+                continue
+            tier = wr.applied_tier
             allowed = set(tier.approver_roles) if tier and tier.approver_roles else set()
             if not allowed or (allowed & user_groups):
-                eligible_steps.append(step)
+                eligible_wr_ids.append(wr.pk)
+                seen.add(wr.pk)
 
+        qs = self.get_queryset().filter(pk__in=eligible_wr_ids)
         return Response(
-            WithdrawalApprovalStepSerializer(eligible_steps, many=True).data
+            SavingsWithdrawalRequestSerializer(qs, many=True, context={'request': request}).data
         )
 
     @action(detail=True, methods=['post'], url_path='approve-step')

@@ -15,14 +15,19 @@ const PART_BASE = '/threads/thread-participants';
 export const threadService = {
   // ── Threads ────────────────────────────────────────────────────────────────
 
-  list(params?: {
+  async list(params?: {
     status?: 'open' | 'closed';
     unread?: boolean;
     page_id?: number;
     branch?: number;
     search?: string;
+    page?: number;
+    page_size?: number;
   }): Promise<Thread[]> {
-    return api.get(`${BASE}/`, { params });
+    const res = await api.get(`${BASE}/`, { params });
+    if (res.data?.results) return res.data.results;
+    if (Array.isArray(res.data)) return res.data;
+    return [];
   },
 
   get(id: number): Promise<Thread> {
@@ -55,10 +60,14 @@ export const threadService = {
 
   // ── Messages ───────────────────────────────────────────────────────────────
 
-  listMessages(threadId: number, afterId?: number): Promise<ThreadMessageItem[]> {
-    return api.get(`${MSG_BASE}/`, {
-      params: { thread: threadId, ...(afterId ? { after: afterId } : {}) },
-    });
+  async listMessages(threadId: number, afterId?: number, page?: number): Promise<ThreadMessageItem[]> {
+    const params: Record<string, any> = { thread: threadId };
+    if (afterId) params.after = afterId;
+    if (page) params.page = page;
+    const res = await api.get(`${MSG_BASE}/`, { params });
+    if (res.data?.results) return res.data.results;
+    if (Array.isArray(res.data)) return res.data;
+    return [];
   },
 
   postMessage(threadId: number, body: string, attachment?: File): Promise<ThreadMessageItem> {
@@ -75,8 +84,11 @@ export const threadService = {
 
   // ── Participants ───────────────────────────────────────────────────────────
 
-  listParticipants(threadId: number): Promise<ThreadParticipantItem[]> {
-    return api.get(`${PART_BASE}/`, { params: { thread: threadId } });
+  async listParticipants(threadId: number): Promise<ThreadParticipantItem[]> {
+    const res = await api.get(`${PART_BASE}/`, { params: { thread: threadId } });
+    if (res.data?.results) return res.data.results;
+    if (Array.isArray(res.data)) return res.data;
+    return [];
   },
 
   addParticipant(threadId: number, userId: number): Promise<ThreadParticipantItem> {

@@ -75,8 +75,9 @@ class ThreadParticipantSerializer(serializers.ModelSerializer):
         read_only_fields = ['can_add_participants', 'last_read_at', 'added_by']
 
     def get_has_unread(self, obj):
+        if hasattr(obj, '_has_unread'):
+            return obj._has_unread
         return obj.has_unread
-
 
 class ThreadSerializer(serializers.ModelSerializer):
     participants = ThreadParticipantSerializer(many=True, read_only=True)
@@ -152,6 +153,15 @@ class ThreadSerializer(serializers.ModelSerializer):
         if obj.closed_by:
             return obj.closed_by.get_full_name() or obj.closed_by.username
         return None
+
+
+class ThreadMessageUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ThreadMessage
+        fields = ['body']
+        extra_kwargs = {
+            'body': {'required': True, 'allow_blank': False, 'max_length': 1000},
+        }
 
 
 class ThreadCreateSerializer(serializers.ModelSerializer):

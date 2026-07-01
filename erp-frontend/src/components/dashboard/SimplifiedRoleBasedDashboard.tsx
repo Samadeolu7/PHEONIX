@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
 import { BRAND } from '../../constants/brand';
+import { ThreadWidget } from '../threads/ThreadWidget';
 import {
   Clock,
   User,
@@ -1628,6 +1629,11 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
               </div>
             );
           })}
+        </div>
+
+        {/* ── DISCUSSIONS WIDGET ───────────────────────────────────────── */}
+        <div className="max-w-sm">
+          <ThreadWidget />
         </div>
       </div>
     </>

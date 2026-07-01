@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Edit, Trash2, RefreshCw, ExternalLink } from 'lucide-react';
 import { api } from '../../services/api';
+import { ThreadToggleButton } from '../threads/ThreadToggleButton';
 
 // Field Group Component
 function FieldGroup({ label, value, type = 'text', badge = null }: any) {
@@ -258,6 +259,15 @@ export default function DetailPageRenderer({ config }: any) {
           </div>
 
           <div className="flex items-center space-x-2">
+            {config?.threadConfig && (
+              <ThreadToggleButton
+                pageId={config.threadConfig.pageId}
+                contentTypeId={config.threadConfig.contentTypeId}
+                objectId={config.threadConfig.objectId}
+                recordLabel={config.threadConfig.recordLabel}
+              />
+            )}
+
             <button
               onClick={handleRefresh}
               disabled={refreshing}

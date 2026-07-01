@@ -217,6 +217,21 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
     client_name = serializers.CharField(
         source='savings_account.client.full_name', read_only=True
     )
+    client_phone = serializers.CharField(
+        source='savings_account.client.phone_primary', read_only=True, default=None
+    )
+    client_bank_name = serializers.CharField(
+        source='savings_account.client.bank_name', read_only=True, default=None
+    )
+    client_bank_account_name = serializers.CharField(
+        source='savings_account.client.bank_account_name', read_only=True, default=None
+    )
+    client_bank_account_number = serializers.CharField(
+        source='savings_account.client.bank_account_number', read_only=True, default=None
+    )
+    client_bvn = serializers.CharField(
+        source='savings_account.client.bvn', read_only=True, default=None
+    )
     requested_by_name = serializers.SerializerMethodField()
     disbursed_by_name = serializers.SerializerMethodField()
 
@@ -229,6 +244,8 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
         model = SavingsWithdrawalRequest
         fields = [
             'id', 'savings_account', 'account_number', 'client_name',
+            'client_phone', 'client_bank_name', 'client_bank_account_name',
+            'client_bank_account_number', 'client_bvn',
             'requested_by', 'requested_by_name',
             'amount', 'description', 'status',
             'required_approvals', 'approvals_received',
@@ -239,7 +256,10 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'account_number', 'client_name', 'requested_by_name',
+            'id', 'account_number', 'client_name',
+            'client_phone', 'client_bank_name', 'client_bank_account_name',
+            'client_bank_account_number', 'client_bvn',
+            'requested_by_name',
             'status', 'required_approvals', 'approvals_received',
             'applied_tier', 'journal_entry', 'steps',
             'destination_bank_name', 'destination_account_number', 'destination_account_name',
