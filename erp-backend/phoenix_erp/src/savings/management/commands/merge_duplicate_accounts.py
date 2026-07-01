@@ -9,10 +9,11 @@ For savings accounts
 - Groups all non-deleted, non-closed accounts by (client, product).
 - Keeps the account with the HIGHEST GL balance as the canonical record
   (ties broken by lowest pk / oldest account).
-- Re-points every TransactionEntry from each duplicate GL account to the
-  primary GL account so full ledger history is preserved and visible.
-- Recomputes the primary GL balance from its (now-combined) entries.
-- Zeroes out and soft-deletes the surplus GL accounts and SavingsAccounts.
+- For each duplicate with a non-zero GL balance, posts a balanced journal
+  entry (Dr duplicate / Cr primary) to transfer the balance through proper
+  double-entry accounting.  The guard is never bypassed.
+- Soft-deletes the surplus GL accounts and SavingsAccounts.
+  Each duplicate retains its own ledger history; entries are NOT repointed.
 
 For loan accounts
 -----------------
@@ -40,6 +41,7 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.db.models import Count, Sum
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +95,11 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------
     def _merge_savings(self, dry_run: bool) -> None:
         from savings.models import SavingsAccount
-        from transactions.models import TransactionEntry
+        from transactions.models import (
+            Transaction as JournalEntry,
+            TransactionEntry,
+            TransactionSeries,
+        )
 
         self.stdout.write('\n=== Savings Account Duplicates ===')
 
@@ -145,7 +151,7 @@ class Command(BaseCommand):
             for dup in duplicates:
                 entry_count = TransactionEntry.objects.filter(account=dup.account).count()
                 self.stdout.write(
-                    f'  -> Merge : #{dup.pk} '
+                    f'  -> Close : #{dup.pk} '
                     f'(GL {dup.account.code}, balance={dup.account.balance}, '
                     f'ledger entries={entry_count})'
                 )
@@ -154,45 +160,98 @@ class Command(BaseCommand):
                 continue
 
             with transaction.atomic():
+                series, _ = TransactionSeries.objects.get_or_create(
+                    code='MRGADM',
+                    defaults={'description': 'Account Merge Administration'},
+                )
+
                 for dup in duplicates:
-                    # 1. Re-point every TransactionEntry from the duplicate GL account
-                    #    to the primary GL account — ledger history is fully preserved.
-                    TransactionEntry.objects.filter(
-                        account=dup.account
-                    ).update(account=primary.account)
+                    dup_balance = dup.account.balance
 
-                    # 2. Zero and soft-delete the duplicate GL account.
-                    dup.account.balance = Decimal('0.00')
+                    if dup_balance > Decimal('0.00'):
+                        # Transfer the duplicate's balance to the primary via a
+                        # proper balanced journal entry so the guard is never
+                        # bypassed and the audit trail is complete.
+                        #
+                        # SAVINGS is credit-normal:
+                        #   Dr dup.account   → reduces its balance to 0
+                        #   Cr primary.account → increases primary's balance
+                        journal = JournalEntry.objects.create(
+                            series=series,
+                            date=timezone.now().date(),
+                            description=(
+                                f'Account merge: '
+                                f'{dup.account_number} -> {primary.account_number}'
+                            ),
+                            owner=primary.owner,
+                            branch=primary.branch,
+                        )
+                        TransactionEntry.objects.create(
+                            transaction=journal,
+                            account=dup.account,
+                            side=TransactionEntry.DEBIT,
+                            amount=dup_balance,
+                        )
+                        TransactionEntry.objects.create(
+                            transaction=journal,
+                            account=primary.account,
+                            side=TransactionEntry.CREDIT,
+                            amount=dup_balance,
+                        )
+                        journal.post()
+                        self.stdout.write(
+                            f'    Transferred {dup_balance} via journal {journal.reference_number}'
+                        )
+
+                    elif dup_balance < Decimal('0.00'):
+                        # Unusual: duplicate has a debit balance on a savings account.
+                        # Reverse the direction so amounts remain positive.
+                        abs_balance = abs(dup_balance)
+                        journal = JournalEntry.objects.create(
+                            series=series,
+                            date=timezone.now().date(),
+                            description=(
+                                f'Account merge (debit-balance correction): '
+                                f'{dup.account_number} -> {primary.account_number}'
+                            ),
+                            owner=primary.owner,
+                            branch=primary.branch,
+                        )
+                        TransactionEntry.objects.create(
+                            transaction=journal,
+                            account=dup.account,
+                            side=TransactionEntry.CREDIT,
+                            amount=abs_balance,
+                        )
+                        TransactionEntry.objects.create(
+                            transaction=journal,
+                            account=primary.account,
+                            side=TransactionEntry.DEBIT,
+                            amount=abs_balance,
+                        )
+                        journal.post()
+                        self.stdout.write(
+                            self.style.WARNING(
+                                f'    WARNING: duplicate had negative balance {dup_balance}; '
+                                f'reversed via journal {journal.reference_number}'
+                            )
+                        )
+
+                    # Soft-delete the duplicate GL account.
+                    # Balance is now 0 in the DB (zeroed by journal.post() above or
+                    # was already 0).  Omitting 'balance' from update_fields means
+                    # the Account.save() guard is never triggered.
                     dup.account.is_deleted = True
-                    dup.account.save(update_fields=['balance', 'is_deleted', 'updated_at'])
+                    dup.account.save(update_fields=['is_deleted', 'updated_at'])
 
-                    # 3. Close and soft-delete the duplicate SavingsAccount.
+                    # Close and soft-delete the duplicate SavingsAccount.
                     dup.status = 'closed'
                     dup.is_deleted = True
                     dup.save(update_fields=['status', 'is_deleted', 'updated_at'])
 
-                # 4. Recompute the primary GL balance from ALL its entries
-                #    (which now include the re-pointed ones from duplicates).
-                #    SAVINGS accounts are credit-normal: balance = CR_total - DR_total.
-                primary_entries = TransactionEntry.objects.filter(
-                    account=primary.account, posted=True
-                )
-                cr_total = (
-                    primary_entries
-                    .filter(side=TransactionEntry.CREDIT)
-                    .aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-                )
-                dr_total = (
-                    primary_entries
-                    .filter(side=TransactionEntry.DEBIT)
-                    .aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
-                )
-                primary.account.balance = cr_total - dr_total
-                primary.account.save(update_fields=['balance', 'updated_at'])
-
                 total_merged += len(duplicates)
 
-        action = 'Would merge' if dry_run else 'Merged'
+        action = 'Would close' if dry_run else 'Closed'
         self.stdout.write(
             self.style.SUCCESS(f'\n  {action} {total_merged} duplicate savings account(s).')
         )
