@@ -98,4 +98,29 @@ export const threadService = {
   removeParticipant(participantId: number): Promise<void> {
     return api.delete(`${PART_BASE}/${participantId}/`);
   },
+
+  // ── Thread metadata update ─────────────────────────────────────────────────
+
+  updateThread(id: number, payload: { title?: string; reason?: string }): Promise<Thread> {
+    return api.patch(`${BASE}/${id}/`, payload);
+  },
+
+  // ── Message edit / soft-delete ─────────────────────────────────────────────
+
+  editMessage(messageId: number, body: string): Promise<ThreadMessageItem> {
+    return api.patch(`${MSG_BASE}/${messageId}/`, { body });
+  },
+
+  deleteMessage(messageId: number): Promise<void> {
+    return api.delete(`${MSG_BASE}/${messageId}/`);
+  },
+
+  // ── User search (for participant picker) ───────────────────────────────────
+
+  async searchUsers(q: string): Promise<{ id: number; username: string; full_name: string }[]> {
+    if (!q || q.length < 2) return [];
+    const res = await api.get('/users/staff-users/search/', { params: { q } });
+    if (Array.isArray(res.data)) return res.data;
+    return [];
+  },
 };

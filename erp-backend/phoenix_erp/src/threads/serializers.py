@@ -164,6 +164,18 @@ class ThreadMessageUpdateSerializer(serializers.ModelSerializer):
         }
 
 
+class ThreadUpdateSerializer(serializers.ModelSerializer):
+    """Allows updating mutable fields on an existing thread (title, reason)."""
+
+    class Meta:
+        model = Thread
+        fields = ['title', 'reason']
+        extra_kwargs = {
+            'title': {'required': False, 'max_length': 300},
+            'reason': {'required': False},
+        }
+
+
 class ThreadCreateSerializer(serializers.ModelSerializer):
     participant_ids = serializers.ListField(
         child=serializers.IntegerField(),

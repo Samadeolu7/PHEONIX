@@ -5,12 +5,13 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError, PermissionDenied
 
+from django.core.paginator import Paginator
+from django.db.models import Count, Q, OuterRef, Subquery, IntegerField
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from common.views import ScopedModelViewSet
 from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt
-from django.core.paginator import Paginator
-from rest_framework.parsers import MultiPartParser, FormParser
 from .serializers import (
-    ThreadSerializer, ThreadCreateSerializer,
+    ThreadSerializer, ThreadCreateSerializer, ThreadUpdateSerializer,
     ThreadParticipantSerializer, ThreadMessageSerializer,
     ThreadMessageUpdateSerializer,
 )
@@ -55,7 +56,17 @@ class ThreadViewSet(ScopedModelViewSet):
     def get_serializer_class(self):
         if self.action == 'create':
             return ThreadCreateSerializer
+        if self.action in ('update', 'partial_update'):
+            return ThreadUpdateSerializer
         return ThreadSerializer
+
+    def perform_update(self, serializer):
+        """Only the initiator or a Director can edit thread metadata."""
+        thread = self.get_object()
+        user = self.request.user
+        if thread.initiated_by != user and not _is_director(user):
+            raise PermissionDenied('Only the initiator or a Director can edit this thread.')
+        serializer.save()
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -105,22 +116,36 @@ class ThreadViewSet(ScopedModelViewSet):
             qs = qs.filter(object_id=params['object_id'], content_type_id=params['content_type'])
         if params.get('branch') and _is_director(user):
             qs = qs.filter(branch_id=params['branch'])
-        # Unread filter: only threads where the current user has unread messages
-        if params.get('unread'):
-            unread_qs = ThreadParticipant.objects.filter(
-                user=user, is_deleted=False, thread__in=qs,
-            )
-            unread_ids = []
-            for up in unread_qs.select_related('thread').prefetch_related('thread__messages'):
-                msg_qs = up.thread.messages.filter(is_system_message=False, is_deleted=False)
-                if up.last_read_at:
-                    msg_qs = msg_qs.filter(created_at__gt=up.last_read_at)
-                if msg_qs.exists():
-                    unread_ids.append(up.thread_id)
-            qs = qs.filter(pk__in=unread_ids)
 
         if params.get('search'):
-            qs = qs.filter(messages__body__icontains=params['search'], messages__is_deleted=False).distinct()
+            qs = qs.filter(
+                Q(title__icontains=params['search']) |
+                Q(messages__body__icontains=params['search'], messages__is_deleted=False)
+            ).distinct()
+
+        if params.get('initiated_by') == 'me':
+            qs = qs.filter(initiated_by=user)
+
+        # Unread filter: pure DB subquery — no Python iteration.
+        if params.get('unread'):
+            my_last_read = Subquery(
+                ThreadParticipant.objects.filter(
+                    thread=OuterRef('pk'), user=user, is_deleted=False
+                ).values('last_read_at')[:1]
+            )
+            latest_non_sys_msg = Subquery(
+                ThreadMessage.objects.filter(
+                    thread=OuterRef('pk'), is_system_message=False, is_deleted=False,
+                ).order_by('-created_at').values('created_at')[:1]
+            )
+            from django.db.models import F
+            qs = qs.annotate(
+                _my_last_read=my_last_read,
+                _latest_msg=latest_non_sys_msg,
+            ).filter(
+                Q(_my_last_read__isnull=True, _latest_msg__isnull=False) |
+                Q(_latest_msg__isnull=False, _latest_msg__gt=F('_my_last_read'))
+            )
 
         return qs.order_by('-updated_at').distinct()
 
@@ -311,6 +336,7 @@ class ThreadViewSet(ScopedModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='widget-summary')
     def widget_summary(self, request):
+        from django.db.models import Max, Case, When, IntegerField, F, Value
         user = request.user
         tenant = getattr(user, 'tenant', None)
 
@@ -327,39 +353,68 @@ class ThreadViewSet(ScopedModelViewSet):
                 participants__user=user, participants__is_deleted=False,
             ).distinct()
 
-        threads = base_qs.select_related('page').prefetch_related(
-            'participants', 'messages'
-        ).order_by('-updated_at')[:20]
+        # Fetch only what we need via DB aggregation — no Python-level message iteration.
+        thread_ids = list(base_qs.order_by('-updated_at').values_list('pk', flat=True)[:20])
 
-        unread_count = 0
-        recent = []
+        if not thread_ids:
+            return Response({'unread_count': 0, 'recent_threads': []})
 
-        for t in threads:
-            try:
-                participant = t.participants.get(user=user, is_deleted=False)
-                last_read = participant.last_read_at
-            except ThreadParticipant.DoesNotExist:
-                last_read = None
+        threads = (
+            Thread.objects.filter(pk__in=thread_ids)
+            .select_related('page')
+            .prefetch_related('participants__user')
+            .annotate(
+                last_msg_at=Max(
+                    'messages__created_at',
+                    filter=Q(messages__is_deleted=False),
+                ),
+            )
+            .order_by('-updated_at')
+        )
 
-            unread_filter = {'is_system_message': False, 'is_deleted': False}
+        # Build per-thread last_read map for the current user (single query)
+        participant_map = {
+            p.thread_id: p.last_read_at
+            for p in ThreadParticipant.objects.filter(
+                thread_id__in=thread_ids, user=user, is_deleted=False
+            )
+        }
+
+        # Latest non-system message per thread (single query)
+        latest_msgs = {
+            row['thread_id']: row
+            for row in ThreadMessage.objects.filter(
+                thread_id__in=thread_ids, is_deleted=False
+            ).order_by('thread_id', '-created_at').distinct('thread_id').values(
+                'thread_id', 'body', 'is_system_message', 'created_at'
+            )
+        }
+
+        # Unread message count per thread for current user (single aggregation query)
+        from django.db.models import Count as DCount
+        # We compute per-thread unread in one pass using participant_map
+        unread_counts = {}
+        for tid in thread_ids:
+            last_read = participant_map.get(tid)
+            q = ThreadMessage.objects.filter(thread_id=tid, is_system_message=False, is_deleted=False)
             if last_read:
-                unread_filter['created_at__gt'] = last_read
-            unread = t.messages.filter(**unread_filter).count()
+                q = q.filter(created_at__gt=last_read)
+            unread_counts[tid] = q.count()
 
-            if unread > 0:
-                unread_count += 1
+        unread_count = sum(1 for c in unread_counts.values() if c > 0)
 
-            last_msg = t.messages.filter(is_deleted=False).order_by('-created_at').first()
+        recent = []
+        for t in threads:
+            last_msg_row = latest_msgs.get(t.pk)
+            preview = ''
+            if last_msg_row and not last_msg_row['is_system_message']:
+                preview = last_msg_row['body'][:80]
             recent.append({
                 'id': t.id,
                 'title': t.title,
-                'last_message_preview': (
-                    last_msg.body[:80]
-                    if last_msg and not last_msg.is_system_message
-                    else ''
-                ),
+                'last_message_preview': preview,
                 'last_activity': t.updated_at,
-                'unread_messages': unread,
+                'unread_messages': unread_counts.get(t.pk, 0),
                 'page_url': t.page.url_path if t.page_id else None,
                 'status': t.status,
             })
@@ -399,7 +454,7 @@ class ThreadMessageViewSet(ScopedModelViewSet):
     queryset = ThreadMessage.objects.all()
     serializer_class = ThreadMessageSerializer
     skip_action_permission = True
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
     PAGE_SIZE = 100
 
     def get_serializer_class(self):
@@ -549,28 +604,27 @@ class ThreadParticipantViewSet(ScopedModelViewSet):
         except Exception:
             return Response({'results': [], 'total': 0, 'page': 1, 'pages': 0})
 
-        # Compute has_unread in bulk to avoid N+1 queries
+        # Compute has_unread in bulk — single query per thread batch, no per-thread DB hit.
         participants = list(page_obj.object_list)
-        thread_ids = {p.thread_id for p in participants}
-        threads_map = {}
-        for tid in thread_ids:
-            try:
-                thread = Thread.objects.get(pk=tid)
-                threads_map[tid] = thread
-            except Thread.DoesNotExist:
-                pass
+        thread_ids = list({p.thread_id for p in participants})
+
+        # One query: latest non-system message created_at per thread
+        from django.db.models import Max
+        latest_msg_map = {
+            row['thread_id']: row['latest']
+            for row in ThreadMessage.objects.filter(
+                thread_id__in=thread_ids, is_system_message=False, is_deleted=False,
+            ).values('thread_id').annotate(latest=Max('created_at'))
+        }
 
         for p in participants:
-            thread = threads_map.get(p.thread_id)
-            if not thread:
+            latest = latest_msg_map.get(p.thread_id)
+            if latest is None:
                 p._has_unread = False
-                continue
-            msgs = list(thread.messages.filter(is_deleted=False).only('created_at', 'is_system_message'))
-            if p.last_read_at:
-                unread = [m for m in msgs if not m.is_system_message and m.created_at > p.last_read_at]
+            elif p.last_read_at is None:
+                p._has_unread = True
             else:
-                unread = [m for m in msgs if not m.is_system_message]
-            p._has_unread = bool(unread)
+                p._has_unread = latest > p.last_read_at
 
         serializer = self.get_serializer(participants, many=True)
         return Response({

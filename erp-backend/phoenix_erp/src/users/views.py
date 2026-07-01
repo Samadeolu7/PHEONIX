@@ -253,9 +253,34 @@ class StaffUserViewSet(ScopedModelViewSet):
         user.save()
         return Response({'status': 'password_changed'})
     
+    @action(detail=False, methods=['get'], url_path='search')
+    def search(self, request):
+        """
+        GET /api/users/staff-users/search/?q=<name_or_username>
+        Lightweight user search for participant pickers. Returns id, username, full_name.
+        Scoped to the current tenant; maximum 20 results.
+        """
+        q = request.query_params.get('q', '').strip()
+        if not q or len(q) < 2:
+            return Response([])
+        tenant = getattr(request.user, 'tenant', None)
+        qs = User.objects.filter(tenant=tenant, is_active=True).filter(
+            Q(username__icontains=q) |
+            Q(first_name__icontains=q) |
+            Q(last_name__icontains=q)
+        ).values('id', 'username', 'first_name', 'last_name')[:20]
+        results = [
+            {
+                'id': u['id'],
+                'username': u['username'],
+                'full_name': f"{u['first_name']} {u['last_name']}".strip() or u['username'],
+            }
+            for u in qs
+        ]
+        return Response(results)
+
     @action(detail=False, methods=['get'])
     def statistics(self, request):
-        """Get user statistics for the tenant"""
         tenant = request.user.tenant
         users = User.objects.filter(tenant=tenant)
         

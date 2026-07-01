@@ -1,20 +1,52 @@
 import React, { useState } from 'react';
-import { Paperclip, ChevronDown, ChevronUp } from 'lucide-react';
+import { Paperclip, ChevronDown, ChevronUp, Pencil, Trash2, Check, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { threadService } from '../../services/threadService';
 import type { ThreadMessageItem } from '../../types/threads';
 
 interface Props {
   message: ThreadMessageItem;
   isOwn: boolean;
+  onUpdated: (msg: ThreadMessageItem) => void;
+  onDeleted: (msgId: number) => void;
 }
 
-export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn }) => {
+export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated, onDeleted }) => {
   const [showReaders, setShowReaders] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editBody, setEditBody] = useState(message.body);
+  const [editError, setEditError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const time = new Date(message.created_at).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
   });
+
+  const handleSaveEdit = async () => {
+    if (!editBody.trim()) return;
+    setSaving(true);
+    setEditError('');
+    try {
+      const updated = await threadService.editMessage(message.id, editBody.trim());
+      onUpdated(updated);
+      setEditing(false);
+    } catch {
+      setEditError('Failed to save edit.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm('Delete this message?')) return;
+    try {
+      await threadService.deleteMessage(message.id);
+      onDeleted(message.id);
+    } catch {
+      // silent — message stays visible
+    }
+  };
 
   if (message.is_system_message) {
     return (
@@ -27,7 +59,7 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn }) => {
   }
 
   return (
-    <div className={cn('flex gap-2 mb-3', isOwn ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={cn('flex gap-2 mb-3 group', isOwn ? 'flex-row-reverse' : 'flex-row')}>
       {/* Avatar */}
       <div
         className={cn(
@@ -39,7 +71,7 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn }) => {
       </div>
 
       <div className={cn('max-w-[75%]', isOwn ? 'items-end' : 'items-start', 'flex flex-col')}>
-        {/* Name + time */}
+        {/* Name + time + actions */}
         <div
           className={cn(
             'flex items-baseline gap-1.5 mb-0.5',
@@ -48,36 +80,82 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn }) => {
         >
           <span className="text-xs font-medium text-gray-700">{message.author_name}</span>
           <span className="text-[10px] text-gray-400">{time}</span>
+          {isOwn && !editing && (
+            <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={() => { setEditing(true); setEditBody(message.body); }}
+                title="Edit message"
+                className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+              <button
+                onClick={handleDelete}
+                title="Delete message"
+                className="p-0.5 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </span>
+          )}
         </div>
 
-        {/* Bubble */}
-        <div
-          className={cn(
-            'px-3 py-2 rounded-2xl text-sm leading-relaxed',
-            isOwn
-              ? 'bg-[#0a1857] text-white rounded-tr-sm'
-              : 'bg-gray-100 text-gray-900 rounded-tl-sm'
-          )}
-        >
-          {message.body}
-          {message.attachment_url && (
-            <a
-              href={message.attachment_url}
-              target="_blank"
-              rel="noreferrer"
-              className={cn(
-                'flex items-center gap-1 mt-1 text-xs underline',
-                isOwn ? 'text-blue-200' : 'text-blue-600'
-              )}
-            >
-              <Paperclip className="w-3 h-3" />
-              Attachment
-            </a>
-          )}
-        </div>
+        {/* Bubble or edit form */}
+        {editing ? (
+          <div className="flex flex-col gap-1 w-full">
+            <textarea
+              value={editBody}
+              onChange={e => setEditBody(e.target.value)}
+              rows={2}
+              className="w-full border border-[#0a1857] rounded-lg px-2 py-1 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#0a1857]"
+              autoFocus
+            />
+            {editError && <p className="text-xs text-red-600">{editError}</p>}
+            <div className="flex gap-1">
+              <button
+                onClick={handleSaveEdit}
+                disabled={saving || !editBody.trim()}
+                className="flex items-center gap-1 px-2 py-1 bg-[#0a1857] text-white text-xs rounded hover:bg-[#0d1f6b] disabled:opacity-50"
+              >
+                <Check className="w-3 h-3" /> Save
+              </button>
+              <button
+                onClick={() => setEditing(false)}
+                className="flex items-center gap-1 px-2 py-1 border border-gray-300 text-xs rounded hover:bg-gray-50"
+              >
+                <X className="w-3 h-3" /> Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div
+            className={cn(
+              'px-3 py-2 rounded-2xl text-sm leading-relaxed',
+              isOwn
+                ? 'bg-[#0a1857] text-white rounded-tr-sm'
+                : 'bg-gray-100 text-gray-900 rounded-tl-sm'
+            )}
+          >
+            {message.body}
+            {message.attachment_url && (
+              <a
+                href={message.attachment_url}
+                target="_blank"
+                rel="noreferrer"
+                className={cn(
+                  'flex items-center gap-1 mt-1 text-xs underline',
+                  isOwn ? 'text-blue-200' : 'text-blue-600'
+                )}
+              >
+                <Paperclip className="w-3 h-3" />
+                Attachment
+              </a>
+            )}
+          </div>
+        )}
 
         {/* Read receipts */}
-        {message.read_by.length > 0 && (
+        {!editing && message.read_by.length > 0 && (
           <button
             onClick={() => setShowReaders(v => !v)}
             className="flex items-center gap-0.5 mt-0.5 text-[10px] text-gray-400 hover:text-gray-600"

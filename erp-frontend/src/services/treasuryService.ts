@@ -38,7 +38,7 @@ export const cashierAccountService = {
     const response = await api.get<TreasuryApiResponse<CashierAccount>>(
       `${BASE_URL}/cashier-accounts/`
     );
-    return response.data?.results || [];
+    return response?.results || [];
   },
 
   /**
@@ -46,7 +46,7 @@ export const cashierAccountService = {
    */
   getById: async (id: number): Promise<CashierAccount> => {
     const response = await api.get<CashierAccount>(`${BASE_URL}/cashier-accounts/${id}/`);
-    return response.data;
+    return response;
   },
 
   /**
@@ -56,7 +56,7 @@ export const cashierAccountService = {
     const response = await api.get<TreasuryApiResponse<CashierAccount>>(
       `${BASE_URL}/cashier-accounts/?is_active=true&is_suspended=false`
     );
-    return response.data?.results || [];
+    return response?.results || [];
   },
 
   /**
@@ -66,7 +66,7 @@ export const cashierAccountService = {
     const response = await api.get<TreasuryApiResponse<CashierAccount>>(
       `${BASE_URL}/cashier-accounts/?needs_reconciliation=true`
     );
-    return response.data?.results || [];
+    return response?.results || [];
   },
 
   /**
@@ -74,7 +74,7 @@ export const cashierAccountService = {
    */
   create: async (data: CreateCashierAccountRequest): Promise<CashierAccount> => {
     const response = await api.post<CashierAccount>(`${BASE_URL}/cashier-accounts/`, data);
-    return response.data;
+    return response;
   },
 };
 
@@ -104,7 +104,7 @@ export const cashCollectionService = {
     const response = await api.get<TreasuryApiResponse<CashCollection>>(
       `${BASE_URL}/cash-collections/?${params.toString()}`
     );
-    return response.data?.results || [];
+    return response?.results || [];
   },
 
   /**
@@ -112,7 +112,7 @@ export const cashCollectionService = {
    */
   getById: async (id: number): Promise<CashCollection> => {
     const response = await api.get<CashCollection>(`${BASE_URL}/cash-collections/${id}/`);
-    return response.data;
+    return response;
   },
 
   /**
@@ -120,7 +120,7 @@ export const cashCollectionService = {
    */
   create: async (data: CreateCashCollectionRequest): Promise<CashCollection> => {
     const response = await api.post<CashCollection>(`${BASE_URL}/cash-collections/`, data);
-    return response.data;
+    return response;
   },
 
   /**
@@ -131,7 +131,7 @@ export const cashCollectionService = {
     data: Partial<CreateCashCollectionRequest>
   ): Promise<CashCollection> => {
     const response = await api.patch<CashCollection>(`${BASE_URL}/cash-collections/${id}/`, data);
-    return response.data;
+    return response;
   },
 
   /**
@@ -146,7 +146,7 @@ export const cashCollectionService = {
    */
   post: async (id: number): Promise<CashCollection> => {
     const response = await api.post<CashCollection>(`${BASE_URL}/cash-collections/${id}/post/`);
-    return response.data;
+    return response;
   },
 
   /**
@@ -184,7 +184,7 @@ export const cashTransferService = {
     const response = await api.get<TreasuryApiResponse<CashTransfer>>(
       `${BASE_URL}/cash-transfers/`
     );
-    return response.data?.results || [];
+    return response?.results || [];
   },
 
   /**
@@ -192,7 +192,7 @@ export const cashTransferService = {
    */
   getById: async (id: number): Promise<CashTransfer> => {
     const response = await api.get<CashTransfer>(`${BASE_URL}/cash-transfers/${id}/`);
-    return response.data;
+    return response;
   },
 
   /**
@@ -215,7 +215,7 @@ export const cashTransferService = {
         'Content-Type': 'multipart/form-data',
       },
     });
-    return response.data;
+    return response;
   },
 
   /**
@@ -223,7 +223,7 @@ export const cashTransferService = {
    */
   submit: async (id: number): Promise<CashTransfer> => {
     const response = await api.post<CashTransfer>(`${BASE_URL}/cash-transfers/${id}/submit/`);
-    return response.data;
+    return response;
   },
 
   /**
@@ -233,7 +233,7 @@ export const cashTransferService = {
     const response = await api.post<CashTransfer>(`${BASE_URL}/cash-transfers/${id}/approve/`, {
       approval_notes: notes,
     });
-    return response.data;
+    return response;
   },
 
   /**
@@ -243,7 +243,7 @@ export const cashTransferService = {
     const response = await api.post<CashTransfer>(`${BASE_URL}/cash-transfers/${id}/reject/`, {
       rejection_reason: reason,
     });
-    return response.data;
+    return response;
   },
 
   /**
@@ -251,7 +251,7 @@ export const cashTransferService = {
    */
   post: async (id: number): Promise<CashTransfer> => {
     const response = await api.post<CashTransfer>(`${BASE_URL}/cash-transfers/${id}/post/`);
-    return response.data;
+    return response;
   },
 
   /**
@@ -261,7 +261,7 @@ export const cashTransferService = {
     const response = await api.get<TreasuryApiResponse<CashTransfer>>(
       `${BASE_URL}/cash-transfers/?status=pending`
     );
-    return response.data?.results || [];
+    return response?.results || [];
   },
 };
 
@@ -289,7 +289,7 @@ export const cashReconciliationService = {
     const response = await api.get<TreasuryApiResponse<CashReconciliation>>(
       `${BASE_URL}/cash-reconciliations/?${params.toString()}`
     );
-    return response.data?.results || [];
+    return response?.results || [];
   },
 
   /**
@@ -297,7 +297,7 @@ export const cashReconciliationService = {
    */
   getById: async (id: number): Promise<CashReconciliation> => {
     const response = await api.get<CashReconciliation>(`${BASE_URL}/cash-reconciliations/${id}/`);
-    return response.data;
+    return response;
   },
 
   /**
@@ -305,7 +305,7 @@ export const cashReconciliationService = {
    */
   create: async (data: CreateCashReconciliationRequest): Promise<CashReconciliation> => {
     const response = await api.post<CashReconciliation>(`${BASE_URL}/cash-reconciliations/`, data);
-    return response.data;
+    return response;
   },
 
   /**
@@ -319,7 +319,7 @@ export const cashReconciliationService = {
       `${BASE_URL}/cash-reconciliations/${id}/`,
       data
     );
-    return response.data;
+    return response;
   },
 
   /**
@@ -333,7 +333,7 @@ export const cashReconciliationService = {
       `${BASE_URL}/cash-reconciliations/${id}/finance_signoff/`,
       data
     );
-    return response.data;
+    return response;
   },
 
   /**
@@ -377,7 +377,7 @@ export const bankReconciliationService = {
     const response = await api.get<TreasuryApiResponse<BankReconciliation>>(
       `${BASE_URL}/bank-reconciliations/?${params.toString()}`
     );
-    return response.data?.results || [];
+    return response?.results || [];
   },
 
   /**
@@ -385,7 +385,7 @@ export const bankReconciliationService = {
    */
   getById: async (id: number): Promise<BankReconciliation> => {
     const response = await api.get<BankReconciliation>(`${BASE_URL}/bank-reconciliations/${id}/`);
-    return response.data;
+    return response;
   },
 
   /**
@@ -393,7 +393,7 @@ export const bankReconciliationService = {
    */
   create: async (data: CreateBankReconciliationRequest): Promise<BankReconciliation> => {
     const response = await api.post<BankReconciliation>(`${BASE_URL}/bank-reconciliations/`, data);
-    return response.data;
+    return response;
   },
 
   /**
@@ -407,7 +407,7 @@ export const bankReconciliationService = {
       `${BASE_URL}/bank-reconciliations/${id}/`,
       data
     );
-    return response.data;
+    return response;
   },
 
   /**
@@ -417,7 +417,7 @@ export const bankReconciliationService = {
     const response = await api.post<BankReconciliation>(
       `${BASE_URL}/bank-reconciliations/${id}/submit_for_review/`
     );
-    return response.data;
+    return response;
   },
 
   /**
@@ -427,7 +427,7 @@ export const bankReconciliationService = {
     const response = await api.post<BankReconciliation>(
       `${BASE_URL}/bank-reconciliations/${id}/approve/`
     );
-    return response.data;
+    return response;
   },
 
   /**
@@ -447,7 +447,7 @@ export const treasurySummaryService = {
    */
   getDashboard: async (): Promise<TreasurySummary | null> => {
     const response = await api.get<TreasurySummary>(`${BASE_URL}/summary/dashboard/`);
-    return response.data || null;
+    return response || null;
   },
 
   /**
@@ -455,7 +455,7 @@ export const treasurySummaryService = {
    */
   getCashierSummaries: async (): Promise<CashierSummary[]> => {
     const response = await api.get<CashierSummary[]>(`${BASE_URL}/summary/cashiers/`);
-    return response.data || [];
+    return response || [];
   },
 };
 
