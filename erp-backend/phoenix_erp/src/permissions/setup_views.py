@@ -203,7 +203,6 @@ class PermissionSetupRoleListView(APIView):
         roles = (
             Role.objects
             .filter(tenant=tenant, is_active=True)
-            .exclude(permission_codes__contains=['*'])
             .order_by('name')
         )
 

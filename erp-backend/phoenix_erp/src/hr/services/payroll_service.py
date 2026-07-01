@@ -10,7 +10,7 @@ Handles payroll calculations including:
 - Net pay calculation
 """
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import logging
 from django.db import transaction as db_transaction
 from django.utils import timezone
@@ -250,12 +250,12 @@ class PayrollService:
                     basic_salary += info.amount
                 else:
                     allowances[comp.name] = {
-                        'amount': float(info.amount),
+                        'amount': info.amount,
                         'is_taxable': comp.is_taxable,
                         'is_pensionable': comp.is_pensionable,
                     }
             else:  # DEDUCTION
-                deductions_dict[comp.name] = float(info.amount)
+                deductions_dict[comp.name] = info.amount
 
         # ── Approved one-time bonus / deduction requests ──────────────────────
         payroll_month = self.payroll.period_start.replace(day=1)
@@ -272,13 +272,13 @@ class PayrollService:
             comp = request.component
             if comp.component_type == SalaryComponent.EARNING:
                 allowances[f"{comp.name} (One-time)"] = {
-                    'amount': float(request.amount),
+                    'amount': request.amount,
                     'is_taxable': comp.is_taxable,
                     'is_pensionable': comp.is_pensionable,
                 }
                 bonuses += request.amount
             else:
-                deductions_dict[f"{comp.name} (One-time)"] = float(request.amount)
+                deductions_dict[f"{comp.name} (One-time)"] = request.amount
 
         # ── Overtime pay ──────────────────────────────────────────────────────
         overtime_pay = Decimal('0.00')
@@ -298,14 +298,14 @@ class PayrollService:
         # the payslip PDF can display a "One-time bonuses" line, but it must NOT
         # be added again here — doing so would double-count every one-time bonus.
         total_allowance_amount = sum(
-            Decimal(str(v['amount'])) for v in allowances.values()
+            v['amount'] for v in allowances.values()
         )
         gross_pay = basic_salary + overtime_pay + total_allowance_amount
 
         # ── Pensionable pay (Basic + Housing + Transport per Nigerian Pension Reform Act) ─
         # Basic salary is always pensionable; allowances depend on is_pensionable flag.
         pensionable_allowances = sum(
-            Decimal(str(v['amount']))
+            v['amount']
             for v in allowances.values()
             if v.get('is_pensionable')
         )
@@ -314,7 +314,7 @@ class PayrollService:
         # ── Taxable income (only taxable earnings) ───────────────────────────
         # Basic salary and overtime are always taxable; allowances depend on flag.
         taxable_allowances = sum(
-            Decimal(str(v['amount']))
+            v['amount']
             for v in allowances.values()
             if v['is_taxable']
         )
@@ -357,7 +357,7 @@ class PayrollService:
         # ── Development Levy (flat per-employee per Nigerian Tax Act 2024) ────
         dev_levy = config.calculate_development_levy()
         if dev_levy > Decimal('0.00'):
-            deductions_dict['Development Levy'] = float(dev_levy)
+            deductions_dict['Development Levy'] = dev_levy
 
         # ── Active Staff IOUs — fixed monthly deductions ──────────────────────
         # Collect all active IOUs whose start_month <= current payroll month.
@@ -378,13 +378,13 @@ class PayrollService:
         if iou_total > 0:
             # All active-IOU deductions are aggregated under a single key so the
             # payroll accounting service can map them to the staff_iou GL account.
-            existing = Decimal(str(deductions_dict.get('Staff IOU', 0)))
-            deductions_dict['Staff IOU'] = float(existing + iou_total)
+            existing = deductions_dict.get('Staff IOU', Decimal('0'))
+            deductions_dict['Staff IOU'] = existing + iou_total
 
         # ── Total deductions ──────────────────────────────────────────────────
         # NHF is a statutory employee deduction (reduces net pay).
         # NSITF is an employer-only cost — NOT deducted from net pay.
-        total_other_deductions = sum(Decimal(str(v)) for v in deductions_dict.values())
+        total_other_deductions = sum(v for v in deductions_dict.values())
         total_deductions = monthly_paye + employee_pension + nhf + total_other_deductions
 
         # ── Net pay ───────────────────────────────────────────────────────────

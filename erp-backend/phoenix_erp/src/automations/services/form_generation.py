@@ -329,13 +329,14 @@ class FormGenerationService:
         
         return logic_rules
     
-    def _extract_threshold(self, condition_str: str) -> float:
+    def _extract_threshold(self, condition_str: str):
         """Extract numeric threshold from condition string"""
         import re
+        from decimal import Decimal
         match = re.search(r'[\d.]+', condition_str)
         if match:
-            return float(match.group())
-        return 0
+            return Decimal(match.group())
+        return Decimal('0')
     
     # ================================================================
     # WORKFLOW GENERATION

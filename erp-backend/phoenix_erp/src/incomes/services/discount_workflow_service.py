@@ -4,7 +4,7 @@ Service for executing workflows during discount eligibility and approval
 """
 import logging
 from typing import Dict, List, Optional, Tuple
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -54,7 +54,7 @@ class DiscountWorkflowService:
                     'name': program.name,
                     'type': program.program_type,
                     'discount_type': program.discount_type,
-                    'discount_value': float(program.discount_value),
+                    'discount_value': program.discount_value,
                     'eligibility_criteria': program.eligibility_criteria,
                 },
                 'client': {
@@ -65,7 +65,7 @@ class DiscountWorkflowService:
                     'metadata': client.metadata,
                 },
                 'invoice': {
-                    'amount': float(invoice_amount),
+                    'amount': invoice_amount,
                 },
                 'timestamp': timezone.now().isoformat(),
             }
@@ -241,7 +241,7 @@ class DiscountWorkflowService:
                     'client_id': client.id,
                     'client_code': client.client_id,
                     'client_name': str(client),
-                    'discount_amount': float(discount_amount),
+                    'discount_amount': discount_amount,
                     'criteria_matched': matching_discount.get('criteria_matched', [])
                 })
                 total_discount += discount_amount
@@ -251,8 +251,8 @@ class DiscountWorkflowService:
             'program_name': program.name,
             'classification_code': client_classification_code,
             'eligible_count': len(eligible_clients),
-            'total_discount': float(total_discount),
-            'budget_remaining': float(program.budget_remaining),
+            'total_discount': total_discount,
+            'budget_remaining': program.budget_remaining,
             'will_exceed_budget': (
                 program.budget_allocated > 0 and 
                 total_discount > program.budget_remaining
@@ -299,7 +299,7 @@ class DiscountWorkflowService:
                 'client_id': app.client.id,
                 'client_code': app.client.client_id,
                 'client_name': str(app.client),
-                'discount_amount': float(discount_amount),
+                'discount_amount': discount_amount,
                 'reason': app.reason,
                 'application_date': app.application_date.isoformat(),
             })
@@ -311,8 +311,8 @@ class DiscountWorkflowService:
                 'program_name': program.name,
                 'program_type': program.program_type,
                 'application_count': len(discount_applications),
-                'total_discount': float(total_discount),
-                'budget_remaining': float(program.budget_remaining),
+                'total_discount': total_discount,
+                'budget_remaining': program.budget_remaining,
                 'will_exceed_budget': (
                     program.budget_allocated > 0 and 
                     total_discount > program.budget_remaining

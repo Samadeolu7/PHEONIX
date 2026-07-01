@@ -11,7 +11,7 @@ from rest_framework import status
 from django.db.models import Sum, Count, Q, F
 from django.utils import timezone
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from clients.models import Client
 from accounts.models import Account
@@ -79,7 +79,7 @@ def outstanding_fees_total(request):
     )
     
     return Response({
-        'value': float(total),
+        'value': total,
         'formatted': f"${total:,.2f}",
         'label': 'Outstanding Fees',
         'trend': trend_data,
@@ -132,12 +132,12 @@ def monthly_income(request):
         total=Sum('credit')
     )['total'] or Decimal('0.00')
     
-    trend_percent = 0
+    trend_percent = Decimal('0')
     if last_month_income > 0:
-        trend_percent = float((income - last_month_income) / last_month_income * 100)
+        trend_percent = ((income - last_month_income) / last_month_income * 100).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     return Response({
-        'value': float(income),
+        'value': income,
         'formatted': f"${income:,.2f}",
         'label': 'Income This Month',
         'trend': {
@@ -221,7 +221,7 @@ def debtor_aging_summary(request):
             'bucket': bucket,
             'days': bucket,
             'count': values['count'],
-            'amount': float(values['amount']),
+            'amount': values['amount'],
             'formatted_amount': f"${values['amount']:,.2f}"
         })
     
@@ -372,9 +372,9 @@ def low_stock_alerts(request):
             'id': item.id,
             'code': item.code,
             'name': item.name,
-            'quantity_on_hand': float(item.quantity_on_hand),
-            'reorder_point': float(item.reorder_point),
-            'shortfall': float(item.reorder_point - item.quantity_on_hand)
+            'quantity_on_hand': item.quantity_on_hand,
+            'reorder_point': item.reorder_point,
+            'shortfall': item.reorder_point - item.quantity_on_hand
         })
     
     return Response({
@@ -410,7 +410,7 @@ def total_stock_value(request):
         total_value += item_value
     
     return Response({
-        'value': float(total_value),
+        'value': total_value,
         'formatted': f"${total_value:,.2f}",
         'label': 'Total Stock Value',
         'currency': 'USD',
@@ -469,13 +469,13 @@ def total_asset_value(request):
     net_book_value = total_cost - total_depreciation
     
     return Response({
-        'value': float(net_book_value),
+        'value': net_book_value,
         'formatted': f"${net_book_value:,.2f}",
         'label': 'Total Asset Value (NBV)',
         'breakdown': {
-            'cost': float(total_cost),
-            'depreciation': float(total_depreciation),
-            'net_book_value': float(net_book_value)
+            'cost': total_cost,
+            'depreciation': total_depreciation,
+            'net_book_value': net_book_value
         },
         'currency': 'USD',
         'last_updated': timezone.now().isoformat()

@@ -210,10 +210,10 @@ class OfficeUseRequestViewSet(ScopedModelViewSet):
                         'item_id': req_item.item.id,
                         'item_name': req_item.item.name,
                         'sku': req_item.item.sku,
-                        'requested': float(req_item.quantity),
-                        'available': float(stock.quantity_available),
-                        'on_hand': float(stock.quantity_on_hand),
-                        'reserved': float(stock.quantity_reserved),
+                        'requested': req_item.quantity,
+                        'available': stock.quantity_available,
+                        'on_hand': stock.quantity_on_hand,
+                        'reserved': stock.quantity_reserved,
                         'status': (
                             'available'
                             if stock.quantity_available >= req_item.quantity
@@ -225,7 +225,7 @@ class OfficeUseRequestViewSet(ScopedModelViewSet):
                         'item_id': req_item.item.id,
                         'item_name': req_item.item.name,
                         'sku': req_item.item.sku,
-                        'requested': float(req_item.quantity),
+                        'requested': req_item.quantity,
                         'available': 0,
                         'on_hand': 0,
                         'reserved': 0,

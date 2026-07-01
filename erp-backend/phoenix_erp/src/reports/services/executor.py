@@ -180,8 +180,8 @@ class ReportExecutor:
         # Type validation
         if param.parameter_type == 'number':
             try:
-                value = float(value)
-            except (TypeError, ValueError):
+                value = Decimal(str(value))
+            except (TypeError, ValueError, Exception):
                 raise ValidationError(f"Parameter '{param.label}' must be a number")
         
         # Validation rules

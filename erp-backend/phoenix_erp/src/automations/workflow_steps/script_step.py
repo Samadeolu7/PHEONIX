@@ -108,10 +108,10 @@ class ScriptStepHandler(BaseStepHandler):
             'json': json,
         }
         
-        # Convert Decimal values to float for easier arithmetic in scripts
+        # Keep Decimal values as Decimal for precision in script arithmetic
         def convert_decimals(obj):
             if isinstance(obj, Decimal):
-                return float(obj)
+                return obj  # Keep as Decimal for precise arithmetic
             elif isinstance(obj, dict):
                 return {k: convert_decimals(v) for k, v in obj.items()}
             elif isinstance(obj, (list, tuple)):

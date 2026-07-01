@@ -1,5 +1,5 @@
 # assets/views.py
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -285,11 +285,11 @@ class FixedAssetViewSet(ScopedModelViewSet):
             **serializer.data,
             'journal_entry_id': journal_entry.id,
             'disposal_summary': {
-                'purchase_price':            float(purchase_price),
-                'accumulated_depreciation':  float(accum_depr),
-                'book_value':                float(book_value),
-                'proceeds':                  float(proceeds),
-                'net_result':                float(net_result),
+                'purchase_price':            purchase_price,
+                'accumulated_depreciation':  accum_depr,
+                'book_value':                book_value,
+                'proceeds':                  proceeds,
+                'net_result':                net_result,
                 'net_result_type': (
                     'gain' if net_result > 0 else ('loss' if net_result < 0 else 'break_even')
                 ),
@@ -327,18 +327,18 @@ class FixedAssetViewSet(ScopedModelViewSet):
             'name': asset.name,
             'depreciation_method': asset.depreciation_method,
             'useful_life_years': asset.useful_life_years,
-            'purchase_price': float(asset.purchase_price),
-            'salvage_value': float(asset.salvage_value),
-            'depreciable_amount': float(asset.purchase_price - asset.salvage_value),
+            'purchase_price': asset.purchase_price,
+            'salvage_value': asset.salvage_value,
+            'depreciable_amount': asset.purchase_price - asset.salvage_value,
             'period_count': len(schedule),
             'schedule': [
                 {
                     'period_number':       p['period_number'],
                     'period_start':        p['period_start'],
                     'period_end':          p['period_end'],
-                    'depreciation_amount': float(p['depreciation_amount']),
-                    'accumulated':         float(p['accumulated']),
-                    'book_value':          float(p['book_value']),
+                    'depreciation_amount': p['depreciation_amount'],
+                    'accumulated':         p['accumulated'],
+                    'book_value':          p['book_value'],
                 }
                 for p in schedule
             ],
@@ -592,8 +592,8 @@ class FixedAssetViewSet(ScopedModelViewSet):
             has_anomalies = asset.has_irregular_consumptions(days=days)
             consumption_count = asset.consumption_count(days=days)
 
-            period_cost = float(totals['total_cost']) if totals['total_cost'] else 0
-            period_quantity = float(totals['total_quantity']) if totals['total_quantity'] else 0
+            period_cost = totals['total_cost'] if totals['total_cost'] else Decimal('0')
+            period_quantity = totals['total_quantity'] if totals['total_quantity'] else Decimal('0')
 
             total_fleet_cost += period_cost
             total_fleet_quantity += period_quantity
@@ -630,20 +630,20 @@ class FixedAssetViewSet(ScopedModelViewSet):
                 'current_location': asset.current_location or '',
                 'assigned_to': asset.assigned_to or '',
                 'current_reading': (
-                    float(asset.current_meter_reading)
+                    asset.current_meter_reading
                     if asset.current_meter_reading is not None else None
                 ),
                 'efficiency': {
-                    'current': float(efficiency['current']) if efficiency['current'] else None,
-                    'average': float(efficiency['average']) if efficiency['average'] else None,
-                    'best': float(efficiency['best']) if efficiency['best'] else None,
-                    'worst': float(efficiency['worst']) if efficiency['worst'] else None,
+                    'current': efficiency['current'] if efficiency['current'] else None,
+                    'average': efficiency['average'] if efficiency['average'] else None,
+                    'best': efficiency['best'] if efficiency['best'] else None,
+                    'worst': efficiency['worst'] if efficiency['worst'] else None,
                     'status': efficiency_status,
                 },
                 'period_totals': {
                     'quantity': period_quantity,
                     'cost': period_cost,
-                    'usage': float(totals['total_usage']) if totals['total_usage'] else 0,
+                    'usage': totals['total_usage'] if totals['total_usage'] else Decimal('0'),
                     'fill_count': consumption_count,
                 },
                 'has_anomalies': has_anomalies,
@@ -857,13 +857,13 @@ class FixedAssetViewSet(ScopedModelViewSet):
                 'id': c.id,
                 'consumption_number': c.consumption_number,
                 'consumption_date': c.consumption_date,
-                'quantity_consumed': float(c.quantity_consumed),
-                'unit_cost': float(c.unit_cost) if c.unit_cost else None,
-                'total_cost': float(c.total_cost),
-                'previous_reading': float(c.previous_reading) if c.previous_reading else None,
-                'current_reading': float(c.current_reading) if c.current_reading else None,
-                'usage_since_last': float(c.usage_since_last) if c.usage_since_last else 0,
-                'consumption_rate': float(c.consumption_rate) if c.consumption_rate else None,
+                'quantity_consumed': c.quantity_consumed,
+                'unit_cost': c.unit_cost if c.unit_cost else None,
+                'total_cost': c.total_cost,
+                'previous_reading': c.previous_reading if c.previous_reading else None,
+                'current_reading': c.current_reading if c.current_reading else None,
+                'usage_since_last': c.usage_since_last if c.usage_since_last else Decimal('0'),
+                'consumption_rate': c.consumption_rate if c.consumption_rate else None,
                 'payment_flow': c.payment_flow,
                 'operator_name': c.operator_name,
                 'consumption_location': c.consumption_location,
@@ -888,21 +888,20 @@ class FixedAssetViewSet(ScopedModelViewSet):
                 'model': asset.model,
                 'year': asset.year,
                 'current_reading': (
-                    float(asset.current_meter_reading)
-                    if asset.current_meter_reading is not None else None
+                    asset.current_meter_reading
                 ),
             },
             'period_days': days,
             'totals': {
-                'quantity': float(totals['total_quantity']) if totals['total_quantity'] else 0,
-                'cost': float(totals['total_cost']) if totals['total_cost'] else 0,
-                'usage': float(totals['total_usage']) if totals['total_usage'] else 0,
+                'quantity': totals['total_quantity'] if totals['total_quantity'] else Decimal('0'),
+                'cost': totals['total_cost'] if totals['total_cost'] else Decimal('0'),
+                'usage': totals['total_usage'] if totals['total_usage'] else Decimal('0'),
             },
             'efficiency': {
-                'current': float(efficiency['current']) if efficiency['current'] else None,
-                'average': float(efficiency['average']) if efficiency['average'] else None,
-                'best': float(efficiency['best']) if efficiency['best'] else None,
-                'worst': float(efficiency['worst']) if efficiency['worst'] else None,
+                'current': efficiency['current'] if efficiency['current'] else None,
+                'average': efficiency['average'] if efficiency['average'] else None,
+                'best': efficiency['best'] if efficiency['best'] else None,
+                'worst': efficiency['worst'] if efficiency['worst'] else None,
             },
             'history': history,
         })

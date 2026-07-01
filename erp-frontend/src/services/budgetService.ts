@@ -1,5 +1,6 @@
 // src/services/budgetService.ts
 import { api } from './api';
+import { sumDecimals, toDecimal, divDecimals, mulDecimals } from '../utils/decimal';
 import {
   BudgetPeriod,
   BudgetLine,
@@ -201,25 +202,17 @@ export const budgetService = {
   }> {
     const activePeriods = await this.getBudgetPeriods({ status: 'active' });
 
-    const summary = activePeriods.reduce(
-      (acc, period) => ({
-        active_periods: acc.active_periods + 1,
-        total_budget: (
-          parseFloat(acc.total_budget) + parseFloat(period.total_budget || '0')
-        ).toFixed(2),
-        total_actual: (
-          parseFloat(acc.total_actual) + parseFloat(period.total_actual || '0')
-        ).toFixed(2),
-        utilization_percent: 0, // Will calculate after
-      }),
-      { active_periods: 0, total_budget: '0', total_actual: '0', utilization_percent: 0 }
-    );
+    const total_budget = sumDecimals(activePeriods.map(p => p.total_budget || '0'));
+    const total_actual = sumDecimals(activePeriods.map(p => p.total_actual || '0'));
+    const utilization_percent = total_budget.isZero()
+      ? 0
+      : divDecimals(total_actual, total_budget).times(100).toDecimalPlaces(4).toNumber();
 
-    if (parseFloat(summary.total_budget) > 0) {
-      summary.utilization_percent =
-        (parseFloat(summary.total_actual) / parseFloat(summary.total_budget)) * 100;
-    }
-
-    return summary;
+    return {
+      active_periods: activePeriods.length,
+      total_budget: total_budget.toFixed(2),
+      total_actual: total_actual.toFixed(2),
+      utilization_percent,
+    };
   },
 };

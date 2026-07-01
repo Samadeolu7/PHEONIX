@@ -6,6 +6,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
+from decimal import Decimal
 import json
 
 
@@ -260,13 +261,13 @@ class NotificationTemplate(TimeStampedModel, BranchScopedModel, SoftDeleteModel)
         elif operator == '!=':
             return actual != expected
         elif operator == '>':
-            return float(actual) > float(expected)
+            return Decimal(str(actual)) > Decimal(str(expected))
         elif operator == '>=':
-            return float(actual) >= float(expected)
+            return Decimal(str(actual)) >= Decimal(str(expected))
         elif operator == '<':
-            return float(actual) < float(expected)
+            return Decimal(str(actual)) < Decimal(str(expected))
         elif operator == '<=':
-            return float(actual) <= float(expected)
+            return Decimal(str(actual)) <= Decimal(str(expected))
         elif operator == 'in':
             return actual in condition.get('values', [])
         elif operator == 'not_in':
@@ -406,7 +407,7 @@ class TemplateChannelConfig(models.Model):
             elif var_format == 'datetime':
                 value = self._format_datetime(value)
             elif var_format == 'percentage':
-                value = f"{float(value):.2f}%"
+                value = f"{Decimal(str(value)):.2f}%"
             
             prepared[var_name] = value
         

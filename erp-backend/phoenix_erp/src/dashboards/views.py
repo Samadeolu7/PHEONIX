@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from common.views import ScopedModelViewSet
 from common.serializers import IsTenantUser
+from decimal import Decimal, ROUND_HALF_UP
 
 from .models import Dashboard, Widget, WidgetDataSource, DashboardTemplate
 from .serializers import (
@@ -351,10 +352,10 @@ def _fetch_live_widget_data(widget, request):
                     total_invoiced=_Sum('total_amount'),
                     total_collected=_Sum('amount_paid'),
                 )
-                inv = float(totals['total_invoiced'] or 0)
-                col = float(totals['total_collected'] or 0)
-                out = max(0.0, inv - col)
-                rate = round(col / inv * 100, 1) if inv else 0.0
+                inv = totals['total_invoiced'] or Decimal('0')
+                col = totals['total_collected'] or Decimal('0')
+                out = max(Decimal('0'), inv - col)
+                rate = (col / inv * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP) if inv else Decimal('0')
 
                 if metric == 'income_invoiced':
                     return {'value': inv, 'formatted': f'\u20a6{inv:,.0f}', 'trend': None}
@@ -399,7 +400,7 @@ def _fetch_live_widget_data(widget, request):
                     inv=_Sum('total_amount'),
                     paid=_Sum('amount_paid'),
                 )
-                out = max(0.0, float(agg['inv'] or 0) - float(agg['paid'] or 0))
+                out = max(Decimal('0'), (agg['inv'] or Decimal('0')) - (agg['paid'] or Decimal('0')))
                 return {'value': out, 'formatted': f'\u20a6{out:,.0f}', 'trend': None}
             except Exception:
                 pass
@@ -478,7 +479,7 @@ def _fetch_live_widget_data(widget, request):
                     'side': 'CR',
                 })
                 total = TransactionEntry.objects.filter(**q).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-                return {'value': float(total), 'formatted': f'\u20a6{float(total):,.0f}', 'trend': None}
+                return {'value': total, 'formatted': f'\u20a6{total:,.0f}', 'trend': None}
             except Exception:
                 pass
 
@@ -495,7 +496,7 @@ def _fetch_live_widget_data(widget, request):
                     'side': 'DR',
                 })
                 total = TransactionEntry.objects.filter(**q).aggregate(total=Sum('amount'))['total'] or Decimal('0')
-                return {'value': float(total), 'formatted': f'\u20a6{float(total):,.0f}', 'trend': None}
+                return {'value': total, 'formatted': f'\u20a6{total:,.0f}', 'trend': None}
             except Exception:
                 pass
 
@@ -579,7 +580,7 @@ def _fetch_live_widget_data(widget, request):
                         .order_by('month')
                     )
                     arr = [
-                        {'name': m['month'].strftime('%b %Y'), 'value': float(m['value'] or 0)}
+                        {'name': m['month'].strftime('%b %Y'), 'value': m['value'] or Decimal('0')}
                         for m in monthly
                     ]
                     if arr:
@@ -607,7 +608,7 @@ def _fetch_live_widget_data(widget, request):
                     .order_by('month')
                 )
                 arr = [
-                    {'name': m['month'].strftime('%b %Y'), 'value': float(m['value'] or 0)}
+                    {'name': m['month'].strftime('%b %Y'), 'value': m['value'] or Decimal('0')}
                     for m in monthly
                 ]
                 if arr:
@@ -639,7 +640,7 @@ def _fetch_live_widget_data(widget, request):
                 .order_by('month')
             )
             arr = [
-                {'name': m['month'].strftime('%b %Y'), 'value': float(m['value'] or 0)}
+                {'name': m['month'].strftime('%b %Y'), 'value': m['value'] or Decimal('0')}
                 for m in monthly
             ]
             if arr:
@@ -691,7 +692,7 @@ def _fetch_live_widget_data(widget, request):
                 .annotate(value=Sum('amount'))
                 .order_by('-value')[:8]
             )
-            arr = [{'name': r['account__name'], 'value': float(r['value'] or 0)} for r in by_account]
+            arr = [{'name': r['account__name'], 'value': r['value'] or Decimal('0')} for r in by_account]
             if arr:
                 return {'data': arr}
         except Exception:
@@ -732,7 +733,7 @@ def _fetch_live_widget_data(widget, request):
                     rows = [
                         {
                             'category': r['service_item__category__name'] or 'Uncategorised',
-                            'invoiced': float(r['invoiced'] or 0),
+                            'invoiced': r['invoiced'] or Decimal('0'),
                             'invoices': r['count'],
                         }
                         for r in rows_qs
@@ -756,7 +757,7 @@ def _fetch_live_widget_data(widget, request):
                         'po_number': o.po_number,
                         'supplier': str(o.supplier),
                         'order_date': o.order_date.strftime('%Y-%m-%d'),
-                        'total_amount': float(o.total_amount),
+                        'total_amount': o.total_amount,
                         'status': o.get_status_display(),
                     }
                     for o in orders
@@ -794,7 +795,7 @@ def _fetch_live_widget_data(widget, request):
                     'date': t.date.strftime('%Y-%m-%d'),
                     'reference': t.reference_number,
                     'description': t.description or '',
-                    'amount': float(t.total_amount or 0),
+                    'amount': t.total_amount or Decimal('0'),
                     'status': status,
                 })
             if rows:
@@ -844,7 +845,7 @@ def _fetch_live_widget_data(widget, request):
             arr = [
                 {
                     'name': e.description or f'Expense #{e.id}',
-                    'description': f"{e.expense_type or ''} \u2014 \u20a6{float(e.amount or 0):,.0f}".strip(' \u2014'),
+                    'description': f"{e.expense_type or ''} \u2014 \u20a6{e.amount or Decimal('0'):,.0f}".strip(' \u2014'),
                     'icon': 'receipt',
                 }
                 for e in items_qs
@@ -891,8 +892,8 @@ def _fetch_live_widget_data(widget, request):
                     flagged=_Count('id', filter=_Q(is_irregular=True)),
                 )
                 stats = [
-                    {'label': 'Litres (30 days)', 'value': f"{float(totals['total_litres'] or 0):,.0f} L"},
-                    {'label': 'Fuel Cost (30 days)', 'value': f"\u20a6{float(totals['total_cost'] or 0):,.0f}"},
+                    {'label': 'Litres (30 days)', 'value': f"{totals['total_litres'] or Decimal('0'):,.0f} L"},
+                    {'label': 'Fuel Cost (30 days)', 'value': f"\u20a6{totals['total_cost'] or Decimal('0'):,.0f}"},
                     {'label': 'Flagged Items', 'value': str(totals['flagged'] or 0)},
                 ]
                 return {'stats': stats}

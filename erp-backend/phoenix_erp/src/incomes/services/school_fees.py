@@ -6,7 +6,7 @@ Provides high-level API for creating invoices, processing payments, and managing
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from dateutil.relativedelta import relativedelta
 
 from incomes.models import (
@@ -315,9 +315,9 @@ class SchoolFeesService:
         context = {
             'data': {
                 'invoice_id': invoice.id,
-                'invoice_amount': float(invoice.amount),
-                'invoice_balance': float(invoice.balance),
-                'amount': float(amount),
+                'invoice_amount': invoice.amount,
+                'invoice_balance': invoice.balance,
+                'amount': amount,
                 'payment_method': payment_method,
                 'student_name': invoice.client.full_name,
                 'client_id': invoice.client.id,
@@ -400,13 +400,13 @@ class SchoolFeesService:
                 restrictions.append({
                     'fee_type': entitlement.fee_structure.name,
                     'reason': reason,
-                    'balance': float(entitlement.balance)
+                    'balance': entitlement.balance
                 })
             else:
                 required_entitlements.append({
                     'fee_type': entitlement.fee_structure.name,
                     'access_level': entitlement.current_access_level,
-                    'balance': float(entitlement.balance)
+                    'balance': entitlement.balance
                 })
         
         return {
@@ -443,12 +443,12 @@ class SchoolFeesService:
         for ent in entitlements.filter(status__in=['active', 'pending']):
             active_entitlements.append({
                 'fee_type': ent.fee_structure.name,
-                'amount': float(ent.total_amount),
-                'paid': float(ent.amount_paid),
-                'balance': float(ent.balance),
+                'amount': ent.total_amount,
+                'paid': ent.amount_paid,
+                'balance': ent.balance,
                 'status': ent.status,
                 'access_level': ent.current_access_level,
-                'payment_percentage': float(ent.payment_percentage)
+                'payment_percentage': ent.payment_percentage
             })
         
         # Get overdue invoices
@@ -458,8 +458,8 @@ class SchoolFeesService:
                 overdue_invoices.append({
                     'invoice_number': inv.invoice_number,
                     'description': inv.description,
-                    'amount': float(inv.amount),
-                    'balance': float(inv.balance),
+                    'amount': inv.amount,
+                    'balance': inv.balance,
                     'due_date': inv.due_date.isoformat(),
                     'days_overdue': (timezone.now().date() - inv.due_date).days
                 })
@@ -471,8 +471,8 @@ class SchoolFeesService:
                 plan = ent.payment_plan
                 payment_plans.append({
                     'plan_name': plan.plan_name,
-                    'total_amount': float(plan.total_amount),
-                    'installment_amount': float(plan.installment_amount),
+                    'total_amount': plan.total_amount,
+                    'installment_amount': plan.installment_amount,
                     'frequency': plan.frequency,
                     'next_due_date': plan.installments.filter(
                         status='pending'
@@ -482,9 +482,9 @@ class SchoolFeesService:
                 })
         
         return {
-            'total_invoiced': float(total_invoiced),
-            'total_paid': float(total_paid),
-            'total_balance': float(total_balance),
+            'total_invoiced': total_invoiced,
+            'total_paid': total_paid,
+            'total_balance': total_balance,
             'active_entitlements': active_entitlements,
             'overdue_invoices': overdue_invoices,
             'payment_plans': payment_plans

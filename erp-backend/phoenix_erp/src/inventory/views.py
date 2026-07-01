@@ -773,7 +773,7 @@ class StockAdjustmentViewSet(ScopedModelViewSet):
                 branch=request.user.branch,
                 created_by=request.user,
                 status='pending',
-                amount=float(estimated_cost) if estimated_cost else 0.0,
+                amount=estimated_cost if estimated_cost else Decimal('0'),
                 metadata={
                     'item_id': item.id,
                     'item_name': item.name,
@@ -1500,11 +1500,11 @@ class AllocationRedemptionViewSet(ScopedModelViewSet):
                         'message': f'Cannot redeem items: {reason}',
                         'payment_required': True,
                         'payment_status': {
-                            'total_amount': float(fee_entitlement.total_amount),
-                            'amount_paid': float(fee_entitlement.amount_paid),
-                            'minimum_required': float(fee_entitlement.minimum_required),
-                            'balance': float(fee_entitlement.balance),
-                            'payment_percentage': float(fee_entitlement.payment_percentage)
+                            'total_amount': fee_entitlement.total_amount,
+                            'amount_paid': fee_entitlement.amount_paid,
+                            'minimum_required': fee_entitlement.minimum_required,
+                            'balance': fee_entitlement.balance,
+                            'payment_percentage': fee_entitlement.payment_percentage
                         }
                     }, status=status.HTTP_402_PAYMENT_REQUIRED)
             
@@ -2808,14 +2808,14 @@ class PhysicalCountViewSet(ScopedModelViewSet):
         # Summary
         summary = {
             'total_lines': lines.count(),
-            'total_variance_value': float(count.total_variance_value),
+            'total_variance_value': str(Decimal(str(count.total_variance_value))),
             'lines_with_variance': lines.exclude(variance=0).count(),
             'surplus_lines': lines.filter(variance__gt=0).count(),
             'shortage_lines': lines.filter(variance__lt=0).count(),
-            'total_surplus_value': float(lines.filter(variance__gt=0).aggregate(
-                total=Sum('variance_value'))['total'] or 0),
-            'total_shortage_value': float(lines.filter(variance__lt=0).aggregate(
-                total=Sum('variance_value'))['total'] or 0),
+            'total_surplus_value': str(Decimal(str(lines.filter(variance__gt=0).aggregate(
+                total=Sum('variance_value'))['total'] or 0))),
+            'total_shortage_value': str(Decimal(str(lines.filter(variance__lt=0).aggregate(
+                total=Sum('variance_value'))['total'] or 0))),
         }
         
         # By category
@@ -2830,7 +2830,7 @@ class PhysicalCountViewSet(ScopedModelViewSet):
             by_category.append({
                 'category': cat['item__category__name'] or 'Uncategorized',
                 'line_count': cat['line_count'],
-                'variance_value': float(cat['variance_value'] or 0)
+                'variance_value': str(Decimal(str(cat['variance_value'] or 0)))
             })
         
         # By reason
@@ -2844,7 +2844,7 @@ class PhysicalCountViewSet(ScopedModelViewSet):
             by_reason.append({
                 'reason': reason['variance_reason'],
                 'line_count': reason['line_count'],
-                'variance_value': float(reason['variance_value'] or 0)
+                'variance_value': str(Decimal(str(reason['variance_value'] or 0)))
             })
         
         # Top variances
@@ -2913,8 +2913,8 @@ class PhysicalCountViewSet(ScopedModelViewSet):
         
         summary.update({
             'total_lines': summary['total_lines'] or 0,
-            'total_variance_value': float(summary['total_variance_value'] or 0),
-            'avg_variance_percent': float(summary['avg_variance_percent'] or 0),
+            'total_variance_value': str(Decimal(str(summary['total_variance_value'] or 0))),
+            'avg_variance_percent': str(Decimal(str(summary['avg_variance_percent'] or 0)).quantize(Decimal('0.0001'))),
             'total_counts': counts_qs.count(),
         })
         
@@ -2931,7 +2931,7 @@ class PhysicalCountViewSet(ScopedModelViewSet):
             by_location.append({
                 'location': loc['physical_count__location__name'],
                 'line_count': loc['line_count'],
-                'variance_value': float(loc['variance_value'] or 0)
+                'variance_value': str(Decimal(str(loc['variance_value'] or 0)))
             })
         
         # Group by category
@@ -2945,7 +2945,7 @@ class PhysicalCountViewSet(ScopedModelViewSet):
             by_category.append({
                 'category': cat['item__category__name'] or 'Uncategorized',
                 'line_count': cat['line_count'],
-                'variance_value': float(cat['variance_value'] or 0)
+                'variance_value': str(Decimal(str(cat['variance_value'] or 0)))
             })
         
         # Group by reason
@@ -2959,7 +2959,7 @@ class PhysicalCountViewSet(ScopedModelViewSet):
             by_reason.append({
                 'reason': reason['variance_reason'],
                 'line_count': reason['line_count'],
-                'variance_value': float(reason['variance_value'] or 0)
+                'variance_value': str(Decimal(str(reason['variance_value'] or 0)))
             })
         
         return Response({

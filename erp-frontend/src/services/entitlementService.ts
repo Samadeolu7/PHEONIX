@@ -1,5 +1,6 @@
 // src/services/entitlementService.ts
 import { api } from './api';
+import { toDecimal } from '../utils/decimal';
 
 export interface FeeEntitlement {
   id: number;
@@ -270,9 +271,9 @@ export const entitlementService = {
             !ent.access_rules.restricted_services.includes(serviceCode)
         ) || entitlements.results[0];
 
-      const paymentPercentage = parseFloat(relevantEntitlement.payment_percentage);
-      const requiredPercentage = relevantEntitlement.access_rules.full_access_at_percent || 100;
-      const minimumPercentage = relevantEntitlement.access_rules.minimum_percent || 0;
+      const paymentPercentage = toDecimal(relevantEntitlement.payment_percentage);
+      const requiredPercentage = toDecimal(relevantEntitlement.access_rules.full_access_at_percent || 100);
+      const minimumPercentage = toDecimal(relevantEntitlement.access_rules.minimum_percent || 0);
 
       // Check if service is explicitly restricted
       const isRestricted =
@@ -288,13 +289,13 @@ export const entitlementService = {
         canAccess = false;
         reason = `Entitlement is ${relevantEntitlement.status}`;
         restrictions.push(`Entitlement status: ${relevantEntitlement.status}`);
-      } else if (isRestricted && paymentPercentage < requiredPercentage) {
+      } else if (isRestricted && paymentPercentage.lessThan(requiredPercentage)) {
         canAccess = false;
-        reason = `Service requires ${requiredPercentage}% payment. Current: ${paymentPercentage.toFixed(1)}%`;
+        reason = `Service requires ${requiredPercentage.toFixed(1)}% payment. Current: ${paymentPercentage.toFixed(1)}%`;
         restrictions.push(`Insufficient payment for restricted service`);
-      } else if (!isAllowed && !isRestricted && paymentPercentage < minimumPercentage) {
+      } else if (!isAllowed && !isRestricted && paymentPercentage.lessThan(minimumPercentage)) {
         canAccess = false;
-        reason = `Minimum ${minimumPercentage}% payment required. Current: ${paymentPercentage.toFixed(1)}%`;
+        reason = `Minimum ${minimumPercentage.toFixed(1)}% payment required. Current: ${paymentPercentage.toFixed(1)}%`;
         restrictions.push(`Below minimum payment threshold`);
       } else {
         canAccess = true;
@@ -304,7 +305,7 @@ export const entitlementService = {
       return {
         can_access: canAccess,
         reason,
-        payment_percentage: paymentPercentage,
+        payment_percentage: paymentPercentage.toNumber(),
         required_percentage: requiredPercentage,
         amount_paid: relevantEntitlement.amount_paid,
         balance: relevantEntitlement.balance,

@@ -91,7 +91,7 @@ def auto_apply_discounts_after_approval(self, application_id, user_id):
             'client_name': application.client.name,
             'applied_count': len(applied_discounts),
             'total_discount_amount': sum(
-                float(ad.discount_amount) for ad in applied_discounts
+                ad.discount_amount for ad in applied_discounts
             ),
             'applied_discount_ids': [ad.id for ad in applied_discounts]
         }

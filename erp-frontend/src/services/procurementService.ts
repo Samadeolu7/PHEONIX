@@ -1,6 +1,7 @@
 // src/services/procurementService.ts
 import { api } from './api';
 import { ErrorHandler } from '../utils/errorHandler';
+import { sumDecimals } from '../utils/decimal';
 import {
   PurchaseRequisition,
   CreatePurchaseRequisitionData,
@@ -1116,11 +1117,7 @@ class ProcurementService {
       status: data.status || 'pending',
       total_amount:
         data.total_amount ||
-        data.items
-          .reduce((sum, item) => {
-            return sum + parseFloat(item.return_cost || '0');
-          }, 0)
-          .toString(),
+        sumDecimals(data.items.map(item => item.return_cost || '0')).toFixed(2),
 
       // Transform items to match API expectations
       items: data.items.map(item => {

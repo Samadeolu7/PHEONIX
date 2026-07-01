@@ -5,6 +5,7 @@ Provides common functionality for variable resolution, condition evaluation, etc
 """
 from typing import Dict, Any, List
 from abc import ABC, abstractmethod
+from decimal import Decimal
 import re
 import operator as op
 import logging
@@ -387,8 +388,8 @@ class BaseStepHandler(ABC):
         import re
         match = re.search(r'[\d.]+', condition_str)
         if match:
-            return float(match.group())
-        return 0
+            return Decimal(match.group())
+        return Decimal('0')
     
     def _safe_get(self, dictionary: Dict, key: str, default: Any = None) -> Any:
         """
@@ -431,9 +432,9 @@ class BaseStepHandler(ABC):
         
         elif format_type == 'percentage':
             try:
-                val = float(value)
+                val = Decimal(str(value))
                 return f"{val:.2f}%"
-            except:
+            except Exception:
                 return str(value)
         
         elif format_type == 'date':

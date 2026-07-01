@@ -572,7 +572,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                         branch=user.branch,
                         created_by=user,
                         status=invoice.status,
-                        amount=float(invoice.total_amount) if invoice.total_amount else 0.0,
+                        amount=invoice.total_amount if invoice.total_amount else None,
                         metadata=invoice.metadata or {}
                     )
                     
@@ -1569,7 +1569,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                         branch=request.user.branch,
                         created_by=request.user,
                         status=invoice.status,
-                        amount=float(invoice.amount),
+                        amount=invoice.amount,
                         metadata=invoice.metadata or {}
                     )
                     
@@ -1592,7 +1592,7 @@ class InvoiceViewSet(ScopedModelViewSet):
             'success': True,
             'created_count': len(created_invoices),
             'failed_count': len(failed),
-            'total_amount': str(sum(float(inv['amount']) for inv in created_invoices)),
+            'total_amount': str(sum(Decimal(inv['amount']) for inv in created_invoices)),
             'created_invoices': created_invoices,
             'failed': failed if failed else None
         }, status=status.HTTP_201_CREATED if created_invoices else status.HTTP_400_BAD_REQUEST)
@@ -1713,14 +1713,14 @@ class InvoiceViewSet(ScopedModelViewSet):
             if class_invoices:
                 results_by_class[class_code] = {
                     'count': len(class_invoices),
-                    'total_amount': float(sum(inv.amount for inv in class_invoices))
+                    'total_amount': str(sum(inv.amount for inv in class_invoices))
                 }
                 total_invoices += len(class_invoices)
         
         return Response({
             "message": f"Generated {total_invoices} draft invoices",
             "total_invoices": total_invoices,
-            "total_amount": float(total_amount),
+            "total_amount": str(total_amount),
             "classes": results_by_class,
             "status": "draft",
             "next_step": "Review class summaries and approve"
@@ -2102,7 +2102,7 @@ class InvoiceViewSet(ScopedModelViewSet):
         
         try:
             sample_size = int(sample_size) if sample_size else None
-            sample_pct = float(sample_pct)
+            sample_pct = Decimal(str(sample_pct))
         except ValueError:
             return Response(
                 {"error": "sample_size and sample_pct must be numeric"},
@@ -2503,12 +2503,12 @@ class FeeEntitlementViewSet(ScopedModelViewSet):
                 # 4. Build comprehensive access rules
                 complete_access_rules = {
                     'requires_minimum': True,
-                    'full_access_at_percent': float(full_access_percent),
+                    'full_access_at_percent': str(full_access_percent),
                     'grace_period_days': grace_period_days,
                     'restrict_on_overdue': True,
                     'allowed_services': allowed_services,
                     'restricted_services': restricted_services,
-                    'minimum_percent': float(minimum_percent)
+                    'minimum_percent': str(minimum_percent)
                 }
                 
                 # 5. Create entitlement

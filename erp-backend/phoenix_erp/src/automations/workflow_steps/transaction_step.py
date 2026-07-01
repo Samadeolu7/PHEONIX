@@ -152,7 +152,7 @@ class TransactionStepHandler:
                 'transaction_id': transaction.id,
                 'reference_number': transaction.reference_number,
                 'date': transaction.date.isoformat(),
-                'amount': float(dr_total),
+                'amount': dr_total,
                 'entries_count': len(created_entries),
                 'balanced': True
             }

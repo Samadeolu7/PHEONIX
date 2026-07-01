@@ -3,7 +3,7 @@ Aggregate Step Handler
 Performs aggregate operations on collections (sum, avg, count, etc.)
 """
 from typing import Dict, Any, List
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import logging
 
 from .base import BaseStepHandler
@@ -108,14 +108,13 @@ class AggregateStepHandler(BaseStepHandler):
                 if field and not numeric_values and values:
                     raise ValueError(f"Cannot calculate sum for field '{field}': no numeric values found")
                 result = sum(Decimal(str(v)) for v in numeric_values)
-                result = float(result)
             
             elif op_type == 'avg':
                 numeric_values = [Decimal(str(v)) for v in values if self._is_numeric(v)]
                 # Validate that we have numeric values for avg operation
                 if field and not numeric_values and values:
                     raise ValueError(f"Cannot calculate average for field '{field}': no numeric values found")
-                result = float(sum(numeric_values) / len(numeric_values)) if numeric_values else 0
+                result = (sum(numeric_values) / Decimal(str(len(numeric_values)))).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP) if numeric_values else Decimal('0')
             
             elif op_type == 'count':
                 result = len(collection)
@@ -197,7 +196,7 @@ class AggregateStepHandler(BaseStepHandler):
     def _is_numeric(self, value: Any) -> bool:
         """Check if value is numeric"""
         try:
-            float(value)
+            Decimal(str(value))
             return True
-        except (ValueError, TypeError):
+        except Exception:
             return False

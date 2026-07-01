@@ -1,4 +1,5 @@
 from typing import Dict, Any, Optional
+from decimal import Decimal
 from django.db import transaction as db_transaction
 from django.utils import timezone
 from automations.models import WorkflowTemplate, WorkflowRun
@@ -165,7 +166,7 @@ class SubWorkflowExecutor:
                     # e.g., "amount > 0"
                     try:
                         field, op, threshold = validation.split()
-                        if field == name and op == '>' and float(value) <= float(threshold):
+                        if field == name and op == '>' and Decimal(str(value)) <= Decimal(str(threshold)):
                             raise ValueError(f"Input '{name}' must be > {threshold}")
                     except:
                         pass

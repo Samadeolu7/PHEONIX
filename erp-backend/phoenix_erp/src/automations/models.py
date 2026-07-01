@@ -15,7 +15,7 @@ from decimal import Decimal
 def serialize_for_json(obj):
     """Convert objects to JSON-serializable format"""
     if isinstance(obj, Decimal):
-        return float(obj)
+        return str(obj)  # Preserve precision as string
     elif isinstance(obj, dict):
         return {k: serialize_for_json(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):
@@ -85,8 +85,8 @@ class FormSchema(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             
             if value and field.get("type") in ("number", "money"):
                 try:
-                    float(value)
-                except (TypeError, ValueError):
+                    Decimal(str(value))
+                except (TypeError, ValueError, Exception):
                     errors[field_id] = f"{field.get('label', field_id)} must be a number"
         
         return errors
@@ -1173,13 +1173,13 @@ class WorkflowConditionEvaluator:
         elif op == 'not_equals' or op == '!=':
             return actual_value != value
         elif op == 'greater_than' or op == '>':
-            return float(actual_value or 0) > float(value)
+            return Decimal(str(actual_value or 0)) > Decimal(str(value))
         elif op == 'less_than' or op == '<':
-            return float(actual_value or 0) < float(value)
+            return Decimal(str(actual_value or 0)) < Decimal(str(value))
         elif op == 'greater_equal' or op == '>=':
-            return float(actual_value or 0) >= float(value)
+            return Decimal(str(actual_value or 0)) >= Decimal(str(value))
         elif op == 'less_equal' or op == '<=':
-            return float(actual_value or 0) <= float(value)
+            return Decimal(str(actual_value or 0)) <= Decimal(str(value))
         elif op == 'in':
             return actual_value in value if isinstance(value, list) else False
         elif op == 'not_in':

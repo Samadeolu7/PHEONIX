@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import datetime
 
 def _is_global_user(user):
@@ -203,8 +203,8 @@ class MicrofinanceDashboardStatsView(APIView):
             outstanding = agg['outstanding'] or Decimal('0.00')
             total_obligation = paid + outstanding
             data['loan_repayment_rate'] = (
-                round(float(paid / total_obligation) * 100, 1)
-                if total_obligation > 0 else 0.0
+                (paid / total_obligation * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+                if total_obligation > 0 else Decimal('0')
             )
 
             # Defaulting loans (CBN classification = loss/doubtful or status=defaulted)
@@ -217,7 +217,7 @@ class MicrofinanceDashboardStatsView(APIView):
                 days_in_arrears__gte=30
             ).aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0')
             data['par30_ratio'] = (
-                round(float(par30_bal / glp) * 100, 2) if glp > 0 else 0.0
+                (par30_bal / glp * 100).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) if glp > 0 else Decimal('0')
             )
             data['par30_amount'] = str(par30_bal)
 
@@ -391,8 +391,8 @@ class LoanRepaymentTrendView(APIView):
             result.append({
                 'month': f"{year}-{month:02d}",
                 'label': datetime.date(year, month, 1).strftime('%b %Y'),
-                'disbursed': float(disbursed),
-                'repaid': float(repaid),
+                'disbursed': disbursed,
+                'repaid': repaid,
             })
 
         return Response({'success': True, 'data': result})

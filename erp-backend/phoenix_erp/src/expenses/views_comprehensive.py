@@ -18,7 +18,7 @@ from rest_framework import filters
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from django.core.exceptions import ValidationError
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from expenses.models import Expense, ExpenseCategory, PrepaidExpense
 from expenses.serializers import (
@@ -102,7 +102,7 @@ class ExpenseCategoryViewSet(ScopedModelViewSet):
             'period_start': str(period_start),
             'total_spent': str(spent),
             'remaining': str(remaining),
-            'utilization_percent': round(float(utilization), 1),
+            'utilization_percent': utilization.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP),
             'is_over_budget': spent > budget,
         })
 

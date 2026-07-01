@@ -102,19 +102,19 @@ class FormSchema(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     if field.get("type") == "money":
                         value = Decimal(str(raw_value))
                     else:
-                        value = float(raw_value)
+                        value = Decimal(str(raw_value))
                 except (TypeError, ValueError, InvalidOperation):
                     errors[field_id] = f"{field.get('label', field_id)} must be a number"
                     continue
             else:
                 value = raw_value
 
-            # min / max checks (coerce to float for comparisons)
+            # min / max checks using Decimal for precision
             if validation.get("min") is not None:
-                if float(value) < float(validation["min"]):
+                if Decimal(str(value)) < Decimal(str(validation["min"])):
                     errors[field_id] = f"{field.get('label', field_id)} must be at least {validation['min']}"
             if validation.get("max") is not None:
-                if float(value) > float(validation["max"]):
+                if Decimal(str(value)) > Decimal(str(validation["max"])):
                     errors[field_id] = f"{field.get('label', field_id)} must be at most {validation['max']}"
 
             # pattern validation
@@ -368,13 +368,13 @@ class BusinessFunction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             expected_type = rule.get("type")
             if expected_type == "number":
                 try:
-                    float(value)
-                except (TypeError, ValueError):
+                    Decimal(str(value))
+                except (TypeError, ValueError, InvalidOperation):
                     errors.append(f"{field} must be a number")
 
-            if "min" in rule and float(value) < rule["min"]:
+            if "min" in rule and Decimal(str(value)) < Decimal(str(rule["min"])):
                 errors.append(f"{field} must be at least {rule['min']}")
-            if "max" in rule and float(value) > rule["max"]:
+            if "max" in rule and Decimal(str(value)) > Decimal(str(rule["max"])):
                 errors.append(f"{field} must be at most {rule['max']}")
 
             if "pattern" in rule:

@@ -94,7 +94,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
     
     def get_current_meter_reading(self, obj):
         reading = obj.current_meter_reading
-        return float(reading) if reading is not None else None
+        return reading if reading is not None else None
 
     def get_consumption_count_30d(self, obj):
         return obj.consumption_count(days=30)

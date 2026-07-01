@@ -226,10 +226,10 @@ class MaterialRequestViewSet(ScopedModelViewSet):
                         'item_id': mr_item.item.id,
                         'item_name': mr_item.item.name,
                         'sku': mr_item.item.sku,
-                        'requested': float(mr_item.quantity),
-                        'available': float(stock.quantity_available),
-                        'on_hand': float(stock.quantity_on_hand),
-                        'reserved': float(stock.quantity_reserved),
+                        'requested': mr_item.quantity,
+                        'available': stock.quantity_available,
+                        'on_hand': stock.quantity_on_hand,
+                        'reserved': stock.quantity_reserved,
                         'status': 'available' if stock.quantity_available >= mr_item.quantity else 'insufficient'
                     }
                 except InventoryStock.DoesNotExist:
@@ -237,7 +237,7 @@ class MaterialRequestViewSet(ScopedModelViewSet):
                         'item_id': mr_item.item.id,
                         'item_name': mr_item.item.name,
                         'sku': mr_item.item.sku,
-                        'requested': float(mr_item.quantity),
+                        'requested': mr_item.quantity,
                         'available': 0,
                         'on_hand': 0,
                         'reserved': 0,

@@ -309,6 +309,9 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
         'rest_framework.renderers.BrowsableAPIRenderer',
     ],
+    # Serialize Decimal as numeric (not string) so chart libraries and frontend
+    # receive proper JSON numbers while still using Decimal precision internally.
+    'COERCE_DECIMAL_TO_STRING': False,
     'EXCEPTION_HANDLER': 'common.error_handlers.custom_exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',

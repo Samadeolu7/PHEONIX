@@ -5,7 +5,7 @@ Three-Way Matching Service
 Matches Purchase Order → Goods Received Note → Supplier Invoice
 to detect discrepancies before payment approval.
 """
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Tuple, Optional
 from django.db import transaction
 from django.utils import timezone
@@ -30,13 +30,13 @@ class MatchingResult:
         self.message = ""
     
     def to_dict(self):
-        # Try to convert to float, but keep as-is if it's a string (e.g., supplier name)
-        def safe_float(value):
+        # Try to convert to Decimal, but keep as-is if it's a string (e.g., supplier name)
+        def safe_decimal(value):
             if value is None:
                 return None
             try:
-                return float(value)
-            except (ValueError, TypeError):
+                return Decimal(str(value))
+            except (ValueError, TypeError, Exception):
                 return value
         
         # Map is_match to status for backward compatibility
@@ -60,10 +60,10 @@ class MatchingResult:
             'is_match': self.is_match,
             'status': status,  # For backward compatibility
             'severity': severity,  # For backward compatibility
-            'expected_value': safe_float(self.expected_value),
-            'actual_value': safe_float(self.actual_value),
-            'variance_amount': float(self.variance_amount) if self.variance_amount else None,
-            'variance_percentage': float(self.variance_percentage) if self.variance_percentage else None,
+            'expected_value': safe_decimal(self.expected_value),
+            'actual_value': safe_decimal(self.actual_value),
+            'variance_amount': self.variance_amount if self.variance_amount else None,
+            'variance_percentage': self.variance_percentage if self.variance_percentage else None,
             'action_required': self.action_required,
             'approver_role': self.approver_role,
             'message': self.message,
@@ -349,7 +349,7 @@ class ThreeWayMatchingService:
             'summary': self._generate_summary(),
             'po_number': po.po_number,
             'grn_number': grn.grn_number,
-            'invoice_amount': float(invoice_amount)
+            'invoice_amount': invoice_amount
         }
     
     def _match_supplier(self, po: PurchaseOrder, grn: GoodsReceivedNote):

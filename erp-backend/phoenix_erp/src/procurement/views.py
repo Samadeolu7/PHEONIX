@@ -589,7 +589,7 @@ class PurchaseRequisitionViewSet(ScopedModelViewSet):
                     context={
                         'pr_id': pr.id,
                         'reference_number': pr_number,
-                        'estimated_total': float(estimated_total),
+                        'estimated_total': str(estimated_total),
                         'department': pr_data.get('department', ''),
                         'items': items,
                         'triggered_by_user_id': request.user.id,
@@ -620,7 +620,7 @@ class PurchaseRequisitionViewSet(ScopedModelViewSet):
                     'pr_number': pr_number,
                     'workflow_run_id': workflow_run.id,
                     'status': pr.status,
-                    'estimated_total': float(estimated_total),
+                    'estimated_total': estimated_total,
                     'message': 'Purchase requisition created and workflow started'
                 })
                 

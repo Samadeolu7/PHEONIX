@@ -4,7 +4,7 @@ Service for managing school receivables and invoices
 Flexible discount system with configurable eligibility criteria
 """
 from typing import List, Dict, Tuple, Optional
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -345,7 +345,7 @@ class ReceivablesService:
         else:  # full_waiver
             discount_amount = total_amount
         
-        return Decimal(str(round(float(discount_amount), 2)))
+        return discount_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     def _has_sibling_in_school(self, student: Client) -> bool:
         """Check if student has siblings currently in school"""
@@ -376,8 +376,8 @@ class ReceivablesService:
         gpa = metadata.get('gpa') or metadata.get('grade_point_average')
         if gpa:
             try:
-                return float(gpa)
-            except (ValueError, TypeError):
+                return Decimal(str(gpa))
+            except (ValueError, TypeError, Exception):
                 return None
         return None
     
@@ -519,7 +519,7 @@ class ReceivablesService:
                 {
                     'fee_code': item['fee_structure'].code,
                     'description': item['description'],
-                    'base_amount': float(item['base_amount']),
+                    'base_amount': str(item['base_amount']),
                     'category_code': item['category'].code,
                     'category_name': item['category'].name,
                     'is_mandatory': item['is_mandatory']
@@ -531,16 +531,16 @@ class ReceivablesService:
                     'program_code': disc['program'].program_code,
                     'program_name': disc['program'].name,
                     'program_type': disc['program'].program_type,
-                    'discount_amount': float(disc['discount_amount']),
+                    'discount_amount': str(disc['discount_amount']),
                     'reason': disc['reason'],
                     'auto_approved': disc['auto_approved'],
                     'criteria_met': disc['criteria_met']
                 }
                 for disc in (applicable_discounts or [])
             ],
-            'total_base_amount': float(total_base_amount),
-            'total_discount': float(total_discount),
-            'final_amount': float(final_amount)
+            'total_base_amount': str(total_base_amount),
+            'total_discount': str(total_discount),
+            'final_amount': str(final_amount)
         }
         
         # Create invoice
@@ -681,16 +681,16 @@ class ReceivablesService:
             'class_name': invoices[0].metadata.get('class_name', '') if invoices else '',
             'student_count': student_count,
             'invoice_count': len(invoices),
-            'total_base_amount': float(base_total),
-            'total_discounts': float(discount_total),
-            'total_mandatory_fees': float(mandatory_total),
-            'total_optional_fees': float(optional_total),
-            'grand_total': float(grand_total),
-            'average_per_student': float(avg_per_student),
+            'total_base_amount': base_total,
+            'total_discounts': discount_total,
+            'total_mandatory_fees': mandatory_total,
+            'total_optional_fees': optional_total,
+            'grand_total': grand_total,
+            'average_per_student': avg_per_student,
             'discount_summary': [
                 {
                     **prog,
-                    'total_amount': float(prog['total_amount'])
+                    'total_amount': prog['total_amount']
                 }
                 for prog in discount_programs.values()
             ],
@@ -698,9 +698,9 @@ class ReceivablesService:
                 {
                     'invoice_number': inv.invoice_number,
                     'student_name': inv.client.full_name,
-                    'base_amount': float(inv.metadata.get('total_base_amount', 0)),
-                    'discount_amount': float(inv.metadata.get('total_discount', 0)),
-                    'final_amount': float(inv.amount),
+                    'base_amount': Decimal(str(inv.metadata.get('total_base_amount', 0))),
+                    'discount_amount': Decimal(str(inv.metadata.get('total_discount', 0))),
+                    'final_amount': inv.amount,
                     'has_discounts': bool(inv.metadata.get('discount_breakdown'))
                 }
                 for inv in invoices

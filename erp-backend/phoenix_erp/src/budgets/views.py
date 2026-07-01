@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from django.db.models import Sum, Q, Count, F
 from django.utils import timezone
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from common.views import ScopedModelViewSet
 from .models import BudgetPeriod, BudgetLine
@@ -147,7 +147,7 @@ class BudgetPeriodViewSet(ScopedModelViewSet):
         # Get query parameters
         department_id = request.query_params.get('department_id')
         account_type = request.query_params.get('account_type')
-        threshold = float(request.query_params.get('threshold', 0))
+        threshold = Decimal(str(request.query_params.get('threshold', 0)))
         group_by = request.query_params.get('group_by', 'account')
         
         # Get budget lines with filters
@@ -192,8 +192,8 @@ class BudgetPeriodViewSet(ScopedModelViewSet):
                 'budget': str(line.amount),
                 'actual': str(variance_data['actual']),
                 'variance': str(variance_data['variance']),
-                'variance_percent': float(variance_data['variance_percent']),
-                'utilization_percent': float(variance_data['utilization_percent']),
+                'variance_percent': variance_data['variance_percent'],
+                'utilization_percent': variance_data['utilization_percent'],
                 'status': variance_data['status']
             })
         
@@ -206,8 +206,8 @@ class BudgetPeriodViewSet(ScopedModelViewSet):
             'total_budget': str(total_budget),
             'total_actual': str(total_actual),
             'total_variance': str(total_variance),
-            'variance_percent': float(variance_percent),
-            'utilization_percent': float(utilization_percent),
+            'variance_percent': variance_percent,
+            'utilization_percent': utilization_percent,
             'line_count': len(lines_data),
             'over_budget_count': over_budget_count,
             'under_budget_count': under_budget_count,
@@ -237,8 +237,8 @@ class BudgetPeriodViewSet(ScopedModelViewSet):
                     'budget': str(data['budget']),
                     'actual': str(data['actual']),
                     'variance': str(variance),
-                    'variance_percent': float((variance / data['budget'] * 100) if data['budget'] else 0),
-                    'utilization_percent': float((data['actual'] / data['budget'] * 100) if data['budget'] else 0),
+                    'variance_percent': (variance / data['budget'] * 100) if data['budget'] else Decimal('0'),
+                    'utilization_percent': (data['actual'] / data['budget'] * 100) if data['budget'] else Decimal('0'),
                     'line_count': data['line_count']
                 })
         
@@ -265,8 +265,8 @@ class BudgetPeriodViewSet(ScopedModelViewSet):
                 'budget': str(data['budget']),
                 'actual': str(data['actual']),
                 'variance': str(variance),
-                'variance_percent': float((variance / data['budget'] * 100) if data['budget'] else 0),
-                'utilization_percent': float((data['actual'] / data['budget'] * 100) if data['budget'] else 0),
+                'variance_percent': (variance / data['budget'] * 100) if data['budget'] else Decimal('0'),
+                'utilization_percent': (data['actual'] / data['budget'] * 100) if data['budget'] else Decimal('0'),
                 'line_count': data['line_count']
             })
         

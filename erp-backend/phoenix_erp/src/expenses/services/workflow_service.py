@@ -50,7 +50,7 @@ class ExpenseWorkflowService:
         
         return {
             'success': True,
-            'amount': float(expense.total_amount),
+            'amount': expense.total_amount,
             'expense_type': expense.expense_type,
             'next_action': 'route_to_approver'
         }

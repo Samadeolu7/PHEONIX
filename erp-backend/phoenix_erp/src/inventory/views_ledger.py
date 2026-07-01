@@ -15,7 +15,7 @@ Endpoints:
   GET /api/inventory/ledger/{id}/cost_analysis/  — costing method explanation
   GET /api/inventory/ledger/movements_by_invoice/ — helper by invoice
 """
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -121,11 +121,11 @@ class InventoryLedgerViewSet(ScopedModelViewSet):
             )
 
         return {
-            'previous_avg_cost':    float(old_avg),
-            'new_avg_cost':         float(new_avg),
-            'change_per_unit':      float(delta),
-            'qty_before_receipt':   float(qty_before),
-            'implicit_revaluation': float(reval),
+            'previous_avg_cost':    str(old_avg),
+            'new_avg_cost':         str(new_avg),
+            'change_per_unit':      str(delta),
+            'qty_before_receipt':   str(qty_before),
+            'implicit_revaluation': str(reval),
             'direction':            direction,
             'accounting_note':      note,
         }
@@ -350,13 +350,13 @@ class InventoryLedgerViewSet(ScopedModelViewSet):
                 'date':                  mv.movement_date.isoformat(),
                 'movement_type':         mv.movement_type,
                 'movement_type_display': MOVEMENT_DISPLAY.get(mv.movement_type, mv.movement_type),
-                'quantity_in':           float(qty) if is_in  else 0,
-                'quantity_out':          float(qty) if not is_in else 0,
-                'unit_cost':             float(cost),
-                'total_cost':            float(mv.total_cost or qty * cost),
-                'running_qty':           float(run_qty),
-                'running_avg_cost':      float(run_avg),
-                'running_value':         float(run_value),
+                'quantity_in':           str(qty) if is_in  else '0',
+                'quantity_out':          str(qty) if not is_in else '0',
+                'unit_cost':             str(cost),
+                'total_cost':            str(mv.total_cost or qty * cost),
+                'running_qty':           str(run_qty),
+                'running_avg_cost':      str(run_avg),
+                'running_value':         str(run_value),
                 'cost_changed':          cost_changed,
                 'cost_change':           cost_change,
                 'source':                source_block,
@@ -390,24 +390,24 @@ class InventoryLedgerViewSet(ScopedModelViewSet):
                 'valuation_method_display': VALUATION_DISPLAY.get(
                     item.valuation_method, item.valuation_method
                 ),
-                'current_cost':             float(live_avg),
-                'current_quantity':         float(live_qty),
-                'current_value':            float(live_val),
+                'current_cost':             str(live_avg),
+                'current_quantity':         str(live_qty),
+                'current_value':            str(live_val),
                 'category_name':            item.category.name if item.category else '',
                 'is_active':                item.is_active,
             },
             'period': {'date_from': date_from, 'date_to': date_to},
             'summary': {
-                'opening_qty':          float(open_qty),
-                'opening_avg_cost':     float(open_avg),
-                'opening_value':        float(open_value),
-                'total_received_qty':   float(total_in_qty),
-                'total_received_value': float(total_in_val),
-                'total_issued_qty':     float(total_out_qty),
-                'total_issued_value':   float(total_out_val),
-                'closing_qty':          float(run_qty),
-                'closing_avg_cost':     float(run_avg),
-                'closing_value':        float(run_qty * run_avg),
+                'opening_qty':          str(open_qty),
+                'opening_avg_cost':     str(open_avg),
+                'opening_value':        str(open_value),
+                'total_received_qty':   str(total_in_qty),
+                'total_received_value': str(total_in_val),
+                'total_issued_qty':     str(total_out_qty),
+                'total_issued_value':   str(total_out_val),
+                'closing_qty':          str(run_qty),
+                'closing_avg_cost':     str(run_avg),
+                'closing_value':        str(run_qty * run_avg),
                 'cost_change_count':    cost_changes,
             },
             'entries':     entries,
@@ -442,18 +442,18 @@ class InventoryLedgerViewSet(ScopedModelViewSet):
                 curr_qty, curr_avg, hyp_qty, hyp_cost, item.valuation_method
             )
             return {
-                'purchase_qty':   float(hyp_qty),
-                'purchase_cost':  float(hyp_cost),
-                'receipt_value':  float(hyp_qty * hyp_cost),
+                'purchase_qty':   hyp_qty,
+                'purchase_cost':  hyp_cost,
+                'receipt_value':  hyp_qty * hyp_cost,
                 'journal_entry': {
-                    'debit':  f"Inventory Asset  DR  {float(hyp_qty * hyp_cost):,.2f}",
-                    'credit': f"Accounts Payable CR  {float(hyp_qty * hyp_cost):,.2f}",
+                    'debit':  f"Inventory Asset  DR  {hyp_qty * hyp_cost:,.2f}",
+                    'credit': f"Accounts Payable CR  {hyp_qty * hyp_cost:,.2f}",
                 },
-                'new_avg_cost':            float(new_avg),
-                'avg_cost_change':         float(new_avg - curr_avg),
-                'implicit_stock_reval':    float(curr_qty * (new_avg - curr_avg)),
-                'future_cogs_per_unit':    float(new_avg),
-                'cogs_change_vs_current':  float(new_avg - curr_avg),
+                'new_avg_cost':            new_avg,
+                'avg_cost_change':         new_avg - curr_avg,
+                'implicit_stock_reval':    curr_qty * (new_avg - curr_avg),
+                'future_cogs_per_unit':    new_avg,
+                'cogs_change_vs_current':  new_avg - curr_avg,
             }
 
         EXPLANATIONS = {
@@ -500,9 +500,9 @@ class InventoryLedgerViewSet(ScopedModelViewSet):
                 ),
             },
             'current_position': {
-                'quantity_on_hand': float(curr_qty),
-                'average_cost':     float(curr_avg),
-                'total_value':      float(curr_val),
+                'quantity_on_hand': curr_qty,
+                'average_cost':     curr_avg,
+                'total_value':      curr_val,
             },
             'explanation': EXPLANATIONS.get(item.valuation_method, ''),
             'examples': {
@@ -547,8 +547,8 @@ class InventoryLedgerViewSet(ScopedModelViewSet):
                         'id': inv_item.item.id, 'name': inv_item.item.name,
                         'sku': inv_item.item.sku,
                     },
-                    'quantity':      float(mv.quantity),
-                    'unit_cost':     float(mv.unit_cost),
+                    'quantity':      mv.quantity,
+                    'unit_cost':     mv.unit_cost,
                     'location':      {'id': loc.id, 'name': loc.name} if loc else None,
                     'movement_date': mv.movement_date.isoformat(),
                     'created_by':    mv.created_by.get_full_name() if mv.created_by else None,

@@ -2,6 +2,7 @@
 import { procurementService } from './procurementService';
 import { inventoryService } from './inventoryService';
 import { accountService } from './accountService';
+import { mulDecimals } from '../utils/decimal';
 import {
   GoodsReceivedNote,
   PurchaseReturn,
@@ -76,7 +77,7 @@ class ProcurementIntegrationService {
               movement_type: 'receipt',
               quantity: grnItem.quantity_accepted.toString(),
               unit_cost: grnItem.unit_cost,
-              total_cost: (grnItem.quantity_accepted * parseFloat(grnItem.unit_cost)).toString(),
+              total_cost: mulDecimals(grnItem.quantity_accepted, grnItem.unit_cost).toFixed(2),
               reference_number: grn.grn_number,
               reference_type: 'grn',
               reference_id: grnId,

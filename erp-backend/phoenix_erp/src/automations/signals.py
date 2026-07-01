@@ -59,7 +59,7 @@ def handle_transaction_created(sender, instance, created, **kwargs):
     event_data = {
         'transaction_id': instance.id,
         'account_id': instance.account_id if hasattr(instance, 'account_id') else None,
-        'amount': float(instance.amount) if hasattr(instance, 'amount') else 0,
+        'amount': instance.amount if hasattr(instance, 'amount') else 0,
         'transaction_type': instance.transaction_type if hasattr(instance, 'transaction_type') else 'unknown',
         'timestamp': instance.created_at.isoformat(),
     }

@@ -10,7 +10,7 @@ from rest_framework.exceptions import NotFound
 from django.db import transaction
 from django.utils import timezone
 from django.http import FileResponse, HttpResponse
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import logging
 
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
@@ -702,7 +702,7 @@ class LeaveBalanceViewSet(ScopedModelViewSet):
                     },
                     'start_date': lr.start_date.isoformat(),
                     'end_date': lr.end_date.isoformat(),
-                    'num_days': float(lr.num_days),
+                    'num_days': lr.num_days,
                     'status': lr.status,
                     'year': year
                 })
@@ -714,8 +714,8 @@ class LeaveBalanceViewSet(ScopedModelViewSet):
                         'id': lr.staff.id,
                         'name': f"{lr.staff.first_name} {lr.staff.last_name}"
                     },
-                    'requested': float(lr.num_days),
-                    'available': float(balance.available_days)
+                    'requested': lr.num_days,
+                    'available': balance.available_days
                 })
         
         # Group orphaned by staff
@@ -1233,7 +1233,7 @@ class PayrollViewSet(ScopedModelViewSet):
             branch=user.branch,
             created_by=user,
             status=payroll.status,
-            amount=float(payroll.total_net_pay) if payroll.total_net_pay else 0.0,
+            amount=payroll.total_net_pay if payroll.total_net_pay else Decimal('0'),
             metadata={
                 'period_start': payroll.period_start.isoformat() if payroll.period_start else None,
                 'period_end': payroll.period_end.isoformat() if payroll.period_end else None,
@@ -1809,7 +1809,7 @@ class PayrollViewSet(ScopedModelViewSet):
         # Summary statistics
         total_leave_days = sum(lr['num_days'] for lr in leave_requests)
         total_overtime_hours = sum(
-            float(ot['total_overtime_hours'] or 0) 
+            Decimal(str(ot['total_overtime_hours'] or 0)) 
             for ot in overtime_records
         )
         
@@ -1972,7 +1972,7 @@ class PensionRemittanceViewSet(ScopedModelViewSet):
                 branch=user.branch,
                 created_by=user,
                 status='draft',
-                amount=float(remittance.total_amount) if remittance.total_amount else 0.0,
+                amount=remittance.total_amount if remittance.total_amount else Decimal('0'),
             )
         except Exception:
             pass

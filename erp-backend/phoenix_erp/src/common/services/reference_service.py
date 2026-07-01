@@ -245,7 +245,7 @@ class ReferenceService:
                     'module': r.module,
                     'model': r.model_name,
                     'status': r.status,
-                    'amount': float(r.amount) if r.amount else None,
+                    'amount': r.amount if r.amount else None,
                     'created_at': r.created_at.isoformat(),
                     'created_by': r.created_by.email if r.created_by else None,
                     'workflow_run_id': r.workflow_run_id,

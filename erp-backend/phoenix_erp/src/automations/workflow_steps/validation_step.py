@@ -150,8 +150,8 @@ class ValidationStepHandler(BaseStepHandler):
         
         elif rule == 'numeric':
             try:
-                float(value) if value is not None else None
-            except (ValueError, TypeError):
+                Decimal(str(value)) if value is not None else None
+            except (ValueError, TypeError, Exception):
                 return f"{field_name} must be numeric"
         
         elif rule == 'integer':
@@ -194,16 +194,16 @@ class ValidationStepHandler(BaseStepHandler):
         """Apply parameterized validation rule"""
         if rule == 'min':
             try:
-                if value is not None and float(value) < float(param):
+                if value is not None and Decimal(str(value)) < Decimal(str(param)):
                     return f"{field_name} must be at least {param}"
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, Exception):
                 pass
         
         elif rule == 'max':
             try:
-                if value is not None and float(value) > float(param):
+                if value is not None and Decimal(str(value)) > Decimal(str(param)):
                     return f"{field_name} must be at most {param}"
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, Exception):
                 pass
         
         elif rule == 'min_length':

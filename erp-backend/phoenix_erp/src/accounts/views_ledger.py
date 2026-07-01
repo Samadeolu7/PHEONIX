@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Q, Sum, F, Case, When, DecimalField, Value
 from django.utils import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta
 
 from common.views import ScopedModelViewSet
@@ -25,9 +25,9 @@ class AccountLedgerSerializer:
     def serialize_ledger_entry(entry, running_balance, client_name=None):
         """Serialize a single ledger entry"""
         side = (getattr(entry, 'side', '') or '').upper()
-        amt = float(entry.amount) if getattr(entry, 'amount', None) is not None else 0.0
-        debit_val = amt if side == TransactionEntry.DEBIT else 0.0
-        credit_val = amt if side == TransactionEntry.CREDIT else 0.0
+        amt = entry.amount if getattr(entry, 'amount', None) is not None else Decimal('0')
+        debit_val = amt if side == TransactionEntry.DEBIT else Decimal('0')
+        credit_val = amt if side == TransactionEntry.CREDIT else Decimal('0')
         return {
             'date': entry.transaction.date.isoformat(),
             'transaction_id': entry.transaction.id,
@@ -35,7 +35,7 @@ class AccountLedgerSerializer:
             'description': entry.transaction.description,
             'debit': debit_val,
             'credit': credit_val,
-            'balance': float(running_balance),
+            'balance': running_balance,
             'amount': amt,
             'side': entry.side,
             'client_name': client_name,
@@ -52,7 +52,7 @@ class AccountLedgerSerializer:
                 'workflow_reference': entry.transaction.workflow_reference,
                 'approved': entry.transaction.approved,
                 'is_reversal': getattr(entry.transaction, 'is_reversal', False),
-                'total_amount': float(entry.transaction.get_total_amount()) if hasattr(entry.transaction, 'get_total_amount') else None,
+                'total_amount': entry.transaction.get_total_amount() if hasattr(entry.transaction, 'get_total_amount') else None,
             },
         }
 
@@ -274,14 +274,14 @@ class AccountLedgerViewSet(ScopedModelViewSet):
                 'code': account.code,
                 'name': account.name,
                 'account_type': account.account_type,
-                'current_balance': float(account.balance),
+                'current_balance': account.balance,
             },
             'period': {
                 'date_from': date_from,
                 'date_to': date_to,
             },
-            'opening_balance': float(opening_balance),
-            'closing_balance': float(running_balance),
+            'opening_balance': opening_balance,
+            'closing_balance': running_balance,
             'total_debits': total_debits,
             'total_credits': total_credits,
             'entries': ledger_entries,
@@ -352,7 +352,7 @@ class AccountLedgerViewSet(ScopedModelViewSet):
                     'account_type': account.account_type,
                 },
                 'entry_count': entry_count,
-                'closing_balance': float(running_balance),
+                'closing_balance': running_balance,
             })
         
         return Response({

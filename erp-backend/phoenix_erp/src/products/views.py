@@ -196,7 +196,7 @@ class ProductViewSet(ScopedModelViewSet):
             'id': acc.id,
             'name': acc.name,
             'account_number': acc.account_number,
-            'balance': float(acc.balance) if acc.balance else 0,
+            'balance': acc.balance if acc.balance else 0,
             'created_at': acc.created_at
         } for acc in accounts]
         

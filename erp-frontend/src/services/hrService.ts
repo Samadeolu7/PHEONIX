@@ -1,6 +1,7 @@
 // HR Service - Based on task7.md and MISSING_HR_DETAIL_ENDPOINTS.md
 import { api, triggerDownload } from './api';
 import { ErrorHandler } from '../utils/errorHandler';
+import { sumDecimals, toDecimal, subDecimals } from '../utils/decimal';
 import {
   Staff,
   CreateStaffData,
@@ -831,15 +832,20 @@ class HRService {
   }> {
     const components = await this.getStaffAssignedComponents(staffId);
 
-    const totalEarnings = components
+    const earningAmounts = components
       .filter(c => c.component_type === 'EARNING')
-      .reduce((sum, c) => sum + parseFloat(c.amount), 0);
-
-    const totalDeductions = components
+      .map(c => c.amount);
+    const deductionAmounts = components
       .filter(c => c.component_type === 'DEDUCTION')
-      .reduce((sum, c) => sum + parseFloat(c.amount), 0);
+      .map(c => c.amount);
 
-    const netSalary = totalEarnings - totalDeductions;
+    const totalEarningsDecimal = sumDecimals(earningAmounts);
+    const totalDeductionsDecimal = sumDecimals(deductionAmounts);
+    const netSalaryDecimal = subDecimals(totalEarningsDecimal, totalDeductionsDecimal);
+
+    const totalEarnings = totalEarningsDecimal.toNumber();
+    const totalDeductions = totalDeductionsDecimal.toNumber();
+    const netSalary = netSalaryDecimal.toNumber();
 
     return {
       totalEarnings,

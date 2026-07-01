@@ -303,17 +303,17 @@ class StaffPayrollExportService:
                 if key == 'name':
                     row_data.append(f"{staff.first_name} {staff.last_name}".strip())
                 elif key == 'gross_salary':
-                    row_data.append(float(gross))
+                    row_data.append(gross)
                 elif key == 'other_deductions':
-                    row_data.append(float(other_deductions_total) if other_deductions_total else '')
+                    row_data.append(other_deductions_total if other_deductions_total else '')
                 elif key == 'staff_iou_monthly':
-                    row_data.append(float(iou_monthly) if iou_monthly else '')
+                    row_data.append(iou_monthly if iou_monthly else '')
                 elif key == 'staff_iou_balance':
-                    row_data.append(float(iou_balance) if iou_balance else '')
+                    row_data.append(iou_balance if iou_balance else '')
                 elif key == 'total_deductions':
-                    row_data.append(float(total_deduct))
+                    row_data.append(total_deduct)
                 elif key == 'net_pay':
-                    row_data.append(float(net))
+                    row_data.append(net)
                 elif key == 'paye_pin':
                     row_data.append(staff.paye_pin or '')
                 elif key == 'pension_number':
@@ -326,7 +326,7 @@ class StaffPayrollExportService:
                     row_data.append(staff.bank_account_number or '')
                 else:
                     val = pay_map.get(key, Decimal('0'))
-                    row_data.append(float(val) if val else '')
+                    row_data.append(val if val else '')
 
             ws.append(row_data)
 

@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Avg, Max, Min, Q, F
 from django.utils import timezone
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from .models import ResourceConsumption, Resource
 
@@ -41,8 +41,8 @@ def _base_consumption_qs(request, resource_type='fuel'):
 
 def _fmt(value):
     if value is None:
-        return 0.0
-    return round(float(value), 2)
+        return Decimal('0')
+    return Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 # ---------------------------------------------------------------------------

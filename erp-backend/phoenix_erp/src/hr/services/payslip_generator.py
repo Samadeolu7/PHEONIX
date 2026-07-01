@@ -5,7 +5,7 @@ Payslip PDF Generation Service
 Generates professional PDF payslips
 """
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from django.core.files.base import ContentFile
 from django.template.loader import render_to_string
 import io
@@ -114,9 +114,9 @@ class PayslipGenerator:
         if self.payslip.allowances:
             for name, value in self.payslip.allowances.items():
                 if isinstance(value, dict):
-                    amt = float(value.get('amount', 0) or 0)
+                    amt = Decimal(str(value.get('amount', 0) or 0))
                 else:
-                    amt = float(value or 0)
+                    amt = Decimal(str(value or 0))
                 earnings_data.append([name, '', f"{amt:,.2f}"])
         
         # Add overtime
@@ -159,22 +159,22 @@ class PayslipGenerator:
         ]
 
         # PAYE Tax
-        tax_val = float(self.payslip.tax or 0)
+        tax_val = self.payslip.tax or Decimal('0')
         if tax_val > 0:
             deductions_data.append(['PAYE Tax', '', f"{tax_val:,.2f}"])
 
         # Employee Pension (8%)
-        pension_val = float(self.payslip.employee_pension or 0)
+        pension_val = self.payslip.employee_pension or Decimal('0')
         if pension_val > 0:
             deductions_data.append(['Employee Pension (8%)', '', f"{pension_val:,.2f}"])
 
         # Add other deductions
         if self.payslip.deductions:
             for name, amount in self.payslip.deductions.items():
-                deductions_data.append([name, '', f"{float(amount or 0):,.2f}"])
+                deductions_data.append([name, '', f"{Decimal(str(amount or 0)):,.2f}"])
 
         # Total deductions
-        deductions_data.append(['', 'Total Deductions:', f"{float(self.payslip.total_deductions or 0):,.2f}"])
+        deductions_data.append(['', 'Total Deductions:', f"{self.payslip.total_deductions or Decimal('0'):,.2f}"])
         
         deductions_table = Table(deductions_data, colWidths=[3*inch, 1.5*inch, 1.5*inch])
         deductions_table.setStyle(TableStyle([
@@ -289,24 +289,24 @@ class PayslipGenerator:
             <div class="section">
                 <h3>Earnings</h3>
                 <table>
-                    <tr><td>Basic Salary</td><td>{float(self.payslip.basic_salary or 0):,.2f}</td></tr>
-                    <tr><td>Overtime Pay</td><td>{float(self.payslip.overtime_pay or 0):,.2f}</td></tr>
-                    <tr class="total"><td>Gross Pay</td><td>{float(self.payslip.gross_pay or 0):,.2f}</td></tr>
+                    <tr><td>Basic Salary</td><td>{self.payslip.basic_salary or Decimal('0'):,.2f}</td></tr>
+                    <tr><td>Overtime Pay</td><td>{self.payslip.overtime_pay or Decimal('0'):,.2f}</td></tr>
+                    <tr class="total"><td>Gross Pay</td><td>{self.payslip.gross_pay or Decimal('0'):,.2f}</td></tr>
                 </table>
             </div>
             
             <div class="section">
                 <h3>Deductions</h3>
                 <table>
-                    <tr><td>PAYE Tax</td><td>{float(self.payslip.tax or 0):,.2f}</td></tr>
-                    <tr><td>Employee Pension (8%)</td><td>{float(self.payslip.employee_pension or 0):,.2f}</td></tr>
-                    <tr class="total"><td>Total Deductions</td><td>{float(self.payslip.total_deductions or 0):,.2f}</td></tr>
+                    <tr><td>PAYE Tax</td><td>{self.payslip.tax or Decimal('0'):,.2f}</td></tr>
+                    <tr><td>Employee Pension (8%)</td><td>{self.payslip.employee_pension or Decimal('0'):,.2f}</td></tr>
+                    <tr class="total"><td>Total Deductions</td><td>{self.payslip.total_deductions or Decimal('0'):,.2f}</td></tr>
                 </table>
             </div>
             
             <div class="section">
                 <table>
-                    <tr class="net-pay"><td>NET PAY</td><td>{float(self.payslip.net_pay or 0):,.2f}</td></tr>
+                    <tr class="net-pay"><td>NET PAY</td><td>{self.payslip.net_pay or Decimal('0'):,.2f}</td></tr>
                 </table>
             </div>
         </body>

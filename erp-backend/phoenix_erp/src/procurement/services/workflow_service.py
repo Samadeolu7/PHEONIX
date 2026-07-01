@@ -48,7 +48,7 @@ class ProcurementWorkflowService:
         
         return {
             'success': True,
-            'estimated_total': float(total),
+            'estimated_total': total,
             'next_action': 'route_to_approver'
         }
     

@@ -305,6 +305,35 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     },
   },
   {
+    label: 'Branch Manager',
+    description: 'Full access within their branch — all modules, approve up to their limit',
+    policies: Object.fromEntries(
+      PERMISSION_REGISTRY.flatMap(mod =>
+        mod.pages.map(page => [
+          `${mod.code}:${page.code}`,
+          { ...full('own_branch'), can_approve: true },
+        ])
+      )
+    ),
+  },
+  {
+    label: 'Supervisor',
+    description: 'Manages all daily operations within the branch — cannot give final financial approvals',
+    policies: Object.fromEntries(
+      PERMISSION_REGISTRY.flatMap(mod =>
+        mod.pages.map(page => {
+          // Supervisors cannot approve financial/sensitive actions
+          const noApproveModules = ['loans', 'savings', 'banks', 'hr', 'procurement', 'cash-management'];
+          const canApprove = !noApproveModules.includes(mod.code);
+          return [
+            `${mod.code}:${page.code}`,
+            { ...full('own_branch'), can_approve: canApprove },
+          ];
+        })
+      )
+    ),
+  },
+  {
     label: 'Administrator',
     description: 'Full access across all modules (no global scope)',
     policies: Object.fromEntries(

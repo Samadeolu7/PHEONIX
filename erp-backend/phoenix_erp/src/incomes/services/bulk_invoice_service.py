@@ -2,7 +2,7 @@
 Bulk Invoice Generation Service for School Domain
 Handles batch invoice creation for entire classes with discount/scholarship visibility
 """
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional, Tuple
 from django.db import transaction, models
 from django.utils import timezone
@@ -146,9 +146,9 @@ class BulkInvoiceService:
                     discount_summary.append({
                         'student_id': student.client_id,
                         'student_name': student.name,
-                        'base_amount': float(base_amount),
-                        'discount_amount': float(discount_amount),
-                        'final_amount': float(final_amount),
+                        'base_amount': str(base_amount),
+                        'discount_amount': str(discount_amount),
+                        'final_amount': str(final_amount),
                         'programs': discount_programs,
                         'needs_approval': True  # Flag for workflow
                     })
@@ -179,8 +179,8 @@ class BulkInvoiceService:
                         'term_code': term.code,
                         'classification_id': classification.id,
                         'classification_name': classification.name,
-                        'base_amount': float(base_amount),
-                        'discount_amount': float(discount_amount),
+                        'base_amount': str(base_amount),
+                        'discount_amount': str(discount_amount),
                         'discount_programs': discount_programs,
                         'batch_notes': notes,
                     }
@@ -203,9 +203,9 @@ class BulkInvoiceService:
                     'reference_number': invoice.reference_number,
                     'student_id': student.client_id,
                     'student_name': student.name,
-                    'base_amount': float(base_amount),
-                    'discount_amount': float(discount_amount),
-                    'final_amount': float(final_amount),
+                    'base_amount': str(base_amount),
+                    'discount_amount': str(discount_amount),
+                    'final_amount': str(final_amount),
                     'status': 'draft',
                     'has_discount': discount_amount > 0,
                 })
@@ -228,14 +228,14 @@ class BulkInvoiceService:
             'fee_structure': {
                 'id': fee_structure.id,
                 'name': fee_structure.name,
-                'base_amount': float(fee_structure.base_amount),
+                'base_amount': str(fee_structure.base_amount),
             },
             'total_students': total_students,
             'invoices_created': len(invoices_created),
             'students_with_discounts': students_with_discounts,
-            'total_discount_amount': float(total_discount_amount),
-            'total_base_amount': float(fee_structure.base_amount * total_students),
-            'total_final_amount': float(sum(inv['final_amount'] for inv in invoices_created)),
+            'total_discount_amount': str(total_discount_amount),
+            'total_base_amount': str(fee_structure.base_amount * total_students),
+            'total_final_amount': str(sum(Decimal(inv['final_amount']) for inv in invoices_created)),
             'invoices': invoices_created,
             'discount_summary': discount_summary,  # For approval review
             'due_date': str(due_date),
@@ -289,9 +289,9 @@ class BulkInvoiceService:
                     'reference_number': invoice.reference_number,
                     'student_id': invoice.client.client_id,
                     'student_name': invoice.client.name,
-                    'base_amount': invoice.metadata.get('base_amount', 0),
-                    'discount_amount': float(discount_amount),
-                    'final_amount': float(invoice.amount_due),
+                    'base_amount': invoice.metadata.get('base_amount', '0'),
+                    'discount_amount': str(discount_amount),
+                    'final_amount': str(invoice.amount_due),
                     'programs': invoice.metadata.get('discount_programs', []),
                     'status': invoice.status,
                 })
@@ -306,11 +306,11 @@ class BulkInvoiceService:
             'paid_count': paid_count,
             'total_students': total_invoices,
             'students_with_discounts': students_with_discounts,
-            'discount_percentage': round((students_with_discounts / total_invoices * 100), 2) if total_invoices > 0 else 0,
-            'total_base_amount': float(sum(Decimal(str(inv.metadata.get('base_amount', 0))) for inv in invoices)),
-            'total_discount_amount': float(total_discount_amount),
-            'total_final_amount': float(total_amount),
-            'savings_percentage': round((total_discount_amount / sum(Decimal(str(inv.metadata.get('base_amount', 0))) for inv in invoices) * 100), 2) if invoices.exists() else 0,
+            'total_base_amount': str(sum(Decimal(str(inv.metadata.get('base_amount', 0))) for inv in invoices)),
+            'total_discount_amount': str(total_discount_amount),
+            'total_final_amount': str(total_amount),
+            'savings_percentage': str((total_discount_amount / sum(Decimal(str(inv.metadata.get('base_amount', 0))) for inv in invoices) * 100).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if invoices.exists() else '0',
+            'discount_percentage': str(Decimal(str(round(students_with_discounts / total_invoices * 100, 2))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)) if total_invoices > 0 else '0',
             'discount_summary': discount_summary,
             'created_at': first_invoice.created_at.isoformat(),
             'notes': metadata.get('batch_notes', ''),
@@ -418,8 +418,8 @@ class BulkInvoiceService:
                                 'classification_name': invoice.metadata.get('classification_name', ''),
                                 'invoice_date': invoice.invoice_date.strftime('%B %d, %Y'),
                                 'has_discount': invoice.metadata.get('discount_amount', 0) > 0,
-                                'discount_amount': float(invoice.metadata.get('discount_amount', 0)),
-                                'base_amount': float(invoice.metadata.get('base_amount', invoice.amount_due)),
+                                'discount_amount': str(Decimal(str(invoice.metadata.get('discount_amount', 0)))),
+                                'base_amount': str(Decimal(str(invoice.metadata.get('base_amount', str(invoice.amount_due))))),
                             },
                             owner=approver,
                             branch=branch,
@@ -572,11 +572,11 @@ class BulkInvoiceService:
                 'student_name': inv.client.name,
                 'classification': inv.metadata.get('classification_name', ''),
                 'fee_structure_name': inv.fee_structure.name if inv.fee_structure else '',
-                'fee_structure_base': float(inv.fee_structure.base_amount) if inv.fee_structure else 0,
-                'base_amount': float(base_amount),
-                'discount_amount': float(discount_amount),
-                'final_amount': float(inv.amount_due),
-                'expected_final': float(expected_final),
+                'fee_structure_base': str(inv.fee_structure.base_amount) if inv.fee_structure else '0',
+                'base_amount': str(base_amount),
+                'discount_amount': str(discount_amount),
+                'final_amount': str(inv.amount_due),
+                'expected_final': str(expected_final),
                 'has_discrepancy': has_discrepancy,
                 'discount_programs': inv.metadata.get('discount_programs', []),
             }
@@ -587,9 +587,9 @@ class BulkInvoiceService:
                 discrepancies.append({
                     'invoice': inv.reference_number,
                     'student': inv.client.name,
-                    'expected': float(expected_final),
-                    'actual': float(inv.amount_due),
-                    'difference': float(inv.amount_due - expected_final)
+                    'expected': str(expected_final),
+                    'actual': str(inv.amount_due),
+                    'difference': str(inv.amount_due - expected_final)
                 })
         
         return {
@@ -845,7 +845,6 @@ class BulkInvoiceService:
         # Generate PDF using WeasyPrint
         pdf = HTML(string=html_content).write_pdf()
         return pdf
-        }
     
     @staticmethod
     def list_batches(branch, status: Optional[str] = None) -> List[Dict]:

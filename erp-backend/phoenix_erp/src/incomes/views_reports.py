@@ -15,14 +15,14 @@ from rest_framework.permissions import IsAuthenticated
 
 from django.db.models import (
     Sum, Count, Q, F, Case, When,
-    DecimalField, Value, CharField, FloatField
+    DecimalField, Value, CharField,
 )
 from django.db.models.functions import (
     TruncMonth, TruncQuarter, TruncYear, TruncWeek, TruncDay, Coalesce
 )
 from django.utils import timezone
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from .models import Invoice, IncomeCategory, ServiceItem, InvoiceItem
 
@@ -47,10 +47,10 @@ def _base_invoice_qs(request):
 
 
 def _fmt(value):
-    """Return a float rounded to 2 d.p., or 0.0 for None."""
+    """Return a Decimal rounded to 2 d.p. using ROUND_HALF_UP, or Decimal('0') for None."""
     if value is None:
-        return 0.0
-    return round(float(value), 2)
+        return Decimal('0')
+    return Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 # ---------------------------------------------------------------------------

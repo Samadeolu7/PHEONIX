@@ -7,7 +7,7 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db import models
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import logging
 
 from accounts.models import Account
@@ -88,7 +88,7 @@ class DiscountService:
             discount_amount = receivable.original_amount
         
         # Round to 2 decimal places
-        discount_amount = Decimal(str(round(float(discount_amount), 2)))
+        discount_amount = discount_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         
         # Ensure discount doesn't exceed outstanding balance
         if discount_amount > receivable.balance:
@@ -348,7 +348,7 @@ class DiscountService:
         # Don't exceed outstanding balance
         discount_amount = min(discount_amount, receivable.balance)
         
-        return Decimal(str(round(float(discount_amount), 2)))
+        return discount_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     
     @staticmethod
     @transaction.atomic
@@ -481,7 +481,7 @@ class DiscountService:
             'budget_allocated': program.budget_allocated,
             'budget_used': program.budget_used,
             'budget_remaining': program.budget_remaining,
-            'budget_utilization_percent': float(program.budget_utilization_percent),
+            'budget_utilization_percent': program.budget_utilization_percent,
             'max_recipients': program.max_recipients,
             'current_recipients': program.current_recipients,
             'available_slots': (

@@ -1378,8 +1378,8 @@ class PettyCashReplenishmentViewSet(viewsets.ModelViewSet):
             cat_name = (
                 v.expense_category.name if v.expense_category else 'Uncategorised'
             )
-            entry = expense_breakdown.setdefault(cat_name, {'amount': 0, 'vouchers': []})
-            entry['amount'] += float(v.actual_amount_disbursed or v.amount or 0)
+            entry = expense_breakdown.setdefault(cat_name, {'amount': Decimal('0'), 'vouchers': []})
+            entry['amount'] += v.actual_amount_disbursed or v.amount or Decimal('0')
             entry['vouchers'].append(v.voucher_number)
 
         # â”€â”€ Save replenishment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

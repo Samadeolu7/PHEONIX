@@ -566,8 +566,8 @@ class ResourceConsumptionSerializer(serializers.ModelSerializer):
         """Get remaining balance on voucher"""
         if obj.prepaid_voucher:
             return {
-                'units': float(obj.prepaid_voucher.remaining_units),
-                'amount': float(obj.prepaid_voucher.remaining_amount)
+                'units': obj.prepaid_voucher.remaining_units,
+                'amount': obj.prepaid_voucher.remaining_amount
             }
         return None
 
@@ -784,9 +784,9 @@ class ResourceConsumptionDetailSerializer(ResourceConsumptionSerializer):
         if obj.prepaid_voucher:
             return {
                 'voucher_number': obj.prepaid_voucher.voucher_number,
-                'allocated_units': float(obj.prepaid_voucher.allocated_units),
-                'consumed_units': float(obj.prepaid_voucher.consumed_units),
-                'remaining_units': float(obj.prepaid_voucher.remaining_units),
+                'allocated_units': obj.prepaid_voucher.allocated_units,
+                'consumed_units': obj.prepaid_voucher.consumed_units,
+                'remaining_units': obj.prepaid_voucher.remaining_units,
                 'status': obj.prepaid_voucher.status,
             }
         return None
@@ -801,10 +801,10 @@ class ResourceConsumptionDetailSerializer(ResourceConsumptionSerializer):
             return {
                 'asset_number': obj.asset.asset_number,
                 'name': obj.asset.name,
-                'current_reading': float(obj.asset.current_meter_reading) if obj.asset.current_meter_reading is not None else None,
-                'average_consumption_rate': float(avg) if avg else None,
-                'monthly_total_quantity': float(totals['total_quantity']) if totals['total_quantity'] is not None else 0,
-                'monthly_total_cost': float(totals['total_cost']) if totals['total_cost'] is not None else 0,
+                'current_reading': obj.asset.current_meter_reading if obj.asset.current_meter_reading is not None else None,
+                'average_consumption_rate': avg if avg else None,
+                'monthly_total_quantity': totals['total_quantity'] if totals['total_quantity'] is not None else 0,
+                'monthly_total_cost': totals['total_cost'] if totals['total_cost'] is not None else 0,
             }
         return None
     
@@ -812,7 +812,7 @@ class ResourceConsumptionDetailSerializer(ResourceConsumptionSerializer):
         """Get historical average consumption rate"""
         if obj.asset:
             # Note: Method expects resource_id, not resource_type. Using None for now.
-            return float(obj.asset.get_average_consumption_rate(resource_id=None) or 0)
+            return obj.asset.get_average_consumption_rate(resource_id=None) or 0
         return None
 
 

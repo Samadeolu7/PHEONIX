@@ -370,10 +370,10 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             if remaining <= 0:
                 breakdown.append({
                     'band': label,
-                    'rate': float(rate),
-                    'amount_in_band': 0.0,
-                    'tax_in_band': 0.0,
-                    'cumulative_balance': float(income - prev_limit) if upper is None else float(max(Decimal('0'), income - upper)),
+                    'rate': rate,
+                    'amount_in_band': Decimal('0'),
+                    'tax_in_band': Decimal('0'),
+                    'cumulative_balance': (income - prev_limit) if upper is None else max(Decimal('0'), income - upper),
                 })
                 continue
 
@@ -390,10 +390,10 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
             breakdown.append({
                 'band': label,
-                'rate': float(rate),
-                'amount_in_band': float(band_size),
-                'tax_in_band': float(tax_in_band),
-                'cumulative_balance': float(remaining),
+                'rate': rate,
+                'amount_in_band': band_size,
+                'tax_in_band': tax_in_band,
+                'cumulative_balance': remaining,
             })
 
             if upper is not None:

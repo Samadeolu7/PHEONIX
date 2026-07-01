@@ -1,4 +1,5 @@
 import { api } from './api';
+import { toDecimal, subDecimals } from '../utils/decimal';
 
 export interface ConsistencyIssue {
   id: string;
@@ -145,13 +146,13 @@ export const dataConsistencyService = {
           receivableByInvoiceMap.get(invoice.id) || receivableByRefMap.get(invoice.invoice_number);
 
         if (receivable) {
-          const invoiceBalance = parseFloat(invoice.balance || '0');
-          const receivableBalance = parseFloat(receivable.balance || '0');
-          const invoiceAmountPaid = parseFloat(invoice.amount_paid || '0');
-          const receivableAmountPaid = parseFloat(receivable.amount_paid || '0');
+          const invoiceBalance = toDecimal(invoice.balance || '0');
+          const receivableBalance = toDecimal(receivable.balance || '0');
+          const invoiceAmountPaid = toDecimal(invoice.amount_paid || '0');
+          const receivableAmountPaid = toDecimal(receivable.amount_paid || '0');
 
           // Check balance consistency
-          if (Math.abs(invoiceBalance - receivableBalance) > 0.01) {
+          if (subDecimals(invoiceBalance, receivableBalance).abs().greaterThan('0.01')) {
             issues.push({
               id: `balance_mismatch_${invoice.id}`,
               type: 'balance_discrepancy',
@@ -173,7 +174,7 @@ export const dataConsistencyService = {
           }
 
           // Check amount paid consistency
-          if (Math.abs(invoiceAmountPaid - receivableAmountPaid) > 0.01) {
+          if (subDecimals(invoiceAmountPaid, receivableAmountPaid).abs().greaterThan('0.01')) {
             issues.push({
               id: `payment_mismatch_${invoice.id}`,
               type: 'balance_discrepancy',

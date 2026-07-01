@@ -2310,7 +2310,7 @@ class PettyCashReplenishment(TimeStampedModel, BranchScopedModel, SoftDeleteMode
         self.posted_at = timezone.now()
         self.posted_by = user
         self.expense_breakdown = {
-            k: {'amount': float(v['amount']), 'vouchers': v['vouchers']}
+            k: {'amount': str(v['amount']), 'vouchers': v['vouchers']}
             for k, v in expense_breakdown.items()
         }
 

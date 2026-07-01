@@ -150,8 +150,9 @@ export const DynamicForm: React.FC<DynamicFormProps> = ({
             onChange(field.id, '');
             return;
           }
-          const parsed = field.type === 'money' ? parseFloat(val) : parseInt(val, 10);
-          onChange(field.id, isNaN(parsed) ? val : parsed);
+          // Keep money values as strings to preserve decimal precision
+          const parsed = field.type === 'money' ? val : parseInt(val, 10);
+          onChange(field.id, field.type === 'money' ? val : (isNaN(parsed as number) ? val : parsed));
         };
 
         return (

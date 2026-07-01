@@ -110,7 +110,7 @@ class DiscountProgramViewSet(ScopedModelViewSet):
             'budget_allocated': program.budget_allocated,
             'budget_used': program.budget_used,
             'budget_remaining': program.budget_remaining,
-            'budget_utilization_percent': float(program.budget_utilization_percent),
+            'budget_utilization_percent': program.budget_utilization_percent,
             'is_within_budget': program.is_within_budget,
         })
     

@@ -1,5 +1,6 @@
 // Resource Consumption Service
 import { api } from './api';
+import { toDecimal } from '../utils/decimal';
 import {
   ResourceConsumption,
   ConsumptionListResponse,
@@ -107,12 +108,12 @@ class ResourceConsumptionService {
     try {
       const response = await api.get(`/expenses/vouchers/${voucherId}/`);
       const voucher = response;
-      const remaining = parseFloat(voucher.remaining_units ?? '0');
-      const requested = parseFloat(quantity);
-      if (requested > remaining) {
+      const remaining = toDecimal(voucher.remaining_units ?? '0');
+      const requested = toDecimal(quantity);
+      if (requested.greaterThan(remaining)) {
         return {
           valid: false,
-          message: `Requested ${requested} exceeds available balance of ${remaining} ${voucher.unit_of_measure ?? 'units'}`,
+          message: `Requested ${requested.toFixed(2)} exceeds available balance of ${remaining.toFixed(2)} ${voucher.unit_of_measure ?? 'units'}`,
         };
       }
       return { valid: true };

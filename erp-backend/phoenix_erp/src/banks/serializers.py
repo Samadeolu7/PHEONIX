@@ -5,7 +5,7 @@ Serializers for Bank Management System
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from common.serializers import TenantModelSerializer
 from .models import Bank, BankAccount, BankTransfer, BankPayment, BankAccountBalanceLog, BankFeedConsent, BankStatementUpload, BankStatementLine
@@ -47,7 +47,7 @@ class BankSerializer(TenantModelSerializer):
             bank_account__is_active=True,
             bank_account__is_deleted=False,
         ).aggregate(total=Sum('balance'))['total']
-        return float(total) if total else 0.0
+        return total if total else Decimal('0')
 
 
 class BankAccountSerializer(TenantModelSerializer):
@@ -96,25 +96,25 @@ class BankAccountSerializer(TenantModelSerializer):
     
     def get_available_balance(self, obj):
         """Get available balance after pending transactions"""
-        return float(obj.get_available_balance())
+        return obj.get_available_balance()
     
     def get_current_balance(self, obj):
         """Always read live balance from the linked GL account."""
         if obj.gl_account_id:
             try:
-                return float(obj.gl_account.balance)
+                return obj.gl_account.balance
             except Exception:
                 pass
-        return float(obj.current_balance)
+        return obj.current_balance
 
     def get_available_balance(self, obj):
         """Available = GL balance minus pending outgoing transfers."""
         from django.db.models import Sum
-        gl_balance = float(obj.gl_account.balance) if obj.gl_account_id else float(obj.current_balance)
+        gl_balance = obj.gl_account.balance if obj.gl_account_id else obj.current_balance
         pending_out = obj.outgoing_transfers.filter(
             status__in=['pending', 'approved']
-        ).aggregate(total=Sum('amount'))['total'] or 0
-        return gl_balance - float(pending_out)
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        return gl_balance - pending_out
 
     def get_gl_account_code(self, obj):
         return obj.gl_account.code if obj.gl_account_id else None
@@ -223,8 +223,8 @@ class BankAccountDetailSerializer(BankAccountSerializer):
             'date': entry.transaction.date.isoformat(),
             'reference': entry.transaction.reference_number,
             'description': entry.transaction.description,
-            'debit': float(entry.amount) if entry.side == 'DEBIT' else 0,
-            'credit': float(entry.amount) if entry.side == 'CREDIT' else 0,
+            'debit': entry.amount if entry.side == 'DEBIT' else Decimal('0'),
+            'credit': entry.amount if entry.side == 'CREDIT' else Decimal('0'),
         } for entry in entries]
     
     def get_pending_transfers_out(self, obj):
@@ -232,14 +232,14 @@ class BankAccountDetailSerializer(BankAccountSerializer):
         transfers = obj.outgoing_transfers.filter(
             status__in=['pending', 'approved']
         ).aggregate(total=serializers.models.Sum('amount'))['total']
-        return float(transfers) if transfers else 0.0
+        return transfers if transfers else Decimal('0')
     
     def get_pending_transfers_in(self, obj):
         """Get pending incoming transfers"""
         transfers = obj.incoming_transfers.filter(
             status__in=['pending', 'approved']
         ).aggregate(total=serializers.models.Sum('amount'))['total']
-        return float(transfers) if transfers else 0.0
+        return transfers if transfers else Decimal('0')
 
 
 class BankTransferSerializer(TenantModelSerializer):

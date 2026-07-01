@@ -153,7 +153,7 @@ def search_references(request):
             'module': ref.module,
             'model_name': ref.model_name,
             'status': ref.status,
-            'amount': float(ref.amount) if ref.amount else None,
+            'amount': ref.amount if ref.amount else None,
             'origin_reference': ref.origin_reference,
             'parent_reference': ref.parent_reference,
             'workflow_run_id': ref.workflow_run_id,

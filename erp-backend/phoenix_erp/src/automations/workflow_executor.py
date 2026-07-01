@@ -760,10 +760,10 @@ class WorkflowTestExecutor:
             }
         
         # Calculate totals
-        dr_total = sum(float(e.get('amount', 0)) for e in entries if e.get('side') == 'DR')
-        cr_total = sum(float(e.get('amount', 0)) for e in entries if e.get('side') == 'CR')
+        dr_total = sum(Decimal(str(e.get('amount', 0))) for e in entries if e.get('side') == 'DR')
+        cr_total = sum(Decimal(str(e.get('amount', 0))) for e in entries if e.get('side') == 'CR')
         
-        if abs(dr_total - cr_total) > 0.01:
+        if abs(dr_total - cr_total) > Decimal('0.01'):
             return {
                 'status': 'error',
                 'error': f'Transaction not balanced: DR={dr_total}, CR={cr_total}'

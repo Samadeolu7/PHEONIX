@@ -1,7 +1,7 @@
 # automations/workflow_steps.py - Add new handler for calculations
 
 from typing import Dict, Any
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import logging
 import re
 from datetime import datetime
@@ -203,10 +203,10 @@ class CalculationStepHandler:
         # Try to convert to number if it looks like one
         try:
             if '.' in result:
-                return float(result)
+                return Decimal(result)
             else:
                 return int(result)
-        except ValueError:
+        except (ValueError, Exception):
             return result
     
     def _get_variable_value(self, var_path: str, context: Dict[str, Any]) -> Any:
@@ -283,7 +283,7 @@ class CalculationStepHandler:
             # Parse formula
             tree = ast.parse(formula, mode='eval')
             result = eval_node(tree.body)
-            return float(result)
+            return Decimal(str(result))
         
         except SyntaxError as e:
             raise ValueError(f"Invalid formula syntax: {str(e)}")

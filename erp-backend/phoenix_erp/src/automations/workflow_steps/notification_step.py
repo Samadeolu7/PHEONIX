@@ -3,6 +3,7 @@
 Notification step handler for workflows
 """
 from typing import Dict, Any
+from decimal import Decimal
 import logging
 from django.utils import timezone
 
@@ -268,13 +269,13 @@ class NotificationStepHandler:
         actual_value = self._resolve_variable(f"${{{field}}}", context)
         
         if operator == '>':
-            return float(actual_value) > float(expected_value)
+            return Decimal(str(actual_value)) > Decimal(str(expected_value))
         elif operator == '>=':
-            return float(actual_value) >= float(expected_value)
+            return Decimal(str(actual_value)) >= Decimal(str(expected_value))
         elif operator == '<':
-            return float(actual_value) < float(expected_value)
+            return Decimal(str(actual_value)) < Decimal(str(expected_value))
         elif operator == '<=':
-            return float(actual_value) <= float(expected_value)
+            return Decimal(str(actual_value)) <= Decimal(str(expected_value))
         elif operator == '==':
             return actual_value == expected_value
         elif operator == '!=':

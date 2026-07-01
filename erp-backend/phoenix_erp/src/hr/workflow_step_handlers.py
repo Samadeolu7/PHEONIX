@@ -7,6 +7,7 @@ HR-specific functionality within workflows.
 """
 
 from django.core.exceptions import ValidationError
+from decimal import Decimal
 from automations.workflow_steps.base import BaseStepHandler
 
 
@@ -65,7 +66,7 @@ class LeaveValidationStepHandler(BaseStepHandler):
             'errors': validation_result['errors'],
             'warnings': validation_result['warnings'],
             'leave_request_id': leave_request.id,
-            'num_days': float(leave_request.num_days),
+            'num_days': leave_request.num_days,
             'requires_approval': leave_request.leave_type.requires_approval,
             'next_step': 'approval' if validation_result['is_valid'] else 'notify_rejection',
         }
@@ -210,8 +211,8 @@ class AttendanceTrackingStepHandler(BaseStepHandler):
             return {
                 'success': True,
                 'attendance_id': attendance.id,
-                'hours_worked': float(attendance.hours_worked),
-                'overtime_hours': float(attendance.overtime_hours),
+                'hours_worked': attendance.hours_worked,
+                'overtime_hours': attendance.overtime_hours,
                 'status': attendance.status,
                 'created': created,
             }
@@ -271,9 +272,9 @@ class PayrollCalculationStepHandler(BaseStepHandler):
             return {
                 'success': True,
                 'payslips_created': result['payslips_created'],
-                'total_gross_pay': float(result['total_gross_pay']),
-                'total_deductions': float(result['total_deductions']),
-                'total_net_pay': float(result['total_net_pay']),
+                'total_gross_pay': result['total_gross_pay'],
+                'total_deductions': result['total_deductions'],
+                'total_net_pay': result['total_net_pay'],
                 'payroll_status': payroll.status,
                 'next_step': 'approval',
             }

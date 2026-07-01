@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.utils import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import logging
 
 logger = logging.getLogger(__name__)
@@ -172,7 +172,7 @@ class ExpenseViewSet(ScopedModelViewSet):
                     context_data={
                         'expense_id': expense.id,
                         'reference_number': reference,
-                        'total_amount': float(total_amount),
+                        'total_amount': str(total_amount),
                         'expense_type': expense_data['expense_type'],
                         'category_id': expense_data['category_id']
                     }
@@ -228,7 +228,7 @@ class ExpenseViewSet(ScopedModelViewSet):
                     'expense_reference': reference,
                     'workflow_run_id': workflow_run.id,
                     'status': expense.status,
-                    'total_amount': float(total_amount),
+                    'total_amount': total_amount,
                     'message': 'Expense request created and workflow started'
                 })
                 
@@ -440,7 +440,7 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
                     'message': 'Consumption posted successfully',
                     'consumption_number': consumption.consumption_number,
                     'payment_flow': consumption.payment_flow,
-                    'total_cost': float(consumption.total_cost),
+                    'total_cost': consumption.total_cost,
                     'journal_entry_id': consumption.journal_entry_id,
                     'accounts_payable_id': consumption.accounts_payable_id,
                 })
@@ -625,19 +625,19 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
                 'id': asset.id,
                 'asset_number': asset.asset_number,
                 'name': asset.name,
-                'current_reading': float(asset.current_meter_reading) if asset.current_meter_reading is not None else None,
+                'current_reading': asset.current_meter_reading if asset.current_meter_reading is not None else None,
             },
             'period_days': days,
             'totals': {
-                'quantity': float(totals['total_quantity']) if totals['total_quantity'] is not None else 0,
-                'cost': float(totals['total_cost']) if totals['total_cost'] is not None else 0,
-                'usage': float(totals['total_usage']) if totals['total_usage'] is not None else 0,
+                'quantity': totals['total_quantity'] if totals['total_quantity'] is not None else 0,
+                'cost': totals['total_cost'] if totals['total_cost'] is not None else 0,
+                'usage': totals['total_usage'] if totals['total_usage'] is not None else 0,
             },
             'efficiency': {
-                'current': float(efficiency['current']) if efficiency['current'] else None,
-                'average': float(efficiency['average']) if efficiency['average'] else None,
-                'best': float(efficiency['best']) if efficiency['best'] else None,
-                'worst': float(efficiency['worst']) if efficiency['worst'] else None,
+                'current': efficiency['current'] if efficiency['current'] else None,
+                'average': efficiency['average'] if efficiency['average'] else None,
+                'best': efficiency['best'] if efficiency['best'] else None,
+                'worst': efficiency['worst'] if efficiency['worst'] else None,
             },
             'has_irregularities': has_irregular,
             'recent_consumptions': self.get_serializer(recent, many=True).data
@@ -783,12 +783,12 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
         )
 
         staff_data = []
-        grand_total_quantity = 0
-        grand_total_cost = 0
+        grand_total_quantity = Decimal('0')
+        grand_total_cost = Decimal('0')
 
         for item in summary:
-            qty = float(item['total_quantity'] or 0)
-            cost = float(item['total_cost'] or 0)
+            qty = Decimal(str(item['total_quantity'] or 0))
+            cost = Decimal(str(item['total_cost'] or 0))
             grand_total_quantity += qty
             grand_total_cost += cost
 
@@ -824,9 +824,9 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
                 'consumption_date': c.consumption_date,
                 'employee_name': emp_name or c.beneficiary_name,
                 'department': c.employee.department.name if (c.employee and c.employee.department) else 'N/A',
-                'quantity_consumed': float(c.quantity_consumed),
-                'unit_cost': float(c.unit_cost) if c.unit_cost else None,
-                'total_cost': float(c.total_cost),
+                'quantity_consumed': c.quantity_consumed,
+                'unit_cost': c.unit_cost if c.unit_cost else None,
+                'total_cost': c.total_cost,
                 'payment_flow': c.payment_flow,
                 'resource_name': c.resource.name,
                 'resource_unit': c.resource.unit_of_measure,
@@ -899,8 +899,8 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
                 'registration_number': item['asset__registration_number'] or '',
                 'make': item['asset__make'] or '',
                 'model': item['asset__model'] or '',
-                'total_quantity': float(item['total_quantity'] or 0),
-                'total_cost': float(item['total_cost'] or 0),
+                'total_quantity': Decimal(str(item['total_quantity'] or 0)),
+                'total_cost': Decimal(str(item['total_cost'] or 0)),
                 'fill_count': item['fill_count'],
                 'irregular_count': item['irregular_count'],
                 'has_irregularities': item['irregular_count'] > 0,
@@ -1000,7 +1000,7 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
                 'staff_name': f'{operator.first_name} {operator.last_name}',
                 'staff_id':             operator.staff_id,
                 'component_name':       component.name,
-                'amount':               float(deduction_request.amount),
+                'amount':               deduction_request.amount,
                 'for_month':            str(deduction_request.for_month),
                 'status':               deduction_request.status,
                 'consumption_number':   consumption.consumption_number,
@@ -1230,7 +1230,7 @@ class PrepaidVoucherViewSet(ScopedModelViewSet):
             branch=user.branch,
             created_by=user,
             status='active',
-            amount=float(voucher.allocated_amount) if voucher.allocated_amount else 0.0,
+            amount=voucher.allocated_amount if voucher.allocated_amount else Decimal('0'),
             metadata={
                 'prepaid_expense_id': voucher.prepaid_expense_id,
                 'beneficiary_name': voucher.beneficiary_name,
