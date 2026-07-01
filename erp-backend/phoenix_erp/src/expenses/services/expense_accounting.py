@@ -392,7 +392,16 @@ class PrepaidExpenseAccountingService:
         """
         if self.prepaid_expense.status == 'fully_consumed':
             raise ValidationError("Prepaid expense is fully consumed")
-        
+
+        if amount <= Decimal('0'):
+            raise ValidationError("Amortization amount must be positive")
+
+        if amount > self.prepaid_expense.remaining_amount:
+            raise ValidationError(
+                f"Amortization amount ({amount}) exceeds remaining balance "
+                f"({self.prepaid_expense.remaining_amount})"
+            )
+
         # Convert period_end_date to date object if it's a string
         from django.utils.dateparse import parse_date
         if isinstance(period_end_date, str):
@@ -443,7 +452,9 @@ class PrepaidExpenseAccountingService:
         
         # Update prepaid expense
         self.prepaid_expense.consumed_amount += amount
+        self.prepaid_expense.remaining_amount -= amount
         if self.prepaid_expense.remaining_amount <= Decimal('0.01'):
+            self.prepaid_expense.remaining_amount = Decimal('0.00')
             self.prepaid_expense.status = 'fully_consumed'
             self.prepaid_expense.consumed_date = timezone.now()
         self.prepaid_expense.save()

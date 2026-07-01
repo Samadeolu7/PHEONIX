@@ -57,17 +57,6 @@ const PrepaidExpenseAmortizePage: React.FC = () => {
 
     if (!formData.period_end_date) newErrors.period_end_date = ['Period end date is required'];
 
-    // Date validations
-    if (formData.period_end_date) {
-      const periodDate = new Date(formData.period_end_date);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      if (periodDate < today) {
-        newErrors.period_end_date = ['Period end date cannot be in the past'];
-      }
-    }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };

@@ -172,7 +172,7 @@ const CashTransferListPage: React.FC = () => {
           </p>
         </div>
         <Link
-          to="/treasury/cash-transfers/new"
+          to="/banks/transfers/new"
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
         >
           <Plus size={16} />
@@ -220,7 +220,7 @@ const CashTransferListPage: React.FC = () => {
             <ArrowUpCircle size={40} className="mx-auto mb-3 text-gray-300" />
             <p className="text-sm text-gray-500">No cash transfers found</p>
             <Link
-              to="/treasury/cash-transfers/new"
+              to="/banks/transfers/new"
               className="mt-3 inline-flex items-center gap-1 text-sm text-blue-600 hover:underline"
             >
               <Plus size={14} /> Create first transfer

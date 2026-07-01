@@ -291,17 +291,26 @@ class MicrofinanceDashboardStatsView(APIView):
 
         # ── Cashier Balance ───────────────────────────────────────────────────
         # The logged-in user's own cash account — must be 0 at end of day.
+        # Resolved via CashierAccount.cashier=user so that the lookup is always
+        # tied to the actual cashier FK, regardless of who "owns" the GL account.
         try:
-            from accounts.models import Account
-            ca = Account.objects.filter(
-                owner=user, is_deleted=False, is_cashier_bank=True
-            ).order_by('-created_at').first()
-            if ca:
-                data['cashier_balance'] = str(ca.balance)
+            from cash_management.models import CashierAccount as _CA
+            _ca = (
+                _CA.objects
+                .filter(cashier=user, is_active=True, is_deleted=False)
+                .select_related('account')
+                .first()
+            )
+            if _ca:
+                balance = _ca.account.balance if _ca.account_id else _ca.current_balance
+                data['cashier_balance'] = str(balance)
+                data['cashier_account_name'] = _ca.name
             else:
-                data['cashier_balance'] = 'No cashier account'
+                data['cashier_balance'] = None
+                data['cashier_account_name'] = None
         except Exception:
-            data['cashier_balance'] = 'error'
+            data['cashier_balance'] = None
+            data['cashier_account_name'] = None
                 
         # ── Pending Tickets ───────────────────────────────────────────────────
         try:
