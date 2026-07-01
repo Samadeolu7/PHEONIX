@@ -611,6 +611,7 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
         'requested_by',
         'disbursed_by',
         'applied_tier',
+        'cashier_account',            # needed for cashier_account_name
         'destination_bank_account__bank',
     ).prefetch_related('approval_steps')
     serializer_class = SavingsWithdrawalRequestSerializer
@@ -754,7 +755,12 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='approve-step')
     def approve_step(self, request, pk=None):
-        """Approve or reject the next pending step on this withdrawal request."""
+        """Approve or reject the next pending step on this withdrawal request.
+
+        On the first step (payment_method not yet set), the body must also include:
+          payment_method: 'cash' | 'bank'
+          cashier_account: <account_id>  (required when payment_method='cash')
+        """
         wr = self.get_object()
         serializer = WithdrawalApprovalActionSerializer(data=request.data)
         if not serializer.is_valid():
@@ -774,6 +780,8 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
                 approver=request.user,
                 approved=serializer.validated_data['approved'],
                 comment=serializer.validated_data.get('comment', ''),
+                payment_method=serializer.validated_data.get('payment_method'),
+                cashier_account_id=serializer.validated_data.get('cashier_account'),
             )
         except Exception as exc:
             return Response({'detail': str(exc)}, status=400)
@@ -811,27 +819,33 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
         """
         Disburse a fully-approved withdrawal request.
 
-        The disburser must be a different person from both the creator (requested_by)
-        and all approvers (3-person maker-checker: creator → approver → disburser).
+        Cash withdrawals (payment_method='cash'):
+          Cashier account was set by the Branch Manager during approval.
+          Director just confirms — no additional fields required.
 
-        Request body:
-            destination_bank_account (int): FK of the BankAccount to credit.
+        Bank withdrawals (payment_method='bank'):
+          Request body must include:
+            destination_bank_account (int): FK of the org BankAccount to debit.
         """
         wr = self.get_object()
 
         destination_bank = None
-        if request.data.get('destination_bank_account'):
-            from banks.models import BankAccount
-            try:
-                destination_bank = BankAccount.objects.get(pk=request.data['destination_bank_account'])
-            except Exception:
-                return Response({'detail': 'destination_bank_account not found.'}, status=400)
-
-        if not destination_bank:
-            return Response(
-                {'detail': 'A destination bank account is required for disbursement.'},
-                status=400,
-            )
+        if wr.payment_method == 'bank' or request.data.get('destination_bank_account'):
+            if request.data.get('destination_bank_account'):
+                from banks.models import BankAccount
+                try:
+                    destination_bank = BankAccount.objects.get(
+                        pk=request.data['destination_bank_account']
+                    )
+                except Exception:
+                    return Response(
+                        {'detail': 'destination_bank_account not found.'}, status=400
+                    )
+            elif wr.payment_method == 'bank':
+                return Response(
+                    {'detail': 'A destination bank account is required for bank disbursements.'},
+                    status=400,
+                )
 
         try:
             disburse_withdrawal(wr, request.user, destination_bank_account=destination_bank)

@@ -247,6 +247,9 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
     applied_tier_name = serializers.CharField(
         source='applied_tier.tier_name', read_only=True, default=None
     )
+    # Cashier account display — set by Branch Manager during first approval step
+    cashier_account_name = serializers.SerializerMethodField()
+
     requested_by_name = serializers.SerializerMethodField()
     disbursed_by_name = serializers.SerializerMethodField()
 
@@ -264,9 +267,10 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             'account_current_balance', 'account_minimum_balance',
             'account_status', 'product_name', 'applied_tier_name',
             'requested_by', 'requested_by_name',
-            'amount', 'description', 'status',
+            'amount', 'description', 'status', 'payment_method',
             'required_approvals', 'approvals_received',
             'applied_tier', 'destination_bank_account', 'cashier_account',
+            'cashier_account_name',
             'destination_bank_name', 'destination_account_number', 'destination_account_name',
             'journal_entry', 'steps',
             'disbursed_by', 'disbursed_by_name', 'disbursed_at',
@@ -278,9 +282,10 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             'client_bank_account_number', 'client_bvn',
             'account_current_balance', 'account_minimum_balance',
             'account_status', 'product_name', 'applied_tier_name',
-            'requested_by_name',
+            'requested_by_name', 'payment_method',
             'status', 'required_approvals', 'approvals_received',
             'applied_tier', 'journal_entry', 'steps',
+            'cashier_account_name',
             'destination_bank_name', 'destination_account_number', 'destination_account_name',
             'disbursed_by', 'disbursed_by_name', 'disbursed_at',
             'owner', 'branch', 'created_at', 'updated_at',
@@ -321,8 +326,30 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             return getattr(obj.destination_bank_account, 'account_name', None)
         return None
 
+    def get_cashier_account_name(self, obj):
+        """Return the name of the cashier GL account chosen by the Branch Manager."""
+        if obj.cashier_account_id:
+            try:
+                return obj.cashier_account.name
+            except Exception:
+                return None
+        return None
+
 
 class WithdrawalApprovalActionSerializer(serializers.Serializer):
     """Used by approve/reject action endpoints."""
     approved = serializers.BooleanField()
     comment = serializers.CharField(required=False, allow_blank=True, default='')
+    # Payment routing — required on the first approval step (when payment_method not yet set)
+    payment_method = serializers.ChoiceField(
+        choices=['cash', 'bank'],
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+    cashier_account = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text="GL Account ID for the cashier account (required when payment_method='cash').",
+    )

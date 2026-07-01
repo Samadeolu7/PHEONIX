@@ -861,12 +861,28 @@ class SavingsWithdrawalRequest(TimeStampedModel, BranchScopedModel, SoftDeleteMo
     )
 
     # Where the money goes once approved
+    PAYMENT_CASH = 'cash'
+    PAYMENT_BANK = 'bank'
+    PAYMENT_CHOICES = [
+        (PAYMENT_CASH, 'Cash'),
+        (PAYMENT_BANK, 'Bank Transfer'),
+    ]
+    payment_method = models.CharField(
+        max_length=10,
+        choices=PAYMENT_CHOICES,
+        null=True, blank=True,
+        help_text=(
+            "Set by the Branch Manager during approval. "
+            "'cash' = teller payout via a cashier GL account; "
+            "'bank' = bank transfer. Amounts ≥ ₦50,000 are forced to 'bank'."
+        ),
+    )
     destination_bank_account = models.ForeignKey(
         'banks.BankAccount',
         on_delete=models.PROTECT,
         null=True, blank=True,
         related_name='incoming_withdrawal_requests',
-        help_text="Bank account to credit when withdrawal completes.",
+        help_text="Bank account to credit when withdrawal completes (bank transfers only).",
     )
     cashier_account = models.ForeignKey(
         Account,
@@ -874,7 +890,7 @@ class SavingsWithdrawalRequest(TimeStampedModel, BranchScopedModel, SoftDeleteMo
         null=True, blank=True,
         limit_choices_to={'account_type': Account.ASSET},
         related_name='withdrawal_request_cashier',
-        help_text="Cash / Cashier GL account debited from savings, used when no bank account.",
+        help_text="Cash / Cashier GL account debited from savings, used for cash withdrawals.",
     )
 
     # GL journal entry — set only when status = completed

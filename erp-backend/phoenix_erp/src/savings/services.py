@@ -425,13 +425,19 @@ def initiate_withdrawal(
         destination_bank_account=destination_bank_account,
         owner=savings_account.owner,
         branch=savings_account.branch,
+        # tenant must be set so OwnerBranchManager's tenant filter can find the record
+        tenant=getattr(savings_account.branch, 'tenant', None) or getattr(requested_by, 'tenant', None),
     )
 
     # Create one pending step per required approver
+    _tenant = wr.tenant
+    _owner = wr.owner
     for step_num in range(1, required_approvals + 1):
         WithdrawalApprovalStep.objects.create(
             withdrawal_request=wr,
             step_number=step_num,
+            tenant=_tenant,
+            owner=_owner,
         )
 
     return wr
@@ -443,18 +449,21 @@ def process_withdrawal_approval(
     approver: User,
     approved: bool,
     comment: str = '',
+    payment_method: str | None = None,
+    cashier_account_id: int | None = None,
 ) -> SavingsWithdrawalRequest:
     """
     Record an approver's decision on one approval step.
 
-    When approved=True and all required steps are approved, the withdrawal
-    is executed atomically (GL entries created, status set to completed).
+    On the FIRST approval step (when payment_method is not yet set on the request),
+    the approver must also select the payment routing:
+      payment_method = 'cash'  → cashier_account_id required; amount must be < ₦50,000
+      payment_method = 'bank'  → director selects the bank account at disbursal time
 
-    When approved=False, the entire request is rejected and no GL movement happens.
-
-    Raises:
-        ValidationError: if the approver is not eligible, or the step is already decided.
+    When approved=True and all required steps are approved, the withdrawal moves
+    to STATUS_APPROVED so a separate disburser (3rd person) can release the funds.
     """
+    CASH_LIMIT = Decimal('50000.00')
     wr: SavingsWithdrawalRequest = step.withdrawal_request
 
     # Guard: request must still be pending or partially approved
@@ -495,6 +504,33 @@ def process_withdrawal_approval(
                 f"You are not authorised to approve withdrawals at this tier. "
                 f"Required role(s): {', '.join(allowed_groups)}."
             )
+
+    # ── Payment method selection (first step only) ────────────────────────────
+    if approved and wr.payment_method is None:
+        # Branch Manager must select payment routing on the first approval
+        if payment_method not in ('cash', 'bank'):
+            raise ValidationError(
+                "Payment method must be selected: 'cash' or 'bank'."
+            )
+        if payment_method == 'cash':
+            if wr.amount >= CASH_LIMIT:
+                raise ValidationError(
+                    f"Withdrawals of ₦{CASH_LIMIT:,.0f} or above must be disbursed "
+                    "via bank transfer, not cash."
+                )
+            if not cashier_account_id:
+                raise ValidationError(
+                    "A cashier account must be selected for cash withdrawals."
+                )
+            from accounts.models import Account
+            try:
+                cashier = Account.objects.get(pk=cashier_account_id)
+            except Account.DoesNotExist:
+                raise ValidationError("Cashier account not found.")
+            wr.cashier_account = cashier
+        wr.payment_method = payment_method
+        wr.save(update_fields=['payment_method', 'cashier_account_id', 'updated_at'])
+    # ── End payment method selection ──────────────────────────────────────────
 
     # Record the decision
     step.approver = approver
@@ -537,16 +573,33 @@ def disburse_withdrawal(
     Third-role disbursement: a user different from the creator AND all approvers
     physically releases the funds.
 
-    Enforces the 3-person maker-checker rule:
-      1. requested_by (creator)  ≠ 2. approver(s)  ≠ 3. disbursed_by (disburser)
+    Cash withdrawals: cashier_account was set by the Branch Manager during approval.
+      Director just confirms — no bank account selection needed.
+
+    Bank withdrawals: Director must supply destination_bank_account at disbursal time.
     """
     if wr.status != SavingsWithdrawalRequest.STATUS_APPROVED:
         raise ValidationError(
             "Withdrawal must be fully approved before it can be disbursed."
         )
 
-    if not destination_bank_account:
-        raise ValidationError("A destination bank account is required for disbursement.")
+    if not wr.payment_method:
+        raise ValidationError(
+            "Payment method has not been set on this withdrawal request. "
+            "Please ensure the Branch Manager's approval step has been completed."
+        )
+
+    if wr.payment_method == SavingsWithdrawalRequest.PAYMENT_BANK:
+        if not destination_bank_account:
+            raise ValidationError(
+                "A destination bank account must be selected for bank disbursements."
+            )
+    elif wr.payment_method == SavingsWithdrawalRequest.PAYMENT_CASH:
+        if not wr.cashier_account:
+            raise ValidationError(
+                "No cashier account is configured for this cash withdrawal. "
+                "Please contact the Branch Manager."
+            )
 
     # Creator ≠ disburser
     if disbursed_by.pk == wr.requested_by_id:

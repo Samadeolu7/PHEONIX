@@ -278,6 +278,10 @@ export interface SavingsWithdrawalRequest {
   account_status?: string | null;
   product_name?: string | null;
   applied_tier_name?: string | null;
+  // Payment routing — set by Branch Manager during first approval step
+  payment_method?: 'cash' | 'bank' | null;
+  cashier_account: number | null;
+  cashier_account_name?: string | null;  // display name of the cashier GL account
   requested_by: number;
   requested_by_name?: string;
   amount: string;
@@ -285,7 +289,6 @@ export interface SavingsWithdrawalRequest {
   required_approvals: number;
   approvals_received: number;
   description: string;
-  cashier_account: number | null;
   destination_bank_account: number | null;
   destination_bank_name?: string | null;
   destination_account_number?: string | null;
@@ -388,7 +391,13 @@ export const getPendingDisburse = (): Promise<SavingsWithdrawalRequest[]> => {
 
 export const approveWithdrawalStep = (
   withdrawalId: number,
-  data: { approved: boolean; comment?: string }
+  data: {
+    approved: boolean;
+    comment?: string;
+    // Required on first step (when payment_method not yet set on the withdrawal)
+    payment_method?: 'cash' | 'bank' | null;
+    cashier_account?: number | null;
+  }
 ): Promise<SavingsWithdrawalRequest> =>
   api.post(`${BASE_WITHDRAWALS}/${withdrawalId}/approve-step/`, data);
 
@@ -397,7 +406,7 @@ export const cancelWithdrawal = (id: number): Promise<SavingsWithdrawalRequest> 
 
 export const disburseWithdrawal = (
   id: number,
-  data: { destination_bank_account: number }
+  data: { destination_bank_account?: number }
 ): Promise<SavingsWithdrawalRequest> =>
   api.post(`${BASE_WITHDRAWALS}/${id}/disburse/`, data);
 

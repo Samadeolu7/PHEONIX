@@ -50,6 +50,8 @@ import {
 } from '../../services/savingsService';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
+import { accountService } from '../../services/accountService';
+import { Account } from '../../types/accounts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -90,13 +92,41 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Payment method selection (only needed on first step)
+  const needsPaymentMethod = !withdrawal.payment_method;
+  const CASH_LIMIT = 50000;
+  const amountNum = parseFloat(withdrawal.amount);
+  const forceBankTransfer = amountNum >= CASH_LIMIT;
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'bank'>(
+    forceBankTransfer ? 'bank' : 'bank'  // default to bank; user can switch to cash if < 50k
+  );
+  const [cashierAccounts, setCashierAccounts] = useState<Account[]>([]);
+  const [cashierAccountId, setCashierAccountId] = useState<number | ''>('');
+
+  useEffect(() => {
+    if (needsPaymentMethod) {
+      accountService.getAccounts({ account_type: 'ASSET' }).then(setCashierAccounts).catch(() => {});
+    }
+  }, [needsPaymentMethod]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (approved === null) { setError('Please select Approve or Reject.'); return; }
+    if (approved && needsPaymentMethod) {
+      if (paymentMethod === 'cash' && !cashierAccountId) {
+        setError('Please select a cashier account for cash disbursement.');
+        return;
+      }
+    }
     setSaving(true);
     setError(null);
     try {
-      const updated = await approveWithdrawalStep(withdrawal.id, { approved, comment });
+      const payload: Parameters<typeof approveWithdrawalStep>[1] = { approved, comment };
+      if (approved && needsPaymentMethod) {
+        payload.payment_method = paymentMethod;
+        if (paymentMethod === 'cash') payload.cashier_account = cashierAccountId as number;
+      }
+      const updated = await approveWithdrawalStep(withdrawal.id, payload);
       onDone(updated);
     } catch (e: any) {
       setError(e?.message ?? e?.detail ?? 'Action failed.');
@@ -184,7 +214,7 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
 
         {/* Approval steps audit trail */}
         {withdrawal.approval_steps?.length > 0 && (
-          <div className="mx-5 mb-4 rounded-lg border border-gray-200 overflow-hidden">
+          <div className="mx-5 mb-2 rounded-lg border border-gray-200 overflow-hidden">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-3 py-2 bg-gray-50 border-b border-gray-200">Approval Chain</p>
             <div className="divide-y divide-gray-100">
               {withdrawal.approval_steps.map(s => (
@@ -204,10 +234,12 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="px-5 pb-5 space-y-4">
+        <form onSubmit={handleSubmit} className="px-5 pb-5 space-y-4 mt-3">
           {error && (
             <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
           )}
+
+          {/* Decision */}
           <div>
             <p className="text-sm font-medium text-gray-700 mb-2">Your Decision</p>
             <div className="flex gap-3">
@@ -235,12 +267,80 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
               </button>
             </div>
           </div>
+
+          {/* Payment method — only on first approval step (when not yet set) */}
+          {approved === true && needsPaymentMethod && (
+            <div className="rounded-xl border-2 border-blue-200 bg-blue-50 p-4 space-y-3">
+              <p className="text-sm font-semibold text-blue-800 flex items-center gap-1.5">
+                <Landmark className="w-4 h-4" /> Select Payment Method
+              </p>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={forceBankTransfer}
+                  onClick={() => setPaymentMethod('cash')}
+                  className={`flex-1 py-2.5 rounded-lg border-2 text-sm font-medium transition-colors ${
+                    paymentMethod === 'cash'
+                      ? 'border-blue-500 bg-white text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-500 hover:border-blue-300'
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  💵 Cash
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('bank')}
+                  className={`flex-1 py-2.5 rounded-lg border-2 text-sm font-medium transition-colors ${
+                    paymentMethod === 'bank'
+                      ? 'border-blue-500 bg-white text-blue-700'
+                      : 'border-gray-200 bg-white text-gray-500 hover:border-blue-300'
+                  }`}
+                >
+                  🏦 Bank Transfer
+                </button>
+              </div>
+              {forceBankTransfer && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                  Amounts ≥ ₦50,000 must be disbursed via bank transfer.
+                </p>
+              )}
+
+              {/* Cashier account selector — cash only */}
+              {paymentMethod === 'cash' && (
+                <div>
+                  <label className="block text-xs font-medium text-blue-800 mb-1">
+                    Cashier Account <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={cashierAccountId}
+                    onChange={e => setCashierAccountId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    required
+                  >
+                    <option value="">Select cashier / cash account</option>
+                    {cashierAccounts.map(a => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} {a.code ? `(${a.code})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-blue-600 mt-1">Funds will be paid out from this GL account.</p>
+                </div>
+              )}
+              {paymentMethod === 'bank' && (
+                <p className="text-xs text-blue-600">
+                  The Director will select the organisation bank account at disbursal time.
+                </p>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Comment {approved === false ? '(required for rejection)' : '(optional)'}</label>
             <textarea
               value={comment}
               onChange={e => setComment(e.target.value)}
-              rows={3}
+              rows={2}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
               placeholder="Add a note for the audit trail..."
             />
@@ -257,7 +357,6 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close"
               className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               Cancel
@@ -278,24 +377,35 @@ interface DisburseModalProps {
 }
 
 function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
+  const isCash = withdrawal.payment_method === 'cash';
+  const isBank = withdrawal.payment_method === 'bank';
+
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<number | ''>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
-  }, []);
+    // Only need bank accounts list for bank disbursements
+    if (isBank) {
+      bankService.listBankAccounts({ is_active: true }).then(setBankAccounts).catch(() => {});
+    }
+  }, [isBank]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (typeof selectedBankId !== 'number') { setError('Please select a destination bank account.'); return; }
+    if (isBank && typeof selectedBankId !== 'number') {
+      setError('Please select an organisation bank account to disburse from.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const updated = await disburseWithdrawal(withdrawal.id, {
-        destination_bank_account: selectedBankId,
-      });
+      const payload: { destination_bank_account?: number } = {};
+      if (isBank && typeof selectedBankId === 'number') {
+        payload.destination_bank_account = selectedBankId;
+      }
+      const updated = await disburseWithdrawal(withdrawal.id, payload);
       onDone(updated);
     } catch (e: any) {
       setError(e?.message ?? e?.detail ?? 'Disbursement failed.');
@@ -314,7 +424,7 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
           <div>
             <h3 className="text-base font-semibold text-gray-900">Disburse Withdrawal</h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              {withdrawal.account_number} — Requested by {withdrawal.requested_by_name ?? '—'}
+              {withdrawal.account_number} — {withdrawal.client_name}
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1 rounded-full text-gray-400 hover:bg-gray-100">
@@ -322,123 +432,184 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
           </button>
         </div>
 
-        {/* Amount summary */}
-        <div className="px-5 py-4 bg-teal-50 border-b border-teal-100 flex items-center justify-between">
+        {/* Amount + payment method banner */}
+        <div className={`px-5 py-4 border-b flex items-center justify-between ${
+          isCash ? 'bg-orange-50 border-orange-100' : 'bg-teal-50 border-teal-100'
+        }`}>
           <div>
-            <p className="text-xs text-teal-600 font-medium uppercase tracking-wide">Withdrawal Amount</p>
-            <p className="text-2xl font-bold text-teal-800">₦{fmt(withdrawal.amount)}</p>
-            <p className="text-xs text-teal-600 mt-0.5">{withdrawal.client_name}</p>
+            <p className={`text-xs font-medium uppercase tracking-wide ${isCash ? 'text-orange-600' : 'text-teal-600'}`}>
+              {isCash ? '💵 Cash Withdrawal' : '🏦 Bank Transfer'}
+            </p>
+            <p className={`text-2xl font-bold ${isCash ? 'text-orange-900' : 'text-teal-800'}`}>
+              ₦{fmt(withdrawal.amount)}
+            </p>
+            <p className={`text-xs mt-0.5 ${isCash ? 'text-orange-600' : 'text-teal-600'}`}>
+              {withdrawal.client_name}
+            </p>
           </div>
-          {withdrawal.client_phone && (
-            <p className="text-sm text-teal-700">{withdrawal.client_phone}</p>
-          )}
+          <span className={`px-3 py-1 rounded-full text-xs font-semibold border ${
+            isCash
+              ? 'bg-orange-100 text-orange-700 border-orange-200'
+              : 'bg-teal-100 text-teal-700 border-teal-200'
+          }`}>
+            {isCash ? 'CASH' : 'BANK'}
+          </span>
         </div>
 
-        {/* Client bank details — Pay To */}
-        <div className={`mx-5 mt-4 rounded-xl border-2 p-4 ${
-          hasClientBankDetails
-            ? 'bg-blue-50 border-blue-200'
-            : 'bg-amber-50 border-amber-200'
-        }`}>
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-blue-800 flex items-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5" />
-              Pay To — Member Bank Details
-            </h4>
-            {!hasClientBankDetails && (
-              <span className="text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
-                No bank details on file
-              </span>
-            )}
-          </div>
-          {hasClientBankDetails ? (
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-white rounded-lg border border-blue-100 p-2.5">
-                <p className="text-xs text-gray-400 mb-0.5">Bank</p>
-                <p className="text-sm font-semibold text-gray-900">{withdrawal.client_bank_name || '—'}</p>
-              </div>
-              <div className="bg-white rounded-lg border border-blue-100 p-2.5">
-                <p className="text-xs text-gray-400 mb-0.5">Account Name</p>
-                <p className="text-sm font-semibold text-gray-900">{withdrawal.client_bank_account_name || '—'}</p>
-              </div>
-              <div className="bg-white rounded-lg border border-blue-100 p-2.5">
-                <p className="text-xs text-gray-400 mb-0.5">Account Number</p>
-                <p className="text-sm font-mono font-bold text-gray-900 tracking-wider">{withdrawal.client_bank_account_number}</p>
-              </div>
-              {withdrawal.client_bvn && (
-                <div className="col-span-3 flex items-center gap-2 pt-1 border-t border-blue-100 text-xs text-gray-500">
-                  <span className="font-medium">BVN:</span>
-                  <span className="font-mono tracking-wider text-gray-700">{withdrawal.client_bvn}</span>
+        {/* ── CASH PATH: show cashier account, confirm only ── */}
+        {isCash && (
+          <div className="px-5 py-4">
+            <div className="rounded-xl bg-orange-50 border border-orange-200 p-4 space-y-3">
+              <p className="text-xs font-semibold text-orange-800 uppercase tracking-wide">
+                Cash Payout Details
+              </p>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="bg-white rounded-lg border border-orange-100 p-2.5">
+                  <p className="text-xs text-gray-400 mb-0.5">Client</p>
+                  <p className="font-semibold text-gray-900">{withdrawal.client_name}</p>
+                  {withdrawal.client_phone && (
+                    <p className="text-xs text-gray-500">{withdrawal.client_phone}</p>
+                  )}
                 </div>
+                <div className="bg-white rounded-lg border border-orange-100 p-2.5">
+                  <p className="text-xs text-gray-400 mb-0.5">Cashier Account</p>
+                  <p className="font-semibold text-gray-900">
+                    {withdrawal.cashier_account_name ?? `Account #${withdrawal.cashier_account}`}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">Funds debited from this account</p>
+                </div>
+              </div>
+              <div className="flex justify-between border-t border-orange-200 pt-3">
+                <span className="text-sm text-gray-500">Amount to pay out:</span>
+                <span className="text-base font-bold text-orange-800">₦{fmt(withdrawal.amount)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── BANK PATH: client details + org bank selector ── */}
+        {isBank && (
+          <>
+            {/* Client bank "Pay To" panel */}
+            <div className={`mx-5 mt-4 rounded-xl border-2 p-4 ${
+              hasClientBankDetails ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'
+            }`}>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-blue-800 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5" />
+                  Pay To — Member Bank Details
+                </h4>
+                {!hasClientBankDetails && (
+                  <span className="text-xs font-semibold text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-full">
+                    No bank details on file
+                  </span>
+                )}
+              </div>
+              {hasClientBankDetails ? (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white rounded-lg border border-blue-100 p-2.5">
+                    <p className="text-xs text-gray-400 mb-0.5">Bank</p>
+                    <p className="text-sm font-semibold text-gray-900">{withdrawal.client_bank_name || '—'}</p>
+                  </div>
+                  <div className="bg-white rounded-lg border border-blue-100 p-2.5">
+                    <p className="text-xs text-gray-400 mb-0.5">Account Name</p>
+                    <p className="text-sm font-semibold text-gray-900">{withdrawal.client_bank_account_name || '—'}</p>
+                  </div>
+                  <div className="bg-white rounded-lg border border-blue-100 p-2.5">
+                    <p className="text-xs text-gray-400 mb-0.5">Account No.</p>
+                    <p className="text-sm font-mono font-bold text-gray-900 tracking-wider">{withdrawal.client_bank_account_number}</p>
+                  </div>
+                  {withdrawal.client_bvn && (
+                    <div className="col-span-3 flex items-center gap-2 pt-1 border-t border-blue-100 text-xs text-gray-500">
+                      <span className="font-medium">BVN:</span>
+                      <span className="font-mono tracking-wider text-gray-700">{withdrawal.client_bvn}</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-amber-600">Update the member's profile with bank details before disbursing.</p>
               )}
             </div>
-          ) : (
-            <p className="text-xs text-amber-600">Update the member's profile with bank details before disbursing via bank transfer.</p>
-          )}
-        </div>
 
-        {/* Confirmation summary */}
-        <div className="mx-5 mt-3 rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm space-y-1">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Confirm Transfer Details</p>
-          <div className="flex justify-between">
-            <span className="text-gray-500">To:</span>
-            <span className="font-semibold text-gray-900">{withdrawal.client_name}</span>
-          </div>
-          {withdrawal.client_bank_account_number && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Account:</span>
-              <span className="font-mono font-bold text-gray-900 tracking-wider">{withdrawal.client_bank_account_number}</span>
+            {/* Transfer summary */}
+            <div className="mx-5 mt-3 rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm space-y-1">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Transfer Summary</p>
+              <div className="flex justify-between">
+                <span className="text-gray-500">To:</span>
+                <span className="font-semibold text-gray-900">{withdrawal.client_name}</span>
+              </div>
+              {withdrawal.client_bank_account_number && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Account:</span>
+                  <span className="font-mono font-bold text-gray-900 tracking-wider">{withdrawal.client_bank_account_number}</span>
+                </div>
+              )}
+              {withdrawal.client_bank_name && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Bank:</span>
+                  <span className="font-medium text-gray-900">{withdrawal.client_bank_name}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t pt-2 mt-2">
+                <span className="text-gray-500">Amount:</span>
+                <span className="font-bold text-teal-700 text-base">₦{fmt(withdrawal.amount)}</span>
+              </div>
             </div>
-          )}
-          {withdrawal.client_bank_name && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Bank:</span>
-              <span className="font-medium text-gray-900">{withdrawal.client_bank_name}</span>
-            </div>
-          )}
-          <div className="flex justify-between border-t pt-2 mt-2">
-            <span className="text-gray-500">Amount:</span>
-            <span className="font-bold text-teal-700 text-base">₦{fmt(withdrawal.amount)}</span>
-          </div>
-        </div>
+          </>
+        )}
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {error && (
             <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
           )}
-          <div>
-            <label htmlFor="disburse-bank-select" className="block text-sm font-medium text-gray-700 mb-1">
-              Destination Bank Account (Organisation) *
-            </label>
-            <select
-              id="disburse-bank-select"
-              value={selectedBankId}
-              onChange={e => setSelectedBankId(e.target.value ? Number(e.target.value) : '')}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-              required
-            >
-              <option value="">Select disbursement bank account</option>
-              {bankAccounts.map(b => (
-                <option key={b.id} value={b.id}>
-                  {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-400 mt-1">The organisation's bank account funds will be deducted from.</p>
-          </div>
+
+          {/* Bank: org bank account selector */}
+          {isBank && (
+            <div>
+              <label htmlFor="disburse-bank-select" className="block text-sm font-medium text-gray-700 mb-1">
+                Disbursement Bank Account (Organisation) <span className="text-red-500">*</span>
+              </label>
+              <select
+                id="disburse-bank-select"
+                value={selectedBankId}
+                onChange={e => setSelectedBankId(e.target.value ? Number(e.target.value) : '')}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                required
+              >
+                <option value="">Select org bank account to debit</option>
+                {bankAccounts.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.bank_name} — {b.account_number} ({b.account_name})
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">Funds will be deducted from this organisation account.</p>
+            </div>
+          )}
+
+          {/* Cash: confirmation note */}
+          {isCash && (
+            <div className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+              Confirming will deduct ₦{fmt(withdrawal.amount)} from the selected cashier account and mark this withdrawal as completed.
+            </div>
+          )}
+
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
               disabled={saving}
-              className="flex-1 flex items-center justify-center gap-2 bg-teal-600 hover:bg-teal-700 text-white text-sm py-2.5 rounded-lg transition-colors disabled:opacity-50"
+              className={`flex-1 flex items-center justify-center gap-2 text-white text-sm py-2.5 rounded-lg transition-colors disabled:opacity-50 ${
+                isCash
+                  ? 'bg-orange-500 hover:bg-orange-600'
+                  : 'bg-teal-600 hover:bg-teal-700'
+              }`}
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              Confirm Disbursement
+              {isCash ? 'Confirm Cash Payout' : 'Confirm Bank Transfer'}
             </button>
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close"
               className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               Cancel
