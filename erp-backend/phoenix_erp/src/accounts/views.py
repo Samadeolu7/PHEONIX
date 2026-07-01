@@ -160,6 +160,117 @@ class AccountViewSet(ScopedModelViewSet):
             }
         }, status=status.HTTP_200_OK)
     
+    @action(detail=True, methods=['get'], url_path='reconciliation-detail')
+    def reconciliation_detail(self, request, pk=None):
+        """
+        Investigation data for reconciling entries posted directly against
+        this account — built for suspense/clearing accounts (e.g. the
+        "Unidentified Cash Receipts" account used to hold funds pending
+        matching to a real bank account) but works for any account.
+
+        GET /api/accounts/{id}/reconciliation-detail/?start_date=&end_date=&side=
+
+        For each entry, enriches the raw ledger data with whatever
+        FinancialAuditLog captured for the transaction (loan number, client,
+        bank reference, principal/interest/fee/penalty split) when
+        available, and who actually recorded it.
+        """
+        from transactions.models import TransactionEntry
+        from common.models import FinancialAuditLog
+
+        account = self.get_object()
+
+        entries = (
+            TransactionEntry.objects
+            .filter(account=account, transaction__is_deleted=False)
+            .select_related('transaction', 'transaction__series', 'transaction__created_by')
+            .order_by('-transaction__date', '-id')
+        )
+
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        side = request.query_params.get('side')
+        if start_date:
+            entries = entries.filter(transaction__date__gte=start_date)
+        if end_date:
+            entries = entries.filter(transaction__date__lte=end_date)
+        if side in (TransactionEntry.DEBIT, TransactionEntry.CREDIT):
+            entries = entries.filter(side=side)
+
+        entries = list(entries)
+
+        # Batch-fetch matching audit log rows (one per journal) instead of
+        # querying per-entry.
+        journal_ids = {str(e.transaction_id) for e in entries}
+        audit_logs = {
+            log.extra.get('journal_entry_id'): log
+            for log in FinancialAuditLog.objects.filter(
+                extra__journal_entry_id__in=list(journal_ids)
+            ).select_related('acted_by')
+        }
+
+        total_debit = Decimal('0.00')
+        total_credit = Decimal('0.00')
+        results = []
+        for entry in entries:
+            txn = entry.transaction
+            if entry.side == TransactionEntry.DEBIT:
+                total_debit += entry.amount
+            else:
+                total_credit += entry.amount
+
+            recorded_by = getattr(txn.created_by, 'email', None) \
+                or getattr(txn.created_by, 'username', None) or txn.created_by_id
+
+            row = {
+                'entry_id': entry.pk,
+                'transaction_reference': txn.reference_number,
+                'series': txn.series.code if txn.series_id else None,
+                'date': txn.date,
+                'side': entry.side,
+                'amount': str(entry.amount),
+                'posted': entry.posted,
+                'posted_at': entry.posted_at,
+                'description': txn.description,
+                'recorded_by': recorded_by,
+                'audit': None,
+            }
+
+            log = audit_logs.get(str(txn.pk))
+            if log:
+                extra = log.extra or {}
+                row['audit'] = {
+                    'event_type': log.event_type,
+                    'acted_by': getattr(log.acted_by, 'email', log.acted_by_id),
+                    'timestamp': log.timestamp,
+                    'loan_number': extra.get('loan_number'),
+                    'client_id': extra.get('client_id'),
+                    'bank_reference': extra.get('bank_reference') or None,
+                    'principal': extra.get('principal'),
+                    'interest': extra.get('interest'),
+                    'fees': extra.get('fees'),
+                    'penalty': extra.get('penalty'),
+                }
+
+            results.append(row)
+
+        return Response({
+            'account': {
+                'id': account.id,
+                'code': account.code,
+                'name': account.name,
+                'account_type': account.account_type,
+                'balance': str(account.balance),
+            },
+            'entries': results,
+            'summary': {
+                'count': len(results),
+                'total_debit': str(total_debit),
+                'total_credit': str(total_credit),
+                'net': str(total_debit - total_credit),
+            },
+        }, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['get'], url_path='generated-components')
     def get_generated_components(self, request, pk=None):
         """

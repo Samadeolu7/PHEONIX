@@ -566,10 +566,6 @@ class LoanAccountViewSet(ScopedModelViewSet):
             payment_amount = amount
 
         # ── Post the repayment ────────────────────────────────────────────
-        description = f"Loan repayment — {loan.loan_number}"
-        if bank_reference:
-            description += f" | Ref: {bank_reference}"
-
         try:
             from django.db import transaction as db_transaction
             with db_transaction.atomic():
@@ -590,6 +586,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
                     received_by=request.user,
                     spillover_savings_account=spillover_savings,
                     spillover_amount=excess if spillover_savings else Decimal('0.00'),
+                    bank_reference=bank_reference or None,
                 )
 
                 if spillover_savings and excess > Decimal('0.00'):
@@ -853,6 +850,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
                         received_by=request.user,
                         spillover_savings_account=spillover_savings,
                         spillover_amount=excess if spillover_savings else Decimal('0.00'),
+                        bank_reference=bank_reference or None,
                     )
 
                     succeeded += 1
@@ -2312,6 +2310,7 @@ class OfflinePaymentRecordViewSet(ScopedModelViewSet):
                     payment_date=rec.payment_date,
                     payment_account=payment_account,
                     received_by=request.user,
+                    bank_reference=rec.bank_reference or None,
                 )
 
                 rec.status = OfflinePaymentRecord.STATUS_POSTED

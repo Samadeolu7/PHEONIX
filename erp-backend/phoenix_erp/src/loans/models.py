@@ -795,7 +795,8 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     @transaction.atomic
     def record_payment(self, amount: Decimal, payment_date=None,
                        payment_account=None, received_by=None,
-                       spillover_savings_account=None, spillover_amount=None):
+                       spillover_savings_account=None, spillover_amount=None,
+                       bank_reference=None):
         """
         Record a loan repayment and create the corresponding GL journal entry.
 
@@ -826,6 +827,8 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             payment_account: The Cash/Bank GL Account that received the payment.
             received_by: The User recording the payment (used as created_by on
                 the journal entry).
+            bank_reference: Optional cashier-entered bank transfer / mobile money
+                reference, appended to the journal description for reconciliation.
 
         Raises:
             ValidationError: if the loan is not active/disbursed, if no
@@ -915,10 +918,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             defaults={'description': 'Loan Repayments'},
         )
 
+        journal_description = f"Loan repayment – {self.loan_number}"
+        if bank_reference:
+            journal_description += f" | Ref: {bank_reference}"
+        journal_description = journal_description[:255]
+
         journal_entry = JournalEntry.objects.create(
             series=series,
             date=payment_date,
-            description=f"Loan repayment – {self.loan_number}",
+            description=journal_description,
             # workflow_reference is intentionally left None so multiple payments
             # per loan don't violate the unique_together constraint.
             owner=self.owner,
@@ -1024,6 +1032,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 'fees': str(fee_payment),
                 'penalty': str(penalty_payment),
                 'journal_entry_id': str(journal_entry.pk),
+                'bank_reference': bank_reference or '',
             },
         )
 
