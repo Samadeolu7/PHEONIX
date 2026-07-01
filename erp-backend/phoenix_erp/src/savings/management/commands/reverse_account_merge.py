@@ -76,14 +76,20 @@ class Command(BaseCommand):
             if not merge_journals.exists():
                 self.stdout.write('  No active MERGE journals to reverse.')
             else:
+                from accounts.models import Account as GlAccount
+
                 for journal in merge_journals:
                     entries = list(journal.entries.all())
                     if not entries:
                         continue
 
-                    # The DEBIT entry targets the duplicate account (balance was zeroed).
-                    # The CREDIT entry targets the primary account (balance was increased).
-                    # Reversal: swap DEBIT ↔ CREDIT so each balance is restored.
+                    # In the original MERGE journal:
+                    #   DEBIT  → duplicate GL account (balance was zeroed)
+                    #   CREDIT → primary GL account   (balance was increased)
+                    # Reversal swaps the sides to restore both balances.
+                    debit_entry_account_ids = [
+                        e.account_id for e in entries if e.side == TransactionEntry.DEBIT
+                    ]
                     amount = entries[0].amount
                     self.stdout.write(
                         f'  Reversing journal {journal.reference_number} (amount={amount})'
@@ -91,6 +97,13 @@ class Command(BaseCommand):
 
                     if not dry_run:
                         with transaction.atomic():
+                            # The dup GL account is soft-deleted; TransactionEntry.post()
+                            # uses Account.objects which excludes is_deleted=True records.
+                            # Un-delete it first so post() can locate it.
+                            GlAccount.all_objects.filter(
+                                pk__in=debit_entry_account_ids
+                            ).update(is_deleted=False)
+
                             reversal = JournalEntry.objects.create(
                                 series=merge_series,
                                 date=timezone.now().date(),
