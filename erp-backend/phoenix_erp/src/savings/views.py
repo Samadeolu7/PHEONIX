@@ -692,17 +692,36 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
         Return full withdrawal REQUEST objects where the current user has a
         pending approval step and belongs to the required role for that tier.
 
-        Uses the viewset's own queryset (proper tenant/branch scope + all
-        select_related / prefetch_related) so no additional DB round-trips
-        are needed when iterating.
+        IMPORTANT: We intentionally bypass the officer-scope filter
+        (officer_client_lookup = 'savings_account__client__assigned_officer')
+        that get_queryset() applies.  Approvers must see all branch withdrawal
+        requests that match their tier/role – not just requests for clients
+        assigned to them as account officers.  Maker-checker requests created
+        by the current user are also excluded because self-approval is blocked.
         """
         user = request.user
         user_groups = set(user.groups.values_list('name', flat=True))
 
-        # Fetch in-progress requests that still have at least one pending step.
-        # The .distinct() is required because the JOIN via approval_steps can
-        # produce duplicate rows when a request has multiple steps.
-        qs = self.get_queryset().filter(
+        # --- Build a scope-correct queryset WITHOUT the officer scope filter ---
+        # Start from the class-level queryset (has select_related/prefetch_related
+        # and the soft-delete .alive() guard from OwnerBranchManager).
+        qs = self.__class__.queryset.all()
+
+        # Apply tenant scope
+        if getattr(user, 'tenant', None):
+            qs = qs.filter(tenant=user.tenant)
+
+        # Apply branch scope (directors with view_all_branches bypass this)
+        if not user.has_perm('savings.view_all_branches'):
+            if getattr(user, 'branch', None):
+                qs = qs.filter(branch=user.branch)
+
+        # Exclude requests created by this user (maker-checker: creator ≠ approver)
+        qs = qs.exclude(requested_by=user)
+
+        # Keep only in-progress requests that still have at least one pending step.
+        # .distinct() is required because the approval_steps JOIN can duplicate rows.
+        qs = qs.filter(
             status__in=[
                 SavingsWithdrawalRequest.STATUS_PENDING,
                 SavingsWithdrawalRequest.STATUS_PARTIAL,
@@ -712,8 +731,7 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
 
         eligible = []
         for wr in qs:
-            # wr.approval_steps.all() uses the prefetch cache on get_queryset(),
-            # so this loop does NOT issue additional DB queries.
+            # wr.approval_steps.all() uses the prefetch cache – no extra DB queries.
             steps = list(wr.approval_steps.all())
 
             # Skip if this user has already responded to any step on this request
@@ -723,7 +741,8 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
             ):
                 continue
 
-            # Check tier eligibility
+            # Check tier eligibility: if a tier specifies approver_roles, the user
+            # must belong to at least one of those groups.
             tier = wr.applied_tier
             allowed = set(tier.approver_roles) if tier and tier.approver_roles else set()
             if not allowed or (allowed & user_groups):
