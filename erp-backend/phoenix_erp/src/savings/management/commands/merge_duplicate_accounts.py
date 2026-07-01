@@ -161,7 +161,7 @@ class Command(BaseCommand):
 
             with transaction.atomic():
                 series, _ = TransactionSeries.objects.get_or_create(
-                    code='MRGADM',
+                    code='MERGE',
                     defaults={'description': 'Account Merge Administration'},
                 )
 
