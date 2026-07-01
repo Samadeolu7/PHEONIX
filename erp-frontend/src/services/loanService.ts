@@ -50,6 +50,8 @@ export interface LoanAccountList {
   loan_number: string;
   client: number;
   client_name: string;
+  client_phone: string;
+  group_name: string;
   product: number;
   product_name: string;
   requested_amount: string;
@@ -62,6 +64,7 @@ export interface LoanAccountList {
   risk_classification: 'performing' | 'watch' | 'substandard' | 'doubtful' | 'loss';
   days_in_arrears: number;
   arrears_amount: string;
+  assigned_officer_name: string;
   application_date: string;
   disbursement_date: string | null;
   maturity_date: string | null;

@@ -197,18 +197,29 @@ class LoanGuarantorSerializer(TenantModelSerializer):
 class LoanAccountListSerializer(TenantModelSerializer):
     """Lightweight list serializer."""
     client_name = serializers.CharField(source='client.full_name', read_only=True)
+    client_phone = serializers.CharField(source='client.phone_primary', read_only=True, default='')
+    group_name = serializers.CharField(source='client.group.name', read_only=True, default='')
     product_name = serializers.CharField(source='product.name', read_only=True)
+    assigned_officer_name = serializers.SerializerMethodField()
+
+    def get_assigned_officer_name(self, obj):
+        officer = getattr(getattr(obj, 'client', None), 'assigned_officer', None)
+        if not officer:
+            return ''
+        return officer.get_full_name() or officer.username or ''
 
     class Meta:
         model = LoanAccount
         fields = [
             'id', 'loan_number', 'client', 'client_name',
+            'client_phone', 'group_name',
             'product', 'product_name',
             'requested_amount', 'disbursed_amount', 'outstanding_principal',
             'processing_fee', 'insurance_amount',
             'term_months', 'term_unit',
             'repayment_frequency', 'status', 'risk_classification',
             'days_in_arrears', 'arrears_amount',
+            'assigned_officer_name',
             'application_date', 'disbursement_date', 'maturity_date',
             'created_at', 'updated_at',
         ]

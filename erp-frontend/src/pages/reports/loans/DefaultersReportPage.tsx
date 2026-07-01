@@ -68,30 +68,22 @@ function arrearsBadge(days: number): string {
 function exportCSV(loans: LoanAccountList[], asOf: string) {
   const headers = [
     '#', 'Client Name', 'Phone', 'Group', 'Loan #', 'Product',
-    'Outstanding Balance (₦)', 'Days in Arrears', 'Last Payment Date',
+    'Amount Due (₦)', 'Outstanding Balance (₦)', 'Days in Arrears',
     'Status', 'Assigned Officer',
   ];
-  const rows = loans.map((l, i) => {
-    const la = l as unknown as {
-      client_phone?: string;
-      group_name?: string;
-      last_payment_date?: string;
-      assigned_officer_name?: string;
-    };
-    return [
-      i + 1,
-      l.client_name,
-      la.client_phone || '',
-      la.group_name || '',
-      l.loan_number,
-      l.product_name,
-      parseFloat(l.outstanding_principal || '0').toFixed(2),
-      l.days_in_arrears,
-      la.last_payment_date || '',
-      l.status,
-      la.assigned_officer_name || '',
-    ];
-  });
+  const rows = loans.map((l, i) => [
+    i + 1,
+    l.client_name,
+    l.client_phone || '',
+    l.group_name || '',
+    l.loan_number,
+    l.product_name,
+    parseFloat(l.arrears_amount || '0').toFixed(2),
+    parseFloat(l.outstanding_principal || '0').toFixed(2),
+    l.days_in_arrears,
+    l.status,
+    l.assigned_officer_name || '',
+  ]);
 
   const csv = [headers, ...rows]
     .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
@@ -115,8 +107,8 @@ type SortKey =
   | 'loan_number'
   | 'product_name'
   | 'outstanding_principal'
+  | 'arrears_amount'
   | 'days_in_arrears'
-  | 'last_payment_date'
   | 'assigned_officer_name';
 
 type SortDir = 'asc' | 'desc';
@@ -144,7 +136,7 @@ export default function DefaultersReportPage() {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortKey(key);
-      setSortDir(key === 'days_in_arrears' || key === 'outstanding_principal' ? 'desc' : 'asc');
+      setSortDir(key === 'days_in_arrears' || key === 'outstanding_principal' || key === 'arrears_amount' ? 'desc' : 'asc');
     }
   };
 
@@ -170,14 +162,18 @@ export default function DefaultersReportPage() {
   }, [loadLoans]);
 
   // Client-side search filter (summary stats use all loaded loans; table uses filtered)
-  const q = search.trim().toLowerCase();
-  const filtered = q
-    ? loans.filter(
-        (l) =>
-          l.client_name?.toLowerCase().includes(q) ||
-          l.loan_number?.toLowerCase().includes(q)
-      )
-    : loans;
+  // Split into tokens so "John Doe" matches "John Michael Doe" (middle name present).
+  const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const filtered = tokens.length === 0
+    ? loans
+    : loans.filter((l) => {
+        const name = l.client_name?.toLowerCase() ?? '';
+        const loanNum = l.loan_number?.toLowerCase() ?? '';
+        const phone = l.client_phone?.toLowerCase() ?? '';
+        return tokens.every(
+          (t) => name.includes(t) || loanNum.includes(t) || phone.includes(t)
+        );
+      });
 
   // Apply sorting
   const sorted = useMemo(() => {
@@ -190,12 +186,12 @@ export default function DefaultersReportPage() {
       if (sortKey === 'days_in_arrears') {
         aVal = a.days_in_arrears ?? 0;
         bVal = b.days_in_arrears ?? 0;
-      } else if (sortKey === 'outstanding_principal') {
-        aVal = parseFloat(a.outstanding_principal || '0');
-        bVal = parseFloat(b.outstanding_principal || '0');
+      } else if (sortKey === 'outstanding_principal' || sortKey === 'arrears_amount') {
+        aVal = parseFloat(a[sortKey] || '0');
+        bVal = parseFloat(b[sortKey] || '0');
       } else {
-        aVal = (sortKey === 'product_name' ? a.product_name : la[sortKey] ?? '') as string;
-        bVal = (sortKey === 'product_name' ? b.product_name : lb[sortKey] ?? '') as string;
+        aVal = (sortKey === 'product_name' ? a.product_name : (a as unknown as Record<string, string>)[sortKey] ?? '') as string;
+        bVal = (sortKey === 'product_name' ? b.product_name : (b as unknown as Record<string, string>)[sortKey] ?? '') as string;
         return sortDir === 'asc'
           ? String(aVal).localeCompare(String(bVal))
           : String(bVal).localeCompare(String(aVal));
@@ -381,6 +377,12 @@ export default function DefaultersReportPage() {
                   </th>
                   <th
                     className="cursor-pointer select-none px-4 py-3 text-right hover:bg-white/10"
+                    onClick={() => toggleSort('arrears_amount')}
+                  >
+                    Amount Due (₦) <SortIcon col="arrears_amount" sortKey={sortKey} sortDir={sortDir} />
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 text-right hover:bg-white/10"
                     onClick={() => toggleSort('outstanding_principal')}
                   >
                     Outstanding (₦) <SortIcon col="outstanding_principal" sortKey={sortKey} sortDir={sortDir} />
@@ -393,12 +395,6 @@ export default function DefaultersReportPage() {
                   </th>
                   <th
                     className="cursor-pointer select-none px-4 py-3 hover:bg-white/10"
-                    onClick={() => toggleSort('last_payment_date')}
-                  >
-                    Last Payment <SortIcon col="last_payment_date" sortKey={sortKey} sortDir={sortDir} />
-                  </th>
-                  <th
-                    className="cursor-pointer select-none px-4 py-3 hover:bg-white/10"
                     onClick={() => toggleSort('assigned_officer_name')}
                   >
                     Officer <SortIcon col="assigned_officer_name" sortKey={sortKey} sortDir={sortDir} />
@@ -406,22 +402,18 @@ export default function DefaultersReportPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {sorted.map((loan, idx) => {
-                  const la = loan as unknown as {
-                    client_phone?: string;
-                    group_name?: string;
-                    last_payment_date?: string;
-                    assigned_officer_name?: string;
-                  };
-                  return (
+                {sorted.map((loan, idx) => (
                     <tr key={loan.id} className={arrearsRowClass(loan.days_in_arrears)}>
                       <td className="px-4 py-3 text-gray-400 tabular-nums">{idx + 1}</td>
                       <td className="px-4 py-3 font-medium text-gray-900">{loan.client_name}</td>
-                      <td className="px-4 py-3 text-gray-600 text-xs">{la.client_phone || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600 text-xs">{la.group_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">{loan.client_phone || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">{loan.group_name || '—'}</td>
                       <td className="px-4 py-3 font-mono text-xs text-gray-700">{loan.loan_number}</td>
                       <td className="px-4 py-3 text-gray-600">{loan.product_name}</td>
-                      <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">
+                      <td className="px-4 py-3 text-right tabular-nums font-semibold text-red-600">
+                        {fmt(loan.arrears_amount)}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-700">
                         {fmt(loan.outstanding_principal)}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -434,14 +426,10 @@ export default function DefaultersReportPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-600">
-                        {la.last_payment_date || <span className="text-gray-300">Never</span>}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-600">
-                        {la.assigned_officer_name || '—'}
+                        {loan.assigned_officer_name || '—'}
                       </td>
                     </tr>
-                  );
-                })}
+                  ))}
               </tbody>
               <tfoot>
                 <tr
@@ -451,8 +439,11 @@ export default function DefaultersReportPage() {
                   <td className="px-4 py-3" colSpan={6}>
                     Totals ({fmtInt(sorted.length)} accounts{sorted.length !== loans.length ? ` of ${fmtInt(loans.length)}` : ''})
                   </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {fmt(sorted.reduce((s, l) => s + parseFloat(l.arrears_amount || '0'), 0))}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums">{fmt(totalOutstanding)}</td>
-                  <td colSpan={3} />
+                  <td colSpan={2} />
                 </tr>
               </tfoot>
             </table>
