@@ -1,7 +1,17 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
-  X, Minus, MessageSquare, Send, Paperclip, Plus,
-  ChevronDown, Lock, Unlock, Users, UserPlus, UserX,
+  X,
+  Minus,
+  MessageSquare,
+  Send,
+  Paperclip,
+  Plus,
+  ChevronDown,
+  Lock,
+  Unlock,
+  Users,
+  UserPlus,
+  UserX,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useThreadContext } from '../../contexts/ThreadContext';
@@ -9,7 +19,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { threadService } from '../../services/threadService';
 import { useThreadDraft } from '../../hooks/useThreadDraft';
 import { ThreadMessageBubble } from './ThreadMessageBubble';
-import type { Thread, ThreadMessageItem, PageThreadConfig, ThreadReason } from '../../types/threads';
+import type {
+  Thread,
+  ThreadMessageItem,
+  PageThreadConfig,
+  ThreadReason,
+} from '../../types/threads';
 
 const POLL_INTERVAL_MS = 8000;
 
@@ -22,8 +37,16 @@ const REASON_LABELS: Record<ThreadReason, string> = {
 };
 
 export const ThreadPanel: React.FC = () => {
-  const { panelState, activeTarget, activeThread, openPanel, minimisePanel, restorePanel, closePanel, setActiveThread } =
-    useThreadContext();
+  const {
+    panelState,
+    activeTarget,
+    activeThread,
+    openPanel,
+    minimisePanel,
+    restorePanel,
+    closePanel,
+    setActiveThread,
+  } = useThreadContext();
   const { user } = useAuth();
 
   // Page thread config (is_threadable, can_initiate, etc.)
@@ -41,15 +64,21 @@ export const ThreadPanel: React.FC = () => {
   // Participant management
   const [showParticipantManager, setShowParticipantManager] = useState(false);
   const [participantSearch, setParticipantSearch] = useState('');
-  const [participantSuggestions, setParticipantSuggestions] = useState<{ id: number; username: string; full_name: string }[]>([]);
+  const [participantSuggestions, setParticipantSuggestions] = useState<
+    { id: number; username: string; full_name: string }[]
+  >([]);
   const [participantError, setParticipantError] = useState('');
 
   // Create thread flow
   const [creating, setCreating] = useState(false);
   const [createReason, setCreateReason] = useState<ThreadReason | ''>('');
-  const [createParticipants, setCreateParticipants] = useState<{ id: number; full_name: string }[]>([]);
+  const [createParticipants, setCreateParticipants] = useState<{ id: number; full_name: string }[]>(
+    []
+  );
   const [createSearch, setCreateSearch] = useState('');
-  const [createSearchResults, setCreateSearchResults] = useState<{ id: number; username: string; full_name: string }[]>([]);
+  const [createSearchResults, setCreateSearchResults] = useState<
+    { id: number; username: string; full_name: string }[]
+  >([]);
   const [createError, setCreateError] = useState('');
 
   // Message input
@@ -74,7 +103,10 @@ export const ThreadPanel: React.FC = () => {
     setMessages([]);
     setCreating(false);
 
-    threadService.pageConfig(activeTarget.pageId).then(setPageConfig).catch(() => {});
+    threadService
+      .pageConfig(activeTarget.pageId)
+      .then(setPageConfig)
+      .catch(() => {});
 
     threadService
       .list({
@@ -148,7 +180,11 @@ export const ThreadPanel: React.FC = () => {
     setSending(true);
     setSendError('');
     try {
-      const msg = await threadService.postMessage(selectedThreadId, draft.trim(), attachFile ?? undefined);
+      const msg = await threadService.postMessage(
+        selectedThreadId,
+        draft.trim(),
+        attachFile ?? undefined
+      );
       setMessages(prev => [...prev, msg]);
       lastMsgIdRef.current = msg.id;
       clearDraft();
@@ -169,13 +205,19 @@ export const ThreadPanel: React.FC = () => {
 
   // ── User search for participant picker ───────────────────────────────────
   const searchParticipantUsers = useCallback(async (q: string) => {
-    if (q.length < 2) { setParticipantSuggestions([]); return; }
+    if (q.length < 2) {
+      setParticipantSuggestions([]);
+      return;
+    }
     const results = await threadService.searchUsers(q).catch(() => []);
     setParticipantSuggestions(results);
   }, []);
 
   const searchCreateUsers = useCallback(async (q: string) => {
-    if (q.length < 2) { setCreateSearchResults([]); return; }
+    if (q.length < 2) {
+      setCreateSearchResults([]);
+      return;
+    }
     const results = await threadService.searchUsers(q).catch(() => []);
     setCreateSearchResults(results);
   }, []);
@@ -232,12 +274,18 @@ export const ThreadPanel: React.FC = () => {
   // ── Minimised tab ─────────────────────────────────────────────────────────
   if (panelState === 'minimised') {
     // Count unread from live message list (updated by background poll)
-    const unreadCount = messages.filter(
-      msg => !msg.is_system_message && selectedThread &&
-        (selectedThread.participants.find(p => p.user === user?.id)?.last_read_at
-          ? new Date(msg.created_at) > new Date(selectedThread.participants.find(p => p.user === user?.id)!.last_read_at!)
-          : true)
-    ).length || selectedThread?.unread_count || 0;
+    const unreadCount =
+      messages.filter(
+        msg =>
+          !msg.is_system_message &&
+          selectedThread &&
+          (selectedThread.participants.find(p => p.user === user?.id)?.last_read_at
+            ? new Date(msg.created_at) >
+              new Date(selectedThread.participants.find(p => p.user === user?.id)!.last_read_at!)
+            : true)
+      ).length ||
+      selectedThread?.unread_count ||
+      0;
     const draftPending = draft.trim().length > 0;
     return (
       <button
@@ -248,7 +296,10 @@ export const ThreadPanel: React.FC = () => {
                    transition-colors"
         style={{ writingMode: 'vertical-rl' }}
       >
-        <MessageSquare className="w-4 h-4 mb-1 rotate-90" style={{ writingMode: 'horizontal-tb' }} />
+        <MessageSquare
+          className="w-4 h-4 mb-1 rotate-90"
+          style={{ writingMode: 'horizontal-tb' }}
+        />
         {unreadCount > 0 && (
           <span
             className="bg-red-500 text-white text-[10px] font-bold px-1 rounded-full"
@@ -400,7 +451,9 @@ export const ThreadPanel: React.FC = () => {
         {selectedThread && showParticipantManager && (
           <div className="border-b border-gray-100 px-4 py-3 bg-gray-50 space-y-2">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-gray-700">Participants ({selectedThread.participants.length})</p>
+              <p className="text-xs font-semibold text-gray-700">
+                Participants ({selectedThread.participants.length})
+              </p>
               <button
                 onClick={() => setShowParticipantManager(false)}
                 className="text-xs text-gray-400 hover:text-gray-600"
@@ -416,11 +469,16 @@ export const ThreadPanel: React.FC = () => {
                     onClick={async () => {
                       try {
                         await threadService.removeParticipant(p.id);
-                        setThreads(prev => prev.map(t => t.id === selectedThread.id
-                          ? { ...t, participants: t.participants.filter(x => x.id !== p.id) }
-                          : t
-                        ));
-                      } catch { setParticipantError('Failed to remove participant.'); }
+                        setThreads(prev =>
+                          prev.map(t =>
+                            t.id === selectedThread.id
+                              ? { ...t, participants: t.participants.filter(x => x.id !== p.id) }
+                              : t
+                          )
+                        );
+                      } catch {
+                        setParticipantError('Failed to remove participant.');
+                      }
                     }}
                     className="text-red-400 hover:text-red-600"
                     title="Remove participant"
@@ -436,7 +494,10 @@ export const ThreadPanel: React.FC = () => {
                 type="text"
                 placeholder="Search by name or username…"
                 value={participantSearch}
-                onChange={e => { setParticipantSearch(e.target.value); searchParticipantUsers(e.target.value); }}
+                onChange={e => {
+                  setParticipantSearch(e.target.value);
+                  searchParticipantUsers(e.target.value);
+                }}
                 className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
               />
               {participantSuggestions.length > 0 && (
@@ -451,11 +512,16 @@ export const ThreadPanel: React.FC = () => {
                           setParticipantSuggestions([]);
                           try {
                             const p = await threadService.addParticipant(selectedThread.id, u.id);
-                            setThreads(prev => prev.map(t => t.id === selectedThread.id
-                              ? { ...t, participants: [...t.participants, p] }
-                              : t
-                            ));
-                          } catch { setParticipantError('Failed to add participant.'); }
+                            setThreads(prev =>
+                              prev.map(t =>
+                                t.id === selectedThread.id
+                                  ? { ...t, participants: [...t.participants, p] }
+                                  : t
+                              )
+                            );
+                          } catch {
+                            setParticipantError('Failed to add participant.');
+                          }
                         }}
                         className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
                       >
@@ -500,7 +566,9 @@ export const ThreadPanel: React.FC = () => {
               >
                 <option value="">Select reason (optional)</option>
                 {(Object.entries(REASON_LABELS) as [ThreadReason, string][]).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
+                  <option key={k} value={k}>
+                    {v}
+                  </option>
                 ))}
               </select>
               {/* Participant picker */}
@@ -509,9 +577,16 @@ export const ThreadPanel: React.FC = () => {
                 {createParticipants.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-1">
                     {createParticipants.map(p => (
-                      <span key={p.id} className="flex items-center gap-1 bg-[#0a1857]/10 text-[#0a1857] text-xs px-2 py-0.5 rounded-full">
+                      <span
+                        key={p.id}
+                        className="flex items-center gap-1 bg-[#0a1857]/10 text-[#0a1857] text-xs px-2 py-0.5 rounded-full"
+                      >
                         {p.full_name}
-                        <button onClick={() => setCreateParticipants(prev => prev.filter(x => x.id !== p.id))}>
+                        <button
+                          onClick={() =>
+                            setCreateParticipants(prev => prev.filter(x => x.id !== p.id))
+                          }
+                        >
                           <X className="w-2.5 h-2.5" />
                         </button>
                       </span>
@@ -523,7 +598,10 @@ export const ThreadPanel: React.FC = () => {
                     type="text"
                     placeholder="Search by name or username…"
                     value={createSearch}
-                    onChange={e => { setCreateSearch(e.target.value); searchCreateUsers(e.target.value); }}
+                    onChange={e => {
+                      setCreateSearch(e.target.value);
+                      searchCreateUsers(e.target.value);
+                    }}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
                   />
                   {createSearchResults.length > 0 && (
@@ -534,7 +612,10 @@ export const ThreadPanel: React.FC = () => {
                             type="button"
                             onClick={() => {
                               if (!createParticipants.find(p => p.id === u.id)) {
-                                setCreateParticipants(prev => [...prev, { id: u.id, full_name: u.full_name }]);
+                                setCreateParticipants(prev => [
+                                  ...prev,
+                                  { id: u.id, full_name: u.full_name },
+                                ]);
                               }
                               setCreateSearch('');
                               setCreateSearchResults([]);
@@ -550,9 +631,7 @@ export const ThreadPanel: React.FC = () => {
                   )}
                 </div>
               </div>
-              {createError && (
-                <p className="text-xs text-red-600">{createError}</p>
-              )}
+              {createError && <p className="text-xs text-red-600">{createError}</p>}
               <div className="flex gap-2">
                 <button
                   onClick={handleCreateThread}
@@ -561,7 +640,12 @@ export const ThreadPanel: React.FC = () => {
                   Create
                 </button>
                 <button
-                  onClick={() => { setCreating(false); setCreateSearch(''); setCreateSearchResults([]); setCreateParticipants([]); }}
+                  onClick={() => {
+                    setCreating(false);
+                    setCreateSearch('');
+                    setCreateSearchResults([]);
+                    setCreateParticipants([]);
+                  }}
                   className="px-3 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Cancel
@@ -583,7 +667,9 @@ export const ThreadPanel: React.FC = () => {
                   key={msg.id}
                   message={msg}
                   isOwn={msg.author === user?.id}
-                  onUpdated={updated => setMessages(prev => prev.map(m => m.id === updated.id ? updated : m))}
+                  onUpdated={updated =>
+                    setMessages(prev => prev.map(m => (m.id === updated.id ? updated : m)))
+                  }
                   onDeleted={id => setMessages(prev => prev.filter(m => m.id !== id))}
                 />
               ))}
@@ -595,9 +681,7 @@ export const ThreadPanel: React.FC = () => {
         {/* ── Footer: message input ── */}
         {selectedThread && !creating && (
           <div className="border-t border-gray-200 px-4 py-3">
-            {actionError && (
-              <p className="text-xs text-red-600 mb-1">{actionError}</p>
-            )}
+            {actionError && <p className="text-xs text-red-600 mb-1">{actionError}</p>}
             {isClosed ? (
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-500 flex items-center gap-1">
@@ -616,7 +700,10 @@ export const ThreadPanel: React.FC = () => {
                   <div className="flex items-center gap-2 mb-2 px-2 py-1 bg-gray-100 rounded text-xs text-gray-600">
                     <Paperclip className="w-3 h-3" />
                     <span className="truncate flex-1">{attachFile.name}</span>
-                    <button onClick={() => setAttachFile(null)} className="text-gray-400 hover:text-gray-600">
+                    <button
+                      onClick={() => setAttachFile(null)}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
                       <X className="w-3 h-3" />
                     </button>
                   </div>
@@ -630,9 +717,6 @@ export const ThreadPanel: React.FC = () => {
                     rows={2}
                     className="flex-1 resize-none border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0a1857] placeholder-gray-400"
                   />
-                </div>
-                {sendError && <p className="text-xs text-red-600 mt-1">{sendError}</p>
-                } 
                   <div className="flex flex-col gap-1">
                     <button
                       onClick={() => fileInputRef.current?.click()}
@@ -660,6 +744,7 @@ export const ThreadPanel: React.FC = () => {
                     </button>
                   </div>
                 </div>
+                {sendError && <p className="text-xs text-red-600 mt-1">{sendError}</p>}
                 <input
                   ref={fileInputRef}
                   type="file"
