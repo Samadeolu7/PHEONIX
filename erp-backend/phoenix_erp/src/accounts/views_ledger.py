@@ -240,6 +240,54 @@ class AccountLedgerViewSet(ScopedModelViewSet):
                                     row.get('client__last_name'),
                                 )
 
+            # ── Strategy 5: FinancialAuditLog-backed events ────────────────────
+            # Loan repayments (record_payment) and savings deposits/withdrawals
+            # all log a FinancialAuditLog row with extra.journal_entry_id and
+            # extra.client_id, regardless of workflow_reference — covers LNPMT
+            # and SVDEP/SVWD series transactions that the strategies above (all
+            # incomes-app specific) never touch.
+            final_uncovered = [tid for tid in transaction_ids if tid not in client_by_txn]
+            if final_uncovered:
+                from common.models import FinancialAuditLog
+                from clients.models import Client
+
+                audit_qs = FinancialAuditLog.objects.filter(
+                    event_type__in=[
+                        FinancialAuditLog.LOAN_REPAY,
+                        FinancialAuditLog.SAVINGS_DEPOSIT,
+                        FinancialAuditLog.SAVINGS_WITHDRAW,
+                    ],
+                    extra__journal_entry_id__in=[str(tid) for tid in final_uncovered],
+                ).values('extra')
+
+                client_id_to_tx_ids: dict = {}
+                for row in audit_qs:
+                    extra = row['extra'] or {}
+                    jid = extra.get('journal_entry_id')
+                    cid = extra.get('client_id')
+                    if not jid or not cid:
+                        continue
+                    try:
+                        tx_id = int(jid)
+                    except (TypeError, ValueError):
+                        continue
+                    if tx_id in client_by_txn:
+                        continue
+                    client_id_to_tx_ids.setdefault(cid, []).append(tx_id)
+
+                if client_id_to_tx_ids:
+                    client_qs = (
+                        Client.objects.all_tenants()
+                        .filter(id__in=list(client_id_to_tx_ids.keys()))
+                        .values('id', 'first_name', 'last_name')
+                    )
+                    for row in client_qs:
+                        for tx_id in client_id_to_tx_ids.get(str(row['id']), []):
+                            if tx_id not in client_by_txn:
+                                client_by_txn[tx_id] = _build_name(
+                                    row.get('first_name'), row.get('last_name')
+                                )
+
         ledger_entries = []
         running_balance = opening_balance
         
