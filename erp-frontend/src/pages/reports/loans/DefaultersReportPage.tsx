@@ -5,13 +5,17 @@
  * Route: /reports/loans/defaulters
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  ChevronsUpDown,
   Download,
   Loader2,
   Printer,
   RefreshCw,
+  Search,
 } from 'lucide-react';
 import { loanService, LoanAccountList } from '../../../services/loanService';
 import { BRAND } from '../../../constants/brand';
@@ -104,6 +108,26 @@ function exportCSV(loans: LoanAccountList[], asOf: string) {
   URL.revokeObjectURL(url);
 }
 
+// ── Sorting ───────────────────────────────────────────────────────────────────
+
+type SortKey =
+  | 'client_name'
+  | 'loan_number'
+  | 'product_name'
+  | 'outstanding_principal'
+  | 'days_in_arrears'
+  | 'last_payment_date'
+  | 'assigned_officer_name';
+
+type SortDir = 'asc' | 'desc';
+
+function SortIcon({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; sortDir: SortDir }) {
+  if (col !== sortKey) return <ChevronsUpDown size={12} className="ml-1 inline opacity-40" />;
+  return sortDir === 'asc'
+    ? <ChevronUp size={12} className="ml-1 inline opacity-90" />
+    : <ChevronDown size={12} className="ml-1 inline opacity-90" />;
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function DefaultersReportPage() {
@@ -111,48 +135,75 @@ export default function DefaultersReportPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [asOf, setAsOf] = useState(todayStr());
+  const [search, setSearch] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('days_in_arrears');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir(key === 'days_in_arrears' || key === 'outstanding_principal' ? 'desc' : 'asc');
+    }
+  };
 
   const loadLoans = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      // Fetch defaulted + active loans that have arrears
-      const [defaultedRes, activeRes] = await Promise.all([
-        loanService.listLoans({ status: 'defaulted', page: 1, page_size: 500 }),
-        loanService.listLoans({ status: 'active', page: 1, page_size: 500 }),
-      ]);
-
-      const defaultedArr: LoanAccountList[] = Array.isArray(defaultedRes)
-        ? defaultedRes
-        : (defaultedRes?.results ?? []);
-      const activeArr: LoanAccountList[] = Array.isArray(activeRes)
-        ? activeRes
-        : (activeRes?.results ?? []);
-
-      // Only include active loans that have any days in arrears
-      const activeInArrears = activeArr.filter((l) => l.days_in_arrears > 0);
-
-      // Merge, deduplicate by id, sort by days descending
-      const merged = [...defaultedArr, ...activeInArrears];
-      const seen = new Set<number>();
-      const unique = merged.filter((l) => {
-        if (seen.has(l.id)) return false;
-        seen.add(l.id);
-        return true;
-      });
-      unique.sort((a, b) => b.days_in_arrears - a.days_in_arrears);
-      setLoans(unique);
+      const res = await loanService.getDefaulters(asOf);
+      const arr: LoanAccountList[] = Array.isArray(res)
+        ? res
+        : (res?.results ?? []);
+      setLoans(arr);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setError(err?.detail ?? err?.message ?? 'Failed to load defaulters report.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [asOf]);
 
   useEffect(() => {
     loadLoans();
   }, [loadLoans]);
+
+  // Client-side search filter (summary stats use all loaded loans; table uses filtered)
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? loans.filter(
+        (l) =>
+          l.client_name?.toLowerCase().includes(q) ||
+          l.loan_number?.toLowerCase().includes(q)
+      )
+    : loans;
+
+  // Apply sorting
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    arr.sort((a, b) => {
+      const la = a as unknown as Record<string, string | undefined>;
+      const lb = b as unknown as Record<string, string | undefined>;
+      let aVal: string | number;
+      let bVal: string | number;
+      if (sortKey === 'days_in_arrears') {
+        aVal = a.days_in_arrears ?? 0;
+        bVal = b.days_in_arrears ?? 0;
+      } else if (sortKey === 'outstanding_principal') {
+        aVal = parseFloat(a.outstanding_principal || '0');
+        bVal = parseFloat(b.outstanding_principal || '0');
+      } else {
+        aVal = (sortKey === 'product_name' ? a.product_name : la[sortKey] ?? '') as string;
+        bVal = (sortKey === 'product_name' ? b.product_name : lb[sortKey] ?? '') as string;
+        return sortDir === 'asc'
+          ? String(aVal).localeCompare(String(bVal))
+          : String(bVal).localeCompare(String(aVal));
+      }
+      return sortDir === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir]);
 
   // Summary stats
   const totalOutstanding = loans.reduce(
@@ -191,9 +242,20 @@ export default function DefaultersReportPage() {
                 className="rounded-lg border-0 bg-white/10 px-3 py-1.5 text-sm text-white placeholder:text-white/60 focus:bg-white/20 focus:outline-none"
               />
             </div>
+            <div className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-1.5">
+              <Search size={13} className="opacity-60" />
+              <input
+                type="text"
+                placeholder="Search client / loan #"
+                title="Search by client name or loan number"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="border-0 bg-transparent text-sm text-white placeholder:text-white/60 focus:outline-none w-40"
+              />
+            </div>
             <button
-              onClick={() => exportCSV(loans, asOf)}
-              disabled={loading || loans.length === 0}
+              onClick={() => exportCSV(sorted, asOf)}
+              disabled={loading || sorted.length === 0}
               className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-sm font-medium hover:bg-white/20 disabled:opacity-50"
             >
               <Download size={14} /> Export CSV
@@ -282,7 +344,11 @@ export default function DefaultersReportPage() {
           </div>
         ) : loans.length === 0 ? (
           <div className="py-20 text-center text-sm text-gray-500">
-            No defaulters found. Portfolio is performing well.
+            No defaulters found as of {asOf}. Portfolio is performing well.
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="py-20 text-center text-sm text-gray-500">
+            No results match your search.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -293,19 +359,54 @@ export default function DefaultersReportPage() {
                   style={{ background: BRAND.colors.navyPrimary }}
                 >
                   <th className="px-4 py-3">#</th>
-                  <th className="px-4 py-3">Client Name</th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 hover:bg-white/10"
+                    onClick={() => toggleSort('client_name')}
+                  >
+                    Client Name <SortIcon col="client_name" sortKey={sortKey} sortDir={sortDir} />
+                  </th>
                   <th className="px-4 py-3">Phone</th>
                   <th className="px-4 py-3">Group</th>
-                  <th className="px-4 py-3">Loan #</th>
-                  <th className="px-4 py-3">Product</th>
-                  <th className="px-4 py-3 text-right">Outstanding (₦)</th>
-                  <th className="px-4 py-3 text-right">Days Arrears</th>
-                  <th className="px-4 py-3">Last Payment</th>
-                  <th className="px-4 py-3">Officer</th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 hover:bg-white/10"
+                    onClick={() => toggleSort('loan_number')}
+                  >
+                    Loan # <SortIcon col="loan_number" sortKey={sortKey} sortDir={sortDir} />
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 hover:bg-white/10"
+                    onClick={() => toggleSort('product_name')}
+                  >
+                    Product <SortIcon col="product_name" sortKey={sortKey} sortDir={sortDir} />
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 text-right hover:bg-white/10"
+                    onClick={() => toggleSort('outstanding_principal')}
+                  >
+                    Outstanding (₦) <SortIcon col="outstanding_principal" sortKey={sortKey} sortDir={sortDir} />
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 text-right hover:bg-white/10"
+                    onClick={() => toggleSort('days_in_arrears')}
+                  >
+                    Days Arrears <SortIcon col="days_in_arrears" sortKey={sortKey} sortDir={sortDir} />
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 hover:bg-white/10"
+                    onClick={() => toggleSort('last_payment_date')}
+                  >
+                    Last Payment <SortIcon col="last_payment_date" sortKey={sortKey} sortDir={sortDir} />
+                  </th>
+                  <th
+                    className="cursor-pointer select-none px-4 py-3 hover:bg-white/10"
+                    onClick={() => toggleSort('assigned_officer_name')}
+                  >
+                    Officer <SortIcon col="assigned_officer_name" sortKey={sortKey} sortDir={sortDir} />
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {loans.map((loan, idx) => {
+                {sorted.map((loan, idx) => {
                   const la = loan as unknown as {
                     client_phone?: string;
                     group_name?: string;
@@ -348,7 +449,7 @@ export default function DefaultersReportPage() {
                   style={{ background: BRAND.colors.navyLight }}
                 >
                   <td className="px-4 py-3" colSpan={6}>
-                    Totals ({fmtInt(loans.length)} accounts)
+                    Totals ({fmtInt(sorted.length)} accounts{sorted.length !== loans.length ? ` of ${fmtInt(loans.length)}` : ''})
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{fmt(totalOutstanding)}</td>
                   <td colSpan={3} />

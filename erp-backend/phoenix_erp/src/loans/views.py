@@ -190,6 +190,93 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         return qs
 
+    @action(detail=False, methods=['get'], url_path='defaulters')
+    def defaulters(self, request):
+        """
+        Return loans in arrears as of a given date.
+
+        Query params:
+          - as_of (YYYY-MM-DD, optional): report date; defaults to today.
+            When provided, arrears are computed from the repayment schedule
+            relative to that date (historical view).
+          - search: filter by loan number / client name.
+        """
+        from datetime import date as date_type
+        from django.utils import timezone as tz
+
+        as_of_raw = request.query_params.get('as_of')
+        if as_of_raw:
+            try:
+                as_of = date_type.fromisoformat(as_of_raw)
+            except ValueError:
+                as_of = tz.localdate()
+        else:
+            as_of = tz.localdate()
+
+        today = tz.localdate()
+
+        if as_of >= today:
+            # Current / future report: rely on live status rather than the
+            # nullable disbursement_date field so no loans are silently dropped.
+            qs = (
+                self.get_queryset()
+                .filter(status__in=['active', 'disbursed', 'defaulted'])
+                .filter(Q(closed_date__isnull=True) | Q(closed_date__gte=today))
+            )
+        else:
+            # Historical report: loans disbursed before the requested date and
+            # not yet closed by then.  disbursement_date IS NULL rows are
+            # excluded deliberately (no record → can't place them in time).
+            qs = (
+                self.get_queryset()
+                .filter(disbursement_date__isnull=False, disbursement_date__lte=as_of)
+                .filter(Q(closed_date__isnull=True) | Q(closed_date__gt=as_of))
+            )
+
+        qs = qs.select_related('client', 'product').prefetch_related('repayment_schedule')
+
+        search = request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(
+                Q(loan_number__icontains=search)
+                | Q(client__first_name__icontains=search)
+                | Q(client__last_name__icontains=search)
+                | Q(client__client_id__icontains=search)
+            )
+
+        results = []
+        for loan in qs:
+            # An installment is overdue as of `as_of` when its due_date is on
+            # or before that date and it was not yet fully paid by then.
+            # Uses <= so a payment due *on* the as_of date counts as arrears.
+            overdue = [
+                inst
+                for inst in loan.repayment_schedule.all()
+                if inst.due_date <= as_of
+                and (inst.payment_date is None or inst.payment_date > as_of)
+            ]
+            if not overdue:
+                continue
+
+            overdue.sort(key=lambda x: x.due_date)
+            earliest = overdue[0]
+            days_in_arrears = (as_of - earliest.due_date).days
+            arrears_amount = sum(inst.total_due - inst.total_paid for inst in overdue)
+
+            data = LoanAccountListSerializer(loan, context={'request': request}).data
+            data['days_in_arrears'] = days_in_arrears
+            data['arrears_amount'] = str(arrears_amount)
+            results.append(data)
+
+        results.sort(key=lambda x: x['days_in_arrears'], reverse=True)
+        return Response({
+            'count': len(results),
+            'next': None,
+            'previous': None,
+            'results': results,
+            'as_of': str(as_of),
+        })
+
     @action(detail=True, methods=['get'])
     def schedule(self, request, pk=None):
         """Return the repayment schedule for a loan."""

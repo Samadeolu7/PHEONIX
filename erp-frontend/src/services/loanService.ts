@@ -247,6 +247,8 @@ export interface LoanAccountFilters {
   client?: number;
   product?: number;
   search?: string;
+  as_of?: string;
+  in_arrears?: boolean;
   page?: number;
   page_size?: number;
 }
@@ -356,6 +358,13 @@ export const loanService = {
 
   async listLoans(params?: LoanAccountFilters): Promise<PaginatedResponse<LoanAccountList>> {
     return api.get(`${BASE}/accounts/`, { params });
+  },
+
+  async getDefaulters(asOf?: string, search?: string): Promise<PaginatedResponse<LoanAccountList>> {
+    const params: Record<string, string> = {};
+    if (asOf) params.as_of = asOf;
+    if (search) params.search = search;
+    return api.get(`${BASE}/accounts/defaulters/`, { params });
   },
 
   async getLoan(id: number): Promise<LoanAccount> {
