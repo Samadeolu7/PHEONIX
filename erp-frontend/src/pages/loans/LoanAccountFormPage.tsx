@@ -10,6 +10,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   Landmark, Loader2, AlertCircle, CheckCircle, ArrowLeft,
   Info, CreditCard, Wallet, Search, X,
@@ -81,7 +82,9 @@ export default function LoanAccountFormPage() {
   const loadProducts = useCallback(async () => {
     setLoadingProducts(true);
     try { const data = await loanService.listProducts({ is_active: true }); setProducts(data); }
-    catch { /* ignore */ }
+    catch {
+      toast.error('Failed to load loan products. Please refresh the page.');
+    }
     finally { setLoadingProducts(false); }
   }, []);
 
@@ -144,7 +147,10 @@ export default function LoanAccountFormPage() {
           });
           return next;
         });
-      } catch { setFeePreviews([]); }
+      } catch {
+        setFeePreviews([]);
+        toast.error('Could not load fee preview. Fees will still apply at submission.');
+      }
       finally { setLoadingFees(false); }
     }, 600);
   }, [productId, requestedAmount]);
@@ -223,8 +229,24 @@ export default function LoanAccountFormPage() {
       setSuccess(true);
       setTimeout(() => navigate('/loans/accounts'), responseWarnings.length ? 3000 : 1500);
     } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string; non_field_errors?: string[] };
-      setError(err?.detail ?? (err?.non_field_errors ?? []).join(', ') ?? err?.message ?? 'Failed to submit.');
+      const data = (e as any)?.response?.data;
+      let msg: string;
+      if (data && typeof data === 'object') {
+        const fieldErrors = Object.entries(data)
+          .filter(([k]) => k !== 'detail' && k !== 'non_field_errors')
+          .map(([, v]) => (Array.isArray(v) ? v.join(', ') : String(v)))
+          .join('; ');
+        msg = data.detail
+          || (Array.isArray(data.non_field_errors) ? data.non_field_errors.join(', ') : '')
+          || fieldErrors
+          || 'Failed to submit loan application.';
+      } else if (typeof data === 'string' && data) {
+        msg = data;
+      } else {
+        msg = (e as Error)?.message || 'Failed to submit loan application.';
+      }
+      setError(msg);
+      toast.error(msg);
     } finally { setSubmitting(false); }
   }
 
