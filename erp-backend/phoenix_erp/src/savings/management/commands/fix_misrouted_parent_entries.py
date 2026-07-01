@@ -52,7 +52,7 @@ from django.utils import timezone
 
 
 SUSPENSE_ACCOUNT_NAME = 'Unidentified Cash Receipts - Pending Reconciliation'
-RECLASS_SERIES_CODE = 'RECLASS'
+RECLASS_SERIES_CODE = 'RECL'  # TransactionSeries.code is varchar(5)
 
 
 class Command(BaseCommand):
