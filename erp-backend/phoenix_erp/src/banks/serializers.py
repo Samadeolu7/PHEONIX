@@ -10,6 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from common.serializers import TenantModelSerializer
 from .models import Bank, BankAccount, BankTransfer, BankPayment, BankAccountBalanceLog, BankFeedConsent, BankStatementUpload, BankStatementLine
 from accounts.models import Account
+from cash_management.models import CashierAccount
 from accounts.serializers import AccountSerializer
 
 
@@ -244,7 +245,15 @@ class BankAccountDetailSerializer(BankAccountSerializer):
 
 class BankTransferSerializer(TenantModelSerializer):
     """Serializer for BankTransfer model"""
-    
+
+    # Explicit queryset evaluated at import time (no thread-local tenant filter baked in),
+    # so DRF can validate the FK regardless of the runtime tenant context.
+    source_cashier_account = serializers.PrimaryKeyRelatedField(
+        queryset=CashierAccount.objects.filter(is_active=True),
+        required=False,
+        allow_null=True,
+    )
+
     # Read-only display fields
     source_display = serializers.SerializerMethodField()
     destination_display = serializers.SerializerMethodField()
@@ -274,7 +283,7 @@ class BankTransferSerializer(TenantModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'transfer_number', 'initiated_at', 'approved_by', 'approved_at',
+            'transfer_number', 'initiated_by', 'initiated_at', 'approved_by', 'approved_at',
             'second_approved_by', 'second_approved_at', 'rejected_by', 'rejected_at',
             'completed_by', 'completed_at', 'journal_entry',
             'created_at', 'updated_at'
