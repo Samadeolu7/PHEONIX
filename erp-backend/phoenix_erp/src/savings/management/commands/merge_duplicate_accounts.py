@@ -7,17 +7,20 @@ client holds more than one account linked to the same product.
 For savings accounts
 --------------------
 - Groups all non-deleted, non-closed accounts by (client, product).
-- Keeps the oldest (lowest pk) non-closed account as the canonical record.
-- Adds the GL balances of every other account in the group to the canonical.
-- Zeroes out and soft-deletes the surplus accounts (and their GL accounts).
+- Keeps the account with the HIGHEST GL balance as the canonical record
+  (ties broken by lowest pk / oldest account).
+- Re-points every TransactionEntry from each duplicate GL account to the
+  primary GL account so full ledger history is preserved and visible.
+- Recomputes the primary GL balance from its (now-combined) entries.
+- Zeroes out and soft-deletes the surplus GL accounts and SavingsAccounts.
 
 For loan accounts
 -----------------
-- Groups all non-deleted, non-terminal accounts by (client, product).
-- Keeps the account with the highest outstanding_principal (tie-break: lowest pk).
-- Cancels and soft-deletes duplicate loans that have zero outstanding balance.
-- Reports (does NOT auto-merge) duplicates that carry a non-zero balance; those
-  need manual review because merging loan schedules is complex.
+- Groups all non-deleted, non-terminal active loans by (client, product).
+- Keeps the loan with the highest outstanding_principal (tie-break: lowest pk).
+- Cancels and soft-deletes duplicate loans that have zero OUTSTANDING balance.
+  (A loan that was disbursed but fully repaid — outstanding=0 — is safe to cancel.)
+- Reports duplicates with non-zero outstanding for manual review.
 
 Usage
 -----
@@ -36,7 +39,7 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, Sum
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +93,7 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------
     def _merge_savings(self, dry_run: bool) -> None:
         from savings.models import SavingsAccount
+        from transactions.models import TransactionEntry
 
         self.stdout.write('\n=== Savings Account Duplicates ===')
 
@@ -116,16 +120,15 @@ class Command(BaseCommand):
                 SavingsAccount.objects
                 .filter(client_id=client_id, product_id=product_id)
                 .select_related('account', 'client', 'product')
-                .order_by('id')  # oldest first
             )
 
-            # Primary = oldest non-closed account; fall back to oldest overall.
-            primary = next((a for a in accounts if a.status != 'closed'), accounts[0])
+            # Primary = highest GL balance; tie-break -> lowest pk (oldest).
+            accounts.sort(key=lambda a: (-a.account.balance, a.pk))
+            primary = accounts[0]
             duplicates = [a for a in accounts if a.pk != primary.pk]
 
             combined_balance = sum(
-                (a.account.balance for a in accounts),
-                Decimal('0.00'),
+                (a.account.balance for a in accounts), Decimal('0.00')
             )
             client_label = getattr(primary.client, 'full_name', str(primary.client))
             product_label = primary.product.name
@@ -136,33 +139,56 @@ class Command(BaseCommand):
                 f'  Accounts found: {len(accounts)} | Combined GL balance: {combined_balance}'
             )
             self.stdout.write(
-                f'  → Keep  : #{primary.pk} '
+                f'  -> Keep  : #{primary.pk} '
                 f'(GL {primary.account.code}, balance={primary.account.balance})'
             )
             for dup in duplicates:
+                entry_count = TransactionEntry.objects.filter(account=dup.account).count()
                 self.stdout.write(
-                    f'  → Merge : #{dup.pk} '
-                    f'(GL {dup.account.code}, balance={dup.account.balance})'
+                    f'  -> Merge : #{dup.pk} '
+                    f'(GL {dup.account.code}, balance={dup.account.balance}, '
+                    f'ledger entries={entry_count})'
                 )
 
             if dry_run:
                 continue
 
             with transaction.atomic():
-                # Transfer the combined balance to the primary GL account.
-                primary.account.balance = combined_balance
-                primary.account.save(update_fields=['balance', 'updated_at'])
-
                 for dup in duplicates:
-                    # Zero the duplicate GL account and soft-delete it.
+                    # 1. Re-point every TransactionEntry from the duplicate GL account
+                    #    to the primary GL account — ledger history is fully preserved.
+                    TransactionEntry.objects.filter(
+                        account=dup.account
+                    ).update(account=primary.account)
+
+                    # 2. Zero and soft-delete the duplicate GL account.
                     dup.account.balance = Decimal('0.00')
                     dup.account.is_deleted = True
                     dup.account.save(update_fields=['balance', 'is_deleted', 'updated_at'])
 
-                    # Close and soft-delete the duplicate savings account.
+                    # 3. Close and soft-delete the duplicate SavingsAccount.
                     dup.status = 'closed'
                     dup.is_deleted = True
                     dup.save(update_fields=['status', 'is_deleted', 'updated_at'])
+
+                # 4. Recompute the primary GL balance from ALL its entries
+                #    (which now include the re-pointed ones from duplicates).
+                #    SAVINGS accounts are credit-normal: balance = CR_total - DR_total.
+                primary_entries = TransactionEntry.objects.filter(
+                    account=primary.account, posted=True
+                )
+                cr_total = (
+                    primary_entries
+                    .filter(side=TransactionEntry.CREDIT)
+                    .aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                )
+                dr_total = (
+                    primary_entries
+                    .filter(side=TransactionEntry.DEBIT)
+                    .aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                )
+                primary.account.balance = cr_total - dr_total
+                primary.account.save(update_fields=['balance', 'updated_at'])
 
                 total_merged += len(duplicates)
 
@@ -234,14 +260,14 @@ class Command(BaseCommand):
             )
 
             for dup in duplicates:
-                has_balance = (
-                    dup.outstanding_principal > Decimal('0.00')
-                    or dup.disbursed_amount > Decimal('0.00')
-                )
-                if has_balance:
+                # Only flag for manual review when outstanding principal is non-zero.
+                # A loan with outstanding=0 (even if disbursed_amount>0, i.e. fully
+                # repaid) is safe to cancel — no remaining debt exists.
+                has_outstanding = dup.outstanding_principal > Decimal('0.00')
+                if has_outstanding:
                     self.stdout.write(
                         self.style.ERROR(
-                            f'  → MANUAL REVIEW NEEDED: #{dup.pk} '
+                            f'  -> MANUAL REVIEW NEEDED: #{dup.pk} '
                             f'(loan {dup.loan_number}, '
                             f'outstanding={dup.outstanding_principal}, '
                             f'disbursed={dup.disbursed_amount})'
@@ -250,8 +276,8 @@ class Command(BaseCommand):
                     needs_manual += 1
                 else:
                     self.stdout.write(
-                        f'  → Cancel: #{dup.pk} '
-                        f'(loan {dup.loan_number}, zero balance)'
+                        f'  -> Cancel: #{dup.pk} '
+                        f'(loan {dup.loan_number}, outstanding=0)'
                     )
                     if not dry_run:
                         with transaction.atomic():
