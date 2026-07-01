@@ -203,10 +203,12 @@ class LoanAccountListSerializer(TenantModelSerializer):
     assigned_officer_name = serializers.SerializerMethodField()
 
     def get_assigned_officer_name(self, obj):
+        # client.assigned_officer is an hr.Staff record, not a Django User —
+        # it has first_name/last_name but no get_full_name()/username.
         officer = getattr(getattr(obj, 'client', None), 'assigned_officer', None)
         if not officer:
             return ''
-        return officer.get_full_name() or officer.username or ''
+        return f"{officer.first_name} {officer.last_name}".strip()
 
     class Meta:
         model = LoanAccount

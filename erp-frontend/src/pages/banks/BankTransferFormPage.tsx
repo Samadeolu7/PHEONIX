@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, X } from 'lucide-react';
 import bankService from '../../services/bankService';
 import { cashierAccountService } from '../../services/treasuryService';
+import { useAuth } from '../../contexts/AuthContext';
 import type { BankAccount, CreateBankTransferRequest } from '../../types/banks';
 import type { CashierAccount } from '../../types/treasury';
 
@@ -10,6 +11,7 @@ const DECIMAL_INPUT_REGEX = /^\d{0,16}(?:\.\d{0,2})?$/;
 
 const BankTransferFormPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [sourceType, setSourceType] = useState<'bank' | 'cashier'>('bank');
   const [formData, setFormData] = useState<CreateBankTransferRequest>({
     source_type: 'bank',
@@ -34,6 +36,13 @@ const BankTransferFormPage: React.FC = () => {
   useEffect(() => {
     setDestinationAccounts(bankAccounts.filter(acc => acc.id !== formData.source_bank_account));
   }, [formData.source_bank_account, bankAccounts]);
+
+  // Only your own cashier float can be the source of a transfer — the backend
+  // rejects any other cashier_account_id (by design: nobody, not even a
+  // director, can move money out of someone else's cash drawer this way).
+  // Filtering here matches that so the dropdown can't offer a choice that
+  // will always fail.
+  const myCashierAccounts = cashierAccounts.filter(acc => acc.cashier === user?.id);
 
   const loadAccounts = async () => {
     const [banksResult, cashiersResult] = await Promise.allSettled([
@@ -80,7 +89,11 @@ const BankTransferFormPage: React.FC = () => {
       if (!formData.destination_bank_account) {
         throw new Error('Please select a destination account');
       }
-      if (!formData.amount || isNaN(parseFloat(formData.amount)) || parseFloat(formData.amount) <= 0) {
+      if (
+        !formData.amount ||
+        isNaN(parseFloat(formData.amount)) ||
+        parseFloat(formData.amount) <= 0
+      ) {
         throw new Error('Please enter a valid amount');
       }
 
@@ -134,7 +147,9 @@ const BankTransferFormPage: React.FC = () => {
                     onChange={() => handleSourceTypeChange(st)}
                     className="accent-blue-600"
                   />
-                  <span className="text-sm text-gray-700 capitalize">{st === 'bank' ? 'Bank Account' : 'Cashier Account'}</span>
+                  <span className="text-sm text-gray-700 capitalize">
+                    {st === 'bank' ? 'Bank Account' : 'Cashier Account'}
+                  </span>
                 </label>
               ))}
             </div>
@@ -161,7 +176,10 @@ const BankTransferFormPage: React.FC = () => {
                 {bankAccounts.map(acc => (
                   <option key={acc.id} value={acc.id}>
                     {acc.account_name} ({acc.account_number}) - {acc.bank_name} - ₦
-                    {parseFloat(acc.current_balance).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {parseFloat(acc.current_balance).toLocaleString('en-NG', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </option>
                 ))}
               </select>
@@ -178,13 +196,22 @@ const BankTransferFormPage: React.FC = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
                 <option value="">Select source cashier account...</option>
-                {cashierAccounts.map(acc => (
+                {myCashierAccounts.map(acc => (
                   <option key={acc.id} value={acc.id}>
                     {acc.name} ({acc.account_number}) - ₦
-                    {parseFloat(acc.current_balance || '0').toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {parseFloat(acc.current_balance || '0').toLocaleString('en-NG', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </option>
                 ))}
               </select>
+            )}
+            {sourceType === 'cashier' && myCashierAccounts.length === 0 && (
+              <p className="text-sm text-amber-600 mt-1">
+                You don&apos;t have an active cashier account. You can only transfer from your own
+                float.
+              </p>
             )}
           </div>
 

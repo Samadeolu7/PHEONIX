@@ -87,6 +87,22 @@ const fetchWithAuth = async (url: string, options: RequestInit = {}): Promise<Re
   }
 };
 
+// DRF field-validation errors come back shaped like
+// {"source_cashier_account": ["Invalid pk \"3\" - object does not exist."]}
+// — no top-level "message" or "detail" key. Flatten that shape into a
+// readable string so real validation reasons aren't silently dropped in
+// favor of a generic fallback message.
+const flattenDrfErrors = (errorDetails: any): string | null => {
+  if (!errorDetails || typeof errorDetails !== 'object') return null;
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(errorDetails)) {
+    const text = Array.isArray(value) ? value.join(' ') : typeof value === 'string' ? value : null;
+    if (!text) continue;
+    parts.push(key === 'non_field_errors' ? text : `${key}: ${text}`);
+  }
+  return parts.length ? parts.join(' | ') : null;
+};
+
 // Enhanced response handler with detailed error information
 const handleResponse = async (response: Response): Promise<any> => {
   if (!response.ok) {
@@ -109,7 +125,11 @@ const handleResponse = async (response: Response): Promise<any> => {
     const error = {
       status: response.status,
       statusText: response.statusText,
-      message: errorDetails.message || errorDetails.detail || response.statusText,
+      message:
+        errorDetails.message ||
+        errorDetails.detail ||
+        flattenDrfErrors(errorDetails) ||
+        response.statusText,
       details: errorDetails,
       response: {
         status: response.status,
