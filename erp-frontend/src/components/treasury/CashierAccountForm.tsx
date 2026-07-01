@@ -6,6 +6,7 @@ import React from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import { toast } from 'sonner';
 import { cashierAccountService } from '../../services/treasuryService';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table';
 
@@ -98,10 +99,6 @@ export const CashierAccountForm: React.FC<CashierAccountFormProps> = ({ onSucces
       onSuccess?.();
     } catch (error: any) {
       console.error('Error creating cashier account:', error);
-      console.error('Error details:', error.details);
-      console.error('Error response:', error.response);
-
-      // Show detailed error message
       let errorMessage = 'Failed to create cashier account';
       if (error.details) {
         const errors = Object.entries(error.details)
@@ -109,10 +106,12 @@ export const CashierAccountForm: React.FC<CashierAccountFormProps> = ({ onSucces
             ([field, messages]: [string, any]) =>
               `${field}: ${Array.isArray(messages) ? messages.join(', ') : messages}`
           )
-          .join('\n');
-        errorMessage += `:\n${errors}`;
+          .join('; ');
+        errorMessage += `: ${errors}`;
+      } else if (error.response?.data?.detail) {
+        errorMessage += `: ${error.response.data.detail}`;
       }
-      alert(errorMessage);
+      toast.error(errorMessage);
     }
   };
 

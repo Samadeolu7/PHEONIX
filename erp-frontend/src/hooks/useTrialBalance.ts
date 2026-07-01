@@ -2,6 +2,7 @@
 // Custom hook for Trial Balance report with TanStack Query integration
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { financialReportsService } from '../services/financialReportsService';
 import { TrialBalanceData, TrialBalanceParams, ExportFormat } from '../types/financialReports';
 
@@ -41,8 +42,9 @@ export const useTrialBalance = (initialParams: TrialBalanceParams = {}): UseTria
   const exportMutation = useMutation({
     mutationFn: (format: ExportFormat) =>
       financialReportsService.downloadReport('trial-balance', format, initialParams),
-    onError: error => {
+    onError: (error: any) => {
       console.error('Export failed:', error);
+      toast.error(error?.response?.data?.message || 'Failed to export trial balance. Please try again.');
     },
   });
 

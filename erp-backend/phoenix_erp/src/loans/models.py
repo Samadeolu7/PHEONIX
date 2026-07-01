@@ -587,6 +587,19 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                         f'Term is below product minimum ({self.product.min_term_months} {prod_term_unit})'
                     )
             # If units differ, skip validation (uncommon — product admin misconfiguration)
+
+        # Prevent duplicate active loans for the same client + product
+        _TERMINAL = {'paid_off', 'written_off', 'rejected', 'cancelled'}
+        current_status = getattr(self, 'status', None) or 'pending'
+        if self.client_id and self.product_id and not self.is_deleted and current_status not in _TERMINAL:
+            dup_qs = LoanAccount.objects.filter(
+                client_id=self.client_id,
+                product_id=self.product_id,
+            ).exclude(status__in=list(_TERMINAL)).exclude(pk=self.pk)
+            if dup_qs.exists():
+                raise ValidationError(
+                    {'product': 'This client already has an active loan account for this product.'}
+                )
     
     @transaction.atomic
     def approve(self, user, approved_amount: Decimal = None):

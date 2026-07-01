@@ -74,11 +74,12 @@ def _create_default_savings_account(sender, instance, created, **kwargs):
                 )
                 return
 
-            # Idempotency guard — skip if a savings account already exists
+            # Idempotency guard — skip if the client already has a non-closed account
+            # for this specific product (allows other product types to coexist).
             if SavingsAccount.objects.filter(
                 client=instance,
-                status='active',
-            ).exists():
+                product=product,
+            ).exclude(status='closed').exists():
                 return
 
             # Create a child GL account under 2140 (Customer Savings Deposits)

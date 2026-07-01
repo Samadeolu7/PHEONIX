@@ -290,6 +290,14 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         indexes = [
             models.Index(fields=['account_number']),
             models.Index(fields=['status']),
+            models.Index(fields=['client', 'product']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['client', 'product'],
+                condition=models.Q(is_deleted=False) & ~models.Q(status='closed'),
+                name='unique_active_savings_per_client_product',
+            ),
         ]
 
     def __str__(self):
@@ -301,6 +309,17 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             raise ValidationError('Closing date must be after opening date')
         if self.current_balance < -self.overdraft_limit:
             raise ValidationError('Balance cannot be less than negative overdraft limit')
+
+        # Prevent duplicate active savings accounts for the same client + product
+        if self.client_id and self.product_id and not self.is_deleted and self.status != 'closed':
+            dup_qs = SavingsAccount.objects.filter(
+                client_id=self.client_id,
+                product_id=self.product_id,
+            ).exclude(status='closed').exclude(pk=self.pk)
+            if dup_qs.exists():
+                raise ValidationError(
+                    {'product': 'This client already has an active savings account for this product.'}
+                )
 
     def calculate_available_balance(self):
         """

@@ -53,7 +53,7 @@ export const useProcurementIntegration = (
 ): UseProcurementIntegrationReturn => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { showToast } = useToast();
+  const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
 
   const { onSuccess, onError, autoRefresh = true } = options;
 
@@ -62,9 +62,9 @@ export const useProcurementIntegration = (
       const errorMessage = err instanceof Error ? err.message : `Failed to ${operation}`;
       setError(errorMessage);
       onError?.(errorMessage);
-      showToast(errorMessage, 'error');
+      toastError(errorMessage);
     },
-    [onError, showToast]
+    [onError, toastError]
   );
 
   const handleSuccess = useCallback(
@@ -75,29 +75,34 @@ export const useProcurementIntegration = (
       if ('success' in result) {
         // IntegrationResult
         if (result.success) {
-          showToast(`Successfully ${operation}`, 'success');
+          toastSuccess(`Successfully ${operation}`);
         } else {
           const errorMsg = result.errors.join('; ');
           setError(errorMsg);
-          showToast(errorMsg, 'error');
+          toastError(errorMsg);
         }
 
         if (result.warnings.length > 0) {
-          showToast(result.warnings.join('; '), 'warning');
+          toastWarning(result.warnings.join('; '));
         }
       } else {
         // BatchProcessingResult
         if (result.successful > 0) {
-          showToast(
-            `Batch processing completed: ${result.successful} successful, ${result.failed} failed`,
-            result.failed === 0 ? 'success' : 'warning'
-          );
+          if (result.failed === 0) {
+            toastSuccess(
+              `Batch processing completed: ${result.successful} successful, ${result.failed} failed`
+            );
+          } else {
+            toastWarning(
+              `Batch processing completed: ${result.successful} successful, ${result.failed} failed`
+            );
+          }
         } else {
-          showToast('Batch processing failed for all items', 'error');
+          toastError('Batch processing failed for all items');
         }
       }
     },
-    [onSuccess, showToast]
+    [onSuccess, toastSuccess, toastError, toastWarning]
   );
 
   // ============================================================================

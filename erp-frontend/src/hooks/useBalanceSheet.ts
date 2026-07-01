@@ -3,6 +3,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
+import { toast } from 'sonner';
 import { financialReportsService } from '../services/financialReportsService';
 import { BalanceSheetData, BalanceSheetParams, ExportFormat } from '../types/financialReports';
 
@@ -42,8 +43,9 @@ export const useBalanceSheet = (params: BalanceSheetParams = {}): UseBalanceShee
   const exportMutation = useMutation({
     mutationFn: ({ format, params }: { format: ExportFormat; params: BalanceSheetParams }) =>
       financialReportsService.downloadReport('balance-sheet', format, params),
-    onError: error => {
+    onError: (error: any) => {
       console.error('Export failed:', error);
+      toast.error(error?.response?.data?.message || 'Failed to export balance sheet. Please try again.');
     },
   });
 

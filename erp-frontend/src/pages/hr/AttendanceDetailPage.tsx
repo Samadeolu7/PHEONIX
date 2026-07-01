@@ -20,7 +20,7 @@ import { Attendance, AttendanceStatus } from '../../types/hr';
 const AttendanceDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { showToast } = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
 
   const [attendance, setAttendance] = useState<Attendance | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,7 +39,7 @@ const AttendanceDetailPage: React.FC = () => {
       setAttendance(response);
     } catch (error) {
       console.error('Error loading attendance:', error);
-      showToast('Failed to load attendance record', 'error');
+      toastError('Failed to load attendance record');
       navigate('/hr/attendance');
     } finally {
       setLoading(false);
@@ -58,11 +58,11 @@ const AttendanceDetailPage: React.FC = () => {
     try {
       setDeleting(true);
       await hrService.deleteAttendance(attendance.id);
-      showToast('Attendance record deleted successfully', 'success');
+      toastSuccess('Attendance record deleted successfully');
       navigate('/hr/attendance');
     } catch (error) {
       console.error('Error deleting attendance:', error);
-      showToast('Failed to delete attendance record', 'error');
+      toastError('Failed to delete attendance record');
     } finally {
       setDeleting(false);
     }

@@ -1,6 +1,8 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { Toaster as SonnerToaster } from 'sonner';
+import { Toaster as HotToaster } from 'react-hot-toast';
 import './index.css';
 
 import { AuthProvider } from './contexts/AuthContext';
@@ -654,6 +656,8 @@ function App() {
 
   return (
     <GlobalErrorBoundary>
+      <SonnerToaster position="top-right" richColors closeButton />
+      <HotToaster position="top-right" toastOptions={{ duration: 5000 }} />
       <ErrorAndLoadingProvider>
         <ReceivablesErrorBoundary>
           <QueryClientProvider client={queryClient}>

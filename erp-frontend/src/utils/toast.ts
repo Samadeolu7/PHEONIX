@@ -1,11 +1,27 @@
+import { toast } from 'sonner';
 import { useToast } from '../contexts/ToastContext';
 
-// Simple toast utility function for use outside of React components
-// For use in React components, prefer using the useToast hook directly
+/**
+ * Imperative toast helper — works outside React components.
+ * Uses sonner which requires <Toaster /> mounted in App.tsx.
+ * For React components, prefer the useToast hook directly.
+ */
 export const showToast = (message: string, type: 'success' | 'error' | 'info' | 'warning') => {
-  // This is a placeholder - in practice, you should use the useToast hook in components
-  // For now, we'll use console logging as a fallback
-  console.log(`Toast [${type.toUpperCase()}]: ${message}`);
+  switch (type) {
+    case 'success':
+      toast.success(message);
+      break;
+    case 'error':
+      toast.error(message);
+      break;
+    case 'warning':
+      toast.warning(message);
+      break;
+    case 'info':
+    default:
+      toast.info(message);
+      break;
+  }
 };
 
 // Export the hook for use in components

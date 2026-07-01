@@ -2,6 +2,7 @@
 // Custom hook for Profit & Loss report with TanStack Query integration
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { financialReportsService } from '../services/financialReportsService';
 import { ProfitLossData, ProfitLossParams, ExportFormat } from '../types/financialReports';
 
@@ -41,8 +42,9 @@ export const useProfitLoss = (initialParams: ProfitLossParams): UseProfitLossRet
   const exportMutation = useMutation({
     mutationFn: (format: ExportFormat) =>
       financialReportsService.downloadReport('profit-loss', format, initialParams),
-    onError: error => {
+    onError: (error: any) => {
       console.error('Export failed:', error);
+      toast.error(error?.response?.data?.message || 'Failed to export profit & loss report. Please try again.');
     },
   });
 

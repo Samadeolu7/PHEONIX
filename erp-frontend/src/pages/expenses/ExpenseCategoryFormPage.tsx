@@ -23,7 +23,7 @@ const ExpenseCategoryFormPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
   const isEditing = !!id;
-  const { showToast } = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
 
   const [formData, setFormData] = useState<CreateExpenseCategory>({
     name: '',
@@ -62,7 +62,7 @@ const ExpenseCategoryFormPage: React.FC = () => {
         setAssetAccounts(assetAccountsData);
       } catch (error) {
         console.error('Failed to load accounts:', error);
-        showToast('Failed to load accounts. Please refresh the page.', 'error');
+        toastError('Failed to load accounts. Please refresh the page.');
       } finally {
         setIsLoadingAccounts(false);
       }
@@ -153,15 +153,15 @@ const ExpenseCategoryFormPage: React.FC = () => {
           id: Number(id),
           data: formData as UpdateExpenseCategory,
         });
-        showToast('Expense category updated successfully', 'success');
+        toastSuccess('Expense category updated successfully');
       } else {
         await createCategory.mutateAsync(formData);
-        showToast('Expense category created successfully', 'success');
+        toastSuccess('Expense category created successfully');
       }
       navigate('/expenses/categories');
     } catch (error: any) {
       console.error('Failed to save expense category:', error);
-      showToast('Failed to save expense category. Please try again.', 'error');
+      toastError('Failed to save expense category. Please try again.');
     }
   };
 

@@ -22,7 +22,7 @@ import { Staff, StaffFilters } from '../../types/hr';
 
 const StaffListPage: React.FC = () => {
   const navigate = useNavigate();
-  const { showToast } = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
   const queryClient = useQueryClient();
 
   const [filters, setFilters] = useState<StaffFilters>({
@@ -37,9 +37,9 @@ const StaffListPage: React.FC = () => {
     setIsDownloading(true);
     try {
       await hrService.downloadPayrollExcel();
-      showToast('Payroll Excel downloaded successfully', 'success');
+      toastSuccess('Payroll Excel downloaded successfully');
     } catch (err: any) {
-      showToast(err?.message || 'Failed to download payroll Excel', 'error');
+      toastError(err?.message || 'Failed to download payroll Excel');
     } finally {
       setIsDownloading(false);
     }
@@ -74,10 +74,10 @@ const StaffListPage: React.FC = () => {
     try {
       await hrService.deleteStaff(id);
       queryClient.invalidateQueries(['staff']);
-      showToast('Staff member deleted successfully', 'success');
+      toastSuccess('Staff member deleted successfully');
     } catch (error) {
       console.error('Error deleting staff:', error);
-      showToast('Failed to delete staff member', 'error');
+      toastError('Failed to delete staff member');
     }
   };
 

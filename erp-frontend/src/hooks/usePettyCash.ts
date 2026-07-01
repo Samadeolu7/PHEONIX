@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { pettyCashService } from '../services/pettyCashService';
 import {
   PettyCashFundFilters,
@@ -398,6 +399,9 @@ export const useUploadReceipt = () => {
       queryClient.invalidateQueries({ queryKey: ['petty-cash-receipts', voucherId] });
       queryClient.invalidateQueries({ queryKey: pettyCashKeys.voucherDetail(voucherId) });
     },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.message || 'Failed to upload receipt. Please try again.');
+    },
   });
 };
 
@@ -410,6 +414,9 @@ export const useDeleteReceipt = () => {
     onSuccess: (_, { voucherId }) => {
       queryClient.invalidateQueries({ queryKey: ['petty-cash-receipts', voucherId] });
       queryClient.invalidateQueries({ queryKey: pettyCashKeys.voucherDetail(voucherId) });
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.message || 'Failed to delete receipt. Please try again.');
     },
   });
 };

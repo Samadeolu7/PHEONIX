@@ -25,18 +25,18 @@ export const useLeaveBalance = (id: number) => {
 
 export const useInitializeLeaveBalances = () => {
   const queryClient = useQueryClient();
-  const { showToast } = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
 
   return useMutation({
     mutationFn: (data: { year: number; staff_ids?: number[] }) =>
       leaveBalanceService.initializeLeaveBalancesForYear(data),
     onSuccess: result => {
       queryClient.invalidateQueries({ queryKey: ['leave-balances'] });
-      showToast(`Successfully initialized leave balances for ${result.year}`, 'success');
+      toastSuccess(`Successfully initialized leave balances for ${result.year}`);
     },
     onError: (error: any) => {
       const errorMessage = error.response?.data?.message || 'Failed to initialize leave balances';
-      showToast(errorMessage, 'error');
+      toastError(errorMessage);
     },
   });
 };
