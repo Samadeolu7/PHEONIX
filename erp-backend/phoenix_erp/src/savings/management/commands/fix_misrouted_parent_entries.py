@@ -135,14 +135,18 @@ class Command(BaseCommand):
                 )
                 amount = abs(net_debit)
 
+                # description is varchar(255); the full reference list is already
+                # printed to stdout above, so truncate here rather than fail the
+                # journal — the offsetting entries themselves are the audit trail.
+                description = (
+                    f'Reclassify {amount} misposted onto parent {acct.code} to '
+                    f'suspense. Orig: {", ".join(refs)}'
+                )[:255]
+
                 journal = Transaction.objects.create(
                     series=reclass_series,
                     date=timezone.now().date(),
-                    description=(
-                        f'Reclassify {amount} misposted directly onto parent account '
-                        f'{acct.code} ({acct.name}) to suspense, pending bank '
-                        f'identification. Original transactions: {", ".join(refs)}'
-                    ),
+                    description=description,
                     owner=suspense_account.owner,
                     branch=suspense_account.branch,
                 )
