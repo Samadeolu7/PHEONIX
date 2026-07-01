@@ -77,6 +77,7 @@ class Command(BaseCommand):
                 self.stdout.write('  No active MERGE journals to reverse.')
             else:
                 from accounts.models import Account as GlAccount
+                from django.db.models import F
 
                 for journal in merge_journals:
                     entries = list(journal.entries.all())
@@ -86,10 +87,6 @@ class Command(BaseCommand):
                     # In the original MERGE journal:
                     #   DEBIT  → duplicate GL account (balance was zeroed)
                     #   CREDIT → primary GL account   (balance was increased)
-                    # Reversal swaps the sides to restore both balances.
-                    debit_entry_account_ids = [
-                        e.account_id for e in entries if e.side == TransactionEntry.DEBIT
-                    ]
                     amount = entries[0].amount
                     self.stdout.write(
                         f'  Reversing journal {journal.reference_number} (amount={amount})'
@@ -97,13 +94,7 @@ class Command(BaseCommand):
 
                     if not dry_run:
                         with transaction.atomic():
-                            # The dup GL account is soft-deleted; TransactionEntry.post()
-                            # uses Account.objects which excludes is_deleted=True records.
-                            # Un-delete it first so post() can locate it.
-                            GlAccount.all_objects.filter(
-                                pk__in=debit_entry_account_ids
-                            ).update(is_deleted=False)
-
+                            # Create the reversal journal record.
                             reversal = JournalEntry.objects.create(
                                 series=merge_series,
                                 date=timezone.now().date(),
@@ -115,21 +106,50 @@ class Command(BaseCommand):
                                 is_reversal=True,
                                 reverses_transaction=journal,
                             )
+
+                            # Apply reversed balance deltas directly via queryset
+                            # update — the same mechanism TransactionEntry.post()
+                            # uses internally.  This works even if the dup account
+                            # is still soft-deleted (is_deleted=True) because we
+                            # use all_objects (include_deleted=True) and Account
+                            # balances are updated through QuerySet.update(), not
+                            # Account.save(), so the balance guard is irrelevant.
                             for entry in entries:
-                                reversed_side = (
-                                    TransactionEntry.CREDIT
-                                    if entry.side == TransactionEntry.DEBIT
-                                    else TransactionEntry.DEBIT
+                                # Savings accounts are credit-normal:
+                                #   original DEBIT on dup   → balance_effect = -amount
+                                #   original CREDIT on primary → balance_effect = +amount
+                                # Reversal (swap sides):
+                                #   CREDIT on dup   → balance_effect = +amount (restore)
+                                #   DEBIT on primary → balance_effect = -amount (restore)
+                                if entry.side == TransactionEntry.DEBIT:
+                                    reversal_delta = entry.amount      # CREDIT restores dup
+                                    reversed_side = TransactionEntry.CREDIT
+                                else:
+                                    reversal_delta = -entry.amount     # DEBIT reduces primary
+                                    reversed_side = TransactionEntry.DEBIT
+
+                                # Update the GL account balance directly.
+                                GlAccount.all_objects.filter(pk=entry.account_id).update(
+                                    balance=F('balance') + reversal_delta
                                 )
-                                TransactionEntry.objects.create(
+
+                                # Create the reversal entry and mark it posted.
+                                rev_entry = TransactionEntry.objects.create(
                                     transaction=reversal,
-                                    account=entry.account,
+                                    account_id=entry.account_id,
                                     side=reversed_side,
                                     amount=entry.amount,
                                 )
-                            reversal.post()
+                                rev_entry.posted = True
+                                rev_entry.posted_at = timezone.now()
+                                rev_entry.save(update_fields=['posted', 'posted_at'])
 
-                            # Mark original journal as reversed
+                            # Mark reversal journal as approved.
+                            reversal.approved = True
+                            reversal.approved_at = timezone.now()
+                            reversal.save(update_fields=['approved', 'approved_at'])
+
+                            # Mark original MERGE journal as reversed.
                             journal.is_reversed = True
                             journal.reversed_at = timezone.now()
                             journal.reversal_transaction = reversal
