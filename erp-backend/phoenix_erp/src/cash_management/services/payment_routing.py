@@ -198,7 +198,34 @@ class PaymentRoutingService:
             'Unable to resolve cashier account automatically. '
             'Please configure a cashier account for this user.'
         )
-    
+
+    @staticmethod
+    def resolve_bank_gl_account(bank_account_id) -> Account:
+        """
+        Resolve the GL ASSET account behind a bank_account_id for bank_transfer /
+        mobile_money payments.
+
+        bank_account_id must reference an active banks.BankAccount, NOT a raw
+        accounts.Account pk. Looking up accounts.Account directly would accept
+        any GL account (including parent/liability/income accounts), letting a
+        payment post as if cash landed somewhere it never did.
+        """
+        from banks.models import BankAccount
+
+        try:
+            bank_account = BankAccount.objects.get(
+                pk=bank_account_id, is_active=True, is_suspended=False,
+            )
+        except BankAccount.DoesNotExist as exc:
+            raise ValidationError('Bank account not found or is not active.') from exc
+
+        if not bank_account.gl_account_id:
+            raise ValidationError(
+                f'Bank account {bank_account.pk} has no linked GL account configured.'
+            )
+
+        return bank_account.gl_account
+
     @staticmethod
     def determine_payment_route(payment_method: str) -> str:
         """

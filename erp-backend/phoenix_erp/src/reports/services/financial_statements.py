@@ -476,6 +476,20 @@ class FinancialStatementService:
                 if include_children:
                     children_data.append(child_data)
 
+            # A parent account can itself receive DIRECT postings when
+            # allow_manual_entries=True. Those entries never touch any child,
+            # so the children-only rollup above silently drops them. Account.
+            # balance can't be reused here to pick them up because it already
+            # includes the same children's contribution via the parent-rollup
+            # update in TransactionEntry.post() — adding it in would double
+            # count. Sum the parent's own entries directly instead.
+            own_debit, own_credit, own_balance = self._own_posted_entries(
+                account, start_date, end_date
+            )
+            total_debit += own_debit
+            total_credit += own_credit
+            total_balance += own_balance
+
             result = {
                 'code': account.code,
                 'name': account.name,
@@ -585,7 +599,54 @@ class FinancialStatementService:
             'credit': str(total_credit),
             'balance': str(balance),
         }
-    
+
+    def _own_posted_entries(
+        self,
+        account: Account,
+        start_date: Optional[date],
+        end_date: date,
+    ) -> tuple:
+        """
+        Sum TransactionEntry rows posted directly against `account` itself
+        (not its children). Only meaningful for PARENT accounts with
+        allow_manual_entries=True; for a normal leaf this returns zero since
+        entries are never blocked from posting to children.
+
+        Deliberately does NOT use Account.balance the way the leaf branch
+        does — for a parent, that field already carries the children's
+        rollup (see TransactionEntry.post()), so reusing it here would
+        double count. Always computed from entries directly.
+
+        Returns (debit, credit, balance) as Decimals.
+        """
+        is_debit_normal = account.account_type in [Account.ASSET, Account.EXPENSE, Account.LOAN]
+
+        entries = TransactionEntry.objects.filter(
+            account=account, transaction__is_deleted=False, posted=True,
+        )
+        if start_date:
+            entries = entries.filter(
+                transaction__date__gte=start_date, transaction__date__lte=end_date
+            )
+        else:
+            entries = entries.filter(transaction__date__lte=end_date)
+        if self.branch:
+            entries = entries.filter(transaction__branch=self.branch)
+        elif hasattr(self.owner, 'tenant') and self.owner.tenant:
+            entries = entries.filter(transaction__tenant=self.owner.tenant)
+
+        debit = entries.filter(side=TransactionEntry.DEBIT).aggregate(
+            total=Sum('amount')
+        )['total'] or Decimal('0.00')
+        credit = entries.filter(side=TransactionEntry.CREDIT).aggregate(
+            total=Sum('amount')
+        )['total'] or Decimal('0.00')
+        debit = Decimal(str(debit))
+        credit = Decimal(str(credit))
+
+        balance = (debit - credit) if is_debit_normal else (credit - debit)
+        return debit, credit, balance
+
     def _is_current_account(self, account_data: Dict) -> bool:
         """
         Determine if account is current asset/liability.

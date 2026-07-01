@@ -505,9 +505,12 @@ class LoanAccountViewSet(ScopedModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
-                payment_account = GlAccount.objects.get(pk=bank_account_id)
-            except GlAccount.DoesNotExist:
-                return Response({'detail': 'Bank account not found.'}, status=status.HTTP_404_NOT_FOUND)
+                payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id)
+            except ValidationError as exc:
+                return Response(
+                    {'detail': str(exc.message if hasattr(exc, 'message') else exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # ── Detect spillover / overpayment ───────────────────────────────
         from decimal import ROUND_HALF_UP
@@ -782,15 +785,14 @@ class LoanAccountViewSet(ScopedModelViewSet):
                     failed.append({'loan_account_id': loan_id, 'error': str(exc)})
                     continue
             else:
-                from accounts.models import Account as GlAccount
                 bank_account_id = request.data.get('bank_account_id')
                 if not bank_account_id:
                     failed.append({'loan_account_id': loan_id, 'error': 'bank_account_id required.'})
                     continue
                 try:
-                    payment_account = GlAccount.objects.get(pk=bank_account_id)
-                except GlAccount.DoesNotExist:
-                    failed.append({'loan_account_id': loan_id, 'error': 'Bank account not found.'})
+                    payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id)
+                except ValidationError as exc:
+                    failed.append({'loan_account_id': loan_id, 'error': str(exc.message if hasattr(exc, 'message') else exc)})
                     continue
 
             try:
@@ -2222,7 +2224,6 @@ class OfflinePaymentRecordViewSet(ScopedModelViewSet):
         from decimal import Decimal, ROUND_HALF_UP
         from django.db import transaction as db_transaction
         from django.utils import timezone
-        from accounts.models import Account as GlAccount
 
         rec = self.get_object()
 
@@ -2262,9 +2263,12 @@ class OfflinePaymentRecordViewSet(ScopedModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
-                payment_account = GlAccount.objects.get(pk=bank_account_id)
-            except GlAccount.DoesNotExist:
-                return Response({'detail': 'GL account not found.'}, status=status.HTTP_404_NOT_FOUND)
+                payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id)
+            except ValidationError as exc:
+                return Response(
+                    {'detail': str(exc.message if hasattr(exc, 'message') else exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # ── Cap payment at what is currently payable ──────────────────────
         amount = rec.amount

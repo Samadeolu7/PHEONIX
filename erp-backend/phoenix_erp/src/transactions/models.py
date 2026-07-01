@@ -578,15 +578,23 @@ class TransactionEntry(models.Model):
                         f"Account must belong to the same branch as the transaction"
                     )
         
-        # Ensure only child accounts or parent accounts without children can have entries
+        # Parent accounts never receive direct entries — absolute, no
+        # allow_manual_entries override. A parent's rollup balance already
+        # reflects its children's postings via TransactionEntry.post(); a
+        # direct entry on the parent has nowhere consistent to land and is
+        # invisible to the trial balance's children-only aggregation. This
+        # matches Account.can_post_transactions's documented "Parent
+        # accounts: NO" rule, which this check previously contradicted by
+        # honoring allow_manual_entries as an override for parents.
+        # (Child-account behaviour is intentionally left unchanged here.)
         if self.account_id:
             Account = apps.get_model('accounts', 'Account')
-            if self.account.account_level == Account.LEVEL_PARENT:
-                if self.account.children.exists() and not self.account.allow_manual_entries:
-                    raise ValidationError(
-                        "Cannot post directly to parent accounts with children. "
-                        "Post to child accounts instead."
-                    )
+            if self.account.account_level == Account.LEVEL_PARENT and self.account.children.exists():
+                raise ValidationError(
+                    f"Account {self.account.code} ({self.account.name}) is a parent "
+                    f"account and cannot receive direct entries. Post to a child "
+                    f"account instead."
+                )
     
     @txt.atomic
     def post(self):
@@ -658,7 +666,18 @@ class TransactionEntry(models.Model):
         self.save(update_fields=['posted', 'posted_at'])
     
     def save(self, *args, **kwargs):
-        """Save the entry - posting must be done explicitly via post() method"""
+        """
+        Save the entry - posting must be done explicitly via post() method.
+
+        clean() runs on creation so this can't be silently skipped by a
+        caller that forgets to call full_clean() before saving (that's
+        exactly how entries ended up posted directly to parent-level GL
+        accounts in the past — see loans repayment bank_transfer routing).
+        Only enforced on INSERT, not on later partial-field updates (e.g.
+        post()'s own save(update_fields=['posted', 'posted_at'])).
+        """
+        if self.pk is None:
+            self.clean()
         super().save(*args, **kwargs)
     
     def signed_amount(self):
