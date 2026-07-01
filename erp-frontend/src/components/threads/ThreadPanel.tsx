@@ -632,7 +632,7 @@ export const ThreadPanel: React.FC = () => {
                   />
                 </div>
                 {sendError && <p className="text-xs text-red-600 mt-1">{sendError}</p>
-                  />
+                } 
                   <div className="flex flex-col gap-1">
                     <button
                       onClick={() => fileInputRef.current?.click()}
