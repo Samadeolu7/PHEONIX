@@ -727,6 +727,12 @@ class LoanAccountViewSet(ScopedModelViewSet):
             return Response({'detail': 'payments list is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         payment_mode = request.data.get('payment_mode', 'cash')
+        if payment_mode not in ('cash', 'bank_transfer'):
+            return Response(
+                {'detail': "payment_mode must be 'cash' or 'bank_transfer'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         bank_reference = request.data.get('bank_reference', '').strip()
 
         if payment_mode == 'bank_transfer' and not bank_reference:
