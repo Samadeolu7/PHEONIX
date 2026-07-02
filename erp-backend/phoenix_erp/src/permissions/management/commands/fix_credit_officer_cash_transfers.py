@@ -2,16 +2,24 @@
 One-time fix: Credit Officer roles were set up (via the Permission Setup page's
 "Apply Template" flow) before the Credit Officer template included the
 cash-management:cash-transfers page, so credit officers can't see the nav
-item or post cash transfers.
+item or post cash transfers or inter-bank transfers.
 
-Two independent gates exist for this page and both need to be granted:
+Two independent gates exist for these pages and both need to be granted:
   1. RolePermissionPolicy(module=cash-management, page=cash-transfers) — used
      by the CashTransferViewSet backend permission check.
-  2. Role.permission_codes containing 'treasury-list' / 'treasury-create' —
-     the flat action codes the frontend route (/treasury/cash-transfers) and
-     nav actually check via ProtectedRoute's requiredPermission prop. This is
-     a legacy code vocabulary from seed_permissions.py, unrelated to the
+  2. Role.permission_codes containing 'treasury-list' / 'treasury-create'
+     (Cash Transfers route) and 'bank-list' / 'bank-create' (Inter-bank
+     Transfers route) — the flat action codes the frontend routes and nav
+     actually check via ProtectedRoute's requiredPermission prop. This is a
+     legacy code vocabulary from seed_permissions.py, unrelated to the
      module:page policy above, so granting #1 alone does not unlock the route.
+
+     Note: 'bank-list'/'bank-create' are also reused (unchanged, by design of
+     this app) by the Bank Accounts and Bank Payments pages, so granting them
+     also unlocks those two pages for Credit Officers. Approval of inter-bank
+     transfers stays director/admin-only regardless — BankTransferViewSet's
+     approve() action checks staff.role_level directly, independent of these
+     codes, so this does not grant any approval capability.
 
 Applies to any role whose name contains "credit officer". Safe to re-run —
 only adds what's missing.
@@ -20,11 +28,11 @@ from django.core.management.base import BaseCommand
 
 MODULE_CODE = 'cash-management'
 PAGE_CODE = 'cash-transfers'
-ACTION_CODES = ['treasury-list', 'treasury-create']
+ACTION_CODES = ['treasury-list', 'treasury-create', 'bank-list', 'bank-create']
 
 
 class Command(BaseCommand):
-    help = 'Grant cash-transfers access (policy + route action codes) to existing Credit Officer roles that are missing it'
+    help = 'Grant cash-transfers and inter-bank-transfer access (policy + route action codes) to existing Credit Officer roles that are missing it'
 
     def add_arguments(self, parser):
         parser.add_argument(

@@ -115,11 +115,22 @@ function defaultModuleIds(role: string): Set<string> {
     case 'Credit Officer':
     case 'Officer': {
       // Officers see clients, savings and loans — data is scoped server-side
-      // to clients assigned to them. Cash Transfers is added individually
-      // (not the whole btn-bank group) so they can post cashier-to-cashier
-      // transfers without gaining visibility into bank accounts/payments/
-      // inter-bank approvals, which stay director/finance-officer-only.
+      // to clients assigned to them. Bank/treasury leaves are added
+      // individually (not the whole btn-bank group) so they get Cash
+      // Transfers, Inter-bank Transfers, Bank Accounts and Bank Payments
+      // (bank-list/bank-create are shared codes across all four — see
+      // fix_credit_officer_cash_transfers.py) while Transfer Approvals,
+      // Bank/Cash Reconciliation and Cashier Accounts stay excluded since
+      // those require permission codes Credit Officers don't hold.
       const ids = pickModules('btn-student', 'btn-savings', 'btn-loans', 'btn-recv');
+      ids.add('leaf-bank');
+      ids.add('leaf-banks');
+      ids.add('leaf-banks-accounts');
+      ids.add('leaf-banks-accounts-new');
+      ids.add('leaf-banks-payments');
+      ids.add('leaf-banks-payments-new');
+      ids.add('leaf-banks-transfers');
+      ids.add('leaf-banks-transfers-new');
       ids.add('leaf-treasury-cash-transfers');
       return ids;
     }

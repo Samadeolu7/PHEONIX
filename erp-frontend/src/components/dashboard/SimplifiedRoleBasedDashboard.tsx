@@ -751,7 +751,7 @@ function getAllowedModuleIds(role: string): string[] | null {
     case 'Loan Officer':
     case 'Field Officer':
     case 'Officer':
-      return ['client-services', 'loans', 'savings', 'all-access'];
+      return ['client-services', 'loans', 'savings', 'bank', 'all-access'];
     case 'Finance Officer':
     case 'Accountant':
       return ['financial', 'bank', 'accounts-payable', 'all-access'];
