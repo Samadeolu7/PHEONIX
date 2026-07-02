@@ -50,6 +50,7 @@ def _handle_loan_account_post_save(sender, instance, created, **kwargs):
                 'status': 'approved',
                 'owner': instance.owner,
                 'branch': instance.branch,
+                'tenant': instance.tenant,
                 'created_by': instance.created_by or instance.approved_by,
             },
         )

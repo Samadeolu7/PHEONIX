@@ -321,6 +321,13 @@ class LoanAccountViewSet(ScopedModelViewSet):
             pass  # Fail-open during rollout; HasActionPermission also covers this
 
         try:
+            from common.managers import set_current_tenant
+            if getattr(request.user, 'tenant', None) is not None:
+                set_current_tenant(request.user.tenant)
+        except Exception:
+            pass
+
+        try:
             loan.approve(request.user)
         except ValidationError as exc:
             return Response({'detail': str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
@@ -1664,6 +1671,7 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
         ).filter(is_deleted=False)
         qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
         qs = self._apply_officer_scope(qs)
+        qs = self._apply_director_branch_override(qs)
         loan_id = self.request.query_params.get('loan')
         if loan_id:
             qs = qs.filter(loan_id=loan_id)
@@ -2041,6 +2049,7 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
         ).all()
         qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
         qs = self._apply_officer_scope(qs)
+        qs = self._apply_director_branch_override(qs)
         status_filter = self.request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
@@ -2199,6 +2208,7 @@ class OfflinePaymentRecordViewSet(ScopedModelViewSet):
         ).all()
         qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
         qs = self._apply_officer_scope(qs)
+        qs = self._apply_director_branch_override(qs)
         status_filter = self.request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)

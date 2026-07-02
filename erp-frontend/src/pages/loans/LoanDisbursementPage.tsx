@@ -47,6 +47,26 @@ const STATUS_COLORS: Record<DisbursementStatus, string> = {
   cancelled: 'bg-gray-100 text-gray-600 border-gray-200',
 };
 
+/** Pull the most user-readable message from a thrown api.ts error. */
+function extractApiError(e: unknown, fallback: string): string {
+  const err = e as any;
+  const data = err?.response?.data ?? err?.details;
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.non_field_errors) && typeof data.non_field_errors[0] === 'string')
+      return data.non_field_errors[0];
+    if (typeof data.detail === 'string') {
+      if (data.detail.startsWith('No LoanDisbursement'))
+        return 'Disbursement record not found. Please refresh the page and try again.';
+      return data.detail;
+    }
+    for (const val of Object.values(data)) {
+      if (Array.isArray(val) && typeof val[0] === 'string') return val[0];
+      if (typeof val === 'string' && val) return val;
+    }
+  }
+  return (typeof err?.message === 'string' && err.message) ? err.message : fallback;
+}
+
 const LoanDisbursementPage: React.FC = () => {
   const { loanId } = useParams<{ loanId: string }>();
   const navigate = useNavigate();
@@ -93,7 +113,7 @@ const LoanDisbursementPage: React.FC = () => {
         setDisbursement(created);
       }
     } catch (err: any) {
-      const msg = err?.response?.data?.detail ?? err?.message ?? 'Failed to load disbursement data';
+      const msg = extractApiError(err, 'Failed to load disbursement data.');
       showError(msg);
     } finally {
       setLoading(false);
@@ -116,7 +136,7 @@ const LoanDisbursementPage: React.FC = () => {
       setDisbursement(updated);
       success('Loan disbursed successfully');
     } catch (err: any) {
-      showError(err?.response?.data?.detail || 'Failed to disburse loan');
+      showError(extractApiError(err, 'Failed to disburse loan. Please try again.'));
     } finally {
       setSubmitting(false);
     }
