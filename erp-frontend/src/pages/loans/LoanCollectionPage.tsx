@@ -787,13 +787,32 @@ function SavingsDebitPanel() {
   const [loadingSavings, setLoadingSavings] = useState(false);
   const [selectedSavings, setSelectedSavings] = useState<SavingsAccount | null>(null);
 
-  const [amount, setAmount] = useState('');
+  const [schedule, setSchedule] = useState<LoanRepaymentSchedule[]>([]);
+  const [scheduleLoading, setScheduleLoading] = useState(false);
+  // Installments are selected as a contiguous, oldest-first run — selectedCount
+  // is how many of the sorted unpaid rows (starting from the oldest) are checked.
+  const [selectedCount, setSelectedCount] = useState(0);
+
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<LoanRepaymentRequest | null>(null);
+
+  const unpaidInstallments = schedule
+    .filter(s => s.status === 'overdue' || s.status === 'pending' || s.status === 'partial')
+    .sort((a, b) => a.due_date.localeCompare(b.due_date));
+  const selectedInstallments = unpaidInstallments.slice(0, selectedCount);
+  const selectedTotal = selectedInstallments.reduce(
+    (sum, s) => sum + parseFloat(s.total_due) - parseFloat(s.total_paid),
+    0
+  );
+  const exceedsBalance = !!selectedSavings && selectedTotal > (parseFloat(String(selectedSavings.available_balance)) || 0);
+
+  const toggleInstallment = (index: number) => {
+    setSelectedCount(index < selectedCount ? index : index + 1);
+  };
 
   // Search loans (active + disbursed)
   const doSearch = useCallback(async () => {
@@ -836,11 +855,22 @@ function SavingsDebitPanel() {
       .finally(() => setLoadingSavings(false));
   }, [selectedLoan]);
 
+  // Load the repayment schedule when loan selected
+  useEffect(() => {
+    if (!selectedLoan) return;
+    setScheduleLoading(true);
+    setSelectedCount(0);
+    loanService.getLoanSchedule(selectedLoan.id)
+      .then(setSchedule)
+      .catch(() => setError('Could not load repayment schedule.'))
+      .finally(() => setScheduleLoading(false));
+  }, [selectedLoan]);
+
   const handleSelectLoan = (loan: LoanAccountList) => {
     setSelectedLoan(loan);
     setResults([]);
     setSearch('');
-    setAmount('');
+    setSelectedCount(0);
     setSubmitted(null);
     setError(null);
   };
@@ -849,7 +879,8 @@ function SavingsDebitPanel() {
     setSelectedLoan(null);
     setSavingsAccounts([]);
     setSelectedSavings(null);
-    setAmount('');
+    setSchedule([]);
+    setSelectedCount(0);
     setSubmitted(null);
     setError(null);
   };
@@ -857,16 +888,19 @@ function SavingsDebitPanel() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedLoan || !selectedSavings) return;
-    const amtNum = parseFloat(amount);
-    if (isNaN(amtNum) || amtNum <= 0) {
-      setError('Enter a valid positive amount.');
+    if (selectedInstallments.length === 0) {
+      setError('Select at least one installment to repay.');
+      return;
+    }
+    if (exceedsBalance) {
+      setError('Selected total exceeds the available savings balance.');
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       const result = await loanService.requestSavingsRepayment(selectedLoan.id, {
-        amount,
+        installment_ids: selectedInstallments.map(s => s.id),
         savings_account_id: selectedSavings.id,
         payment_date: paymentDate || undefined,
         notes: notes || undefined,
@@ -880,6 +914,9 @@ function SavingsDebitPanel() {
   };
 
   if (submitted) {
+    const covered = submitted.covered_installments_detail ?? [];
+    const first = covered[0];
+    const last = covered[covered.length - 1];
     return (
       <div className="mx-auto max-w-lg rounded-xl border border-green-200 bg-green-50 p-8 text-center">
         <CheckCircle className="mx-auto mb-4 text-green-600" size={48} />
@@ -887,10 +924,21 @@ function SavingsDebitPanel() {
         <p className="mb-1 text-sm text-green-700">
           Repayment request <strong>#{submitted.id}</strong> is pending director approval.
         </p>
-        <p className="mb-4 text-sm text-gray-600">
+        <p className="mb-1 text-sm text-gray-600">
           Amount: <strong>₦{fmt(submitted.amount)}</strong> from savings{' '}
           <strong>{submitted.savings_account_number}</strong>
         </p>
+        {covered.length > 0 && (
+          <p className="mb-4 text-sm text-gray-600">
+            Covers installment{covered.length > 1 ? 's' : ''}{' '}
+            <strong>
+              #{first.installment_number}
+              {covered.length > 1 ? `–#${last.installment_number}` : ''}
+            </strong>
+            , due {fmtDate(first.due_date)}
+            {covered.length > 1 ? ` – ${fmtDate(last.due_date)}` : ''}
+          </p>
+        )}
         <div className="flex justify-center gap-3">
           <Link
             to="/loans/repayment-approvals"
@@ -990,13 +1038,7 @@ function SavingsDebitPanel() {
                 <button
                   key={acc.id}
                   type="button"
-                  onClick={() => {
-                    setSelectedSavings(acc);
-                    setAmount(String(Math.min(
-                      parseFloat(String(acc.available_balance)) || 0,
-                      parseFloat(String(selectedLoan.outstanding_principal)) || 0
-                    ).toFixed(2)));
-                  }}
+                  onClick={() => setSelectedSavings(acc)}
                   className={`w-full rounded-lg border p-4 text-left transition-colors ${
                     selectedSavings?.id === acc.id
                       ? 'border-green-500 bg-green-50'
@@ -1022,31 +1064,86 @@ function SavingsDebitPanel() {
         </div>
       )}
 
-      {/* Step 3: Enter Amount & Submit */}
+      {/* Step 3: Select installments to repay */}
       {selectedLoan && selectedSavings && (
         <form onSubmit={handleSubmit} className="rounded-xl border border-gray-200 bg-white p-5">
-          <h3 className="mb-4 text-sm font-semibold text-gray-700">Step 3 — Enter Amount</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor="sd-amount">
-                Amount (₦)
-              </label>
-              <input
-                id="sd-amount"
-                type="number"
-                min="0.01"
-                step="0.01"
-                max={String(selectedSavings.available_balance)}
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                required
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-400 focus:outline-none"
-              />
-              <p className="mt-1 text-xs text-gray-500">
-                Max available: ₦{fmt(selectedSavings.available_balance)}
-              </p>
-            </div>
+          <h3 className="mb-1 text-sm font-semibold text-gray-700">Step 3 — Select Installments</h3>
+          <p className="mb-4 text-xs text-gray-500">
+            Check installments starting from the oldest unpaid one. The total is calculated
+            automatically.
+          </p>
 
+          {scheduleLoading ? (
+            <div className="flex items-center gap-2 py-6 text-sm text-gray-500">
+              <Loader2 className="animate-spin" size={16} /> Loading repayment schedule…
+            </div>
+          ) : unpaidInstallments.length === 0 ? (
+            <p className="py-6 text-center text-sm text-gray-400">No outstanding installments.</p>
+          ) : (
+            <div className="mb-4 overflow-x-auto rounded-lg border border-gray-200">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-4 py-2.5"></th>
+                    <th className="px-4 py-2.5">#</th>
+                    <th className="px-4 py-2.5">Due Date</th>
+                    <th className="px-4 py-2.5 text-right">Remaining</th>
+                    <th className="px-4 py-2.5">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {unpaidInstallments.map((row, index) => {
+                    const remaining = parseFloat(row.total_due) - parseFloat(row.total_paid);
+                    const checked = index < selectedCount;
+                    return (
+                      <tr
+                        key={row.id}
+                        onClick={() => toggleInstallment(index)}
+                        className={`cursor-pointer ${row.status === 'overdue' ? 'bg-red-50' : ''} ${checked ? 'bg-green-50' : 'hover:bg-gray-50'}`}
+                      >
+                        <td className="px-4 py-2.5">
+                          <input
+                            type="checkbox"
+                            readOnly
+                            checked={checked}
+                            aria-label={`Select installment ${row.installment_number}`}
+                            className="h-4 w-4 accent-green-600"
+                          />
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-700">{row.installment_number}</td>
+                        <td className={`px-4 py-2.5 ${row.status === 'overdue' ? 'font-medium text-red-700' : 'text-gray-700'}`}>
+                          {fmtDate(row.due_date)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-semibold text-gray-900">₦{fmt(remaining)}</td>
+                        <td className="px-4 py-2.5">
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${SCHEDULE_STATUS_BADGE[row.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                            {row.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t bg-gray-50">
+                    <td colSpan={3} className="px-4 py-3 text-right text-sm font-semibold text-gray-700">
+                      Selected Total
+                    </td>
+                    <td className={`px-4 py-3 text-right font-bold ${exceedsBalance ? 'text-red-600' : 'text-gray-900'}`}>
+                      ₦{fmt(selectedTotal)}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+
+          <p className="mb-4 text-xs text-gray-500">
+            Max available in savings: ₦{fmt(selectedSavings.available_balance)}
+          </p>
+
+          <div className="space-y-4">
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor="sd-date">
                 Payment Date
@@ -1075,6 +1172,13 @@ function SavingsDebitPanel() {
               />
             </div>
 
+            {exceedsBalance && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle size={14} />
+                Selected total (₦{fmt(selectedTotal)}) exceeds the available savings balance.
+              </div>
+            )}
+
             {error && (
               <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
                 <AlertCircle size={14} />
@@ -1090,7 +1194,7 @@ function SavingsDebitPanel() {
             <div className="flex gap-3">
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || selectedInstallments.length === 0 || exceedsBalance}
                 className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
               >
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <PiggyBank size={14} />}

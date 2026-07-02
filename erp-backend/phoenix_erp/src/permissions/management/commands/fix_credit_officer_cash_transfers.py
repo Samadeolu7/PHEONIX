@@ -2,17 +2,29 @@
 One-time fix: Credit Officer roles were set up (via the Permission Setup page's
 "Apply Template" flow) before the Credit Officer template included the
 cash-management:cash-transfers page, so credit officers can't see the nav
-item or post cash transfers. Grants the missing page policy to any role whose
-name contains "credit officer". Safe to re-run — only adds what's missing.
+item or post cash transfers.
+
+Two independent gates exist for this page and both need to be granted:
+  1. RolePermissionPolicy(module=cash-management, page=cash-transfers) — used
+     by the CashTransferViewSet backend permission check.
+  2. Role.permission_codes containing 'treasury-list' / 'treasury-create' —
+     the flat action codes the frontend route (/treasury/cash-transfers) and
+     nav actually check via ProtectedRoute's requiredPermission prop. This is
+     a legacy code vocabulary from seed_permissions.py, unrelated to the
+     module:page policy above, so granting #1 alone does not unlock the route.
+
+Applies to any role whose name contains "credit officer". Safe to re-run —
+only adds what's missing.
 """
 from django.core.management.base import BaseCommand
 
 MODULE_CODE = 'cash-management'
 PAGE_CODE = 'cash-transfers'
+ACTION_CODES = ['treasury-list', 'treasury-create']
 
 
 class Command(BaseCommand):
-    help = 'Grant cash-management:cash-transfers to existing Credit Officer roles that are missing it'
+    help = 'Grant cash-transfers access (policy + route action codes) to existing Credit Officer roles that are missing it'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -38,23 +50,31 @@ class Command(BaseCommand):
 
         changed = 0
         for role in Role.objects.filter(name__icontains='credit officer'):
-            exists = RolePermissionPolicy.objects.filter(
+            policy_exists = RolePermissionPolicy.objects.filter(
                 role=role, module=module, page=page, action=None,
             ).exists()
-            if exists:
+            existing_codes = set(role.permission_codes or [])
+            missing_codes = [c for c in ACTION_CODES if c not in existing_codes]
+
+            if policy_exists and not missing_codes:
                 continue
 
             self.stdout.write(
-                f'  {"[DRY RUN] " if dry_run else ""}Granting cash-transfers to '
-                f'"{role.name}" (tenant={role.tenant.name})'
+                f'  {"[DRY RUN] " if dry_run else ""}Fixing "{role.name}" '
+                f'(tenant={role.tenant.name}): policy={"ok" if policy_exists else "missing"}, '
+                f'action_codes missing={missing_codes or "none"}'
             )
             if not dry_run:
-                RolePermissionPolicy.objects.create(
-                    role=role, module=module, page=page, action=None,
-                    can_view=True, can_create=True, can_edit=True,
-                    can_delete=False, can_approve=False, can_export=False,
-                    scope=SCOPE_OWN_BRANCH,
-                )
+                if not policy_exists:
+                    RolePermissionPolicy.objects.create(
+                        role=role, module=module, page=page, action=None,
+                        can_view=True, can_create=True, can_edit=True,
+                        can_delete=False, can_approve=False, can_export=False,
+                        scope=SCOPE_OWN_BRANCH,
+                    )
+                if missing_codes:
+                    role.permission_codes = sorted(existing_codes | set(ACTION_CODES))
+                    role.save(update_fields=['permission_codes'])
             changed += 1
 
         if changed == 0:
