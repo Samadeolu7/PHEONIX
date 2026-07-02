@@ -248,6 +248,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       'loans:loan-disbursements':      viewer('assigned_clients'),
       'savings:savings-accounts':      writer('assigned_clients'),
       'cash-management:cash-collections': writer('own_branch'),
+      'cash-management:cash-transfers':   writer('own_branch'),
       'cash-management:collection-sheets': writer('own_branch'),
       'reports:report-executions':     viewer('own_branch'),
     },

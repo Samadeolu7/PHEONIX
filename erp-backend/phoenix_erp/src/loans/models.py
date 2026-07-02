@@ -2374,6 +2374,12 @@ class LoanRepaymentRequest(TimeStampedModel, BranchScopedModel):
         related_name='loan_repayment_request_journals',
     )
     notes = models.TextField(blank=True)
+    covered_installments = models.ManyToManyField(
+        'LoanRepaymentSchedule',
+        blank=True,
+        related_name='repayment_requests',
+        help_text='Schedule rows this request is intended to settle, oldest-due-first.',
+    )
 
     objects = OwnerBranchManager(include_deleted=True)
 

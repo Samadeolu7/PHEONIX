@@ -421,7 +421,7 @@ export const loanService = {
 
   async requestSavingsRepayment(
     loanId: number,
-    data: { amount: string; savings_account_id: number; payment_date?: string; notes?: string }
+    data: { installment_ids: number[]; savings_account_id: number; payment_date?: string; notes?: string }
   ): Promise<LoanRepaymentRequest> {
     return api.post(`${BASE}/accounts/${loanId}/request-savings-repayment/`, data);
   },
@@ -695,6 +695,7 @@ export interface LoanRepaymentRequest {
   reviewed_at: string | null;
   rejection_reason: string;
   journal_entry: number | null;
+  covered_installments_detail: LoanRepaymentSchedule[];
   owner: number;
   branch: number;
   created_at: string;

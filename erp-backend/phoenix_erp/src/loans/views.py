@@ -953,7 +953,12 @@ class LoanAccountViewSet(ScopedModelViewSet):
         """
         Submit a savings-debit repayment request for director approval.
 
-        Body: {amount, savings_account_id, payment_date (optional), notes (optional)}
+        Body: {installment_ids, savings_account_id, payment_date (optional), notes (optional)}
+
+        installment_ids must be exactly the oldest N unpaid schedule rows for the
+        loan (no gaps) — this guarantees the FIFO allocation in
+        LoanAccount._update_schedule_with_payment() lands on exactly these rows
+        once the request is approved.
         """
         from decimal import Decimal
         from django.utils import timezone
@@ -967,15 +972,42 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        amount_raw = request.data.get('amount')
-        if not amount_raw:
-            return Response({'detail': 'amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        installment_ids = request.data.get('installment_ids')
+        if not installment_ids or not isinstance(installment_ids, list):
+            return Response({'detail': 'installment_ids is required.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            amount = Decimal(str(amount_raw))
-        except Exception:
-            return Response({'detail': 'Invalid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+            installment_ids = [int(i) for i in installment_ids]
+        except (TypeError, ValueError):
+            return Response({'detail': 'Invalid installment_ids.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        unpaid = list(
+            loan.repayment_schedule
+            .filter(status__in=['pending', 'partial', 'overdue'])
+            .order_by('due_date')
+        )
+        unpaid_by_id = {s.id: s for s in unpaid}
+
+        selected = [unpaid_by_id[i] for i in installment_ids if i in unpaid_by_id]
+        if len(selected) != len(installment_ids):
+            return Response(
+                {'detail': 'One or more selected installments are invalid or already settled.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Must be exactly the oldest N unpaid installments — no gaps, starting from the oldest.
+        expected_ids = {s.id for s in unpaid[:len(selected)]}
+        if {s.id for s in selected} != expected_ids:
+            return Response(
+                {'detail': 'Select installments starting from the oldest unpaid one, with no gaps.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        amount = sum((s.amount_remaining for s in selected), Decimal('0.00'))
         if amount <= 0:
-            return Response({'detail': 'Amount must be positive.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': 'Selected installments have no remaining balance.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         savings_account_id = request.data.get('savings_account_id')
         if not savings_account_id:
@@ -1018,6 +1050,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             branch=branch,
             tenant=tenant,
         )
+        repay_request.covered_installments.set(selected)
 
         return Response(
             LoanRepaymentRequestSerializer(repay_request, context={'request': request}).data,
@@ -2077,7 +2110,14 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
 
         loan = req.loan
         savings_account = req.savings_account
-        amount = req.amount
+        covered = list(req.covered_installments.all().order_by('due_date'))
+        # Schedule-driven requests: recompute from current remaining balances
+        # rather than trusting the amount stored at request time, in case
+        # another payment landed on these installments in the meantime.
+        amount = (
+            sum((s.amount_remaining for s in covered), Decimal('0.00'))
+            if covered else req.amount
+        )
 
         if loan.status not in ('active', 'disbursed', 'defaulted'):
             return Response(
@@ -2097,41 +2137,48 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Cap at payable_now (overdue + next pending) so that no excess silently
-        # pre-pays future installments. Since the source is savings, any uncapped
-        # excess simply stays in the savings account — no additional GL movement needed.
         total_outstanding = Decimal(str(loan.total_outstanding))
 
-        overdue_due = Decimal('0.00')
-        for s in loan.repayment_schedule.filter(status__in=['overdue', 'partial']):
-            overdue_due += Decimal(str(s.total_due)) - Decimal(str(s.total_paid))
+        if covered:
+            # The officer's installment selection is the guardrail here — just
+            # cap at total_outstanding in case other payments reduced the loan
+            # balance since the request was submitted.
+            payment_amount = min(amount, total_outstanding)
+        else:
+            # Legacy lump-sum request (submitted before schedule-selection
+            # shipped) — preserve the original payable_now cap (overdue + next
+            # pending) so anything already pending at deploy resolves the same
+            # way it always has.
+            overdue_due = Decimal('0.00')
+            for s in loan.repayment_schedule.filter(status__in=['overdue', 'partial']):
+                overdue_due += Decimal(str(s.total_due)) - Decimal(str(s.total_paid))
 
-        next_pending = (
-            loan.repayment_schedule
-            .filter(status='pending')
-            .order_by('due_date')
-            .first()
-        )
-        next_pending_due = (
-            Decimal(str(next_pending.total_due)) - Decimal(str(next_pending.total_paid))
-            if next_pending else Decimal('0.00')
-        )
-
-        has_schedule = loan.repayment_schedule.exists()
-        if has_schedule and (overdue_due + next_pending_due) > Decimal('0.00'):
-            payable_now = min(
-                (overdue_due + next_pending_due).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
-                total_outstanding,
+            next_pending = (
+                loan.repayment_schedule
+                .filter(status='pending')
+                .order_by('due_date')
+                .first()
             )
-        else:
-            payable_now = total_outstanding
+            next_pending_due = (
+                Decimal(str(next_pending.total_due)) - Decimal(str(next_pending.total_paid))
+                if next_pending else Decimal('0.00')
+            )
 
-        if total_outstanding > Decimal('0.00') and amount > total_outstanding:
-            payment_amount = total_outstanding
-        elif payable_now > Decimal('0.00') and amount > payable_now:
-            payment_amount = payable_now
-        else:
-            payment_amount = amount
+            has_schedule = loan.repayment_schedule.exists()
+            if has_schedule and (overdue_due + next_pending_due) > Decimal('0.00'):
+                payable_now = min(
+                    (overdue_due + next_pending_due).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                    total_outstanding,
+                )
+            else:
+                payable_now = total_outstanding
+
+            if total_outstanding > Decimal('0.00') and amount > total_outstanding:
+                payment_amount = total_outstanding
+            elif payable_now > Decimal('0.00') and amount > payable_now:
+                payment_amount = payable_now
+            else:
+                payment_amount = amount
 
         try:
             with db_transaction.atomic():

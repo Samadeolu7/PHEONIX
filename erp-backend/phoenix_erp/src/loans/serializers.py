@@ -565,6 +565,9 @@ class LoanRepaymentRequestSerializer(TenantModelSerializer):
     savings_account_number = serializers.CharField(source='savings_account.account_number', read_only=True)
     requested_by_name = serializers.SerializerMethodField()
     reviewed_by_name = serializers.SerializerMethodField()
+    covered_installments_detail = LoanRepaymentScheduleSerializer(
+        source='covered_installments', many=True, read_only=True,
+    )
 
     def get_requested_by_name(self, obj):
         return obj.requested_by.get_full_name() if obj.requested_by else None
@@ -581,6 +584,7 @@ class LoanRepaymentRequestSerializer(TenantModelSerializer):
             'requested_by', 'requested_by_name',
             'status', 'reviewed_by', 'reviewed_by_name',
             'reviewed_at', 'rejection_reason', 'journal_entry',
+            'covered_installments_detail',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
@@ -588,6 +592,7 @@ class LoanRepaymentRequestSerializer(TenantModelSerializer):
             'requested_by', 'requested_by_name',
             'status', 'reviewed_by', 'reviewed_by_name',
             'reviewed_at', 'rejection_reason', 'journal_entry',
+            'covered_installments_detail',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
 
