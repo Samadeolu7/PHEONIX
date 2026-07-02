@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { CheckCircle, XCircle, Clock, AlertCircle, Eye } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
 import bankService from '../../services/bankService';
 import type { BankTransfer } from '../../types/banks';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 
 const TransferApprovalPage: React.FC = () => {
-  const navigate = useNavigate();
   const { canUserApprove } = useApprovalGuard();
   const [transfers, setTransfers] = useState<BankTransfer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -202,13 +200,6 @@ const TransferApprovalPage: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-center">
                     <div className="flex gap-2 justify-center">
-                      <button
-                        onClick={() => navigate(`/banks/transfers/${transfer.id}`)}
-                        className="p-1 text-blue-600 hover:text-blue-700"
-                        title="View Details"
-                      >
-                        <Eye className="w-5 h-5" />
-                      </button>
                       {canUserApprove && transfer.status === 'pending' && (
                         <>
                           <button

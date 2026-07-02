@@ -5,10 +5,11 @@
 
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, CheckCircle, XCircle, Clock, ArrowRightLeft, Search, RefreshCw } from 'lucide-react';
+import { Plus, CheckCircle, XCircle, Clock, ArrowRightLeft, Search, RefreshCw, Trash2 } from 'lucide-react';
 import {
   useBankTransfers,
   useSubmitBankTransfer,
+  useDeleteBankTransfer,
   useApproveBankTransfer,
   useRejectBankTransfer,
 } from '../../hooks/useBanks';
@@ -78,6 +79,7 @@ const BankTransferListPage: React.FC = () => {
   const { data: transfers = [], isLoading, isFetching, refetch } = useBankTransfers(filters);
 
   const submitMutation = useSubmitBankTransfer();
+  const deleteMutation = useDeleteBankTransfer();
   const approveMutation = useApproveBankTransfer();
   const rejectMutation = useRejectBankTransfer();
 
@@ -95,6 +97,17 @@ const BankTransferListPage: React.FC = () => {
     } catch (err: unknown) {
       const e = err as { details?: { error?: string }; message?: string };
       setActionError(e?.details?.error || (err instanceof Error ? err.message : 'Submit failed'));
+    }
+  };
+
+  const handleDelete = async (transfer: BankTransfer) => {
+    if (!window.confirm(`Delete transfer ${transfer.transfer_number}? This cannot be undone.`)) return;
+    setActionError(null);
+    try {
+      await deleteMutation.mutateAsync(transfer.id);
+    } catch (err: unknown) {
+      const e = err as { details?: { error?: string }; message?: string };
+      setActionError(e?.details?.error || (err instanceof Error ? err.message : 'Delete failed'));
     }
   };
 
@@ -374,13 +387,23 @@ const BankTransferListPage: React.FC = () => {
                       <div className="flex items-center justify-end gap-2">
                         {/* Submit for approval (draft) */}
                         {transfer.status === 'draft' && (
-                          <button
-                            onClick={() => handleSubmit(transfer)}
-                            disabled={submitMutation.isPending}
-                            className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 disabled:opacity-50"
-                          >
-                            Submit
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleSubmit(transfer)}
+                              disabled={submitMutation.isPending}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 disabled:opacity-50"
+                            >
+                              Submit
+                            </button>
+                            <button
+                              onClick={() => handleDelete(transfer)}
+                              disabled={deleteMutation.isPending}
+                              className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 disabled:opacity-50"
+                              title="Delete draft"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </>
                         )}
 
                         {/* Approve / Reject (pending, approver only) */}

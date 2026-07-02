@@ -102,7 +102,11 @@ const BankTransferFormPage: React.FC = () => {
         attachment,
       } as any);
 
-      navigate(`/banks/transfers/${transfer.id}`);
+      // Auto-submit so the transfer immediately enters the approval queue
+      // (draft transfers are invisible to approvers)
+      await bankService.submitTransfer(transfer.id);
+
+      navigate('/banks/transfers');
     } catch (err: any) {
       setError(err.message || 'Failed to create transfer');
     } finally {

@@ -283,6 +283,7 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
                     value={selectedBankId}
                     onChange={e => setSelectedBankId(e.target.value ? Number(e.target.value) : '')}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    aria-label="Destination Bank Account"
                     required
                   >
                     <option value="">Select bank account</option>
@@ -488,6 +489,23 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
 
 // ── Add Guarantor Modal ────────────────────────────────────────────────────
 
+/** Pulls the most user-readable message from a thrown api.ts error. */
+function extractApiError(e: unknown, fallback: string): string {
+  const err = e as any;
+  const data = err?.response?.data ?? err?.details;
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.non_field_errors) && typeof data.non_field_errors[0] === 'string')
+      return data.non_field_errors[0];
+    if (typeof data.detail === 'string') return data.detail;
+    // Scan every field error and return the first non-empty one
+    for (const val of Object.values(data)) {
+      if (Array.isArray(val) && typeof val[0] === 'string') return val[0];
+      if (typeof val === 'string' && val) return val;
+    }
+  }
+  return (typeof err?.message === 'string' && err.message) ? err.message : fallback;
+}
+
 type GuarantorMode = 'search' | 'new';
 
 interface AddGuarantorModalProps {
@@ -578,26 +596,29 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
     }
     setSubmitting(true);
     setError(null);
-    try {
-      let personName: string;
-      let payload: { loan: number; guarantor?: number; guarantor_person?: number; guaranteed_amount: string };
 
-      if (mode === 'search') {
-        if (!selectedResult) { setError('Select a person first.'); setSubmitting(false); return; }
-        personName = selectedResult.name;
-        if (selectedResult.type === 'client') {
-          payload = { loan: loanId, guarantor: selectedResult.id, guaranteed_amount: guaranteedAmount };
-        } else {
-          payload = { loan: loanId, guarantor_person: selectedResult.id, guaranteed_amount: guaranteedAmount };
-        }
+    let personName: string;
+    let payload: { loan: number; guarantor?: number; guarantor_person?: number; guaranteed_amount: string };
+
+    if (mode === 'search') {
+      if (!selectedResult) { setError('Select a person first.'); setSubmitting(false); return; }
+      personName = selectedResult.name;
+      if (selectedResult.type === 'client') {
+        payload = { loan: loanId, guarantor: selectedResult.id, guaranteed_amount: guaranteedAmount };
       } else {
-        const { first_name, last_name, phone, gender } = newPerson;
-        if (!first_name || !last_name) {
-          setError('First name and last name are required.');
-          setSubmitting(false);
-          return;
-        }
-        const created = await guarantorService.createGuarantor({
+        payload = { loan: loanId, guarantor_person: selectedResult.id, guaranteed_amount: guaranteedAmount };
+      }
+    } else {
+      const { first_name, last_name, phone, gender } = newPerson;
+      if (!first_name || !last_name) {
+        setError('First name and last name are required.');
+        setSubmitting(false);
+        return;
+      }
+
+      let created;
+      try {
+        created = await guarantorService.createGuarantor({
           first_name,
           last_name,
           middle_name: newPerson.middle_name || undefined,
@@ -606,19 +627,35 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
           occupation: newPerson.occupation || undefined,
           address: newPerson.address || undefined,
         });
-        personName = created.full_name;
-        payload = { loan: loanId, guarantor_person: created.id, guaranteed_amount: guaranteedAmount };
+      } catch (createErr) {
+        const msg = extractApiError(
+          createErr,
+          'Could not register the guarantor. Please check the details and try again.',
+        );
+        setError(msg);
+        toast.error(msg);
+        setSubmitting(false);
+        return;
       }
 
-      await loanService.addGuarantor(payload);
-      setSuccessName(personName);
-    } catch (e: unknown) {
-      const err = e as any;
-      const msg = err?.guarantor?.[0] ?? err?.guarantor_person?.[0] ?? err?.phone?.[0]
-        ?? err?.non_field_errors?.[0] ?? err?.detail ?? err?.message ?? 'Failed to add guarantor.';
-      setError(msg);
-      setSubmitting(false);
+      personName = created.full_name || `${first_name} ${last_name}`.trim();
+      payload = { loan: loanId, guarantor_person: created.id, guaranteed_amount: guaranteedAmount };
     }
+
+    try {
+      await loanService.addGuarantor(payload);
+    } catch (linkErr) {
+      const msg = extractApiError(
+        linkErr,
+        'Could not link this guarantor to the loan. Please try again.',
+      );
+      setError(msg);
+      toast.error(msg);
+      setSubmitting(false);
+      return;
+    }
+
+    setSuccessName(personName!);
   }
 
   if (successName) {
@@ -728,6 +765,7 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
                     {selectedResult.label}
                   </span>
                   <button type="button" onClick={() => { setSelectedResult(null); setSearch(''); }}
+                    aria-label="Clear selection"
                     className="ml-auto text-gray-400 hover:text-gray-600">
                     <X size={14} />
                   </button>
@@ -773,6 +811,7 @@ function AddGuarantorModal({ loanId, onClose, onSuccess }: AddGuarantorModalProp
                   </label>
                   <select value={newPerson.gender}
                     onChange={e => setPerson('gender', e.target.value)}
+                    aria-label="Gender"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500">
                     <option value="">Select…</option>
                     <option value="male">Male</option>

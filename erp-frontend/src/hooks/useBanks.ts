@@ -299,6 +299,16 @@ export const useSubmitBankTransfer = () => {
   });
 };
 
+export const useDeleteBankTransfer = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => bankService.deleteBankTransfer(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: bankKeys.transfers() });
+    },
+  });
+};
+
 export const useApproveBankTransfer = () => {
   const queryClient = useQueryClient();
   return useMutation({

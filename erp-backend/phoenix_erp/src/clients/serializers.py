@@ -530,15 +530,16 @@ class GuarantorSerializer(TenantModelSerializer):
 
 class GuarantorCreateSerializer(TenantModelSerializer):
     """Minimal serializer for creating a guarantor from the loan application form."""
+    full_name = serializers.CharField(read_only=True)
 
     class Meta:
         model = Guarantor
         fields = [
-            'id',
+            'id', 'full_name',
             'first_name', 'middle_name', 'last_name',
             'nin', 'image', 'phone', 'gender', 'occupation', 'address',
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'full_name']
         extra_kwargs = {
             'first_name': {'required': True},
             'last_name': {'required': True},
