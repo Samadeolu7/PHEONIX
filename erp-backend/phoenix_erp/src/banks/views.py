@@ -34,6 +34,19 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
+def _error_message(exc: Exception) -> str:
+    """Extract a clean message from an exception for API error responses.
+
+    Django's ValidationError renders via str() as a list repr (e.g.
+    "['Only draft transfers can be submitted for approval.']"), so pull
+    from .messages when available instead of relying on str(exc).
+    """
+    messages = getattr(exc, 'messages', None)
+    if messages:
+        return ' '.join(messages)
+    return str(exc)
+
+
 class BankViewSet(ScopedModelViewSet):
     """
     ViewSet for Bank management
@@ -221,7 +234,7 @@ class BankPaymentViewSet(ScopedModelViewSet):
             serializer = self.get_serializer(payment)
             return Response(serializer.data)
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': _error_message(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
@@ -241,7 +254,7 @@ class BankPaymentViewSet(ScopedModelViewSet):
             serializer = self.get_serializer(payment)
             return Response(serializer.data)
         except Exception as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': _error_message(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['get'], url_path='pending-approvals')
     def pending_approvals(self, request):
@@ -803,7 +816,7 @@ class BankTransferViewSet(ScopedModelViewSet):
         
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -842,7 +855,7 @@ class BankTransferViewSet(ScopedModelViewSet):
         
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -879,7 +892,7 @@ class BankTransferViewSet(ScopedModelViewSet):
         
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -907,7 +920,7 @@ class BankTransferViewSet(ScopedModelViewSet):
         
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     

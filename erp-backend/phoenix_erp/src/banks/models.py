@@ -658,23 +658,29 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if not self.transfer_number:
             # Generate transfer number
             from django.utils import timezone
+            from django.db.models.query import QuerySet as _QS
             date_str = timezone.now().strftime('%Y%m%d')
-            
-            # Get last transfer number for today
-            last_transfer = BankTransfer.objects.filter(
-                transfer_number__startswith=f'TRF-{date_str}'
-            ).order_by('-transfer_number').first()
-            
+
+            # Query ALL transfers for today (including soft-deleted) without going
+            # through the scoped manager — otherwise deleted records are invisible
+            # and we'd re-generate a transfer_number that already exists in the DB.
+            last_transfer = (
+                _QS(model=BankTransfer, using='default')
+                .filter(transfer_number__startswith=f'TRF-{date_str}')
+                .order_by('-transfer_number')
+                .first()
+            )
+
             if last_transfer:
                 # Extract sequence and increment
                 try:
                     last_seq = int(last_transfer.transfer_number.split('-')[-1])
                     new_seq = last_seq + 1
-                except:
+                except Exception:
                     new_seq = 1
             else:
                 new_seq = 1
-            
+
             self.transfer_number = f'TRF-{date_str}-{new_seq:04d}'
         
         super().save(*args, **kwargs)
