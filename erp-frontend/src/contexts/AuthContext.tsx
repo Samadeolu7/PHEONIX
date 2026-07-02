@@ -143,6 +143,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         storage.setItem('user', JSON.stringify(userData));
         setUser(userData);
 
+        // Hydrate permissionService (permissions, scope, page matrix) — the
+        // storedUser early-return above skips this fetch entirely when a
+        // cached user already exists, so this path only runs on a genuinely
+        // fresh session restore; still needs the same hydration login does.
+        permissionService.setPermissions(userData);
+
         // Set selected role from user roles
         setSelectedRoleFromUser(userData);
       } else {

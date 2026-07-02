@@ -113,6 +113,16 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         except Exception:
             pass
 
+        # Bulk module:page permission matrix — lets the frontend derive route
+        # access and nav visibility from one payload instead of hand-written
+        # per-role nav allowlists. Isolated in its own try/except: a failure
+        # here must not break login.
+        try:
+            from permissions.services import PermissionResolver
+            data['user']['page_permissions'] = PermissionResolver.resolve_bulk_matrix(self.user)
+        except Exception:
+            data['user']['page_permissions'] = {'wildcard': False, 'legacy_mode': True, 'pages': {}}
+
         # Role-level default dashboard fallback (for bulk-assigned staff)
         try:
             role_dash = (
@@ -139,6 +149,11 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 def get_current_user(request):
     """Get current authenticated user details"""
     user = request.user
+    try:
+        from permissions.services import PermissionResolver
+        page_permissions = PermissionResolver.resolve_bulk_matrix(user)
+    except Exception:
+        page_permissions = {'wildcard': False, 'legacy_mode': True, 'pages': {}}
     return Response({
         'id': user.id,
         'username': user.username,
@@ -165,6 +180,7 @@ def get_current_user(request):
             r.name: (r.permission_codes if isinstance(r.permission_codes, list) else [])
             for r in user.roles.all()
         },
+        'page_permissions': page_permissions,
     })
 
 @api_view(['POST'])

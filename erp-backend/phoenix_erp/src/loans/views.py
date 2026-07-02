@@ -2069,6 +2069,8 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
     POST /api/loans/repayment-requests/:id/approve/  — director posts GL
     POST /api/loans/repayment-requests/:id/reject/   — director rejects
     """
+    permission_module = 'loans'
+    permission_page = 'loan-repayment-approvals'
     queryset = LoanRepaymentRequest.objects.select_related(
         'loan', 'loan__client', 'savings_account', 'requested_by', 'reviewed_by',
     ).all()

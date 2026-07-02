@@ -1604,12 +1604,6 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
             'requested_by', 'approved_by', 'acquisition'
         ).prefetch_related('items', 'items__asset_category')
 
-    def get_permissions(self):
-        if self.action in ('approve', 'reject'):
-            from common.approval_permissions import IsApprover
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
-
     def perform_create(self, serializer):
         import random
         from datetime import datetime

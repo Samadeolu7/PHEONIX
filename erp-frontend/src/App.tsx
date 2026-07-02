@@ -719,7 +719,7 @@ function App() {
                                 <Route
                                   path="/dashboard/select"
                                   element={
-                                    <ProtectedRoute requiredPermission="dashboard-view">
+                                    <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                       <DashboardSelection />
                                     </ProtectedRoute>
                                   }
@@ -729,7 +729,7 @@ function App() {
                                 <Route
                                   path="/dashboard/settings"
                                   element={
-                                    <ProtectedRoute requiredPermission="dashboard-view">
+                                    <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                       <DashboardSettingsPage />
                                     </ProtectedRoute>
                                   }
@@ -740,7 +740,7 @@ function App() {
                                   path="/dashboard"
                                   element={
                                     <DashboardThemeProvider>
-                                      <ProtectedRoute requiredPermission="dashboard-view">
+                                      <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                         <DashboardPage />
                                       </ProtectedRoute>
                                     </DashboardThemeProvider>
@@ -749,7 +749,7 @@ function App() {
                                 <Route
                                   path="/dashboard/role-based"
                                   element={
-                                    <ProtectedRoute requiredPermission="dashboard-view">
+                                    <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                       <RoleBasedDashboardPage />
                                     </ProtectedRoute>
                                   }
@@ -757,7 +757,7 @@ function App() {
                                 <Route
                                   path="/dashboard/workflow-centric"
                                   element={
-                                    <ProtectedRoute requiredPermission="dashboard-view">
+                                    <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                       <WorkflowCentricDashboardPage />
                                     </ProtectedRoute>
                                   }
@@ -765,7 +765,7 @@ function App() {
                                 <Route
                                   path="/dashboard/demo"
                                   element={
-                                    <ProtectedRoute requiredPermission="dashboard-view">
+                                    <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                       <DashboardDemoPage />
                                     </ProtectedRoute>
                                   }
@@ -773,7 +773,7 @@ function App() {
                                 <Route
                                   path="/dashboard/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="dashboard-create">
+                                    <ProtectedRoute requiredPermission="dashboard-create" module="dashboards" page="dashboards" action="create">
                                       <DashboardCreatePage />
                                     </ProtectedRoute>
                                   }
@@ -781,7 +781,7 @@ function App() {
                                 <Route
                                   path="/dashboard/debug"
                                   element={
-                                    <ProtectedRoute requiredPermission="dashboard-view">
+                                    <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                       <DashboardDebugTest />
                                     </ProtectedRoute>
                                   }
@@ -790,7 +790,7 @@ function App() {
                                   path="/dashboard/:dashboardId/edit"
                                   element={
                                     <DashboardThemeProvider>
-                                      <ProtectedRoute requiredPermission="dashboard-edit">
+                                      <ProtectedRoute requiredPermission="dashboard-edit" module="dashboards" page="dashboards" action="edit">
                                         <DashboardSetupPageStyled />
                                       </ProtectedRoute>
                                     </DashboardThemeProvider>
@@ -800,7 +800,7 @@ function App() {
                                   path="/dashboard/:dashboardId"
                                   element={
                                     <DashboardThemeProvider>
-                                      <ProtectedRoute requiredPermission="dashboard-view">
+                                      <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                         <DashboardPage />
                                       </ProtectedRoute>
                                     </DashboardThemeProvider>
@@ -811,7 +811,7 @@ function App() {
                                 <Route
                                   path="/settings/role-navigation"
                                   element={
-                                    <ProtectedRoute requiredPermission="dashboard-view">
+                                    <ProtectedRoute requiredPermission="dashboard-view" module="dashboards" page="dashboards">
                                       <RoleSidebarConfigPage />
                                     </ProtectedRoute>
                                   }
@@ -944,7 +944,7 @@ function App() {
                                 <Route
                                   path="/accounts"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
                                       <AccountsListPage />
                                     </ProtectedRoute>
                                   }
@@ -952,7 +952,7 @@ function App() {
                                 <Route
                                   path="/accounts/:accountId/summary"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="account-summary">
                                       <AccountSummaryPage />
                                     </ProtectedRoute>
                                   }
@@ -960,7 +960,7 @@ function App() {
                                 <Route
                                   path="/accounts/:accountId/ledger"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="account-ledger">
                                       <AccountLedgerPage />
                                     </ProtectedRoute>
                                   }
@@ -968,7 +968,7 @@ function App() {
                                 <Route
                                   path="/account/settings"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
                                       <AccountSettingsPage />
                                     </ProtectedRoute>
                                   }
@@ -976,7 +976,7 @@ function App() {
                                 <Route
                                   path="/accounts/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-create">
+                                    <ProtectedRoute requiredPermission="accounts-create" module="accounts" page="chart-of-accounts" action="create">
                                       <UnifiedAccountCreationPage />
                                     </ProtectedRoute>
                                   }
@@ -984,7 +984,7 @@ function App() {
                                 <Route
                                   path="/accounts/hierarchy"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="account-hierarchy">
                                       <AccountHierarchyPage />
                                     </ProtectedRoute>
                                   }
@@ -992,7 +992,7 @@ function App() {
                                 <Route
                                   path="/accounts/ledger-search"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="ledger-search">
                                       <LedgerSearchPage />
                                     </ProtectedRoute>
                                   }
@@ -1002,7 +1002,7 @@ function App() {
                                 <Route
                                   path="/products"
                                   element={
-                                    <ProtectedRoute requiredPermission="product-list">
+                                    <ProtectedRoute requiredPermission="product-list" module="products" page="products">
                                       {' '}
                                       //no permission required
                                       <ProductManagementPage />
@@ -1014,7 +1014,7 @@ function App() {
                                 <Route
                                   path="/inventory"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-list">
+                                    <ProtectedRoute requiredPermission="item-list" module="inventory" page="inventory-items">
                                       <InventoryModulePage />
                                     </ProtectedRoute>
                                   }
@@ -1022,7 +1022,7 @@ function App() {
                                 <Route
                                   path="/inventory/items"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-list">
+                                    <ProtectedRoute requiredPermission="item-list" module="inventory" page="inventory-items">
                                       <InventoryItemsPage />
                                     </ProtectedRoute>
                                   }
@@ -1030,7 +1030,7 @@ function App() {
                                 <Route
                                   path="/inventory/items/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-create">
+                                    <ProtectedRoute requiredPermission="item-create" module="inventory" page="inventory-items" action="create">
                                       <InventoryItemFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1038,7 +1038,7 @@ function App() {
                                 <Route
                                   path="/inventory/items/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-edit">
+                                    <ProtectedRoute requiredPermission="item-edit" module="inventory" page="inventory-items" action="edit">
                                       <InventoryItemFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1046,7 +1046,7 @@ function App() {
                                 <Route
                                   path="/inventory/items/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-view-detail">
+                                    <ProtectedRoute requiredPermission="item-view-detail" module="inventory" page="inventory-items">
                                       <InventoryItemDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1054,7 +1054,7 @@ function App() {
                                 <Route
                                   path="/inventory/movements"
                                   element={
-                                    <ProtectedRoute requiredPermission="movement-list">
+                                    <ProtectedRoute requiredPermission="movement-list" module="inventory" page="stock-movements">
                                       <StockMovementsPage />
                                     </ProtectedRoute>
                                   }
@@ -1062,7 +1062,7 @@ function App() {
                                 <Route
                                   path="/inventory/locations"
                                   element={
-                                    <ProtectedRoute requiredPermission="location-list">
+                                    <ProtectedRoute requiredPermission="location-list" module="inventory" page="locations">
                                       <StockLocationsPage />
                                     </ProtectedRoute>
                                   }
@@ -1071,7 +1071,7 @@ function App() {
                                 <Route
                                   path="/inventory/adjustments"
                                   element={
-                                    <ProtectedRoute requiredPermission="adjustment-list">
+                                    <ProtectedRoute requiredPermission="adjustment-list" module="inventory" page="stock-adjustments">
                                       <StockAdjustmentsListPage />
                                     </ProtectedRoute>
                                   }
@@ -1079,7 +1079,7 @@ function App() {
                                 <Route
                                   path="/inventory/adjustments/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="adjustment-view-detail">
+                                    <ProtectedRoute requiredPermission="adjustment-view-detail" module="inventory" page="stock-adjustments">
                                       <StockAdjustmentDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1087,7 +1087,7 @@ function App() {
                                 <Route
                                   path="/inventory/adjustments/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="adjustment-create">
+                                    <ProtectedRoute requiredPermission="adjustment-create" module="inventory" page="stock-adjustments" action="create">
                                       <StockAdjustmentPage />
                                     </ProtectedRoute>
                                   }
@@ -1095,7 +1095,7 @@ function App() {
                                 <Route
                                   path="/inventory/transfers"
                                   element={
-                                    <ProtectedRoute requiredPermission="transfer-list">
+                                    <ProtectedRoute requiredPermission="transfer-list" module="inventory" page="stock-transfers">
                                       <StockTransferListPage />
                                     </ProtectedRoute>
                                   }
@@ -1103,7 +1103,7 @@ function App() {
                                 <Route
                                   path="/inventory/transfers/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="transfer-create">
+                                    <ProtectedRoute requiredPermission="transfer-create" module="inventory" page="stock-transfers" action="create">
                                       <StockTransferPage />
                                     </ProtectedRoute>
                                   }
@@ -1111,7 +1111,7 @@ function App() {
                                 <Route
                                   path="/inventory/transfers/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="transfer-list">
+                                    <ProtectedRoute requiredPermission="transfer-list" module="inventory" page="stock-transfers">
                                       <StockTransferDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1119,7 +1119,7 @@ function App() {
                                 <Route
                                   path="/inventory/reports/valuation"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-list">
+                                    <ProtectedRoute requiredPermission="item-list" module="inventory" page="stock-valuation" action="export">
                                       <StockValuationReportPage />
                                     </ProtectedRoute>
                                   }
@@ -1127,7 +1127,7 @@ function App() {
                                 <Route
                                   path="/inventory/tracker"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-list">
+                                    <ProtectedRoute requiredPermission="item-list" module="inventory" page="stock-movements">
                                       <StockMovementTracker />
                                     </ProtectedRoute>
                                   }
@@ -1135,7 +1135,7 @@ function App() {
                                 <Route
                                   path="/inventory/items/:id/ledger"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-view-detail">
+                                    <ProtectedRoute requiredPermission="item-view-detail" module="inventory" page="inventory-items">
                                       <InventoryLedger />
                                     </ProtectedRoute>
                                   }
@@ -1143,7 +1143,7 @@ function App() {
                                 <Route
                                   path="/inventory/material-requests"
                                   element={
-                                    <ProtectedRoute requiredPermission="material-request-list">
+                                    <ProtectedRoute requiredPermission="material-request-list" module="inventory" page="material-requests">
                                       <MaterialRequestList />
                                     </ProtectedRoute>
                                   }
@@ -1151,7 +1151,7 @@ function App() {
                                 <Route
                                   path="/inventory/material-requests/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="material-request-create">
+                                    <ProtectedRoute requiredPermission="material-request-create" module="inventory" page="material-requests" action="create">
                                       <MaterialRequestCreate />
                                     </ProtectedRoute>
                                   }
@@ -1159,7 +1159,7 @@ function App() {
                                 <Route
                                   path="/inventory/material-requests/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="material-request-list">
+                                    <ProtectedRoute requiredPermission="material-request-list" module="inventory" page="material-requests">
                                       <MaterialRequestDetail />
                                     </ProtectedRoute>
                                   }
@@ -1167,7 +1167,7 @@ function App() {
                                 <Route
                                   path="/inventory/office-use-requests"
                                   element={
-                                    <ProtectedRoute requiredPermission="office-use-request-list">
+                                    <ProtectedRoute requiredPermission="office-use-request-list" module="inventory" page="office-use-requests">
                                       <OfficeUseRequestList />
                                     </ProtectedRoute>
                                   }
@@ -1175,7 +1175,7 @@ function App() {
                                 <Route
                                   path="/inventory/office-use-requests/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="office-use-request-create">
+                                    <ProtectedRoute requiredPermission="office-use-request-create" module="inventory" page="office-use-requests" action="create">
                                       <OfficeUseRequestCreate />
                                     </ProtectedRoute>
                                   }
@@ -1183,7 +1183,7 @@ function App() {
                                 <Route
                                   path="/inventory/office-use-requests/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="office-use-request-list">
+                                    <ProtectedRoute requiredPermission="office-use-request-list" module="inventory" page="office-use-requests">
                                       <OfficeUseRequestDetail />
                                     </ProtectedRoute>
                                   }
@@ -1193,7 +1193,7 @@ function App() {
                                 <Route
                                   path="/inventory/sales-orders"
                                   element={
-                                    <ProtectedRoute requiredPermission="sales-order-list">
+                                    <ProtectedRoute requiredPermission="sales-order-list" module="inventory" page="sales-orders">
                                       <SalesOrderListPage />
                                     </ProtectedRoute>
                                   }
@@ -1201,7 +1201,7 @@ function App() {
                                 <Route
                                   path="/inventory/sales-orders/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="sales-order-create">
+                                    <ProtectedRoute requiredPermission="sales-order-create" module="inventory" page="sales-orders" action="create">
                                       <SalesOrderFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1209,7 +1209,7 @@ function App() {
                                 <Route
                                   path="/inventory/sales-orders/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="sales-order-list">
+                                    <ProtectedRoute requiredPermission="sales-order-list" module="inventory" page="sales-orders">
                                       <SalesOrderDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1218,7 +1218,7 @@ function App() {
                                 <Route
                                   path="/inventory/allocations"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-list">
+                                    <ProtectedRoute requiredPermission="item-list" module="inventory" page="allocations">
                                       <AllocationListPage />
                                     </ProtectedRoute>
                                   }
@@ -1226,7 +1226,7 @@ function App() {
                                 <Route
                                   path="/inventory/allocations/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-list">
+                                    <ProtectedRoute requiredPermission="item-list" module="inventory" page="allocations">
                                       <AllocationDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1234,7 +1234,7 @@ function App() {
                                 <Route
                                   path="/inventory/redemptions"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-list">
+                                    <ProtectedRoute requiredPermission="item-list" module="inventory" page="allocation-redemptions">
                                       <RedemptionListPage />
                                     </ProtectedRoute>
                                   }
@@ -1242,7 +1242,7 @@ function App() {
                                 <Route
                                   path="/inventory/write-offs"
                                   element={
-                                    <ProtectedRoute requiredPermission="write-off-list">
+                                    <ProtectedRoute requiredPermission="write-off-list" module="inventory" page="write-offs">
                                       <WriteOffListPage />
                                     </ProtectedRoute>
                                   }
@@ -1250,7 +1250,7 @@ function App() {
                                 <Route
                                   path="/inventory/write-offs/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="write-off-create">
+                                    <ProtectedRoute requiredPermission="write-off-create" module="inventory" page="write-offs" action="create">
                                       <WriteOffFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1258,7 +1258,7 @@ function App() {
                                 <Route
                                   path="/inventory/reorder-alerts"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-list">
+                                    <ProtectedRoute requiredPermission="item-list" module="inventory" page="pending-approvals">
                                       <StockReorderPage />
                                     </ProtectedRoute>
                                   }
@@ -1266,7 +1266,7 @@ function App() {
                                 <Route
                                   path="/inventory/physical-counts"
                                   element={
-                                    <ProtectedRoute requiredPermission="physical-count-list">
+                                    <ProtectedRoute requiredPermission="physical-count-list" module="inventory" page="physical-counts">
                                       <PhysicalCountListPage />
                                     </ProtectedRoute>
                                   }
@@ -1274,7 +1274,7 @@ function App() {
                                 <Route
                                   path="/inventory/physical-counts/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="physical-count-create">
+                                    <ProtectedRoute requiredPermission="physical-count-create" module="inventory" page="physical-counts" action="create">
                                       <PhysicalCountFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1282,7 +1282,7 @@ function App() {
                                 <Route
                                   path="/inventory/physical-counts/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="physical-count-list">
+                                    <ProtectedRoute requiredPermission="physical-count-list" module="inventory" page="physical-counts">
                                       <PhysicalCountFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1290,7 +1290,7 @@ function App() {
                                 <Route
                                   path="/inventory/initial-stock-import"
                                   element={
-                                    <ProtectedRoute requiredPermission="item-import">
+                                    <ProtectedRoute requiredPermission="item-import" module="inventory" page="inventory-items" action="create">
                                       <InitialStockImportPage />
                                     </ProtectedRoute>
                                   }
@@ -1300,7 +1300,7 @@ function App() {
                                 <Route
                                   path="/receivables/dashboard"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-receivables">
                                       <ReceivablesDashboard />
                                     </ProtectedRoute>
                                   }
@@ -1308,7 +1308,7 @@ function App() {
                                 <Route
                                   path="/receivables/collections"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-receivables">
                                       <CollectionsDashboard />
                                     </ProtectedRoute>
                                   }
@@ -1316,7 +1316,7 @@ function App() {
                                 <Route
                                   path="/receivables/collections/workbench"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-receivables">
                                       <CollectionWorkbench />
                                     </ProtectedRoute>
                                   }
@@ -1324,7 +1324,7 @@ function App() {
                                 <Route
                                   path="/receivables/list"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-receivables">
                                       <ReceivablesList />
                                     </ProtectedRoute>
                                   }
@@ -1332,7 +1332,7 @@ function App() {
                                 <Route
                                   path="/receivables/payments/record"
                                   element={
-                                    <ProtectedRoute requiredPermission="invoice-record-payment">
+                                    <ProtectedRoute requiredPermission="invoice-record-payment" module="receivables" page="record-payment" action="create">
                                       <RecordPayment />
                                     </ProtectedRoute>
                                   }
@@ -1340,7 +1340,7 @@ function App() {
                                 <Route
                                   path="/receivables/aging-report"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-receivables">
                                       <AgingReport />
                                     </ProtectedRoute>
                                   }
@@ -1348,7 +1348,7 @@ function App() {
                                 <Route
                                   path="/receivables/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivable-view-detail">
+                                    <ProtectedRoute requiredPermission="receivable-view-detail" module="receivables" page="customer-receivables">
                                       <ReceivableDetail />
                                     </ProtectedRoute>
                                   }
@@ -1356,7 +1356,7 @@ function App() {
                                 <Route
                                   path="/receivables/reminders"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="receivable-activity">
                                       <ReminderManagement />
                                     </ProtectedRoute>
                                   }
@@ -1364,7 +1364,7 @@ function App() {
                                 <Route
                                   path="/receivables/workflows"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="receivable-activity">
                                       <AutomatedWorkflowsPage />
                                     </ProtectedRoute>
                                   }
@@ -1372,7 +1372,7 @@ function App() {
                                 <Route
                                   path="/receivables/advanced-reporting"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-statements">
                                       <AdvancedReporting />
                                     </ProtectedRoute>
                                   }
@@ -1380,7 +1380,7 @@ function App() {
                                 <Route
                                   path="/receivables/payment-trends"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-statements">
                                       <PaymentTrends />
                                     </ProtectedRoute>
                                   }
@@ -1388,7 +1388,7 @@ function App() {
                                 <Route
                                   path="/receivables/statements"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-statements">
                                       <CustomerStatements />
                                     </ProtectedRoute>
                                   }
@@ -1396,7 +1396,7 @@ function App() {
                                 <Route
                                   path="/receivables/payment-plans"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="payment-plans">
                                       <PaymentPlanListPage />
                                     </ProtectedRoute>
                                   }
@@ -1404,7 +1404,7 @@ function App() {
                                 <Route
                                   path="/receivables/data-consistency"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-statements">
                                       <DataConsistencyPage />
                                     </ProtectedRoute>
                                   }
@@ -1412,7 +1412,7 @@ function App() {
                                 <Route
                                   path="/receivables/bulk-payment-upload"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-statements">
                                       <BulkPaymentUpload />
                                     </ProtectedRoute>
                                   }
@@ -1420,7 +1420,7 @@ function App() {
                                 <Route
                                   path="/receivables/statement-preview-test"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-statements">
                                       <StatementPreviewTest />
                                     </ProtectedRoute>
                                   }
@@ -1430,7 +1430,7 @@ function App() {
                                 <Route
                                   path="/sales/invoices"
                                   element={
-                                    <ProtectedRoute requiredPermission="invoice-list">
+                                    <ProtectedRoute requiredPermission="invoice-list" module="incomes" page="invoices">
                                       <InvoicesList />
                                     </ProtectedRoute>
                                   }
@@ -1438,7 +1438,7 @@ function App() {
                                 <Route
                                   path="/fee/invoices/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="invoice-create">
+                                    <ProtectedRoute requiredPermission="invoice-create" module="incomes" page="invoices" action="create">
                                       <CreateInvoice />
                                     </ProtectedRoute>
                                   }
@@ -1446,7 +1446,7 @@ function App() {
                                 <Route
                                   path="/invoices/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="invoice-create">
+                                    <ProtectedRoute requiredPermission="invoice-create" module="incomes" page="invoices" action="create">
                                       <UnifiedInvoiceForm />
                                     </ProtectedRoute>
                                   }
@@ -1455,7 +1455,7 @@ function App() {
                                 <Route
                                   path="/sales/invoices/create-inventory"
                                   element={
-                                    <ProtectedRoute requiredPermission="invoice-create">
+                                    <ProtectedRoute requiredPermission="invoice-create" module="incomes" page="invoices" action="create">
                                       <CreateInventoryInvoice />
                                     </ProtectedRoute>
                                   }
@@ -1463,7 +1463,7 @@ function App() {
                                 <Route
                                   path="/sales/invoices/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="invoice-view-detail">
+                                    <ProtectedRoute requiredPermission="invoice-view-detail" module="incomes" page="invoices">
                                       <InvoiceDetail />
                                     </ProtectedRoute>
                                   }
@@ -1471,7 +1471,7 @@ function App() {
                                 <Route
                                   path="/sales/invoices/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="invoice-edit">
+                                    <ProtectedRoute requiredPermission="invoice-edit" module="incomes" page="invoices" action="edit">
                                       <UnifiedInvoiceForm />
                                     </ProtectedRoute>
                                   }
@@ -1480,7 +1480,7 @@ function App() {
                                 <Route
                                   path="/sales/invoices/:invoiceId/credit-notes"
                                   element={
-                                    <ProtectedRoute requiredPermission="credit-note-list">
+                                    <ProtectedRoute requiredPermission="credit-note-list" module="incomes" page="invoices">
                                       <CreditNotesList />
                                     </ProtectedRoute>
                                   }
@@ -1488,7 +1488,7 @@ function App() {
                                 <Route
                                   path="/sales/invoices/:invoiceId/credit-notes/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="credit-note-create">
+                                    <ProtectedRoute requiredPermission="credit-note-create" module="incomes" page="invoices" action="create">
                                       <CreateCreditNote />
                                     </ProtectedRoute>
                                   }
@@ -1496,7 +1496,7 @@ function App() {
                                 <Route
                                   path="/sales/invoices/:invoiceId/credit-notes/:creditNoteId/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="credit-note-view-detail">
+                                    <ProtectedRoute requiredPermission="credit-note-view-detail" module="incomes" page="invoices">
                                       <CreditNoteDetail />
                                     </ProtectedRoute>
                                   }
@@ -1504,7 +1504,7 @@ function App() {
                                 <Route
                                   path="/sales/invoices/:invoiceId/credit-notes/:creditNoteId/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="credit-note-edit">
+                                    <ProtectedRoute requiredPermission="credit-note-edit" module="incomes" page="invoices" action="edit">
                                       <EditCreditNote />
                                     </ProtectedRoute>
                                   }
@@ -1514,7 +1514,7 @@ function App() {
                                 <Route
                                   path="/sales/credit-notes"
                                   element={
-                                    <ProtectedRoute requiredPermission="credit-note-list">
+                                    <ProtectedRoute requiredPermission="credit-note-list" module="incomes" page="invoices">
                                       <StandaloneCreditNotesList />
                                     </ProtectedRoute>
                                   }
@@ -1524,7 +1524,7 @@ function App() {
                                 <Route
                                   path="/accounting/journal-vouchers"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
                                       <JournalVoucherListPage />
                                     </ProtectedRoute>
                                   }
@@ -1532,7 +1532,7 @@ function App() {
                                 <Route
                                   path="/accounting/journal-vouchers/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts" action="create">
                                       <JournalVoucherFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1540,7 +1540,7 @@ function App() {
                                 <Route
                                   path="/accounting/journal-vouchers/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
                                       <JournalVoucherDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1550,7 +1550,7 @@ function App() {
                                 <Route
                                   path="/accounting/periods"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
                                       <PeriodManagementPage />
                                     </ProtectedRoute>
                                   }
@@ -1560,7 +1560,7 @@ function App() {
                                 <Route
                                   path="/discounts/programs"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-list">
+                                    <ProtectedRoute requiredPermission="discount-list" module="discounts" page="discount-programs">
                                       <DiscountProgramsList />
                                     </ProtectedRoute>
                                   }
@@ -1568,7 +1568,7 @@ function App() {
                                 <Route
                                   path="/discounts/programs/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-create">
+                                    <ProtectedRoute requiredPermission="discount-create" module="discounts" page="discount-programs" action="create">
                                       <DiscountProgramForm />
                                     </ProtectedRoute>
                                   }
@@ -1576,7 +1576,7 @@ function App() {
                                 <Route
                                   path="/discounts/programs/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-list">
+                                    <ProtectedRoute requiredPermission="discount-list" module="discounts" page="discount-programs">
                                       <DiscountProgramDetail />
                                     </ProtectedRoute>
                                   }
@@ -1584,7 +1584,7 @@ function App() {
                                 <Route
                                   path="/discounts/programs/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-edit">
+                                    <ProtectedRoute requiredPermission="discount-edit" module="discounts" page="discount-programs" action="edit">
                                       <DiscountProgramForm />
                                     </ProtectedRoute>
                                   }
@@ -1592,7 +1592,7 @@ function App() {
                                 <Route
                                   path="/discounts/applications"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-list">
+                                    <ProtectedRoute requiredPermission="discount-list" module="discounts" page="discount-applications">
                                       <DiscountApplicationsList />
                                     </ProtectedRoute>
                                   }
@@ -1600,7 +1600,7 @@ function App() {
                                 <Route
                                   path="/discounts/applications/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-create">
+                                    <ProtectedRoute requiredPermission="discount-create" module="discounts" page="discount-applications" action="create">
                                       <DiscountApplicationForm />
                                     </ProtectedRoute>
                                   }
@@ -1608,7 +1608,7 @@ function App() {
                                 <Route
                                   path="/discounts/applications/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-list">
+                                    <ProtectedRoute requiredPermission="discount-list" module="discounts" page="discount-applications">
                                       <DiscountApplicationDetail />
                                     </ProtectedRoute>
                                   }
@@ -1616,7 +1616,7 @@ function App() {
                                 <Route
                                   path="/discounts/applied"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-list">
+                                    <ProtectedRoute requiredPermission="discount-list" module="discounts" page="applied-discounts">
                                       <AppliedDiscountsList />
                                     </ProtectedRoute>
                                   }
@@ -1624,7 +1624,7 @@ function App() {
                                 <Route
                                   path="/discounts/apply"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-list">
+                                    <ProtectedRoute requiredPermission="discount-list" module="discounts" page="applied-discounts">
                                       <ApplyDiscountPage />
                                     </ProtectedRoute>
                                   }
@@ -1632,7 +1632,7 @@ function App() {
                                 <Route
                                   path="/discounts/auto-apply"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-list">
+                                    <ProtectedRoute requiredPermission="discount-list" module="discounts" page="applied-discounts">
                                       <AutoApplyDiscountPage />
                                     </ProtectedRoute>
                                   }
@@ -1640,7 +1640,7 @@ function App() {
                                 <Route
                                   path="/discounts/analytics"
                                   element={
-                                    <ProtectedRoute requiredPermission="discount-list">
+                                    <ProtectedRoute requiredPermission="discount-list" module="discounts" page="applied-discounts">
                                       <DiscountAnalyticsDashboard />
                                     </ProtectedRoute>
                                   }
@@ -1650,7 +1650,7 @@ function App() {
                                 <Route
                                   path="/procurement"
                                   element={
-                                    <ProtectedRoute requiredPermission="pr-list">
+                                    <ProtectedRoute requiredPermission="pr-list" module="procurement" page="purchase-requisitions">
                                       <ProcurementModulePage />
                                     </ProtectedRoute>
                                   }
@@ -1658,7 +1658,7 @@ function App() {
                                 <Route
                                   path="/procurement/orders"
                                   element={
-                                    <ProtectedRoute requiredPermission="po-list">
+                                    <ProtectedRoute requiredPermission="po-list" module="procurement" page="purchase-orders">
                                       <PurchaseOrderListPage />
                                     </ProtectedRoute>
                                   }
@@ -1666,7 +1666,7 @@ function App() {
                                 <Route
                                   path="/procurement/orders/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="po-create">
+                                    <ProtectedRoute requiredPermission="po-create" module="procurement" page="purchase-orders" action="create">
                                       <PurchaseOrderFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1674,7 +1674,7 @@ function App() {
                                 <Route
                                   path="/procurement/orders/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="po-edit">
+                                    <ProtectedRoute requiredPermission="po-edit" module="procurement" page="purchase-orders" action="edit">
                                       <PurchaseOrderFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1682,7 +1682,7 @@ function App() {
                                 <Route
                                   path="/procurement/orders/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="po-view-detail">
+                                    <ProtectedRoute requiredPermission="po-view-detail" module="procurement" page="purchase-orders">
                                       <PurchaseOrderDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1692,7 +1692,7 @@ function App() {
                                 <Route
                                   path="/procurement/requisitions"
                                   element={
-                                    <ProtectedRoute requiredPermission="pr-list">
+                                    <ProtectedRoute requiredPermission="pr-list" module="procurement" page="purchase-requisitions">
                                       <RequisitionListPage />
                                     </ProtectedRoute>
                                   }
@@ -1700,7 +1700,7 @@ function App() {
                                 <Route
                                   path="/procurement/requisitions/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="pr-create">
+                                    <ProtectedRoute requiredPermission="pr-create" module="procurement" page="purchase-requisitions" action="create">
                                       <RequisitionFormPageSimplified />
                                     </ProtectedRoute>
                                   }
@@ -1708,7 +1708,7 @@ function App() {
                                 <Route
                                   path="/procurement/requisitions/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="pr-edit">
+                                    <ProtectedRoute requiredPermission="pr-edit" module="procurement" page="purchase-requisitions" action="edit">
                                       <RequisitionFormPageSimplified />
                                     </ProtectedRoute>
                                   }
@@ -1716,7 +1716,7 @@ function App() {
                                 <Route
                                   path="/procurement/requisitions/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="pr-view-detail">
+                                    <ProtectedRoute requiredPermission="pr-view-detail" module="procurement" page="purchase-requisitions">
                                       <RequisitionDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1726,7 +1726,7 @@ function App() {
                                 <Route
                                   path="/procurement/suppliers"
                                   element={
-                                    <ProtectedRoute requiredPermission="supplier-list">
+                                    <ProtectedRoute requiredPermission="supplier-list" module="procurement" page="suppliers">
                                       <SupplierListPage />
                                     </ProtectedRoute>
                                   }
@@ -1734,7 +1734,7 @@ function App() {
                                 <Route
                                   path="/procurement/suppliers/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="supplier-create">
+                                    <ProtectedRoute requiredPermission="supplier-create" module="procurement" page="suppliers" action="create">
                                       <SupplierFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1742,7 +1742,7 @@ function App() {
                                 <Route
                                   path="/procurement/suppliers/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="supplier-edit">
+                                    <ProtectedRoute requiredPermission="supplier-edit" module="procurement" page="suppliers" action="edit">
                                       <SupplierFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1750,7 +1750,7 @@ function App() {
                                 <Route
                                   path="/procurement/suppliers/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="supplier-view-detail">
+                                    <ProtectedRoute requiredPermission="supplier-view-detail" module="procurement" page="suppliers">
                                       <SupplierDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1760,7 +1760,7 @@ function App() {
                                 <Route
                                   path="/procurement/grn"
                                   element={
-                                    <ProtectedRoute requiredPermission="grn-list">
+                                    <ProtectedRoute requiredPermission="grn-list" module="procurement" page="goods-received">
                                       <GRNListPage />
                                     </ProtectedRoute>
                                   }
@@ -1768,7 +1768,7 @@ function App() {
                                 <Route
                                   path="/procurement/grn/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="grn-create">
+                                    <ProtectedRoute requiredPermission="grn-create" module="procurement" page="goods-received" action="create">
                                       <GRNFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1776,7 +1776,7 @@ function App() {
                                 <Route
                                   path="/procurement/grn/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="grn-view-detail">
+                                    <ProtectedRoute requiredPermission="grn-view-detail" module="procurement" page="goods-received">
                                       <GRNDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1784,7 +1784,7 @@ function App() {
                                 <Route
                                   path="/procurement/grn/:id/quality-check"
                                   element={
-                                    <ProtectedRoute requiredPermission="grn-quality-check">
+                                    <ProtectedRoute requiredPermission="grn-quality-check" module="procurement" page="goods-received" action="edit">
                                       <GRNQualityCheckPage />
                                     </ProtectedRoute>
                                   }
@@ -1794,7 +1794,7 @@ function App() {
                                 <Route
                                   path="/procurement/returns"
                                   element={
-                                    <ProtectedRoute requiredPermission="return-list">
+                                    <ProtectedRoute requiredPermission="return-list" module="procurement" page="purchase-returns">
                                       <ReturnListPage />
                                     </ProtectedRoute>
                                   }
@@ -1802,7 +1802,7 @@ function App() {
                                 <Route
                                   path="/procurement/returns/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="return-create">
+                                    <ProtectedRoute requiredPermission="return-create" module="procurement" page="purchase-returns" action="create">
                                       <ReturnFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1810,7 +1810,7 @@ function App() {
                                 <Route
                                   path="/procurement/returns/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="return-edit">
+                                    <ProtectedRoute requiredPermission="return-edit" module="procurement" page="purchase-returns" action="edit">
                                       <ReturnFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1818,7 +1818,7 @@ function App() {
                                 <Route
                                   path="/procurement/returns/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="return-view-detail">
+                                    <ProtectedRoute requiredPermission="return-view-detail" module="procurement" page="purchase-returns">
                                       <ReturnDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1828,7 +1828,7 @@ function App() {
                                 <Route
                                   path="/procurement/quotes"
                                   element={
-                                    <ProtectedRoute requiredPermission="quote-list">
+                                    <ProtectedRoute requiredPermission="quote-list" module="procurement" page="supplier-quotes">
                                       <QuoteListPage />
                                     </ProtectedRoute>
                                   }
@@ -1836,7 +1836,7 @@ function App() {
                                 <Route
                                   path="/procurement/quotes/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="quote-create">
+                                    <ProtectedRoute requiredPermission="quote-create" module="procurement" page="supplier-quotes" action="create">
                                       <QuoteDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1844,7 +1844,7 @@ function App() {
                                 <Route
                                   path="/procurement/quotes/compare/:requisitionId"
                                   element={
-                                    <ProtectedRoute requiredPermission="quote-compare">
+                                    <ProtectedRoute requiredPermission="quote-compare" module="procurement" page="supplier-quotes">
                                       <QuoteComparisonPage />
                                     </ProtectedRoute>
                                   }
@@ -1852,7 +1852,7 @@ function App() {
                                 <Route
                                   path="/procurement/quotes/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="quote-view-detail">
+                                    <ProtectedRoute requiredPermission="quote-view-detail" module="procurement" page="supplier-quotes">
                                       <QuoteDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1860,7 +1860,7 @@ function App() {
                                 <Route
                                   path="/procurement/quotes/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="quote-edit">
+                                    <ProtectedRoute requiredPermission="quote-edit" module="procurement" page="supplier-quotes" action="edit">
                                       <QuoteDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1868,7 +1868,7 @@ function App() {
                                 <Route
                                   path="/procurement/quotes/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="quote-view-detail">
+                                    <ProtectedRoute requiredPermission="quote-view-detail" module="procurement" page="supplier-quotes">
                                       <QuoteDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1878,7 +1878,7 @@ function App() {
                                 <Route
                                   path="/procurement/three-way-matching"
                                   element={
-                                    <ProtectedRoute requiredPermission="po-view-detail">
+                                    <ProtectedRoute requiredPermission="po-view-detail" module="procurement" page="three-way-matching">
                                       <ThreeWayMatchingDashboard />
                                     </ProtectedRoute>
                                   }
@@ -1888,7 +1888,7 @@ function App() {
                                 <Route
                                   path="/procurement/settings"
                                   element={
-                                    <ProtectedRoute requiredPermission="po-manage">
+                                    <ProtectedRoute requiredPermission="po-manage" module="procurement" page="procurement-config" action="edit">
                                       <ProcurementConfigPage />
                                     </ProtectedRoute>
                                   }
@@ -1898,7 +1898,7 @@ function App() {
                                 <Route
                                   path="/hr"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-list">
+                                    <ProtectedRoute requiredPermission="staff-list" module="hr" page="staff">
                                       <HRIndexPage />
                                     </ProtectedRoute>
                                   }
@@ -1906,7 +1906,7 @@ function App() {
                                 <Route
                                   path="/hr/dashboard"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-list">
+                                    <ProtectedRoute requiredPermission="staff-list" module="hr" page="staff">
                                       <HRDashboardPage />
                                     </ProtectedRoute>
                                   }
@@ -1914,7 +1914,7 @@ function App() {
                                 <Route
                                   path="/hr/config"
                                   element={
-                                    <ProtectedRoute requiredPermission="hr-config">
+                                    <ProtectedRoute requiredPermission="hr-config" module="hr" page="hr-config" action="edit">
                                       <HRConfigPage />
                                     </ProtectedRoute>
                                   }
@@ -1922,7 +1922,7 @@ function App() {
                                 <Route
                                   path="/hr/staff"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-list">
+                                    <ProtectedRoute requiredPermission="staff-list" module="hr" page="staff">
                                       <StaffListPage />
                                     </ProtectedRoute>
                                   }
@@ -1930,7 +1930,7 @@ function App() {
                                 <Route
                                   path="/hr/staff/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-create">
+                                    <ProtectedRoute requiredPermission="staff-create" module="hr" page="staff" action="create">
                                       <StaffFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1938,7 +1938,7 @@ function App() {
                                 <Route
                                   path="/hr/staff/import"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-create">
+                                    <ProtectedRoute requiredPermission="staff-create" module="hr" page="staff" action="create">
                                       <StaffExcelImportPage />
                                     </ProtectedRoute>
                                   }
@@ -1946,7 +1946,7 @@ function App() {
                                 <Route
                                   path="/hr/staff/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-edit">
+                                    <ProtectedRoute requiredPermission="staff-edit" module="hr" page="staff" action="edit">
                                       <StaffFormPage />
                                     </ProtectedRoute>
                                   }
@@ -1954,7 +1954,7 @@ function App() {
                                 <Route
                                   path="/hr/staff/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-view-detail">
+                                    <ProtectedRoute requiredPermission="staff-view-detail" module="hr" page="staff">
                                       <StaffDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -1962,7 +1962,7 @@ function App() {
                                 <Route
                                   path="/hr/staff/:staffId/pay-components"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-pay-components">
+                                    <ProtectedRoute requiredPermission="staff-pay-components" module="hr" page="staff-pay-info" action="edit">
                                       <StaffPayComponentsPage />
                                     </ProtectedRoute>
                                   }
@@ -1970,7 +1970,7 @@ function App() {
                                 <Route
                                   path="/hr/pay-component-removals"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-pay-components">
+                                    <ProtectedRoute requiredPermission="staff-pay-components" module="hr" page="staff-pay-info">
                                       <PayComponentRemovalListPage />
                                     </ProtectedRoute>
                                   }
@@ -1978,7 +1978,7 @@ function App() {
                                 <Route
                                   path="/hr/staff/:staffId/documents"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-list">
+                                    <ProtectedRoute requiredPermission="staff-list" module="hr" page="staff">
                                       <EmployeeDocumentsPage />
                                     </ProtectedRoute>
                                   }
@@ -1988,7 +1988,7 @@ function App() {
                                 <Route
                                   path="/hr/salary-components"
                                   element={
-                                    <ProtectedRoute requiredPermission="salary-component-list">
+                                    <ProtectedRoute requiredPermission="salary-component-list" module="hr" page="salary-components">
                                       <SalaryComponentsListPage />
                                     </ProtectedRoute>
                                   }
@@ -1996,7 +1996,7 @@ function App() {
                                 <Route
                                   path="/hr/salary-components/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="salary-component-create">
+                                    <ProtectedRoute requiredPermission="salary-component-create" module="hr" page="salary-components" action="create">
                                       <SalaryComponentFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2004,7 +2004,7 @@ function App() {
                                 <Route
                                   path="/hr/salary-components/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="salary-component-edit">
+                                    <ProtectedRoute requiredPermission="salary-component-edit" module="hr" page="salary-components" action="edit">
                                       <SalaryComponentFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2014,7 +2014,7 @@ function App() {
                                 <Route
                                   path="/hr/bonus-deduction"
                                   element={
-                                    <ProtectedRoute requiredPermission="bonus-deduction-list">
+                                    <ProtectedRoute requiredPermission="bonus-deduction-list" module="hr" page="bonus-deductions">
                                       <BonusDeductionListPage />
                                     </ProtectedRoute>
                                   }
@@ -2022,7 +2022,7 @@ function App() {
                                 <Route
                                   path="/hr/bonus-deduction/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="bonus-deduction-create">
+                                    <ProtectedRoute requiredPermission="bonus-deduction-create" module="hr" page="bonus-deductions" action="create">
                                       <BonusDeductionFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2030,7 +2030,7 @@ function App() {
                                 <Route
                                   path="/hr/bonus-deduction/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="bonus-deduction-view-detail">
+                                    <ProtectedRoute requiredPermission="bonus-deduction-view-detail" module="hr" page="bonus-deductions">
                                       <BonusDeductionDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2038,7 +2038,7 @@ function App() {
                                 <Route
                                   path="/hr/bonus-deduction/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="bonus-deduction-edit">
+                                    <ProtectedRoute requiredPermission="bonus-deduction-edit" module="hr" page="bonus-deductions" action="edit">
                                       <BonusDeductionFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2048,7 +2048,7 @@ function App() {
                                 <Route
                                   path="/hr/ious"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-iou-list">
+                                    <ProtectedRoute requiredPermission="staff-iou-list" module="hr" page="staff-ious">
                                       <StaffIOUListPage />
                                     </ProtectedRoute>
                                   }
@@ -2056,7 +2056,7 @@ function App() {
                                 <Route
                                   path="/hr/ious/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-iou-create">
+                                    <ProtectedRoute requiredPermission="staff-iou-create" module="hr" page="staff-ious" action="create">
                                       <StaffIOUFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2064,7 +2064,7 @@ function App() {
                                 <Route
                                   path="/hr/ious/bulk-debit"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-iou-create">
+                                    <ProtectedRoute requiredPermission="staff-iou-create" module="hr" page="staff-ious" action="create">
                                       <BulkStaffDebitPage />
                                     </ProtectedRoute>
                                   }
@@ -2072,7 +2072,7 @@ function App() {
                                 <Route
                                   path="/hr/ious/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-iou-list">
+                                    <ProtectedRoute requiredPermission="staff-iou-list" module="hr" page="staff-ious">
                                       <StaffIOUDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2082,7 +2082,7 @@ function App() {
                                 <Route
                                   path="/hr/self-service"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-list">
+                                    <ProtectedRoute requiredPermission="staff-list" module="hr" page="staff">
                                       <EmployeeSelfServicePage />
                                     </ProtectedRoute>
                                   }
@@ -2092,7 +2092,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-balances"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-balances">
+                                    <ProtectedRoute requiredPermission="leave-balances" module="hr" page="leave-balances">
                                       <LeaveBalancesListPage />
                                     </ProtectedRoute>
                                   }
@@ -2100,7 +2100,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-types"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-types-list">
+                                    <ProtectedRoute requiredPermission="leave-types-list" module="hr" page="leave-types">
                                       <LeaveTypesListPage />
                                     </ProtectedRoute>
                                   }
@@ -2108,7 +2108,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-types/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-type-create">
+                                    <ProtectedRoute requiredPermission="leave-type-create" module="hr" page="leave-types" action="create">
                                       <LeaveTypeFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2116,7 +2116,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-types/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-type-edit">
+                                    <ProtectedRoute requiredPermission="leave-type-edit" module="hr" page="leave-types" action="edit">
                                       <LeaveTypeFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2124,7 +2124,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-requests"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-list">
+                                    <ProtectedRoute requiredPermission="leave-list" module="hr" page="leave-requests">
                                       <LeaveRequestsListPage />
                                     </ProtectedRoute>
                                   }
@@ -2132,7 +2132,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-calendar"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-list">
+                                    <ProtectedRoute requiredPermission="leave-list" module="hr" page="leave-calendar">
                                       <LeaveCalendarPage />
                                     </ProtectedRoute>
                                   }
@@ -2140,7 +2140,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-requests/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-create">
+                                    <ProtectedRoute requiredPermission="leave-create" module="hr" page="leave-requests" action="create">
                                       <LeaveRequestFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2148,7 +2148,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-requests/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-edit">
+                                    <ProtectedRoute requiredPermission="leave-edit" module="hr" page="leave-requests" action="edit">
                                       <LeaveRequestFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2156,7 +2156,7 @@ function App() {
                                 <Route
                                   path="/hr/leave-requests/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="leave-view-detail">
+                                    <ProtectedRoute requiredPermission="leave-view-detail" module="hr" page="leave-requests">
                                       <LeaveRequestDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2166,7 +2166,7 @@ function App() {
                                 <Route
                                   path="/hr/clock"
                                   element={
-                                    <ProtectedRoute requiredPermission="attendance-clock">
+                                    <ProtectedRoute requiredPermission="attendance-clock" module="hr" page="attendance" action="create">
                                       <ClockInOutPage />
                                     </ProtectedRoute>
                                   }
@@ -2174,7 +2174,7 @@ function App() {
                                 <Route
                                   path="/hr/attendance"
                                   element={
-                                    <ProtectedRoute requiredPermission="attendance-list">
+                                    <ProtectedRoute requiredPermission="attendance-list" module="hr" page="attendance">
                                       <AttendanceListPage />
                                     </ProtectedRoute>
                                   }
@@ -2182,7 +2182,7 @@ function App() {
                                 <Route
                                   path="/hr/attendance/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="attendance-create">
+                                    <ProtectedRoute requiredPermission="attendance-create" module="hr" page="attendance" action="create">
                                       <AttendanceFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2190,7 +2190,7 @@ function App() {
                                 <Route
                                   path="/hr/attendance/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="attendance-edit">
+                                    <ProtectedRoute requiredPermission="attendance-edit" module="hr" page="attendance" action="edit">
                                       <AttendanceFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2198,7 +2198,7 @@ function App() {
                                 <Route
                                   path="/hr/attendance/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="attendance-view-detail">
+                                    <ProtectedRoute requiredPermission="attendance-view-detail" module="hr" page="attendance">
                                       <AttendanceDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2208,7 +2208,7 @@ function App() {
                                 <Route
                                   path="/hr/payroll"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-list">
+                                    <ProtectedRoute requiredPermission="payroll-list" module="hr" page="payroll">
                                       <PayrollListPage />
                                     </ProtectedRoute>
                                   }
@@ -2216,7 +2216,7 @@ function App() {
                                 <Route
                                   path="/hr/payroll/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-create">
+                                    <ProtectedRoute requiredPermission="payroll-create" module="hr" page="payroll" action="create">
                                       <PayrollFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2224,7 +2224,7 @@ function App() {
                                 <Route
                                   path="/hr/payroll/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-edit">
+                                    <ProtectedRoute requiredPermission="payroll-edit" module="hr" page="payroll" action="edit">
                                       <PayrollFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2232,7 +2232,7 @@ function App() {
                                 <Route
                                   path="/hr/payroll/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-view-detail">
+                                    <ProtectedRoute requiredPermission="payroll-view-detail" module="hr" page="payroll">
                                       <PayrollDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2240,7 +2240,7 @@ function App() {
                                 <Route
                                   path="/hr/payslips"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-view-payslip">
+                                    <ProtectedRoute requiredPermission="payroll-view-payslip" module="hr" page="payslips">
                                       <PayslipListPage />
                                     </ProtectedRoute>
                                   }
@@ -2248,7 +2248,7 @@ function App() {
                                 <Route
                                   path="/hr/payslips/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-view-payslip">
+                                    <ProtectedRoute requiredPermission="payroll-view-payslip" module="hr" page="payslips">
                                       <PayslipDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2257,7 +2257,7 @@ function App() {
                                 <Route
                                   path="/hr/payroll-schedules"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-list">
+                                    <ProtectedRoute requiredPermission="payroll-list" module="hr" page="payroll">
                                       <PayrollScheduleListPage />
                                     </ProtectedRoute>
                                   }
@@ -2265,7 +2265,7 @@ function App() {
                                 <Route
                                   path="/hr/payroll-schedules/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-create">
+                                    <ProtectedRoute requiredPermission="payroll-create" module="hr" page="payroll" action="create">
                                       <PayrollScheduleFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2273,7 +2273,7 @@ function App() {
                                 <Route
                                   path="/hr/payroll-schedules/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-edit">
+                                    <ProtectedRoute requiredPermission="payroll-edit" module="hr" page="payroll" action="edit">
                                       <PayrollScheduleFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2281,7 +2281,7 @@ function App() {
                                 <Route
                                   path="/hr/pension-remittances"
                                   element={
-                                    <ProtectedRoute requiredPermission="payroll-list">
+                                    <ProtectedRoute requiredPermission="payroll-list" module="hr" page="payroll">
                                       {/* no permission required */}
                                       <PensionRemittancePage />
                                     </ProtectedRoute>
@@ -2292,7 +2292,7 @@ function App() {
                                 <Route
                                   path="/reports"
                                   element={
-                                    <ProtectedRoute requiredPermission="report-list">
+                                    <ProtectedRoute requiredPermission="report-list" module="reports" page="report-templates">
                                       {' '}
                                       //no permission required
                                       <ReportsListPage />
@@ -2302,7 +2302,7 @@ function App() {
                                 <Route
                                   path="/reports/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="report-create">
+                                    <ProtectedRoute requiredPermission="report-create" module="reports" page="report-templates" action="create">
                                       {' '}
                                       //no permission required
                                       <ReportBuilder />
@@ -2312,7 +2312,7 @@ function App() {
                                 <Route
                                   path="/reports/:reportId/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="report-edit">
+                                    <ProtectedRoute requiredPermission="report-edit" module="reports" page="report-templates" action="edit">
                                       {' '}
                                       //no permission required
                                       <ReportBuilder />
@@ -2322,7 +2322,7 @@ function App() {
                                 <Route
                                   path="/report/:reportCode"
                                   element={
-                                    <ProtectedRoute requiredPermission="report-list">
+                                    <ProtectedRoute requiredPermission="report-list" module="reports" page="report-executions">
                                       <ReportViewPage />
                                     </ProtectedRoute>
                                   }
@@ -2331,7 +2331,7 @@ function App() {
                                 <Route
                                   path="/admin/access-control"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="users" page="staff-users">
                                       <AccessControlPage />
                                     </ProtectedRoute>
                                   }
@@ -2362,7 +2362,7 @@ function App() {
                                 <Route
                                   path="/admin/permission-setup"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="permissions" page="role-permission-policies" action="edit">
                                       <PermissionSetupPage />
                                     </ProtectedRoute>
                                   }
@@ -2372,7 +2372,7 @@ function App() {
                                 <Route
                                   path="/admin/users"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="users" page="staff-users">
                                       <UserManagementPage />
                                     </ProtectedRoute>
                                   }
@@ -2382,7 +2382,7 @@ function App() {
                                 <Route
                                   path="/admin/dashboard-builder/:templateId?"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="users" page="staff-users">
                                       <DashboardBuilderPage />
                                     </ProtectedRoute>
                                   }
@@ -2392,7 +2392,7 @@ function App() {
                                 <Route
                                   path="/admin/dashboard-assignment"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="users" page="staff-users">
                                       <DashboardAssignmentPage />
                                     </ProtectedRoute>
                                   }
@@ -2402,7 +2402,7 @@ function App() {
                                 <Route
                                   path="/admin/permissions-matrix"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="permissions" page="role-permission-policies">
                                       <RolesPermissionsMatrixPage />
                                     </ProtectedRoute>
                                   }
@@ -2412,7 +2412,7 @@ function App() {
                                 <Route
                                   path="/admin/user-overrides"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="permissions" page="user-permission-overrides" action="edit">
                                       <UserPermissionOverridePage />
                                     </ProtectedRoute>
                                   }
@@ -2422,7 +2422,7 @@ function App() {
                                 <Route
                                   path="/admin/permission-exceptions"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="permissions" page="user-permission-overrides">
                                       <PermissionExceptionReportPage />
                                     </ProtectedRoute>
                                   }
@@ -2432,7 +2432,7 @@ function App() {
                                 <Route
                                   path="/admin/permission-elevation-log"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="permissions" page="user-permission-overrides">
                                       <PermissionElevationLogPage />
                                     </ProtectedRoute>
                                   }
@@ -2442,7 +2442,7 @@ function App() {
                                 <Route
                                   path="/admin/branches"
                                   element={
-                                    <ProtectedRoute requiredPermission="branch-list">
+                                    <ProtectedRoute requiredPermission="branch-list" module="branches" page="branches">
                                       <BranchListPage />
                                     </ProtectedRoute>
                                   }
@@ -2450,7 +2450,7 @@ function App() {
                                 <Route
                                   path="/admin/branches/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="branch-create">
+                                    <ProtectedRoute requiredPermission="branch-create" module="branches" page="branches" action="create">
                                       <BranchFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2458,7 +2458,7 @@ function App() {
                                 <Route
                                   path="/admin/branches/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="branch-view-detail">
+                                    <ProtectedRoute requiredPermission="branch-view-detail" module="branches" page="branches">
                                       <BranchFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2468,7 +2468,7 @@ function App() {
                                 <Route
                                   path="/admin/tenants"
                                   element={
-                                    <ProtectedRoute requiredPermission="tenant-manage">
+                                    <ProtectedRoute requiredPermission="tenant-manage" module="tenants" page="tenants">
                                       <TenantListPage />
                                     </ProtectedRoute>
                                   }
@@ -2476,7 +2476,7 @@ function App() {
                                 <Route
                                   path="/admin/tenants/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="tenant-manage">
+                                    <ProtectedRoute requiredPermission="tenant-manage" module="tenants" page="tenants" action="create">
                                       <TenantFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2484,7 +2484,7 @@ function App() {
                                 <Route
                                   path="/admin/tenants/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="tenant-manage">
+                                    <ProtectedRoute requiredPermission="tenant-manage" module="tenants" page="tenants" action="edit">
                                       <TenantFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2492,7 +2492,7 @@ function App() {
                                 <Route
                                   path="/admin/tenants/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="tenant-manage">
+                                    <ProtectedRoute requiredPermission="tenant-manage" module="tenants" page="tenants">
                                       <TenantFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2502,7 +2502,7 @@ function App() {
                                 <Route
                                   path="/automations/templates"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-list">
+                                    <ProtectedRoute requiredPermission="automation-list" module="automations" page="workflow-templates">
                                       <AutomationTemplatesPage />
                                     </ProtectedRoute>
                                   }
@@ -2510,7 +2510,7 @@ function App() {
                                 <Route
                                   path="/automations/templates/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-list">
+                                    <ProtectedRoute requiredPermission="automation-list" module="automations" page="workflow-templates">
                                       <AutomationTemplateDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2518,7 +2518,7 @@ function App() {
                                 <Route
                                   path="/automations/templates/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-edit">
+                                    <ProtectedRoute requiredPermission="automation-edit" module="automations" page="workflow-templates" action="edit">
                                       <VisualWorkflowBuilder />
                                     </ProtectedRoute>
                                   }
@@ -2526,7 +2526,7 @@ function App() {
                                 <Route
                                   path="/automations/templates/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-create">
+                                    <ProtectedRoute requiredPermission="automation-create" module="automations" page="workflow-templates" action="create">
                                       <VisualWorkflowBuilder />
                                     </ProtectedRoute>
                                   }
@@ -2534,7 +2534,7 @@ function App() {
                                 <Route
                                   path="/automations/run/:templateId"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-list">
+                                    <ProtectedRoute requiredPermission="automation-list" module="automations" page="workflow-runs" action="create">
                                       <RunAutomationPage />
                                     </ProtectedRoute>
                                   }
@@ -2542,7 +2542,7 @@ function App() {
                                 <Route
                                   path="/automations/runs"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-list">
+                                    <ProtectedRoute requiredPermission="automation-list" module="automations" page="workflow-runs">
                                       <AutomationRunsPage />
                                     </ProtectedRoute>
                                   }
@@ -2550,7 +2550,7 @@ function App() {
                                 <Route
                                   path="/automations/runs/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-list">
+                                    <ProtectedRoute requiredPermission="automation-list" module="automations" page="workflow-runs">
                                       <AutomationRunDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2558,7 +2558,7 @@ function App() {
                                 <Route
                                   path="/automations/runs/:id/logs"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-list">
+                                    <ProtectedRoute requiredPermission="automation-list" module="automations" page="workflow-runs">
                                       <AutomationRunDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2568,7 +2568,7 @@ function App() {
                                 <Route
                                   path="/automations/approvals/history"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-list">
+                                    <ProtectedRoute requiredPermission="automation-list" module="automations" page="workflow-approvals">
                                       <ApprovalHistoryPage />
                                     </ProtectedRoute>
                                   }
@@ -2576,7 +2576,7 @@ function App() {
                                 <Route
                                   path="/automations/approvals/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="automation-list">
+                                    <ProtectedRoute requiredPermission="automation-list" module="automations" page="workflow-approvals" action="approve">
                                       <ApprovalsPage />
                                     </ProtectedRoute>
                                   }
@@ -2586,7 +2586,7 @@ function App() {
                                 <Route
                                   path="/forms"
                                   element={
-                                    <ProtectedRoute requiredPermission="form-list">
+                                    <ProtectedRoute requiredPermission="form-list" module="automations" page="forms">
                                       <UserFormsPage />
                                     </ProtectedRoute>
                                   }
@@ -2594,7 +2594,7 @@ function App() {
                                 <Route
                                   path="/forms/:formId"
                                   element={
-                                    <ProtectedRoute requiredPermission="form-list">
+                                    <ProtectedRoute requiredPermission="form-list" module="automations" page="forms">
                                       <UserFormViewPage />
                                     </ProtectedRoute>
                                   }
@@ -2602,7 +2602,7 @@ function App() {
                                 <Route
                                   path="/forms/submissions"
                                   element={
-                                    <ProtectedRoute requiredPermission="form-list">
+                                    <ProtectedRoute requiredPermission="form-list" module="automations" page="forms">
                                       <UserSubmissionsPage />
                                     </ProtectedRoute>
                                   }
@@ -2612,7 +2612,7 @@ function App() {
                                 <Route
                                   path="/admin/forms"
                                   element={
-                                    <ProtectedRoute requiredPermission="form-list">
+                                    <ProtectedRoute requiredPermission="form-list" module="automations" page="forms" action="edit">
                                       <AdminFormsPage />
                                     </ProtectedRoute>
                                   }
@@ -2620,7 +2620,7 @@ function App() {
                                 <Route
                                   path="/admin/workflows"
                                   element={
-                                    <ProtectedRoute requiredPermission="workflow-list">
+                                    <ProtectedRoute requiredPermission="workflow-list" module="automations" page="workflow-templates">
                                       <AdminWorkflowsPage />
                                     </ProtectedRoute>
                                   }
@@ -2628,7 +2628,7 @@ function App() {
                                 <Route
                                   path="/admin/submissions"
                                   element={
-                                    <ProtectedRoute requiredPermission="form-list">
+                                    <ProtectedRoute requiredPermission="form-list" module="automations" page="forms">
                                       <AdminSubmissionsPage />
                                     </ProtectedRoute>
                                   }
@@ -2636,7 +2636,7 @@ function App() {
                                 <Route
                                   path="/admin/workflows/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="workflow-create">
+                                    <ProtectedRoute requiredPermission="workflow-create" module="automations" page="workflow-templates" action="create">
                                       <VisualWorkflowBuilder />
                                     </ProtectedRoute>
                                   }
@@ -2644,7 +2644,7 @@ function App() {
                                 <Route
                                   path="/admin/workflows/:workflowId"
                                   element={
-                                    <ProtectedRoute requiredPermission="workflow-edit">
+                                    <ProtectedRoute requiredPermission="workflow-edit" module="automations" page="workflow-templates" action="edit">
                                       <VisualWorkflowBuilder />
                                     </ProtectedRoute>
                                   }
@@ -2654,7 +2654,7 @@ function App() {
                                 <Route
                                   path="/clients"
                                   element={
-                                    <ProtectedRoute requiredPermission="clients-view">
+                                    <ProtectedRoute requiredPermission="clients-view" module="clients" page="clients">
                                       <ClientListPage />
                                     </ProtectedRoute>
                                   }
@@ -2662,7 +2662,7 @@ function App() {
                                 <Route
                                   path="/clients/classifications"
                                   element={
-                                    <ProtectedRoute requiredPermission="classification-list">
+                                    <ProtectedRoute requiredPermission="classification-list" module="clients" page="client-classifications">
                                       <ClientClassificationsPage />
                                     </ProtectedRoute>
                                   }
@@ -2670,7 +2670,7 @@ function App() {
                                 <Route
                                   path="/clients/classifications/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="classification-create">
+                                    <ProtectedRoute requiredPermission="classification-create" module="clients" page="client-classifications" action="create">
                                       <ClientClassificationsPage /> // adjust if separate form
                                     </ProtectedRoute>
                                   }
@@ -2678,7 +2678,7 @@ function App() {
                                 <Route
                                   path="/clients/classifications/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="classification-edit">
+                                    <ProtectedRoute requiredPermission="classification-edit" module="clients" page="client-classifications" action="edit">
                                       <ClientClassificationsPage />
                                       {/* // adjust */}
                                     </ProtectedRoute>
@@ -2687,7 +2687,7 @@ function App() {
                                 <Route
                                   path="/clients/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="clients-create">
+                                    <ProtectedRoute requiredPermission="clients-create" module="clients" page="clients" action="create">
                                       <ClientFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2695,7 +2695,7 @@ function App() {
                                 <Route
                                   path="/clients/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-view-detail">
+                                    <ProtectedRoute requiredPermission="client-view-detail" module="clients" page="clients">
                                       <ClientDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2703,7 +2703,7 @@ function App() {
                                 <Route
                                   path="/clients/:clientId/ledger"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-view-detail">
+                                    <ProtectedRoute requiredPermission="client-view-detail" module="clients" page="clients">
                                       <ClientLedgerPage />
                                     </ProtectedRoute>
                                   }
@@ -2711,7 +2711,7 @@ function App() {
                                 <Route
                                   path="/clients/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="clients-edit">
+                                    <ProtectedRoute requiredPermission="clients-edit" module="clients" page="clients" action="edit">
                                       <ClientFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2719,7 +2719,7 @@ function App() {
                                 <Route
                                   path="/clients/import"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-bulk-import">
+                                    <ProtectedRoute requiredPermission="client-bulk-import" module="clients" page="clients" action="create">
                                       <ClientBulkImportPage />
                                     </ProtectedRoute>
                                   }
@@ -2727,7 +2727,7 @@ function App() {
                                 <Route
                                   path="/clients/school-fees-import"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-bulk-import">
+                                    <ProtectedRoute requiredPermission="client-bulk-import" module="clients" page="clients" action="create">
                                       <StudentFeeExcelImportPage />
                                     </ProtectedRoute>
                                   }
@@ -2735,7 +2735,7 @@ function App() {
                                 <Route
                                   path="/clients/:id/statement"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-view-detail">
+                                    <ProtectedRoute requiredPermission="client-view-detail" module="clients" page="clients">
                                       <ClientStatement />
                                     </ProtectedRoute>
                                   }
@@ -2743,7 +2743,7 @@ function App() {
                                 <Route
                                   path="/clients/registration-config"
                                   element={
-                                    <ProtectedRoute requiredPermission="clients-edit">
+                                    <ProtectedRoute requiredPermission="clients-edit" module="clients" page="clients" action="edit">
                                       <ClientRegistrationConfigPage />
                                     </ProtectedRoute>
                                   }
@@ -2753,7 +2753,7 @@ function App() {
                                 <Route
                                   path="/incomes/service-items"
                                   element={
-                                    <ProtectedRoute requiredPermission="service-item-list">
+                                    <ProtectedRoute requiredPermission="service-item-list" module="incomes" page="service-items">
                                       <ServiceItemListPage />
                                     </ProtectedRoute>
                                   }
@@ -2761,7 +2761,7 @@ function App() {
                                 <Route
                                   path="/incomes/fee-structures"
                                   element={
-                                    <ProtectedRoute requiredPermission="fee-structure-list">
+                                    <ProtectedRoute requiredPermission="fee-structure-list" module="incomes" page="fee-structures">
                                       <IncomeFeeStructureListPage />
                                     </ProtectedRoute>
                                   }
@@ -2769,7 +2769,7 @@ function App() {
                                 <Route
                                   path="/incomes/fee-structures/approvals"
                                   element={
-                                    <ProtectedRoute requiredPermission="fee-structure-list">
+                                    <ProtectedRoute requiredPermission="fee-structure-list" module="incomes" page="fee-structures">
                                       {' '}
                                       //no permission required
                                       <FeeStructureApprovalPage />
@@ -2779,7 +2779,7 @@ function App() {
                                 <Route
                                   path="/incomes/fee-structures/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="fee-structure-create">
+                                    <ProtectedRoute requiredPermission="fee-structure-create" module="incomes" page="fee-structures" action="create">
                                       <FeeStructureForm />
                                     </ProtectedRoute>
                                   }
@@ -2787,7 +2787,7 @@ function App() {
                                 <Route
                                   path="/incomes/fee-structures/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="fee-structure-edit">
+                                    <ProtectedRoute requiredPermission="fee-structure-edit" module="incomes" page="fee-structures" action="edit">
                                       <FeeStructureForm />
                                     </ProtectedRoute>
                                   }
@@ -2795,7 +2795,7 @@ function App() {
                                 <Route
                                   path="/incomes/fee-structures/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="fee-structure-view-detail">
+                                    <ProtectedRoute requiredPermission="fee-structure-view-detail" module="incomes" page="fee-structures">
                                       <FeeStructureForm />
                                     </ProtectedRoute>
                                   }
@@ -2803,7 +2803,7 @@ function App() {
                                 <Route
                                   path="/incomes/invoices/batch-review"
                                   element={
-                                    <ProtectedRoute requiredPermission="invoice-list">
+                                    <ProtectedRoute requiredPermission="invoice-list" module="incomes" page="invoices">
                                       <BatchReviewPage />
                                     </ProtectedRoute>
                                   }
@@ -2811,7 +2811,7 @@ function App() {
                                 <Route
                                   path="/incomes/setup/fee-structure"
                                   element={
-                                    <ProtectedRoute requiredPermission="fee-structure-list">
+                                    <ProtectedRoute requiredPermission="fee-structure-list" module="incomes" page="fee-structures">
                                       <IncomeFeeStructureSetupPage />
                                     </ProtectedRoute>
                                   }
@@ -2819,7 +2819,7 @@ function App() {
                                 <Route
                                   path="/incomes/financial-periods"
                                   element={
-                                    <ProtectedRoute requiredPermission="income-list">
+                                    <ProtectedRoute requiredPermission="income-list" module="incomes" page="academic-years">
                                       <AcademicSessionPage />
                                     </ProtectedRoute>
                                   }
@@ -2827,7 +2827,7 @@ function App() {
                                 <Route
                                   path="/incomes/categories"
                                   element={
-                                    <ProtectedRoute requiredPermission="income-list">
+                                    <ProtectedRoute requiredPermission="income-list" module="incomes" page="income-categories">
                                       <IncomeCategoryListPage />
                                     </ProtectedRoute>
                                   }
@@ -2835,7 +2835,7 @@ function App() {
                                 <Route
                                   path="/incomes/entitlements"
                                   element={
-                                    <ProtectedRoute requiredPermission="entitlement-list">
+                                    <ProtectedRoute requiredPermission="entitlement-list" module="incomes" page="fee-entitlements">
                                       <EntitlementsList />
                                     </ProtectedRoute>
                                   }
@@ -2843,7 +2843,7 @@ function App() {
                                 <Route
                                   path="/incomes/entitlements/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="entitlement-create">
+                                    <ProtectedRoute requiredPermission="entitlement-create" module="incomes" page="fee-entitlements" action="create">
                                       <EntitlementForm />
                                     </ProtectedRoute>
                                   }
@@ -2851,7 +2851,7 @@ function App() {
                                 <Route
                                   path="/incomes/entitlements/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="entitlement-edit">
+                                    <ProtectedRoute requiredPermission="entitlement-edit" module="incomes" page="fee-entitlements" action="edit">
                                       <EntitlementForm />
                                     </ProtectedRoute>
                                   }
@@ -2859,7 +2859,7 @@ function App() {
                                 <Route
                                   path="/incomes/entitlements/:id/view"
                                   element={
-                                    <ProtectedRoute requiredPermission="entitlement-view-detail">
+                                    <ProtectedRoute requiredPermission="entitlement-view-detail" module="incomes" page="fee-entitlements">
                                       <EntitlementDetail />
                                     </ProtectedRoute>
                                   }
@@ -2867,7 +2867,7 @@ function App() {
                                 <Route
                                   path="/incomes/entitlements/dashboard"
                                   element={
-                                    <ProtectedRoute requiredPermission="entitlement-list">
+                                    <ProtectedRoute requiredPermission="entitlement-list" module="incomes" page="fee-entitlements">
                                       {' '}
                                       //no permission required
                                       <EntitlementDashboard />
@@ -2901,7 +2901,7 @@ function App() {
                                 <Route
                                   path="/approvals"
                                   element={
-                                    <ProtectedRoute requiredPermission="approval-list">
+                                    <ProtectedRoute requiredPermission="approval-list" module="automations" page="workflow-approvals">
                                       <UnifiedPendingApprovalsPage />
                                     </ProtectedRoute>
                                   }
@@ -2909,7 +2909,7 @@ function App() {
                                 <Route
                                   path="/approvals/pending"
                                   element={
-                                    <ProtectedRoute requiredPermission="approval-list">
+                                    <ProtectedRoute requiredPermission="approval-list" module="automations" page="workflow-approvals">
                                       <UnifiedPendingApprovalsPage />
                                     </ProtectedRoute>
                                   }
@@ -2918,7 +2918,7 @@ function App() {
                                 <Route
                                   path="/approvals/workflow"
                                   element={
-                                    <ProtectedRoute requiredPermission="approval-list">
+                                    <ProtectedRoute requiredPermission="approval-list" module="automations" page="workflow-approvals" action="approve">
                                       <ApprovalsPage />
                                     </ProtectedRoute>
                                   }
@@ -2926,7 +2926,7 @@ function App() {
                                 <Route
                                   path="/collections/dashboard"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-receivables">
                                       <CollectionsDashboard />
                                     </ProtectedRoute>
                                   }
@@ -2936,7 +2936,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-list">
+                                    <ProtectedRoute requiredPermission="consumption-list" module="expenses" page="resource-consumption">
                                       <ResourceConsumptionListPage />
                                     </ProtectedRoute>
                                   }
@@ -2944,7 +2944,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-create">
+                                    <ProtectedRoute requiredPermission="consumption-create" module="expenses" page="resource-consumption" action="create">
                                       <ResourceConsumptionFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2952,7 +2952,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-view-detail">
+                                    <ProtectedRoute requiredPermission="consumption-view-detail" module="expenses" page="resource-consumption">
                                       <ResourceConsumptionDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -2960,7 +2960,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-edit">
+                                    <ProtectedRoute requiredPermission="consumption-edit" module="expenses" page="resource-consumption" action="edit">
                                       <ResourceConsumptionFormPage />
                                     </ProtectedRoute>
                                   }
@@ -2968,7 +2968,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/fuel-report"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-list">
+                                    <ProtectedRoute requiredPermission="consumption-list" module="expenses" page="resource-consumption" action="export">
                                       <FuelConsumptionReportPage />
                                     </ProtectedRoute>
                                   }
@@ -2976,7 +2976,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/irregularities"
                                   element={
-                                    <ProtectedRoute requiredPermission="irregularities-view">
+                                    <ProtectedRoute requiredPermission="irregularities-view" module="expenses" page="resource-consumption">
                                       <IrregularitiesDashboardPage />
                                     </ProtectedRoute>
                                   }
@@ -2984,7 +2984,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/approval-queue"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-approval-queue">
+                                    <ProtectedRoute requiredPermission="consumption-approval-queue" module="expenses" page="resource-consumption" action="approve">
                                       <ApprovalQueuePage />
                                     </ProtectedRoute>
                                   }
@@ -2992,7 +2992,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/:id/approve"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-approve">
+                                    <ProtectedRoute requiredPermission="consumption-approve" module="expenses" page="resource-consumption" action="approve">
                                       <ApprovalDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3000,7 +3000,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/posting-queue"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-posting-queue">
+                                    <ProtectedRoute requiredPermission="consumption-posting-queue" module="expenses" page="resource-consumption" action="edit">
                                       <PostingQueuePage />
                                     </ProtectedRoute>
                                   }
@@ -3008,7 +3008,7 @@ function App() {
                                 <Route
                                   path="/expenses/resource-consumption/:id/post"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-post">
+                                    <ProtectedRoute requiredPermission="consumption-post" module="expenses" page="resource-consumption" action="edit">
                                       <PostingDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3018,7 +3018,7 @@ function App() {
                                 <Route
                                   path="/expenses/fuel-log/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="consumption-create">
+                                    <ProtectedRoute requiredPermission="consumption-create" module="expenses" page="resource-consumption" action="create">
                                       <FuelLogFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3028,7 +3028,7 @@ function App() {
                                 <Route
                                   path="/expenses/resources"
                                   element={
-                                    <ProtectedRoute requiredPermission="expenses-resource-list">
+                                    <ProtectedRoute requiredPermission="expenses-resource-list" module="expenses" page="resources">
                                       <ResourceListPage />
                                     </ProtectedRoute>
                                   }
@@ -3036,7 +3036,7 @@ function App() {
                                 <Route
                                   path="/expenses/resources/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="expenses-resource-create">
+                                    <ProtectedRoute requiredPermission="expenses-resource-create" module="expenses" page="resources" action="create">
                                       <ResourceFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3044,7 +3044,7 @@ function App() {
                                 <Route
                                   path="/expenses/resources/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="expenses-resource-list">
+                                    <ProtectedRoute requiredPermission="expenses-resource-list" module="expenses" page="resources">
                                       <ResourceDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3052,7 +3052,7 @@ function App() {
                                 <Route
                                   path="/expenses/resources/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="expenses-resource-edit">
+                                    <ProtectedRoute requiredPermission="expenses-resource-edit" module="expenses" page="resources" action="edit">
                                       <ResourceFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3062,7 +3062,7 @@ function App() {
                                 <Route
                                   path="/expenses/vouchers"
                                   element={
-                                    <ProtectedRoute requiredPermission="voucher-list">
+                                    <ProtectedRoute requiredPermission="voucher-list" module="expenses" page="expenses">
                                       <VoucherListPage />
                                     </ProtectedRoute>
                                   }
@@ -3070,7 +3070,7 @@ function App() {
                                 <Route
                                   path="/expenses/vouchers/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="voucher-create">
+                                    <ProtectedRoute requiredPermission="voucher-create" module="expenses" page="expenses" action="create">
                                       <VoucherFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3078,7 +3078,7 @@ function App() {
                                 <Route
                                   path="/expenses/vouchers/expiring"
                                   element={
-                                    <ProtectedRoute requiredPermission="voucher-expiring">
+                                    <ProtectedRoute requiredPermission="voucher-expiring" module="expenses" page="expenses">
                                       <ExpiringVouchersDashboard />
                                     </ProtectedRoute>
                                   }
@@ -3086,7 +3086,7 @@ function App() {
                                 <Route
                                   path="/expenses/vouchers/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="voucher-view-detail">
+                                    <ProtectedRoute requiredPermission="voucher-view-detail" module="expenses" page="expenses">
                                       <VoucherDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3094,7 +3094,7 @@ function App() {
                                 <Route
                                   path="/expenses/vouchers/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="voucher-edit">
+                                    <ProtectedRoute requiredPermission="voucher-edit" module="expenses" page="expenses" action="edit">
                                       <VoucherFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3104,7 +3104,7 @@ function App() {
                                 <Route
                                   path="/expenses/categories"
                                   element={
-                                    <ProtectedRoute requiredPermission="expense-category-list">
+                                    <ProtectedRoute requiredPermission="expense-category-list" module="expenses" page="expense-categories">
                                       <ExpenseCategoryListPage />
                                     </ProtectedRoute>
                                   }
@@ -3112,7 +3112,7 @@ function App() {
                                 <Route
                                   path="/expenses/categories/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="expense-category-create">
+                                    <ProtectedRoute requiredPermission="expense-category-create" module="expenses" page="expense-categories" action="create">
                                       <ExpenseCategoryFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3120,7 +3120,7 @@ function App() {
                                 <Route
                                   path="/expenses/categories/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="expense-category-edit">
+                                    <ProtectedRoute requiredPermission="expense-category-edit" module="expenses" page="expense-categories" action="edit">
                                       <ExpenseCategoryFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3130,7 +3130,7 @@ function App() {
                                 <Route
                                   path="/expenses/prepaid"
                                   element={
-                                    <ProtectedRoute requiredPermission="prepaid-list">
+                                    <ProtectedRoute requiredPermission="prepaid-list" module="expenses" page="prepaid-vouchers">
                                       <PrepaidExpenseListPage />
                                     </ProtectedRoute>
                                   }
@@ -3138,7 +3138,7 @@ function App() {
                                 <Route
                                   path="/expenses/prepaid/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="prepaid-create">
+                                    <ProtectedRoute requiredPermission="prepaid-create" module="expenses" page="prepaid-vouchers" action="create">
                                       <PrepaidExpenseFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3146,7 +3146,7 @@ function App() {
                                 <Route
                                   path="/expenses/prepaid/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="prepaid-view-detail">
+                                    <ProtectedRoute requiredPermission="prepaid-view-detail" module="expenses" page="prepaid-vouchers">
                                       <PrepaidExpenseDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3154,7 +3154,7 @@ function App() {
                                 <Route
                                   path="/expenses/prepaid/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="prepaid-edit">
+                                    <ProtectedRoute requiredPermission="prepaid-edit" module="expenses" page="prepaid-vouchers" action="edit">
                                       <PrepaidExpenseFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3162,7 +3162,7 @@ function App() {
                                 <Route
                                   path="/expenses/prepaid/:id/amortize"
                                   element={
-                                    <ProtectedRoute requiredPermission="prepaid-amortize">
+                                    <ProtectedRoute requiredPermission="prepaid-amortize" module="expenses" page="prepaid-vouchers" action="edit">
                                       <PrepaidExpenseAmortizePage />
                                     </ProtectedRoute>
                                   }
@@ -3172,7 +3172,7 @@ function App() {
                                 <Route
                                   path="/reports/financial/trial-balance"
                                   element={
-                                    <ProtectedRoute requiredPermission="trial-balance-view">
+                                    <ProtectedRoute requiredPermission="trial-balance-view" module="reports" page="financial-reports">
                                       <TrialBalancePage />
                                     </ProtectedRoute>
                                   }
@@ -3180,7 +3180,7 @@ function App() {
                                 <Route
                                   path="/reports/financial/profit-loss"
                                   element={
-                                    <ProtectedRoute requiredPermission="pl-view">
+                                    <ProtectedRoute requiredPermission="pl-view" module="reports" page="financial-reports">
                                       <ProfitLossPage />
                                     </ProtectedRoute>
                                   }
@@ -3188,7 +3188,7 @@ function App() {
                                 <Route
                                   path="/reports/financial/balance-sheet"
                                   element={
-                                    <ProtectedRoute requiredPermission="balance-sheet-view">
+                                    <ProtectedRoute requiredPermission="balance-sheet-view" module="reports" page="financial-reports">
                                       <BalanceSheetPage />
                                     </ProtectedRoute>
                                   }
@@ -3196,7 +3196,7 @@ function App() {
                                 <Route
                                   path="/reports/financial/cash-flow"
                                   element={
-                                    <ProtectedRoute requiredPermission="cash-flow-view">
+                                    <ProtectedRoute requiredPermission="cash-flow-view" module="reports" page="financial-reports">
                                       <CashFlowStatementPage />
                                     </ProtectedRoute>
                                   }
@@ -3206,7 +3206,7 @@ function App() {
                                 <Route
                                   path="/liabilities/payables"
                                   element={
-                                    <ProtectedRoute requiredPermission="payables-list">
+                                    <ProtectedRoute requiredPermission="payables-list" module="liabilities" page="accounts-payable">
                                       <PayablesListPage />
                                     </ProtectedRoute>
                                   }
@@ -3214,7 +3214,7 @@ function App() {
                                 <Route
                                   path="/liabilities/payables/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="payables-create">
+                                    <ProtectedRoute requiredPermission="payables-create" module="liabilities" page="accounts-payable" action="create">
                                       <CreatePayablePage />
                                     </ProtectedRoute>
                                   }
@@ -3222,7 +3222,7 @@ function App() {
                                 <Route
                                   path="/liabilities/payables/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="payables-list">
+                                    <ProtectedRoute requiredPermission="payables-list" module="liabilities" page="accounts-payable">
                                       <PayableDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3230,7 +3230,7 @@ function App() {
                                 <Route
                                   path="/liabilities/matching"
                                   element={
-                                    <ProtectedRoute requiredPermission="payables-list">
+                                    <ProtectedRoute requiredPermission="payables-list" module="liabilities" page="accounts-payable">
                                       <PayableMatchingDashboard />
                                     </ProtectedRoute>
                                   }
@@ -3238,7 +3238,7 @@ function App() {
                                 <Route
                                   path="/liabilities/vendors"
                                   element={
-                                    <ProtectedRoute requiredPermission="payables-list">
+                                    <ProtectedRoute requiredPermission="payables-list" module="liabilities" page="accounts-payable">
                                       <VendorApAgingPage />
                                     </ProtectedRoute>
                                   }
@@ -3248,7 +3248,7 @@ function App() {
                                 <Route
                                   path="/fixed-asset"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="fixed-assets">
                                       <FixedAssetModulePage />
                                     </ProtectedRoute>
                                   }
@@ -3256,7 +3256,7 @@ function App() {
                                 <Route
                                   path="/assets"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="fixed-assets">
                                       <AssetListPage />
                                     </ProtectedRoute>
                                   }
@@ -3264,7 +3264,7 @@ function App() {
                                 <Route
                                   path="/assets/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="fixed-assets">
                                       <AssetDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3272,7 +3272,7 @@ function App() {
                                 <Route
                                   path="/assets/register"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="fixed-assets" action="create">
                                       <AssetFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3280,7 +3280,7 @@ function App() {
                                 <Route
                                   path="/assets/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-edit">
+                                    <ProtectedRoute requiredPermission="asset-edit" module="assets" page="fixed-assets" action="edit">
                                       <AssetFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3288,7 +3288,7 @@ function App() {
                                 <Route
                                   path="/assets/fuel-monitor"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="asset-fuel-monitor">
                                       <AssetFuelMonitorPage />
                                     </ProtectedRoute>
                                   }
@@ -3296,7 +3296,7 @@ function App() {
                                 <Route
                                   path="/assets/categories"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="asset-categories">
                                       <AssetCategoryListPage />
                                     </ProtectedRoute>
                                   }
@@ -3304,7 +3304,7 @@ function App() {
                                 <Route
                                   path="/assets/categories/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-create">
+                                    <ProtectedRoute requiredPermission="asset-create" module="assets" page="asset-categories" action="create">
                                       <AssetCategoryFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3312,7 +3312,7 @@ function App() {
                                 <Route
                                   path="/assets/categories/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-edit">
+                                    <ProtectedRoute requiredPermission="asset-edit" module="assets" page="asset-categories" action="edit">
                                       <AssetCategoryFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3320,7 +3320,7 @@ function App() {
                                 <Route
                                   path="/assets/purchases"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="fixed-assets">
                                       <AssetPurchaseListPage />
                                     </ProtectedRoute>
                                   }
@@ -3328,7 +3328,7 @@ function App() {
                                 <Route
                                   path="/assets/purchases/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-create">
+                                    <ProtectedRoute requiredPermission="asset-create" module="assets" page="fixed-assets" action="create">
                                       <AssetPurchaseFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3336,7 +3336,7 @@ function App() {
                                 <Route
                                   path="/assets/purchases/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="fixed-assets">
                                       <AssetPurchaseFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3344,7 +3344,7 @@ function App() {
                                 <Route
                                   path="/assets/acquisitions"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="fixed-assets">
                                       <AssetPurchaseListPage />
                                     </ProtectedRoute>
                                   }
@@ -3352,7 +3352,7 @@ function App() {
                                 <Route
                                   path="/assets/acquisitions/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-create">
+                                    <ProtectedRoute requiredPermission="asset-create" module="assets" page="fixed-assets" action="create">
                                       <AssetPurchaseFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3360,7 +3360,7 @@ function App() {
                                 <Route
                                   path="/assets/acquisitions/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="fixed-assets">
                                       <AssetPurchaseFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3368,7 +3368,7 @@ function App() {
                                 <Route
                                   path="/assets/depreciation/run"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-depreciate">
+                                    <ProtectedRoute requiredPermission="asset-depreciate" module="assets" page="asset-depreciation" action="edit">
                                       <DepreciationRunPage />
                                     </ProtectedRoute>
                                   }
@@ -3376,7 +3376,7 @@ function App() {
                                 <Route
                                   path="/assets/maintenance"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="asset-maintenance">
                                       <AssetMaintenanceListPage />
                                     </ProtectedRoute>
                                   }
@@ -3384,7 +3384,7 @@ function App() {
                                 <Route
                                   path="/assets/maintenance/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-create">
+                                    <ProtectedRoute requiredPermission="asset-create" module="assets" page="asset-maintenance" action="create">
                                       <AssetMaintenanceFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3392,7 +3392,7 @@ function App() {
                                 <Route
                                   path="/assets/maintenance/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="asset-maintenance">
                                       <AssetMaintenanceFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3400,7 +3400,7 @@ function App() {
                                 <Route
                                   path="/assets/depreciation"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-list">
+                                    <ProtectedRoute requiredPermission="asset-list" module="assets" page="asset-depreciation">
                                       <AssetDepreciationListPage />
                                     </ProtectedRoute>
                                   }
@@ -3408,7 +3408,7 @@ function App() {
                                 <Route
                                   path="/assets/dispose"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-dispose">
+                                    <ProtectedRoute requiredPermission="asset-dispose" module="assets" page="fixed-assets" action="edit">
                                       <AssetDisposalPage />
                                     </ProtectedRoute>
                                   }
@@ -3416,7 +3416,7 @@ function App() {
                                 <Route
                                   path="/assets/:id/dispose"
                                   element={
-                                    <ProtectedRoute requiredPermission="asset-dispose">
+                                    <ProtectedRoute requiredPermission="asset-dispose" module="assets" page="fixed-assets" action="edit">
                                       <AssetDisposalPage />
                                     </ProtectedRoute>
                                   }
@@ -3426,7 +3426,7 @@ function App() {
                                 <Route
                                   path="/financial-management"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view">
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="financial-management">
                                       <FinancialManagementPage />
                                     </ProtectedRoute>
                                   }
@@ -3434,7 +3434,7 @@ function App() {
                                 <Route
                                   path="/client-services"
                                   element={
-                                    <ProtectedRoute requiredPermission="clients-view">
+                                    <ProtectedRoute requiredPermission="clients-view" module="clients" page="client-services">
                                       <StudentServicesPage />
                                     </ProtectedRoute>
                                   }
@@ -3443,7 +3443,7 @@ function App() {
                                 <Route
                                   path="/administration"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="users" page="staff-users">
                                       <AdministrationPage />
                                     </ProtectedRoute>
                                   }
@@ -3451,7 +3451,7 @@ function App() {
                                 <Route
                                   path="/all-access"
                                   element={
-                                    <ProtectedRoute requiredPermission="user-list">
+                                    <ProtectedRoute requiredPermission="user-list" module="users" page="staff-users">
                                       <AllAccessPage />
                                     </ProtectedRoute>
                                   }
@@ -3461,7 +3461,7 @@ function App() {
                                 <Route
                                   path="/treasury"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="summary">
                                       <TreasuryModulePage />
                                     </ProtectedRoute>
                                   }
@@ -3469,7 +3469,7 @@ function App() {
                                 <Route
                                   path="/treasury/dashboard"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="summary">
                                       <TreasuryDashboard />
                                     </ProtectedRoute>
                                   }
@@ -3477,7 +3477,7 @@ function App() {
                                 <Route
                                   path="/treasury/bank-reconciliation"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-reconcile">
+                                    <ProtectedRoute requiredPermission="treasury-reconcile" module="cash-management" page="bank-reconciliation" action="edit">
                                       <BankReconciliationPage />
                                     </ProtectedRoute>
                                   }
@@ -3485,7 +3485,7 @@ function App() {
                                 <Route
                                   path="/treasury/cash-reconciliation"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-reconcile">
+                                    <ProtectedRoute requiredPermission="treasury-reconcile" module="cash-management" page="cash-reconciliation" action="edit">
                                       <CashReconciliationPage />
                                     </ProtectedRoute>
                                   }
@@ -3495,7 +3495,7 @@ function App() {
                                 <Route
                                   path="/budgets/periods"
                                   element={
-                                    <ProtectedRoute requiredPermission="budget-list">
+                                    <ProtectedRoute requiredPermission="budget-list" module="budgets" page="budget-periods">
                                       <BudgetPeriodList />
                                     </ProtectedRoute>
                                   }
@@ -3503,7 +3503,7 @@ function App() {
                                 <Route
                                   path="/budgets/periods/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="budget-create">
+                                    <ProtectedRoute requiredPermission="budget-create" module="budgets" page="budget-periods" action="create">
                                       <BudgetPeriodFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3511,7 +3511,7 @@ function App() {
                                 <Route
                                   path="/budgets/periods/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="budget-edit">
+                                    <ProtectedRoute requiredPermission="budget-edit" module="budgets" page="budget-periods" action="edit">
                                       <BudgetPeriodFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3519,7 +3519,7 @@ function App() {
                                 <Route
                                   path="/budgets/periods/:id/variance"
                                   element={
-                                    <ProtectedRoute requiredPermission="budget-list">
+                                    <ProtectedRoute requiredPermission="budget-list" module="budgets" page="budget-periods" action="export">
                                       <BudgetVarianceReportPage />
                                     </ProtectedRoute>
                                   }
@@ -3527,7 +3527,7 @@ function App() {
                                 <Route
                                   path="/budgets/periods/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="budget-list">
+                                    <ProtectedRoute requiredPermission="budget-list" module="budgets" page="budget-periods">
                                       <BudgetPeriodDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3537,7 +3537,7 @@ function App() {
                                 <Route
                                   path="/petty-cash"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="petty-cash-funds">
                                       <PettyCashModulePage />
                                     </ProtectedRoute>
                                   }
@@ -3555,7 +3555,7 @@ function App() {
                                 <Route
                                   path="/receivable"
                                   element={
-                                    <ProtectedRoute requiredPermission="receivables-list">
+                                    <ProtectedRoute requiredPermission="receivables-list" module="receivables" page="customer-receivables">
                                       <ReceivableModulePage />
                                     </ProtectedRoute>
                                   }
@@ -3579,7 +3579,7 @@ function App() {
                                 <Route
                                   path="/accounts-payable"
                                   element={
-                                    <ProtectedRoute requiredPermission="payable-list">
+                                    <ProtectedRoute requiredPermission="payable-list" module="liabilities" page="accounts-payable">
                                       <AccountsPayableModulePage />
                                     </ProtectedRoute>
                                   }
@@ -3587,7 +3587,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="petty-cash-funds">
                                       <PettyCashDashboard />
                                     </ProtectedRoute>
                                   }
@@ -3595,7 +3595,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/funds/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-create">
+                                    <ProtectedRoute requiredPermission="treasury-create" module="cash-management" page="petty-cash-funds" action="create">
                                       <PettyCashFundForm />
                                     </ProtectedRoute>
                                   }
@@ -3603,7 +3603,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/funds/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-edit">
+                                    <ProtectedRoute requiredPermission="treasury-edit" module="cash-management" page="petty-cash-funds" action="edit">
                                       <PettyCashFundForm />
                                     </ProtectedRoute>
                                   }
@@ -3611,7 +3611,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/funds/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="petty-cash-funds">
                                       <PettyCashFundDetail />
                                     </ProtectedRoute>
                                   }
@@ -3619,7 +3619,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/vouchers"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="petty-cash-vouchers">
                                       <PettyCashVoucherList />
                                     </ProtectedRoute>
                                   }
@@ -3627,7 +3627,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/vouchers/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-create">
+                                    <ProtectedRoute requiredPermission="treasury-create" module="cash-management" page="petty-cash-vouchers" action="create">
                                       <PettyCashVoucherForm />
                                     </ProtectedRoute>
                                   }
@@ -3635,7 +3635,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/vouchers/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-edit">
+                                    <ProtectedRoute requiredPermission="treasury-edit" module="cash-management" page="petty-cash-vouchers" action="edit">
                                       <PettyCashVoucherForm />
                                     </ProtectedRoute>
                                   }
@@ -3643,7 +3643,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/vouchers/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="petty-cash-vouchers">
                                       <PettyCashVoucherDetail />
                                     </ProtectedRoute>
                                   }
@@ -3651,7 +3651,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/replenishments"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="petty-cash-replenishments">
                                       <PettyCashReplenishmentList />
                                     </ProtectedRoute>
                                   }
@@ -3659,7 +3659,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/replenishments/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-create">
+                                    <ProtectedRoute requiredPermission="treasury-create" module="cash-management" page="petty-cash-replenishments" action="create">
                                       <PettyCashReplenishmentForm />
                                     </ProtectedRoute>
                                   }
@@ -3667,7 +3667,7 @@ function App() {
                                 <Route
                                   path="/treasury/petty-cash/replenishments/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="petty-cash-replenishments">
                                       <PettyCashReplenishmentDetail />
                                     </ProtectedRoute>
                                   }
@@ -3677,7 +3677,7 @@ function App() {
                                 <Route
                                   path="/treasury/cashier-accounts"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="cashier-accounts">
                                       <CashierAccountListPage />
                                     </ProtectedRoute>
                                   }
@@ -3685,7 +3685,7 @@ function App() {
                                 <Route
                                   path="/treasury/cashier-accounts/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-create">
+                                    <ProtectedRoute requiredPermission="treasury-create" module="cash-management" page="cashier-accounts" action="create">
                                       <CashierAccountFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3695,7 +3695,7 @@ function App() {
                                 <Route
                                   path="/treasury/cash-transfers"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-list">
+                                    <ProtectedRoute requiredPermission="treasury-list" module="cash-management" page="cash-transfers">
                                       <CashTransferListPage />
                                     </ProtectedRoute>
                                   }
@@ -3703,7 +3703,7 @@ function App() {
                                 <Route
                                   path="/treasury/cash-transfers/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="treasury-create">
+                                    <ProtectedRoute requiredPermission="treasury-create" module="cash-management" page="cash-transfers" action="create">
                                       <CashTransferFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3713,7 +3713,7 @@ function App() {
                                 <Route
                                   path="/expenses"
                                   element={
-                                    <ProtectedRoute requiredPermission="expense-list">
+                                    <ProtectedRoute requiredPermission="expense-list" module="expenses" page="expenses">
                                       <ExpenseListPage />
                                     </ProtectedRoute>
                                   }
@@ -3721,7 +3721,7 @@ function App() {
                                 <Route
                                   path="/expenses/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="expense-create">
+                                    <ProtectedRoute requiredPermission="expense-create" module="expenses" page="expenses" action="create">
                                       <ExpenseFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3729,7 +3729,7 @@ function App() {
                                 <Route
                                   path="/expenses/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="expense-edit">
+                                    <ProtectedRoute requiredPermission="expense-edit" module="expenses" page="expenses" action="edit">
                                       <ExpenseFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3737,7 +3737,7 @@ function App() {
                                 <Route
                                   path="/expenses/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="expense-list">
+                                    <ProtectedRoute requiredPermission="expense-list" module="expenses" page="expenses">
                                       <ExpenseDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3747,7 +3747,7 @@ function App() {
                                 <Route
                                   path="/banks"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-list">
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="banks">
                                       <BankListPage />
                                     </ProtectedRoute>
                                   }
@@ -3755,7 +3755,7 @@ function App() {
                                 <Route
                                   path="/banks/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-create">
+                                    <ProtectedRoute requiredPermission="bank-create" module="banks" page="banks" action="create">
                                       <BankFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3763,7 +3763,7 @@ function App() {
                                 <Route
                                   path="/banks/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-edit">
+                                    <ProtectedRoute requiredPermission="bank-edit" module="banks" page="banks" action="edit">
                                       <BankFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3771,7 +3771,7 @@ function App() {
                                 <Route
                                   path="/banks/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-list">
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="banks">
                                       <BankFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3779,7 +3779,7 @@ function App() {
                                 <Route
                                   path="/banks/accounts"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-list">
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-accounts">
                                       <BankAccountListPage />
                                     </ProtectedRoute>
                                   }
@@ -3787,7 +3787,7 @@ function App() {
                                 <Route
                                   path="/banks/accounts/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-create">
+                                    <ProtectedRoute requiredPermission="bank-create" module="banks" page="bank-accounts" action="create">
                                       <BankSetupPage />
                                     </ProtectedRoute>
                                   }
@@ -3795,7 +3795,7 @@ function App() {
                                 <Route
                                   path="/banks/accounts/:id/edit"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-edit">
+                                    <ProtectedRoute requiredPermission="bank-edit" module="banks" page="bank-accounts" action="edit">
                                       <BankSetupPage />
                                     </ProtectedRoute>
                                   }
@@ -3803,7 +3803,7 @@ function App() {
                                 <Route
                                   path="/banks/accounts/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-list">
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-accounts">
                                       <BankAccountDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3811,7 +3811,7 @@ function App() {
                                 <Route
                                   path="/banks/transfers"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-list">
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-transfers">
                                       <BankTransferListPage />
                                     </ProtectedRoute>
                                   }
@@ -3819,7 +3819,7 @@ function App() {
                                 <Route
                                   path="/banks/transfers/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-create">
+                                    <ProtectedRoute requiredPermission="bank-create" module="banks" page="bank-transfers" action="create">
                                       <BankTransferFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3827,7 +3827,7 @@ function App() {
                                 <Route
                                   path="/banks/payments"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-list">
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-payments">
                                       <BankPaymentListPage />
                                     </ProtectedRoute>
                                   }
@@ -3835,7 +3835,7 @@ function App() {
                                 <Route
                                   path="/banks/payments/new"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-create">
+                                    <ProtectedRoute requiredPermission="bank-create" module="banks" page="bank-payments" action="create">
                                       <BankPaymentFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3843,7 +3843,7 @@ function App() {
                                 <Route
                                   path="/banks/transfers/approvals"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-approve">
+                                    <ProtectedRoute requiredPermission="bank-approve" module="banks" page="bank-transfers" action="approve">
                                       <TransferApprovalPage />
                                     </ProtectedRoute>
                                   }
@@ -3853,7 +3853,7 @@ function App() {
                                 <Route
                                   path="/banks/statement-uploads"
                                   element={
-                                    <ProtectedRoute requiredPermission="bank-list">
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-uploads" action="create">
                                       <BankStatementUploadPage />
                                     </ProtectedRoute>
                                   }
@@ -3863,7 +3863,7 @@ function App() {
                                 <Route
                                   path="/loans/verification/:loanId"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-verification">
                                       <LoanVerificationPage />
                                     </ProtectedRoute>
                                   }
@@ -3873,7 +3873,7 @@ function App() {
                                 <Route
                                   path="/loans/disbursements/:loanId"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-disbursements-view">
+                                    <ProtectedRoute requiredPermission="loan-disbursements-view" module="loans" page="loan-disbursements" action="create">
                                       <LoanDisbursementPage />
                                     </ProtectedRoute>
                                   }
@@ -3883,7 +3883,7 @@ function App() {
                                 <Route
                                   path="/business-day"
                                   element={
-                                    <ProtectedRoute requiredPermission="business-day-manage">
+                                    <ProtectedRoute requiredPermission="business-day-manage" module="common" page="business-day" action="edit">
                                       <BusinessDayManagementPage />
                                     </ProtectedRoute>
                                   }
@@ -3893,7 +3893,7 @@ function App() {
                                 <Route
                                   path="/cash-management/collection-sheets"
                                   element={
-                                    <ProtectedRoute requiredPermission="cash-management-list">
+                                    <ProtectedRoute requiredPermission="cash-management-list" module="cash-management" page="collection-sheets">
                                       <DailyCollectionSheetPage />
                                     </ProtectedRoute>
                                   }
@@ -3901,7 +3901,7 @@ function App() {
                                 <Route
                                   path="/cash-management/collection-sheets/:sheetId"
                                   element={
-                                    <ProtectedRoute requiredPermission="cash-management-list">
+                                    <ProtectedRoute requiredPermission="cash-management-list" module="cash-management" page="collection-sheets">
                                       <DailyCollectionSheetPage />
                                     </ProtectedRoute>
                                   }
@@ -3911,7 +3911,7 @@ function App() {
                                 <Route
                                   path="/savings/collection"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-collection">
                                       <SavingsCollectionPage />
                                     </ProtectedRoute>
                                   }
@@ -3921,7 +3921,7 @@ function App() {
                                 <Route
                                   path="/savings/accounts"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-accounts">
                                       <SavingsAccountsPage />
                                     </ProtectedRoute>
                                   }
@@ -3931,7 +3931,7 @@ function App() {
                                 <Route
                                   path="/savings/accounts/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-create">
+                                    <ProtectedRoute requiredPermission="savings-accounts-create" module="savings" page="savings-accounts" action="create">
                                       <SavingsAccountFormPage />
                                     </ProtectedRoute>
                                   }
@@ -3941,7 +3941,7 @@ function App() {
                                 <Route
                                   path="/savings/deposit"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-deposit" action="create">
                                       <SavingsDepositPage />
                                     </ProtectedRoute>
                                   }
@@ -3951,7 +3951,7 @@ function App() {
                                 <Route
                                   path="/savings/accounts/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-accounts">
                                       <SavingsAccountDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -3961,7 +3961,7 @@ function App() {
                                 <Route
                                   path="/savings/policy"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="compulsory-savings-policies">
                                       <SavingsPolicyPage />
                                     </ProtectedRoute>
                                   }
@@ -3971,7 +3971,7 @@ function App() {
                                 <Route
                                   path="/savings/withdrawals"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-withdrawals" action="edit">
                                       <SavingsWithdrawalsPage />
                                     </ProtectedRoute>
                                   }
@@ -3981,7 +3981,7 @@ function App() {
                                 <Route
                                   path="/savings/products"
                                   element={
-                                    <ProtectedRoute requiredPermission="product-list">
+                                    <ProtectedRoute requiredPermission="product-list" module="products" page="products">
                                       <ProductManagementPage filterType="SAVINGS" />
                                     </ProtectedRoute>
                                   }
@@ -3991,7 +3991,7 @@ function App() {
                                 <Route
                                   path="/savings/products/:id/config"
                                   element={
-                                    <ProtectedRoute requiredPermission="product-list">
+                                    <ProtectedRoute requiredPermission="product-list" module="products" page="products" action="edit">
                                       <SavingsProductConfigPage />
                                     </ProtectedRoute>
                                   }
@@ -4001,7 +4001,7 @@ function App() {
                                 <Route
                                   path="/loans/accounts"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-accounts">
                                       <LoanAccountsPage />
                                     </ProtectedRoute>
                                   }
@@ -4011,7 +4011,7 @@ function App() {
                                 <Route
                                   path="/loans/accounts/create"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-create">
+                                    <ProtectedRoute requiredPermission="loan-accounts-create" module="loans" page="loan-accounts" action="create">
                                       <LoanAccountFormPage />
                                     </ProtectedRoute>
                                   }
@@ -4021,7 +4021,7 @@ function App() {
                                 <Route
                                   path="/loans/accounts/:id"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-accounts">
                                       <LoanAccountDetailPage />
                                     </ProtectedRoute>
                                   }
@@ -4031,7 +4031,7 @@ function App() {
                                 <Route
                                   path="/loans/collection"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-collection">
                                       <LoanCollectionPage />
                                     </ProtectedRoute>
                                   }
@@ -4041,7 +4041,7 @@ function App() {
                                 <Route
                                   path="/loans/repayment-approvals"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-repayment-approvals" action="approve">
                                       <LoanRepaymentApprovalsPage />
                                     </ProtectedRoute>
                                   }
@@ -4051,7 +4051,7 @@ function App() {
                                 <Route
                                   path="/loans/products"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-products">
                                       <LoanProductsPage />
                                     </ProtectedRoute>
                                   }
@@ -4061,7 +4061,7 @@ function App() {
                                 <Route
                                   path="/loans/products/:id/config"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-products" action="edit">
                                       <LoanProductConfigPage />
                                     </ProtectedRoute>
                                   }
@@ -4071,7 +4071,7 @@ function App() {
                                 <Route
                                   path="/loans/verification"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-verification">
                                       <LoanAccountsPage />
                                     </ProtectedRoute>
                                   }
@@ -4081,7 +4081,7 @@ function App() {
                                 <Route
                                   path="/loans/disbursements"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-disbursements-view">
+                                    <ProtectedRoute requiredPermission="loan-disbursements-view" module="loans" page="loan-disbursements">
                                       <LoanAccountsPage />
                                     </ProtectedRoute>
                                   }
@@ -4091,7 +4091,7 @@ function App() {
                                 <Route
                                   path="/clients/groups"
                                   element={
-                                    <ProtectedRoute requiredPermission="client-groups-view">
+                                    <ProtectedRoute requiredPermission="client-groups-view" module="clients" page="client-groups">
                                       <ClientGroupsPage />
                                     </ProtectedRoute>
                                   }
@@ -4099,7 +4099,7 @@ function App() {
                                 <Route
                                   path="/prospects"
                                   element={
-                                    <ProtectedRoute requiredPermission="clients-view">
+                                    <ProtectedRoute requiredPermission="clients-view" module="clients" page="prospects">
                                       <ProspectListPage />
                                     </ProtectedRoute>
                                   }
@@ -4107,7 +4107,7 @@ function App() {
                                 <Route
                                   path="/clients/reactivate"
                                   element={
-                                    <ProtectedRoute requiredPermission="clients-view">
+                                    <ProtectedRoute requiredPermission="clients-view" module="clients" page="prospects" action="edit">
                                       <ReactivateClientPage />
                                     </ProtectedRoute>
                                   }
@@ -4117,7 +4117,7 @@ function App() {
                                 <Route
                                   path="/savings/combined-receipt"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="combined-receipt">
                                       <CombinedReceiptPage />
                                     </ProtectedRoute>
                                   }
@@ -4125,7 +4125,7 @@ function App() {
                                 <Route
                                   path="/savings/group-combined-receipt"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="combined-receipt">
                                       <GroupCombinedReceiptPage />
                                     </ProtectedRoute>
                                   }
@@ -4133,7 +4133,7 @@ function App() {
                                 <Route
                                   path="/savings/collection/sheet"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-collection">
                                       <AjoCollectionPage />
                                     </ProtectedRoute>
                                   }
@@ -4141,7 +4141,7 @@ function App() {
                                 <Route
                                   path="/savings/collection/spreadsheet"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-collection">
                                       <CollectionSpreadsheetPage />
                                     </ProtectedRoute>
                                   }
@@ -4149,7 +4149,7 @@ function App() {
                                 <Route
                                   path="/savings/collection/multi-day"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-collection" action="create">
                                       <MultiDayDepositPage />
                                     </ProtectedRoute>
                                   }
@@ -4159,7 +4159,7 @@ function App() {
                                 <Route
                                   path="/reports/officer-portfolio"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
                                       <OfficerPortfolioPage />
                                     </ProtectedRoute>
                                   }
@@ -4167,7 +4167,7 @@ function App() {
                                 <Route
                                   path="/reports/loans/debtors"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
                                       <DebtorsReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4175,7 +4175,7 @@ function App() {
                                 <Route
                                   path="/reports/loans/defaulters"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
                                       <DefaultersReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4183,7 +4183,7 @@ function App() {
                                 <Route
                                   path="/reports/loans/par"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
                                       <PARReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4191,7 +4191,7 @@ function App() {
                                 <Route
                                   path="/reports/daily-transactions"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
                                       <RemittanceReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4199,7 +4199,7 @@ function App() {
                                 <Route
                                   path="/reports/daily-summary"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
                                       <DailySummaryReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4207,7 +4207,7 @@ function App() {
                                 <Route
                                   path="/reports/clients/groups"
                                   element={
-                                    <ProtectedRoute requiredPermission="clients-view">
+                                    <ProtectedRoute requiredPermission="clients-view" module="clients" page="client-groups" action="export">
                                       <GroupReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4215,7 +4215,7 @@ function App() {
                                 <Route
                                   path="/reports/savings-by-product"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-reports" action="export">
                                       <SavingsProductReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4223,7 +4223,7 @@ function App() {
                                 <Route
                                   path="/reports/contributions/daily"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-collection" action="export">
                                       <DailyContributionReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4231,7 +4231,7 @@ function App() {
                                 <Route
                                   path="/reports/contributions/spreadsheet"
                                   element={
-                                    <ProtectedRoute requiredPermission="savings-accounts-view">
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-collection" action="export">
                                       <CollectionSpreadsheetPage />
                                     </ProtectedRoute>
                                   }
@@ -4239,7 +4239,7 @@ function App() {
                                 <Route
                                   path="/reports/summary"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
                                       <ReportSummaryPage />
                                     </ProtectedRoute>
                                   }
@@ -4249,7 +4249,7 @@ function App() {
                                 <Route
                                   path="/admin/transaction-reversal"
                                   element={
-                                    <ProtectedRoute requiredPermission="admin">
+                                    <ProtectedRoute requiredPermission="admin" module="common" page="business-day" action="edit">
                                       <TransactionReversalPage />
                                     </ProtectedRoute>
                                   }
@@ -4257,7 +4257,7 @@ function App() {
                                 <Route
                                   path="/admin/review-week"
                                   element={
-                                    <ProtectedRoute requiredPermission="admin">
+                                    <ProtectedRoute requiredPermission="admin" module="common" page="business-day" action="edit">
                                       <ReviewWeekPage />
                                     </ProtectedRoute>
                                   }
@@ -4265,7 +4265,7 @@ function App() {
                                 <Route
                                   path="/admin/close-year"
                                   element={
-                                    <ProtectedRoute requiredPermission="admin">
+                                    <ProtectedRoute requiredPermission="admin" module="common" page="business-day" action="edit">
                                       <CloseYearPage />
                                     </ProtectedRoute>
                                   }

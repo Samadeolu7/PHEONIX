@@ -182,6 +182,178 @@ class PermissionResolver:
         return sorted(codes)
 
     @classmethod
+    def resolve_bulk_matrix(cls, user) -> Dict[str, Any]:
+        """
+        Compute effective permissions for every module:page pair at once, in a
+        constant number of queries (roles, policies, overrides, page catalog)
+        regardless of how many pages exist. Used to hand the frontend a single
+        payload it can derive route access AND nav visibility from, instead of
+        the frontend maintaining its own hand-written per-role nav allowlists.
+
+        Mirrors the exact aggregation semantics of `_resolve_role_baseline` /
+        `_apply_user_overrides` (specificity ordering, scope/limit widening,
+        the legacy `{page_code}-{suffix}` fallback for pages with no
+        RolePermissionPolicy row yet) — just applied to every page in one pass
+        instead of one page per call. Does not alter `resolve()` itself.
+
+        Returns:
+            {
+              "wildcard": bool,       # true → frontend grants everything
+              "legacy_mode": bool,    # true → role has no policies at all yet;
+                                      #        frontend applies the same
+                                      #        view/create/edit/delete-yes,
+                                      #        approve/export-no default as
+                                      #        _legacy_mode_baseline
+              "pages": {
+                "module:page": {"can_view": bool, ..., "scope": str,
+                                 "approval_limit": str|None},
+                ...
+              }
+            }
+        """
+        if cls._is_wildcard(user):
+            return {'wildcard': True, 'legacy_mode': False, 'pages': {}}
+
+        role_ids = list(user.roles.filter(is_active=True).values_list('id', flat=True))
+        if not role_ids:
+            return {'wildcard': False, 'legacy_mode': False, 'pages': {}}
+
+        any_policies = RolePermissionPolicy.objects.filter(role_id__in=role_ids).exists()
+        if not any_policies:
+            return {'wildcard': False, 'legacy_mode': True, 'pages': {}}
+
+        # Action-level rows power get_all_permission_codes(); the page matrix
+        # only needs module/page/global-level rows.
+        policies = list(
+            RolePermissionPolicy.objects
+            .filter(role_id__in=role_ids, action__isnull=True)
+            .select_related('module', 'page')
+        )
+        overrides = [o for o in cls._active_overrides(user) if o.action_id is None]
+
+        legacy_codes: set[str] = set()
+        for role in user.roles.filter(is_active=True, id__in=role_ids):
+            if isinstance(role.permission_codes, list):
+                legacy_codes.update(role.permission_codes)
+
+        from pages.models import ModulePage
+        all_pages = list(
+            ModulePage.objects.filter(tenant=None, is_active=True).select_related('module')
+        )
+
+        def _bucket(items, key_fn):
+            d: dict = {}
+            for it in items:
+                d.setdefault(key_fn(it), []).append(it)
+            return d
+
+        page_policies = _bucket(
+            [p for p in policies if p.module_id and p.page_id],
+            lambda p: (p.module.code, p.page.code),
+        )
+        module_policies = _bucket(
+            [p for p in policies if p.module_id and not p.page_id],
+            lambda p: p.module.code,
+        )
+        global_policies = [p for p in policies if not p.module_id and not p.page_id]
+
+        page_overrides = _bucket(
+            [o for o in overrides if o.module_id and o.page_id],
+            lambda o: (o.module.code, o.page.code),
+        )
+        module_overrides = _bucket(
+            [o for o in overrides if o.module_id and not o.page_id],
+            lambda o: o.module.code,
+        )
+        global_overrides = [o for o in overrides if not o.module_id and not o.page_id]
+
+        _FLAG_SUFFIX = {
+            'can_view': 'view', 'can_create': 'create', 'can_edit': 'edit',
+            'can_delete': 'delete', 'can_approve': 'approve', 'can_export': 'export',
+        }
+
+        result_pages: Dict[str, Any] = {}
+        for mp in all_pages:
+            key = (mp.module.code, mp.code)
+            applicable = (
+                page_policies.get(key, [])
+                + module_policies.get(mp.module.code, [])
+                + global_policies
+            )
+
+            if applicable:
+                flags, scope, limit = cls._aggregate_policy_list(applicable)
+            else:
+                # No RolePermissionPolicy targets this page at all — fall back
+                # to the role's flat permission_codes, same as
+                # _resolve_role_baseline's per-page fallback.
+                flags = {
+                    flag: f'{mp.code}-{suffix}' in legacy_codes
+                    for flag, suffix in _FLAG_SUFFIX.items()
+                }
+                scope = SCOPE_OWN_BRANCH
+                limit = None
+                if not any(flags.values()):
+                    continue  # no grant at all for this page — omit (frontend fails closed)
+
+            applicable_overrides = (
+                page_overrides.get(key, [])
+                + module_overrides.get(mp.module.code, [])
+                + global_overrides
+            )
+            if applicable_overrides:
+                flags, scope, limit = cls._apply_override_list(flags, scope, limit, applicable_overrides)
+
+            if any(flags.values()):
+                result_pages[f'{key[0]}:{key[1]}'] = {
+                    **flags,
+                    'scope': scope,
+                    'approval_limit': str(limit) if limit is not None else None,
+                }
+
+        return {'wildcard': False, 'legacy_mode': False, 'pages': result_pages}
+
+    @staticmethod
+    def _aggregate_policy_list(policy_list):
+        """Same winning-flags/scope/limit aggregation as _resolve_role_baseline, factored out for bulk reuse."""
+        flags = {f: False for f in FLAG_NAMES}
+        scope = SCOPE_OWN_BRANCH
+        limit: Optional[Decimal] = Decimal('0')
+        unlimited = False
+        for p in sorted(policy_list, key=lambda x: x.specificity, reverse=True):
+            for f in FLAG_NAMES:
+                if getattr(p, f):
+                    flags[f] = True
+            if SCOPE_RANK.get(p.scope, 0) > SCOPE_RANK.get(scope, 0):
+                scope = p.scope
+            if p.approval_limit is None:
+                unlimited = True
+            elif not unlimited and p.approval_limit > limit:
+                limit = p.approval_limit
+        return flags, scope, (None if unlimited else (limit or None))
+
+    @staticmethod
+    def _apply_override_list(flags, scope, limit, override_list):
+        """
+        Simplified sibling of _apply_user_overrides for the bulk matrix — same
+        flag/scope/limit override application, without is_elevated/
+        elevated_fields tracking (not needed for access-grant computation).
+        """
+        result = dict(flags)
+        for o in override_list:
+            for f in FLAG_NAMES:
+                ov = getattr(o, f)
+                if ov is not None:
+                    result[f] = ov
+            if o.scope is not None:
+                scope = o.scope
+            if o.approval_limit is not None or (
+                o.approval_limit is None and o.expiry_type != UserPermissionOverride.EXPIRY_PERMANENT
+            ):
+                limit = o.approval_limit
+        return result, scope, limit
+
+    @classmethod
     def override_exceeds_role(cls, override: UserPermissionOverride) -> bool:
         """
         Return True if the override grants more than what the user's roles

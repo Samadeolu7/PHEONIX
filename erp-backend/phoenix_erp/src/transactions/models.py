@@ -467,10 +467,38 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             # Reverse all entry postings
             Account = get_account_model()
             for entry in self.entries.all():
-                # Post opposite amount to reverse the effect
-                Account.objects.filter(pk=entry.account_id).update(
-                    balance=models.F('balance') - entry.signed_amount()
+                # Post opposite amount to reverse the effect. Same SAVINGS-only,
+                # overdraft-aware floor guard as TransactionEntry.post(): a
+                # savings account currently >= its allowed floor may never be
+                # pushed below it; already-negative accounts are exempt.
+                delta = -entry.signed_amount()
+                floor = None
+                if entry.account.account_type == Account.SAVINGS:
+                    SavingsAccount = apps.get_model('savings', 'SavingsAccount')
+                    overdraft_limit = SavingsAccount.objects.all_tenants().filter(
+                        account_id=entry.account_id
+                    ).values_list('overdraft_limit', flat=True).first() or Decimal('0.00')
+                    floor = -overdraft_limit
+                    floor_guard = models.Q(balance__lt=floor) | models.Q(balance__gte=floor - delta)
+                else:
+                    floor_guard = models.Q()
+                updated = Account.objects.filter(pk=entry.account_id).filter(
+                    floor_guard
+                ).update(
+                    balance=models.F('balance') + delta
                 )
+                if not updated:
+                    account = Account.objects.get(pk=entry.account_id)
+                    if floor is not None and account.balance >= floor and account.balance + delta < floor:
+                        raise ValidationError(
+                            f"Cannot void: account {account.code} ({account.name}) "
+                            f"would go below the allowed floor ({floor}) "
+                            f"(balance {account.balance}, delta {delta})."
+                        )
+                    raise ValidationError(
+                        f"Failed to update account balance while voiding "
+                        f"(account_id={entry.account_id})."
+                    )
             
             # Mark as reversed (voided)
             self.is_reversed = True
@@ -625,10 +653,33 @@ class TransactionEntry(models.Model):
         # Calculate balance effect using accounting rules
         # This method encapsulates the sign convention logic
         balance_delta = self.get_balance_effect()
-        
-        # Update account balance atomically
+
+        # Floor guard: SAVINGS accounts only, per client decision — bank/other
+        # GL account types are left unguarded for now, and the parent SAVINGS
+        # control account (a rollup of many members' accounts, some of which
+        # may legitimately overdraft) is left unguarded too. A savings account
+        # currently >= its allowed floor may never be pushed below that floor
+        # by a new posting; accounts already below it (legacy balances
+        # migrated from the old system) are exempt, since enforcing a floor
+        # there isn't something we can retroactively fix. The floor is
+        # -overdraft_limit (0 for accounts without overdraft), matching
+        # SavingsAccount.clean()'s intent. The guard is baked into the WHERE
+        # clause so the check-then-write is race-safe under concurrent
+        # postings.
+        floor = None
+        if account.account_type == Account.SAVINGS:
+            SavingsAccount = apps.get_model('savings', 'SavingsAccount')
+            overdraft_limit = SavingsAccount.objects.all_tenants().filter(
+                account_id=self.account_id
+            ).values_list('overdraft_limit', flat=True).first() or Decimal('0.00')
+            floor = -overdraft_limit
+            not_going_negative = models.Q(balance__lt=floor) | models.Q(balance__gte=floor - balance_delta)
+        else:
+            not_going_negative = models.Q()
         try:
-            updated = Account.objects.all_tenants().filter(pk=self.account_id).update(
+            updated = Account.objects.all_tenants().filter(pk=self.account_id).filter(
+                not_going_negative
+            ).update(
                 balance=models.F('balance') + balance_delta
             )
         except Exception as e:
@@ -639,13 +690,20 @@ class TransactionEntry(models.Model):
                 'Posted entry - Account: %s, Type: %s, Side: %s, Amount: %s, Delta: %s, Updated rows: %s',
                 account.code, account.account_type, self.side, self.amount, balance_delta, updated,
             )
-            
+
             if not updated:
+                account.refresh_from_db(fields=['balance'])
+                if floor is not None and account.balance >= floor and account.balance + balance_delta < floor:
+                    raise ValidationError(
+                        f"Insufficient balance on account {account.code} ({account.name}). "
+                        f"Current balance {account.balance} would go below the allowed floor "
+                        f"({floor}) by {balance_delta}."
+                    )
                 raise ValidationError(
                     f"Failed to update account {account.code} (ID={self.account_id}). "
                     f"Database update affected 0 rows. Balance delta: {balance_delta}"
                 )
-        
+
         # Update parent account balance if this is a child account
         if account.parent_id:
             try:

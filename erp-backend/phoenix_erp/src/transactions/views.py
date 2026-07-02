@@ -69,11 +69,9 @@ class TransactionViewSet(ScopedModelViewSet):
         return queryset.order_by('-date', '-created_at')
     
     def get_permissions(self):
-        """Posting/approving a transaction requires approver authority.
-        Voiding requires staff/admin - enforced at both DRF permission layer
-        and in the view body as defense-in-depth."""
-        if self.action in ('approve', 'post'):
-            return [IsAuthenticated(), IsApprover()]
+        """Voiding requires staff/admin - enforced at both DRF permission layer
+        and in the view body as defense-in-depth. Posting/approving is handled
+        by HasActionPermission (page-aware) via ScopedModelViewSet."""
         if self.action == 'void':
             return [IsAuthenticated(), permissions.IsAdminUser()]
         return super().get_permissions()

@@ -46,6 +46,12 @@ import {
 } from '../../services/dashboardStatsService';
 
 // Module definitions with their required permissions
+// `relatedRegistryModules` maps each dashboard tile to the permissionRegistry.ts
+// module code(s) it groups pages from — a tile is shown if the user has can_view
+// on ANY page within these modules (see hasAnyPageAccessInModule). This replaces
+// the old `requiredPermissions` field, which referenced legacy flat codes but was
+// never actually consulted by the filter — visibility was solely gated by the
+// hardcoded getAllowedModuleIds() switch below, independent of real permissions.
 const MODULES = [
   {
     id: 'financial',
@@ -54,7 +60,7 @@ const MODULES = [
     icon: DollarSign,
     path: '/financial-management',
     color: 'blue',
-    requiredPermissions: ['accounts-view'],
+    relatedRegistryModules: ['accounts', 'budgets'],
   },
   {
     id: 'client-services',
@@ -63,7 +69,7 @@ const MODULES = [
     icon: Users,
     path: '/client-services',
     color: 'green',
-    requiredPermissions: ['clients-view', 'client-list'],
+    relatedRegistryModules: ['clients'],
   },
   {
     id: 'savings',
@@ -72,7 +78,7 @@ const MODULES = [
     icon: Banknote,
     path: '/savings',
     color: 'emerald',
-    requiredPermissions: ['savings-accounts-view', 'savings-accounts-create'],
+    relatedRegistryModules: ['savings'],
   },
   {
     id: 'loans',
@@ -81,7 +87,7 @@ const MODULES = [
     icon: CreditCard,
     path: '/loans',
     color: 'indigo',
-    requiredPermissions: ['loan-accounts-view', 'loan-accounts-create'],
+    relatedRegistryModules: ['loans'],
   },
   {
     id: 'receivable',
@@ -90,7 +96,7 @@ const MODULES = [
     icon: TrendingUp,
     path: '/receivable',
     color: 'amber',
-    requiredPermissions: ['receivables-list', 'invoice-list'],
+    relatedRegistryModules: ['receivables', 'incomes'],
   },
   {
     id: 'bank',
@@ -99,7 +105,7 @@ const MODULES = [
     icon: Building,
     path: '/bank',
     color: 'teal',
-    requiredPermissions: [],
+    relatedRegistryModules: ['banks', 'cash-management'],
   },
   {
     id: 'accounts-payable',
@@ -108,7 +114,7 @@ const MODULES = [
     icon: FileText,
     path: '/accounts-payable',
     color: 'rose',
-    requiredPermissions: ['payable-list'],
+    relatedRegistryModules: ['liabilities'],
   },
   {
     id: 'procurement',
@@ -117,7 +123,7 @@ const MODULES = [
     icon: ShoppingCart,
     path: '/procurement',
     color: 'purple',
-    requiredPermissions: ['po-list', 'pr-list'],
+    relatedRegistryModules: ['procurement'],
   },
   {
     id: 'inventory',
@@ -126,7 +132,7 @@ const MODULES = [
     icon: Package,
     path: '/inventory',
     color: 'orange',
-    requiredPermissions: ['item-list'],
+    relatedRegistryModules: ['inventory'],
   },
   {
     id: 'fixed-asset',
@@ -135,7 +141,7 @@ const MODULES = [
     icon: Home,
     path: '/fixed-asset',
     color: 'slate',
-    requiredPermissions: ['asset-list'],
+    relatedRegistryModules: ['assets'],
   },
   {
     id: 'petty-cash',
@@ -144,7 +150,7 @@ const MODULES = [
     icon: Wallet,
     path: '/petty-cash',
     color: 'yellow',
-    requiredPermissions: ['treasury-list'],
+    relatedRegistryModules: ['cash-management'],
   },
   {
     id: 'administration',
@@ -153,7 +159,7 @@ const MODULES = [
     icon: Settings,
     path: '/administration',
     color: 'gray',
-    requiredPermissions: ['staff-list', 'branch-list', 'payroll-list'],
+    relatedRegistryModules: ['hr', 'branches', 'users'],
   },
   {
     id: 'all-access',
@@ -162,7 +168,7 @@ const MODULES = [
     icon: Grid,
     path: '/all-access',
     color: 'navy',
-    requiredPermissions: [],
+    relatedRegistryModules: [], // always shown — see accessibleModules filter
   },
 ];
 
@@ -739,35 +745,13 @@ const OFFICER_QUICK_ACTIONS: Record<
   ],
 };
 
-/**
- * Returns the explicit module IDs this role is allowed to see.
- * null = no restriction (super user shows all).
- * This prevents lower roles from seeing irrelevant modules like Procurement,
- * Fixed Assets, Petty Cash, Administration, etc.
- */
-function getAllowedModuleIds(role: string): string[] | null {
-  switch (role) {
-    case 'Credit Officer':
-    case 'Loan Officer':
-    case 'Field Officer':
-    case 'Officer':
-      return ['client-services', 'loans', 'savings', 'bank', 'all-access'];
-    case 'Finance Officer':
-    case 'Accountant':
-      return ['financial', 'bank', 'accounts-payable', 'all-access'];
-    case 'HR Officer':
-    case 'HR Manager':
-      return ['administration', 'all-access'];
-    case 'Procurement Officer':
-      return ['procurement', 'inventory', 'accounts-payable', 'all-access'];
-    case 'Store Officer':
-      return ['inventory', 'procurement', 'all-access'];
-    case 'Registrar':
-      return ['client-services', 'savings', 'all-access'];
-    default:
-      return null; // Directors, Principals, Administrators — unrestricted
-  }
-}
+// getAllowedModuleIds() (hardcoded per-role-name switch) has been replaced —
+// tile visibility is now derived from the live page-permission matrix via
+// hasAnyPageAccessInModule() in the accessibleModules filter below. A tile
+// shows iff the user has can_view on at least one page in its
+// relatedRegistryModules; Directors/Principals see everything because their
+// matrix is wildcard, so hasAnyPageAccessInModule always returns true for
+// them — no separate super-user branch needed.
 
 interface SimplifiedRoleBasedDashboardProps {
   className?: string;
@@ -782,7 +766,7 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
 
   const { user, selectedRole } = useAuth();
   const navigate = useNavigate();
-  const { hasPermission, permissions } = usePermission();
+  const { hasPermission, permissions, hasAnyPageAccessInModule } = usePermission();
 
   const [loading, setLoading] = useState(true);
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
@@ -859,12 +843,13 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
   // Director and Principal bypass all permission checks
   const isSuperUser = getRoleRank(effectiveRole) >= 4;
 
-  // Role-specific module restriction: officers only see what's relevant to their job
-  const allowedModuleIds = isSuperUser ? null : getAllowedModuleIds(effectiveRole);
+  // Tile visibility derived from the live page-permission matrix: shown iff
+  // the user can view at least one page in the tile's relatedRegistryModules
+  // (empty array = always shown, e.g. "All Access"). Wildcard users (Director/
+  // Principal) pass every check automatically via hasAnyPageAccessInModule.
   const accessibleModules = MODULES.filter(module => {
-    if (allowedModuleIds !== null) return allowedModuleIds.includes(module.id);
-    // Super users: show all, no permission filtering needed
-    return true;
+    if (module.relatedRegistryModules.length === 0) return true;
+    return module.relatedRegistryModules.some(rm => hasAnyPageAccessInModule(rm));
   });
 
   // Role-specific quick actions — officers get field-relevant shortcuts, not generic ERP ones

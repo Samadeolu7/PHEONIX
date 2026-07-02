@@ -31,6 +31,36 @@ export interface EffectivePermission {
   elevated_fields: string[];
 }
 
+// Shape of one entry in userData.page_permissions.pages, matching
+// PermissionResolver.resolve_bulk_matrix()'s per-page output (permissions/services.py).
+export interface PagePermission {
+  can_view: boolean;
+  can_create: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+  can_approve: boolean;
+  can_export: boolean;
+  scope: string;
+  approval_limit: string | null;
+}
+
+export type PageAction = 'view' | 'create' | 'edit' | 'delete' | 'approve' | 'export';
+
+const PAGE_ACTION_FLAG: Record<PageAction, keyof PagePermission> = {
+  view: 'can_view',
+  create: 'can_create',
+  edit: 'can_edit',
+  delete: 'can_delete',
+  approve: 'can_approve',
+  export: 'can_export',
+};
+
+interface PageMatrix {
+  wildcard: boolean;
+  legacyMode: boolean;
+  pages: Record<string, PagePermission>;
+}
+
 class PermissionService {
   private permissions: string[] = [];
   private rolePermissions: Record<string, string[]> = {};
@@ -43,6 +73,9 @@ class PermissionService {
   private hasElevatedOverride: boolean = false;
   private elevatedFields: string[] = [];
   private effectivePermissions: EffectivePermission | null = null;
+
+  // Bulk module:page permission matrix (see PermissionResolver.resolve_bulk_matrix)
+  private pageMatrix: PageMatrix = { wildcard: false, legacyMode: false, pages: {} };
 
   // ── Hydration ──────────────────────────────────────────────────────────────
 
@@ -85,6 +118,19 @@ class PermissionService {
     if (this.effectivePermissions) {
       localStorage.setItem('effectivePermissions', JSON.stringify(this.effectivePermissions));
     }
+
+    // Bulk module:page matrix (page_permissions.{wildcard,legacy_mode,pages})
+    const rawMatrix = userData.page_permissions;
+    if (rawMatrix && typeof rawMatrix === 'object') {
+      this.pageMatrix = {
+        wildcard: !!rawMatrix.wildcard,
+        legacyMode: !!rawMatrix.legacy_mode,
+        pages: rawMatrix.pages || {},
+      };
+    } else {
+      this.pageMatrix = { wildcard: false, legacyMode: false, pages: {} };
+    }
+    localStorage.setItem('pageMatrix', JSON.stringify(this.pageMatrix));
 
     window.dispatchEvent(new CustomEvent('permissions:updated'));
   }
@@ -159,6 +205,84 @@ class PermissionService {
       try { this.effectivePermissions = JSON.parse(stored); } catch { /* ignore */ }
     }
     return this.effectivePermissions;
+  }
+
+  // ── Page-level (module:page) permission matrix ────────────────────────────
+
+  private _getPageMatrix(): PageMatrix {
+    if (this.pageMatrix.wildcard || this.pageMatrix.legacyMode || Object.keys(this.pageMatrix.pages).length > 0) {
+      return this.pageMatrix;
+    }
+    const stored = localStorage.getItem('pageMatrix');
+    if (stored) {
+      try { this.pageMatrix = JSON.parse(stored); } catch { /* ignore */ }
+    }
+    return this.pageMatrix;
+  }
+
+  /** Full page permission map, keyed "module:page" — for nav-building consumers. */
+  getPagePermissions(): Record<string, PagePermission> {
+    return this._getPageMatrix().pages;
+  }
+
+  /**
+   * Whether the user has can_view on ANY page within the given registry
+   * module — for coarse, module-level nav surfaces (e.g. a dashboard tile
+   * grouping several pages under one "Bank & Cash" tile) where checking one
+   * specific page would be too narrow.
+   */
+  hasAnyPageAccessInModule(module: string): boolean {
+    const matrix = this._getPageMatrix();
+    if (matrix.wildcard || this.getPermissions().includes('*')) return true;
+    if (matrix.legacyMode) return true; // legacy mode grants view broadly
+    const prefix = `${module}:`;
+    return Object.entries(matrix.pages).some(([key, perm]) => key.startsWith(prefix) && perm.can_view);
+  }
+
+  /**
+   * Tri-state resolution for a module:page:action target:
+   *  - 'allow' / 'deny': the matrix has a definite answer.
+   *  - 'unknown': no matrix entry exists for this page at all (registry gap
+   *    during migration — the page hasn't been added to PERMISSION_REGISTRY/
+   *    synced to the backend Module/ModulePage catalog yet). Callers that
+   *    still have a legacy fallback (like ProtectedRoute's requiredPermission
+   *    prop) should use 'unknown' to decide whether to fall back; callers
+   *    with no fallback should treat 'unknown' the same as 'deny'.
+   */
+  resolvePageAccess(module: string, page: string, action: PageAction = 'view'): 'allow' | 'deny' | 'unknown' {
+    const matrix = this._getPageMatrix();
+    if (matrix.wildcard || this.getPermissions().includes('*')) return 'allow';
+
+    // Mirror the auditor write-block safety net already enforced in hasPermission().
+    if (this.isAuditor() && action !== 'view' && action !== 'export') return 'deny';
+
+    if (matrix.legacyMode) {
+      // Mirrors PermissionResolver._legacy_mode_baseline: view/create/edit/delete
+      // allowed, approve/export require explicit grants.
+      return (action !== 'approve' && action !== 'export') ? 'allow' : 'deny';
+    }
+
+    const entry = matrix.pages[`${module}:${page}`];
+    if (!entry) return 'unknown';
+    return entry[PAGE_ACTION_FLAG[action]] ? 'allow' : 'deny';
+  }
+
+  /**
+   * Whether the user can perform `action` (default 'view') on the given
+   * module:page. This is the module:page counterpart to hasPermission(code)
+   * — prefer this for anything derived from RolePermissionPolicy rather than
+   * the legacy flat permission_codes vocabulary.
+   *
+   * Deliberately fails CLOSED on a matrix miss ('unknown' → false) — unlike
+   * the backend's HasActionPermission, which fails open on resolver errors
+   * as an operational safety net, a missing entry here means the page isn't
+   * in the registry/matrix yet, and silently granting access would be worse
+   * than a page briefly not appearing. Callers that need to distinguish
+   * "denied" from "no entry yet" (e.g. for a legacy-code fallback during
+   * migration) should call resolvePageAccess() directly instead.
+   */
+  hasPageAccess(module: string, page: string, action: PageAction = 'view'): boolean {
+    return this.resolvePageAccess(module, page, action) === 'allow';
   }
 
   // ── Role helpers ───────────────────────────────────────────────────────────
@@ -254,6 +378,7 @@ class PermissionService {
     console.log('💰 limit:',      this.approvalLimit);
     console.log('⚠️  elevated:',  this.hasElevatedOverride, this.elevatedFields);
     console.log('👤 roles:',      this.userRoles);
+    console.log('🗺️  page matrix:', this._getPageMatrix());
   }
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
@@ -268,11 +393,12 @@ class PermissionService {
     this.hasElevatedOverride = false;
     this.elevatedFields = [];
     this.effectivePermissions = null;
+    this.pageMatrix = { wildcard: false, legacyMode: false, pages: {} };
 
     [
       'userPermissions', 'rolePermissions', 'excludedPermissions', 'userRoles',
       'userScope', 'approvalLimit', 'hasElevatedOverride', 'elevatedFields',
-      'effectivePermissions',
+      'effectivePermissions', 'pageMatrix',
     ].forEach(k => localStorage.removeItem(k));
 
     window.dispatchEvent(new CustomEvent('permissions:cleared'));

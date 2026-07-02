@@ -292,6 +292,25 @@ class EffectivePermissionsView(APIView):
         return Response(EffectivePermissionsSerializer(eff).data)
 
 
+class BulkEffectivePermissionsView(APIView):
+    """
+    GET /api/permissions/matrix/
+
+    Returns the requesting user's effective permission for EVERY module:page
+    pair at once (see PermissionResolver.resolve_bulk_matrix), so the frontend
+    can derive route access and nav visibility from one payload instead of
+    maintaining separate hardcoded per-role nav allowlists. Always resolves
+    the caller's own account — no `user` query param, unlike
+    EffectivePermissionsView, since this is meant for frontend hydration on
+    login/refresh, not admin inspection of other users.
+    """
+    permission_classes = [drf_permissions.IsAuthenticated]
+
+    def get(self, request):
+        matrix = PermissionResolver.resolve_bulk_matrix(request.user)
+        return Response(matrix)
+
+
 # ── Exception report ──────────────────────────────────────────────────────────
 
 class PermissionExceptionReportView(APIView):

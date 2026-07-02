@@ -12,6 +12,8 @@
 import { HierarchyButton } from '../types';
 import { DASHBOARD_SIDEBAR_CONFIG } from './dashboardSidebarConfig';
 import { navConfigService } from '../services/navConfigService';
+import { ROUTE_TO_PAGE } from './routeToPageMap';
+import { permissionService } from '../services/permissionService';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -76,6 +78,41 @@ export function filterButtons(
   return result;
 }
 
+// ── Permission-derived defaults (live session) ─────────────────────────────────
+
+/**
+ * Walk the full sidebar tree and keep only leaves the CURRENT user's page
+ * permission matrix grants access to (checked against the specific action
+ * each route needs — e.g. an approvals leaf checks 'approve', not 'view' —
+ * so e.g. "Transfer Approvals" only shows for roles that can actually
+ * approve, not everyone who can view the underlying page).
+ *
+ * Leaves whose URL has no ROUTE_TO_PAGE entry (a registry gap, or a
+ * non-route leaf) are shown by default — nav visibility fails OPEN on an
+ * unmapped leaf because the actual page is still independently gated by
+ * ProtectedRoute's own dual-mode check; hiding an unmapped-but-legitimate
+ * leaf would be a worse regression than occasionally showing a link that
+ * 403s. This is deliberately the opposite of hasPageAccess()'s fail-closed
+ * default, which guards real data access rather than a nav list.
+ */
+function permissionDerivedIds(buttons: HierarchyButton[]): Set<string> {
+  const ids = new Set<string>();
+  const walk = (btns: HierarchyButton[]) => {
+    for (const b of btns) {
+      if (b.children && b.children.length > 0) {
+        walk(b.children);
+        continue;
+      }
+      const mapping = b.url ? ROUTE_TO_PAGE[b.url] : undefined;
+      if (!mapping || permissionService.hasPageAccess(mapping.module, mapping.page, mapping.action)) {
+        ids.add(b.id);
+      }
+    }
+  };
+  walk(buttons);
+  return ids;
+}
+
 // ── Default IDs per role ──────────────────────────────────────────────────────
 
 function defaultModuleIds(role: string): Set<string> {
@@ -86,6 +123,20 @@ function defaultModuleIds(role: string): Set<string> {
     const picked = full.filter(b => groupIds.includes(b.id));
     return collectAllIds(picked);
   };
+
+  // If this is the CURRENTLY LOGGED-IN user's own role, derive defaults live
+  // from their actual page-permission matrix — this is the real, security-
+  // relevant path (Director/Principal naturally get everything here, since
+  // hasPageAccess() always returns true for their wildcard matrix, so no
+  // separate super-user branch is needed).
+  //
+  // The role-navigation settings page (RoleSidebarConfigPage) lets a
+  // Director preview/configure defaults for roles OTHER than their own —
+  // there's no live matrix for an arbitrary role name, so that case falls
+  // through to the curated legacy defaults below as sensible starting points.
+  if (permissionService.getUserRoles().includes(role)) {
+    return permissionDerivedIds(full);
+  }
 
   switch (role) {
     case 'Director':

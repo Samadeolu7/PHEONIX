@@ -319,11 +319,6 @@ class FeeStructureViewSet(ScopedModelViewSet):
     serializer_class = FeeStructureSerializer
     permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        if self.action in ('approve', 'reject'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
-    
     def get_queryset(self):
         queryset = super().get_queryset()
         

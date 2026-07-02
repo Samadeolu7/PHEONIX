@@ -334,11 +334,6 @@ class BonusDeductionRequestViewSet(ScopedModelViewSet):
     queryset = BonusDeductionRequest.objects.all()
     serializer_class = BonusDeductionRequestSerializer
 
-    def get_permissions(self):
-        if self.action in ('approve', 'reject'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
-
     def get_serializer_class(self):
         """Use different serializers for different actions"""
         if self.action == 'create':
@@ -765,11 +760,6 @@ class LeaveRequestViewSet(ScopedModelViewSet):
     queryset = LeaveRequest.objects.all()
     serializer_class = LeaveRequestSerializer
 
-    def get_permissions(self):
-        if self.action in ('approve', 'reject'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
-
     def get_queryset(self):
         queryset = super().get_queryset()
         staff_id = self.request.query_params.get('staff')
@@ -1178,11 +1168,6 @@ class PayrollViewSet(ScopedModelViewSet):
     permission_module = 'hr'
     permission_page = 'payroll'
     queryset = Payroll.objects.all()
-
-    def get_permissions(self):
-        if self.action in ('approve',):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -2247,11 +2232,6 @@ class StaffIOUViewSet(ScopedModelViewSet):
         'staff', 'created_by', 'approved_by', 'disbursement_journal'
     ).all()
     serializer_class = StaffIOUSerializer
-
-    def get_permissions(self):
-        if self.action in ('approve', 'disburse', 'adjust_balance'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.action == 'create':

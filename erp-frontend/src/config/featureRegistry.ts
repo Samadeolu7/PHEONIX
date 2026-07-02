@@ -82,6 +82,8 @@ import {
   ArrowRightLeft,
 } from 'lucide-react';
 import { getRoleRank } from '../types/roles';
+import { ROUTE_TO_PAGE } from './routeToPageMap';
+import { permissionService } from '../services/permissionService';
 
 export interface FeatureCard {
   id: string;
@@ -2136,6 +2138,34 @@ export const getFeaturesByModule = (moduleId: string): FeatureCard[] => {
 };
 
 /**
+ * Whether a single feature card is accessible to the user. Looks up the
+ * card's `path` in ROUTE_TO_PAGE to check the live page-permission matrix
+ * first (the module:page:action the card's route actually resolves to);
+ * falls back to the legacy `requiredPermission` string only when the matrix
+ * has no entry for that page yet (registry gap, same dual-mode principle as
+ * ProtectedRoute). Previously this had two DIFFERENT, inconsistent
+ * implementations (this file's getAccessibleFeatures treated an empty
+ * requiredPermission as "always visible"; AllAccessPage.tsx's separate
+ * inline filter treated it as "never visible") — this is the single shared
+ * source both now use.
+ */
+export const isFeatureAccessible = (
+  feature: FeatureCard,
+  hasPermission: (perm: string) => boolean,
+  selectedRole?: string
+): boolean => {
+  if (getRoleRank(selectedRole) >= 4) return true; // Director/Principal bypass
+
+  const mapping = ROUTE_TO_PAGE[feature.path];
+  if (mapping) {
+    const verdict = permissionService.resolvePageAccess(mapping.module, mapping.page, mapping.action);
+    if (verdict !== 'unknown') return verdict === 'allow';
+    // 'unknown' — no matrix entry yet, fall through to the legacy check.
+  }
+  return !!feature.requiredPermission && hasPermission(feature.requiredPermission);
+};
+
+/**
  * Get accessible features for a module based on user permissions.
  * Director and Principal bypass all permission checks.
  */
@@ -2144,12 +2174,8 @@ export const getAccessibleFeatures = (
   hasPermission: (perm: string) => boolean,
   selectedRole?: string
 ): FeatureCard[] => {
-  const isSuperUser = getRoleRank(selectedRole) >= 4;
-
   return FEATURE_REGISTRY.filter(
-    f =>
-      f.moduleId === moduleId &&
-      (isSuperUser || !f.requiredPermission || hasPermission(f.requiredPermission))
+    f => f.moduleId === moduleId && isFeatureAccessible(f, hasPermission, selectedRole)
   );
 };
 
@@ -2181,9 +2207,12 @@ export const getFeaturesGroupedByCategory = (
  */
 export const hasModuleAccess = (
   moduleId: string,
-  hasPermission: (perm: string) => boolean
+  hasPermission: (perm: string) => boolean,
+  selectedRole?: string
 ): boolean => {
-  return FEATURE_REGISTRY.some(f => f.moduleId === moduleId && hasPermission(f.requiredPermission));
+  return FEATURE_REGISTRY.some(
+    f => f.moduleId === moduleId && isFeatureAccessible(f, hasPermission, selectedRole)
+  );
 };
 
 /**

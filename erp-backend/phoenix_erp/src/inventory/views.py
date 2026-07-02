@@ -631,15 +631,10 @@ class StockAdjustmentViewSet(ScopedModelViewSet):
     permission_page = 'stock-adjustments'
     http_method_names = ['get', 'post', 'head', 'options']
 
-    def get_permissions(self):
-        if self.action in ('approve', 'reject'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
-
     def get_serializer_class(self):
         from inventory.models import StockAdjustmentRequest
         from rest_framework import serializers
-        
+
         class StockAdjustmentRequestSerializer(serializers.ModelSerializer):
             requested_by_name = serializers.CharField(source='requested_by.get_full_name', read_only=True)
             approved_by_name = serializers.CharField(source='approved_by.get_full_name', read_only=True, allow_null=True)

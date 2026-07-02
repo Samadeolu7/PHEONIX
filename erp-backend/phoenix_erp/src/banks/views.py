@@ -685,16 +685,21 @@ class BankTransferViewSet(ScopedModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def _is_transfer_manager(self):
-        """True for directors, admins, and branch managers who oversee all transfers."""
+        """
+        True for directors, admins, and branch managers who oversee all transfers.
+
+        Driven by RolePermissionPolicy(module='banks', page='bank-transfers').can_edit
+        — see permissions/management/commands/migrate_bank_transfer_policies.py, which
+        grants can_edit=True to director/admin/branch_manager-fragment roles (mirroring
+        this method's old staff_profile.role_level check) without granting can_approve
+        to branch_manager, preserving approve()'s narrower director/admin-only gate.
+        """
+        from permissions.services import PermissionResolver
         user = self.request.user
-        # Use the base-class check first (global-scope roles, owner, system admin)
         if self._is_elevated_user(user):
             return True
-        # Fallback: staff profile role level
-        try:
-            return user.staff_profile.role_level in ('director', 'admin', 'branch_manager')
-        except Exception:
-            return False
+        eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers')
+        return eff.can_edit
 
     def get_queryset(self):
         """Filter transfers by various criteria"""
@@ -827,10 +832,13 @@ class BankTransferViewSet(ScopedModelViewSet):
         
         # Check approval permission based on source type
         if transfer.source_type == 'bank':
-            # Bank-to-bank transfers require director approval
-            staff = getattr(request.user, 'staff_profile', None)
-            role = getattr(staff, 'role_level', None) if staff else None
-            if role not in ('director', 'admin'):
+            # Bank-to-bank transfers require director/admin approval — driven by
+            # RolePermissionPolicy(module='banks', page='bank-transfers').can_approve.
+            # See migrate_bank_transfer_policies.py for the equivalent-grant migration
+            # from the old staff_profile.role_level check this replaces.
+            from permissions.services import PermissionResolver
+            eff = PermissionResolver.resolve(request.user, module='banks', page='bank-transfers', action='approve')
+            if not eff.can_approve:
                 return Response(
                     {'error': 'Only directors can approve bank-to-bank transfers'},
                     status=status.HTTP_403_FORBIDDEN
@@ -842,10 +850,10 @@ class BankTransferViewSet(ScopedModelViewSet):
                     {'error': 'Only the destination account manager can approve this transfer'},
                     status=status.HTTP_403_FORBIDDEN
                 )
-        
+
         serializer = BankTransferActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         try:
             transfer.approve(request.user, serializer.validated_data.get('notes', ''))
             logger.info(f"Transfer {transfer.transfer_number} approved by {request.user}")
@@ -864,11 +872,11 @@ class BankTransferViewSet(ScopedModelViewSet):
         """Second approval for dual approval transfers"""
         transfer = self.get_object()
         
-        # Same role check as first approval
+        # Same check as first approval
         if transfer.source_type == 'bank':
-            staff = getattr(request.user, 'staff_profile', None)
-            role = getattr(staff, 'role_level', None) if staff else None
-            if role not in ('director', 'admin'):
+            from permissions.services import PermissionResolver
+            eff = PermissionResolver.resolve(request.user, module='banks', page='bank-transfers', action='approve')
+            if not eff.can_approve:
                 return Response(
                     {'error': 'Only directors can approve bank-to-bank transfers'},
                     status=status.HTTP_403_FORBIDDEN

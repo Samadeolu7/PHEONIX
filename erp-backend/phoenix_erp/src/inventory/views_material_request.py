@@ -40,11 +40,8 @@ class MaterialRequestViewSet(ScopedModelViewSet):
     queryset = MaterialRequest.objects.all()
     serializer_class = MaterialRequestSerializer
     permission_classes = [IsAuthenticated]
-
-    def get_permissions(self):
-        if self.action in ('approve', 'reject'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
+    permission_module = 'inventory'
+    permission_page = 'inventory-items'
 
     def get_queryset(self):
         """Filter by branch and apply search/filter parameters"""

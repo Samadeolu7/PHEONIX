@@ -45,11 +45,8 @@ class OfficeUseRequestViewSet(ScopedModelViewSet):
     queryset = OfficeUseRequest.objects.all()
     serializer_class = OfficeUseRequestSerializer
     permission_classes = [IsAuthenticated]
-
-    def get_permissions(self):
-        if self.action in ('approve', 'reject'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
+    permission_module = 'inventory'
+    permission_page = 'inventory-items'
 
     def get_queryset(self):
         qs = super().get_queryset()

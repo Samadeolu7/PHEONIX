@@ -1,21 +1,23 @@
 // src/hooks/usePermissions.ts
 import { useCallback, useState, useEffect } from 'react';
-import { permissionService, EffectivePermission } from '@/services/permissionService';
+import { permissionService, EffectivePermission, PageAction, PagePermission } from '@/services/permissionService';
 
 export const usePermission = () => {
   const [permissions, setPermissions] = useState<string[]>(permissionService.getPermissions());
   const [scope, setScope] = useState<string>(permissionService.getScope());
   const [isElevated, setIsElevated] = useState<boolean>(permissionService.isElevated());
+  const [pageMatrixVersion, setPageMatrixVersion] = useState<number>(0);
 
   useEffect(() => {
     const refresh = () => {
       setPermissions(permissionService.getPermissions());
       setScope(permissionService.getScope());
       setIsElevated(permissionService.isElevated());
+      setPageMatrixVersion(v => v + 1);
     };
 
     const handleStorage = (e: StorageEvent) => {
-      if (['userPermissions', 'userScope', 'hasElevatedOverride'].includes(e.key ?? '')) {
+      if (['userPermissions', 'userScope', 'hasElevatedOverride', 'pageMatrix'].includes(e.key ?? '')) {
         refresh();
       }
     };
@@ -80,6 +82,32 @@ export const usePermission = () => {
     [permissions]
   );
 
+  const hasPageAccess = useCallback(
+    (module: string, page: string, action: PageAction = 'view'): boolean =>
+      permissionService.hasPageAccess(module, page, action),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pageMatrixVersion]
+  );
+
+  const resolvePageAccess = useCallback(
+    (module: string, page: string, action: PageAction = 'view'): 'allow' | 'deny' | 'unknown' =>
+      permissionService.resolvePageAccess(module, page, action),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pageMatrixVersion]
+  );
+
+  const getPagePermissions = useCallback(
+    (): Record<string, PagePermission> => permissionService.getPagePermissions(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pageMatrixVersion]
+  );
+
+  const hasAnyPageAccessInModule = useCallback(
+    (module: string): boolean => permissionService.hasAnyPageAccessInModule(module),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pageMatrixVersion]
+  );
+
   return {
     permissions,
     hasPermission,
@@ -96,6 +124,11 @@ export const usePermission = () => {
     isElevated,
     getElevatedFields,
     getEffectivePermissions,
+    // Page-level (module:page) matrix
+    hasPageAccess,
+    resolvePageAccess,
+    getPagePermissions,
+    hasAnyPageAccessInModule,
   };
 };
 

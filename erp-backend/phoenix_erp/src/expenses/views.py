@@ -31,11 +31,6 @@ class ExpenseViewSet(ScopedModelViewSet):
     permission_page = 'expenses'
     permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        if self.action in ('approve', 'reject'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
-    
     def get_queryset(self):
         return Expense.objects.filter(
             branch=self.request.user.branch
@@ -342,11 +337,6 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
     permission_module = 'expenses'
     permission_page = 'resource-consumption'
     permission_classes = [IsAuthenticated]
-
-    def get_permissions(self):
-        if self.action in ('approve', 'approve_consumption', 'reject_consumption'):
-            return [IsAuthenticated(), IsApprover()]
-        return super().get_permissions()
 
     def get_queryset(self):
         queryset = ResourceConsumption.objects.filter(

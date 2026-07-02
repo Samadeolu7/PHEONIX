@@ -3,7 +3,7 @@ import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { usePermission } from '@/hooks/usePermissions';
 import { useAuth } from '../../contexts/AuthContext';
-import { FEATURE_REGISTRY, FeatureCard } from '../../config/featureRegistry';
+import { FEATURE_REGISTRY, FeatureCard, isFeatureAccessible } from '../../config/featureRegistry';
 import { BRAND } from '../../constants/brand';
 import {
   Grid,
@@ -33,8 +33,6 @@ const MODULE_NAMES = {
   administration: 'Administration',
 };
 
-import { getRoleRank } from '../../types/roles';
-
 export const AllAccessPage: React.FC = () => {
   const { hasPermission } = usePermission();
   const { selectedRole } = useAuth();
@@ -44,15 +42,13 @@ export const AllAccessPage: React.FC = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [groupByModule, setGroupByModule] = useState(true);
 
-  // Rank 4+ (Principal, Director) see every feature — no permission check needed
-  const isSuperUser = getRoleRank(selectedRole) >= 4;
-
-  // Get all accessible features across ALL modules
+  // Get all accessible features across ALL modules — shares the same
+  // page-permission-matrix-first, legacy-code-fallback logic as the module
+  // landing pages (getAccessibleFeatures), so a card's visibility here always
+  // agrees with its visibility on its own module's page.
   const accessibleFeatures = useMemo(() => {
-    return FEATURE_REGISTRY.filter(
-      feature => isSuperUser || hasPermission(feature.requiredPermission)
-    );
-  }, [isSuperUser, hasPermission]);
+    return FEATURE_REGISTRY.filter(feature => isFeatureAccessible(feature, hasPermission, selectedRole));
+  }, [hasPermission, selectedRole]);
 
   // Get unique modules from accessible features
   const availableModules = useMemo(() => {

@@ -9,6 +9,7 @@ from permissions.views import (
     RolePermissionPolicyViewSet,
     UserPermissionOverrideViewSet,
     EffectivePermissionsView,
+    BulkEffectivePermissionsView,
     PermissionExceptionReportView,
     PermissionElevationLogView,
 )
@@ -25,6 +26,7 @@ router.register(r'user-overrides',  UserPermissionOverrideViewSet, basename='use
 urlpatterns = [
     path('', include(router.urls)),
     path('effective/',        EffectivePermissionsView.as_view(),     name='permissions-effective'),
+    path('matrix/',           BulkEffectivePermissionsView.as_view(), name='permissions-matrix'),
     path('exception-report/', PermissionExceptionReportView.as_view(), name='permissions-exception-report'),
     path('elevation-log/',    PermissionElevationLogView.as_view(),    name='permissions-elevation-log'),
     # Permission setup UI endpoints
