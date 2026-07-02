@@ -674,11 +674,12 @@ class BankTransferViewSet(ScopedModelViewSet):
     def _is_transfer_manager(self):
         """True for directors, admins, and branch managers who oversee all transfers."""
         user = self.request.user
-        if getattr(user, 'is_system_admin', False):
+        # Use the base-class check first (global-scope roles, owner, system admin)
+        if self._is_elevated_user(user):
             return True
+        # Fallback: staff profile role level
         try:
-            role = user.staff_profile.role_level
-            return role in ('director', 'admin', 'branch_manager')
+            return user.staff_profile.role_level in ('director', 'admin', 'branch_manager')
         except Exception:
             return False
 
