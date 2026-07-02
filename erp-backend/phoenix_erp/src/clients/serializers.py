@@ -534,9 +534,11 @@ class GuarantorCreateSerializer(TenantModelSerializer):
     class Meta:
         model = Guarantor
         fields = [
+            'id',
             'first_name', 'middle_name', 'last_name',
             'nin', 'image', 'phone', 'gender', 'occupation', 'address',
         ]
+        read_only_fields = ['id']
         extra_kwargs = {
             'first_name': {'required': True},
             'last_name': {'required': True},
