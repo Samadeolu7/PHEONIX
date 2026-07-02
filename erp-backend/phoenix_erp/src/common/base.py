@@ -1,6 +1,6 @@
 from django.db import models
 from django.conf import settings
-from .managers import OwnerBranchManager
+from .managers import OwnerBranchManager, get_current_tenant
 
 class TimeStampedModel(models.Model):
     """
@@ -39,6 +39,24 @@ class TimeStampedModel(models.Model):
         abstract = True
         # Add composite indexes in concrete models like:
         # indexes = [models.Index(fields=['tenant', 'created_at'])]
+
+    def save(self, *args, **kwargs):
+        """
+        Default tenant from the request-scoped thread-local when a caller
+        creates a record without passing one explicitly.
+
+        Without this, any write path that doesn't go through a view built on
+        ScopedModelViewSet (which sets tenant explicitly in perform_create)
+        silently persists tenant=NULL — invisible to tenant-scoped queries
+        (like OwnerBranchManager, which every SoftDeleteModel uses) even
+        though it's still returned by anything that queries without that
+        scoping. Only fills in when unset; never overrides an explicit value.
+        """
+        if self.tenant_id is None:
+            current_tenant = get_current_tenant()
+            if current_tenant is not None:
+                self.tenant = current_tenant
+        super().save(*args, **kwargs)
 
 class BranchScopedModel(models.Model):
     """

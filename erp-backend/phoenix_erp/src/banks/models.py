@@ -1745,7 +1745,7 @@ class BankStatementLine(TimeStampedModel):
 
 # ── Daily Reconciliation (Bank-Recon Java integration) ─────────────────────────
 
-class DailyReconciliation(TimeStampedModel, BranchScopedModel):
+class DailyReconciliation(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """
     One reconciliation run for a given bank account and date.
 
