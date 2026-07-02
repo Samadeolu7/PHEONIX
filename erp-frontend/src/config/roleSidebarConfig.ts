@@ -113,10 +113,16 @@ function defaultModuleIds(role: string): Set<string> {
       return pickModules('btn-student', 'btn-bank');
 
     case 'Credit Officer':
-    case 'Officer':
+    case 'Officer': {
       // Officers see clients, savings and loans — data is scoped server-side
-      // to clients assigned to them
-      return pickModules('btn-student', 'btn-savings', 'btn-loans', 'btn-recv');
+      // to clients assigned to them. Cash Transfers is added individually
+      // (not the whole btn-bank group) so they can post cashier-to-cashier
+      // transfers without gaining visibility into bank accounts/payments/
+      // inter-bank approvals, which stay director/finance-officer-only.
+      const ids = pickModules('btn-student', 'btn-savings', 'btn-loans', 'btn-recv');
+      ids.add('leaf-treasury-cash-transfers');
+      return ids;
+    }
 
     default:
       return pickModules('btn-student', 'btn-bank');

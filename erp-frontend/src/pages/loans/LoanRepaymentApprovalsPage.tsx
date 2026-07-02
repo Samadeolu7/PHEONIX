@@ -107,8 +107,22 @@ function RequestRow({ req, onApprove, onReject, actionLoading }: RequestRowProps
         <p className="text-sm font-medium text-gray-900">{req.client_name}</p>
         <p className="text-xs text-gray-500">{req.loan_number}</p>
       </td>
-      <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
-        ₦{fmt(req.amount)}
+      <td className="px-4 py-3 text-sm text-gray-900">
+        <p>₦{fmt(req.amount)}</p>
+        {req.covered_installments_detail?.length > 0 && (
+          <p className="mt-0.5 text-xs text-gray-500">
+            Installment{req.covered_installments_detail.length > 1 ? 's' : ''}{' '}
+            #{req.covered_installments_detail[0].installment_number}
+            {req.covered_installments_detail.length > 1
+              ? `–#${req.covered_installments_detail[req.covered_installments_detail.length - 1].installment_number}`
+              : ''}
+            {req.covered_installments_detail.some(s => s.status === 'overdue') && (
+              <span className="ml-1 rounded-full bg-red-100 px-1.5 py-0.5 font-medium text-red-700">
+                overdue
+              </span>
+            )}
+          </p>
+        )}
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-600">
         {req.savings_account_number}

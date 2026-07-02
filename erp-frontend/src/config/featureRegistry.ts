@@ -430,7 +430,7 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
       'Record cash movements between cashier accounts and bank accounts with approval workflow and GL journal entry generation.',
     path: '/treasury/cash-transfers',
     icon: ArrowRight,
-    requiredPermission: '',
+    requiredPermission: 'treasury-list',
     moduleId: 'bank',
     category: 'Banking',
     isNew: true,
