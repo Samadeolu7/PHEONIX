@@ -117,9 +117,12 @@ export interface BankTransfer {
   source_bank_account_number?: string;
   source_display?: string;
   // Destination
-  destination_bank_account: number;
+  destination_type: 'cashier' | 'bank';
+  destination_bank_account?: number;
   destination_bank_account_number?: string;
   destination_bank_name?: string;
+  destination_cashier_account?: number;
+  destination_cashier_name?: string;
   destination_display?: string;
   // Amount and details
   amount: string;
@@ -127,6 +130,11 @@ export interface BankTransfer {
   reference_number: string;
   // Workflow
   status: 'draft' | 'pending' | 'approved' | 'rejected' | 'completed' | 'failed';
+  // Server-computed: can the current user approve this transfer right now
+  // (mirrors BankTransferViewSet.approve()'s permission branches exactly —
+  // director/admin for bank-to-bank, destination cashier for cashier-to-
+  // cashier, destination account manager for cashier-to-bank).
+  can_approve?: boolean;
   initiated_by: number;
   initiated_by_name?: string;
   initiated_at: string;
@@ -164,7 +172,9 @@ export interface CreateBankTransferRequest {
   source_type: 'cashier' | 'bank';
   source_cashier_account?: number;
   source_bank_account?: number;
-  destination_bank_account: number;
+  destination_type: 'cashier' | 'bank';
+  destination_bank_account?: number;
+  destination_cashier_account?: number;
   transfer_date?: string;
   amount: string;
   description: string;

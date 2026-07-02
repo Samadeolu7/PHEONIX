@@ -705,9 +705,16 @@ class BankTransferViewSet(ScopedModelViewSet):
         """Filter transfers by various criteria"""
         queryset = super().get_queryset()
 
-        # Regular users only see their own transfers; managers/directors see all.
+        # Regular users see their own initiated transfers, plus any cashier-to-
+        # cashier transfer pending their approval as the destination cashier
+        # (they're neither the initiator nor a transfer manager, so without this
+        # they'd never be able to discover a transfer sent to them).
+        # Managers/directors see all.
         if not self._is_transfer_manager():
-            queryset = queryset.filter(initiated_by=self.request.user)
+            queryset = queryset.filter(
+                Q(initiated_by=self.request.user) |
+                Q(destination_cashier_account__cashier=self.request.user)
+            )
 
         # Filter by status
         status_filter = self.request.query_params.get('status')
@@ -756,6 +763,7 @@ class BankTransferViewSet(ScopedModelViewSet):
             'source_cashier_account',
             'source_bank_account',
             'destination_bank_account',
+            'destination_cashier_account',
             'initiated_by',
             'approved_by',
             'second_approved_by'
@@ -830,7 +838,7 @@ class BankTransferViewSet(ScopedModelViewSet):
         """Approve transfer (first approval)"""
         transfer = self.get_object()
         
-        # Check approval permission based on source type
+        # Check approval permission based on source/destination type
         if transfer.source_type == 'bank':
             # Bank-to-bank transfers require director/admin approval — driven by
             # RolePermissionPolicy(module='banks', page='bank-transfers').can_approve.
@@ -841,6 +849,14 @@ class BankTransferViewSet(ScopedModelViewSet):
             if not eff.can_approve:
                 return Response(
                     {'error': 'Only directors can approve bank-to-bank transfers'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        elif transfer.destination_type == 'cashier':
+            # Cashier-to-cashier transfers require the destination cashier
+            if not transfer.destination_cashier_account or \
+               transfer.destination_cashier_account.cashier != request.user:
+                return Response(
+                    {'error': 'Only the destination cashier can approve this transfer'},
                     status=status.HTTP_403_FORBIDDEN
                 )
         else:
@@ -872,6 +888,15 @@ class BankTransferViewSet(ScopedModelViewSet):
         """Second approval for dual approval transfers"""
         transfer = self.get_object()
         
+        # Cashier-to-cashier transfers are single-approval only (see approve()'s
+        # dual-approval gate) and structurally never reach this state, but reject
+        # explicitly here too rather than relying solely on that being true.
+        if transfer.destination_type == 'cashier':
+            return Response(
+                {'error': 'Cashier-to-cashier transfers do not require or support second approval.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Same check as first approval
         if transfer.source_type == 'bank':
             from permissions.services import PermissionResolver
@@ -887,7 +912,7 @@ class BankTransferViewSet(ScopedModelViewSet):
                     {'error': 'Only the destination account manager can approve this transfer'},
                     status=status.HTTP_403_FORBIDDEN
                 )
-        
+
         serializer = BankTransferActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         

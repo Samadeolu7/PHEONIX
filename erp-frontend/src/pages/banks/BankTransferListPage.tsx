@@ -359,7 +359,8 @@ const BankTransferListPage: React.FC = () => {
                     <td className="px-4 py-3 text-gray-700 max-w-[160px] truncate">
                       {transfer.destination_display ||
                         transfer.destination_bank_account_number ||
-                        String(transfer.destination_bank_account)}
+                        transfer.destination_cashier_name ||
+                        '—'}
                     </td>
 
                     {/* Amount */}
@@ -406,8 +407,15 @@ const BankTransferListPage: React.FC = () => {
                           </>
                         )}
 
-                        {/* Approve / Reject (pending, approver only) */}
-                        {transfer.status === 'pending' && canUserApprove && (
+                        {/* Approve / Reject (pending, approver only). canUserApprove is a
+                            coarse, role-rank-only gate (director/principal) that would hide
+                            this from any lower-ranked approver — e.g. the destination cashier
+                            on a cashier-to-cashier transfer, or a bank account manager on a
+                            cashier-to-bank transfer. transfer.can_approve is the precise,
+                            per-transfer, server-computed check (mirrors approve()'s actual
+                            permission branches) — combine both so directors keep working via
+                            the fast global check and everyone else is gated correctly. */}
+                        {transfer.status === 'pending' && (canUserApprove || transfer.can_approve) && (
                           <>
                             <button
                               onClick={() => handleApprove(transfer)}

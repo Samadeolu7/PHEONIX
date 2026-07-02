@@ -16,10 +16,12 @@ const BankTransferFormPage: React.FC = () => {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [sourceType, setSourceType] = useState<'bank' | 'cashier'>('bank');
+  const [destinationType, setDestinationType] = useState<'bank' | 'cashier'>('bank');
   const [formData, setFormData] = useState<CreateBankTransferRequest>({
     source_type: 'bank',
     source_bank_account: undefined,
-    destination_bank_account: 0,
+    destination_type: 'bank',
+    destination_bank_account: undefined,
     amount: '',
     description: '',
     reference_number: '',
@@ -47,6 +49,21 @@ const BankTransferFormPage: React.FC = () => {
   // will always fail.
   const myCashierAccounts = cashierAccounts.filter(acc => acc.cashier === user?.id);
 
+  // Cashier-to-cashier destination: any active cashier account except your own
+  // (you're sending TO someone else) and the currently-selected source account,
+  // restricted to the same branch as the selected source cashier account — the
+  // backend enforces same-branch for cashier-to-cashier transfers, so this
+  // avoids offering a choice that will always fail validation.
+  const sourceCashierBranch = cashierAccounts.find(
+    acc => acc.id === formData.source_cashier_account
+  )?.branch;
+  const destinationCashierAccounts = cashierAccounts.filter(
+    acc =>
+      acc.cashier !== user?.id &&
+      acc.id !== formData.source_cashier_account &&
+      (sourceCashierBranch === undefined || acc.branch === sourceCashierBranch)
+  );
+
   const loadAccounts = async () => {
     const [banksResult, cashiersResult] = await Promise.allSettled([
       bankService.listBankAccounts({ is_active: true }),
@@ -60,11 +77,28 @@ const BankTransferFormPage: React.FC = () => {
 
   const handleSourceTypeChange = (st: 'bank' | 'cashier') => {
     setSourceType(st);
+    // Cashier destinations only make sense for a cashier source (bank-to-cashier
+    // isn't supported) — reset to bank destination when switching away.
+    const nextDestinationType = st === 'cashier' ? destinationType : 'bank';
+    setDestinationType(nextDestinationType);
     setFormData({
       ...formData,
       source_type: st,
       source_bank_account: undefined,
       source_cashier_account: undefined,
+      destination_type: nextDestinationType,
+      destination_bank_account: undefined,
+      destination_cashier_account: undefined,
+    });
+  };
+
+  const handleDestinationTypeChange = (dt: 'bank' | 'cashier') => {
+    setDestinationType(dt);
+    setFormData({
+      ...formData,
+      destination_type: dt,
+      destination_bank_account: undefined,
+      destination_cashier_account: undefined,
     });
   };
 
@@ -89,8 +123,19 @@ const BankTransferFormPage: React.FC = () => {
           throw new Error('Please select a source cashier account');
         }
       }
-      if (!formData.destination_bank_account) {
-        throw new Error('Please select a destination account');
+      if (destinationType === 'cashier') {
+        if (sourceType !== 'cashier') {
+          throw new Error(
+            'Cashier destinations are only available for cashier-to-cashier transfers'
+          );
+        }
+        if (!formData.destination_cashier_account) {
+          throw new Error('Please select a destination cashier account');
+        }
+      } else {
+        if (!formData.destination_bank_account) {
+          throw new Error('Please select a destination account');
+        }
       }
       if (
         !formData.amount ||
@@ -130,10 +175,12 @@ const BankTransferFormPage: React.FC = () => {
           className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4"
         >
           <ArrowLeft className="w-5 h-5" />
-          Back to Inter-bank Transfers
+          Back to Bank Transfers
         </button>
-        <h1 className="text-3xl font-bold text-gray-900">New Inter-bank Transfer</h1>
-        <p className="text-gray-600 mt-1">Move funds between bank accounts</p>
+        <h1 className="text-3xl font-bold text-gray-900">New Bank Transfer</h1>
+        <p className="text-gray-600 mt-1">
+          Move funds between bank accounts, cashier floats, or between cashiers
+        </p>
       </div>
 
       <div className="bg-white rounded-lg shadow p-6">
@@ -226,33 +273,85 @@ const BankTransferFormPage: React.FC = () => {
             )}
           </div>
 
+          {/* Destination Type — cashier destinations only apply to a cashier source */}
+          {sourceType === 'cashier' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Destination Type
+              </label>
+              <div className="flex gap-4">
+                {(['bank', 'cashier'] as const).map(dt => (
+                  <label key={dt} className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="radio"
+                      name="destinationType"
+                      value={dt}
+                      checked={destinationType === dt}
+                      onChange={() => handleDestinationTypeChange(dt)}
+                      className="accent-blue-600"
+                    />
+                    <span className="text-sm text-gray-700 capitalize">
+                      {dt === 'bank' ? 'Bank Account' : 'Cashier Account'}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Destination Account */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Destination Bank Account *
+              Destination {destinationType === 'bank' ? 'Bank' : 'Cashier'} Account *
             </label>
-            <select
-              required
-              value={formData.destination_bank_account || ''}
-              onChange={e =>
-                setFormData({
-                  ...formData,
-                  destination_bank_account: Number(e.target.value),
-                })
-              }
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            >
-              <option value="">Select destination account...</option>
-              {destinationAccounts.map(acc => (
-                <option key={acc.id} value={acc.id}>
-                  {acc.account_name} ({acc.account_number}) - {acc.bank_name}
-                  {acc.is_cashier_collection_account && ' [Collection Account]'}
-                </option>
-              ))}
-            </select>
-            {destinationAccounts.length === 0 && (
+            {destinationType === 'cashier' ? (
+              <select
+                required
+                value={formData.destination_cashier_account || ''}
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    destination_cashier_account: Number(e.target.value),
+                  })
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">Select destination cashier account...</option>
+                {destinationCashierAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.name} ({acc.account_number})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                required
+                value={formData.destination_bank_account || ''}
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    destination_bank_account: Number(e.target.value),
+                  })
+                }
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">Select destination account...</option>
+                {destinationAccounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.account_name} ({acc.account_number}) - {acc.bank_name}
+                    {acc.is_cashier_collection_account && ' [Collection Account]'}
+                  </option>
+                ))}
+              </select>
+            )}
+            {destinationType === 'bank' && destinationAccounts.length === 0 && (
               <p className="text-sm text-amber-600 mt-1">
                 Select a source account to see available destinations.
+              </p>
+            )}
+            {destinationType === 'cashier' && destinationCashierAccounts.length === 0 && (
+              <p className="text-sm text-amber-600 mt-1">
+                No other active cashier accounts found in this branch.
               </p>
             )}
           </div>

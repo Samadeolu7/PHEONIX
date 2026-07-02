@@ -255,6 +255,16 @@ class BankTransferSerializer(TenantModelSerializer):
         allow_null=True,
     )
 
+    # Destination cashier account (cashier-to-cashier transfers). Unlike
+    # source_cashier_account, this is NOT narrowed to "your own" account in
+    # get_fields() below — you're sending TO someone else's float, scoped to
+    # same-branch active cashier accounts instead.
+    destination_cashier_account = serializers.PrimaryKeyRelatedField(
+        queryset=CashierAccount.objects.filter(is_active=True, is_suspended=False),
+        required=False,
+        allow_null=True,
+    )
+
     # Read-only display fields
     source_display = serializers.SerializerMethodField()
     destination_display = serializers.SerializerMethodField()
@@ -263,18 +273,20 @@ class BankTransferSerializer(TenantModelSerializer):
     second_approved_by_name = serializers.SerializerMethodField()
     rejected_by_name = serializers.SerializerMethodField()
     completed_by_name = serializers.SerializerMethodField()
-    
+    can_approve = serializers.SerializerMethodField()
+
     # Status display
     status_display = serializers.CharField(source='get_status_display', read_only=True)
-    
+
     class Meta:
         model = BankTransfer
         fields = [
             'id', 'transfer_number', 'transfer_date',
             'source_type', 'source_cashier_account', 'source_bank_account',
-            'source_display', 'destination_bank_account', 'destination_display',
+            'source_display', 'destination_type', 'destination_bank_account',
+            'destination_cashier_account', 'destination_display',
             'amount', 'description', 'reference_number',
-            'status', 'status_display',
+            'status', 'status_display', 'can_approve',
             'initiated_by', 'initiated_by_name', 'initiated_at',
             'approved_by', 'approved_by_name', 'approved_at', 'approval_notes',
             'second_approved_by', 'second_approved_by_name', 'second_approved_at', 'second_approval_notes',
@@ -318,6 +330,15 @@ class BankTransferSerializer(TenantModelSerializer):
                         bank_qs = bank_qs.filter(tenant=tenant)
                 fields['source_bank_account'].queryset = bank_qs
 
+            # destination_cashier_account: same-branch active cashier accounts
+            # (cashier-to-cashier transfers are branch-restricted — see
+            # BankTransfer.clean()). Not narrowed to "own account" — the whole
+            # point is sending to someone else's float.
+            if 'destination_cashier_account' in fields and branch:
+                fields['destination_cashier_account'].queryset = CashierAccount.objects.filter(
+                    is_active=True, is_suspended=False, branch=branch
+                )
+
         return fields
 
     def get_source_display(self, obj):
@@ -330,10 +351,39 @@ class BankTransferSerializer(TenantModelSerializer):
     
     def get_destination_display(self, obj):
         """Get human-readable destination account"""
+        if obj.destination_type == 'cashier' and obj.destination_cashier_account:
+            return f"Cashier: {obj.destination_cashier_account.name}"
         if obj.destination_bank_account:
             return f"{obj.destination_bank_account.bank.bank_name} - {obj.destination_bank_account.account_number}"
         return "Unknown"
     
+    def get_can_approve(self, obj):
+        """
+        Whether the requesting user could successfully call approve() on this
+        transfer right now — mirrors BankTransferViewSet.approve()'s permission
+        branches exactly. Exists because the frontend's approve button was
+        previously gated by a single global role-rank check (useApprovalGuard,
+        rank >= 4) with no per-transfer awareness, which would hide the button
+        entirely from a destination cashier approving a cashier-to-cashier
+        transfer (cashiers are not rank >= 4). Computed server-side so the
+        frontend never needs to know cashier/account-manager ownership details
+        itself, and stays correct if the approval rules change later.
+        """
+        request = self.context.get('request')
+        user = getattr(request, 'user', None) if request else None
+        if not user or not getattr(user, 'is_authenticated', False):
+            return False
+        if obj.status != 'pending':
+            return False
+
+        if obj.source_type == 'bank':
+            from permissions.services import PermissionResolver
+            eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers', action='approve')
+            return bool(eff.can_approve)
+        if obj.destination_type == 'cashier':
+            return bool(obj.destination_cashier_account and obj.destination_cashier_account.cashier == user)
+        return bool(obj.destination_bank_account and obj.destination_bank_account.account_manager == user)
+
     def get_initiated_by_name(self, obj):
         if obj.initiated_by:
             return obj.initiated_by.get_full_name() or obj.initiated_by.username
@@ -389,19 +439,60 @@ class BankTransferSerializer(TenantModelSerializer):
             raise serializers.ValidationError({
                 'amount': 'Transfer amount must be greater than zero.'
             })
-        
-        # Validate destination account
-        destination = data.get('destination_bank_account')
-        if destination and not destination.is_active:
-            raise serializers.ValidationError({
-                'destination_bank_account': 'Destination bank account is not active.'
-            })
-        
-        if destination and destination.is_suspended:
-            raise serializers.ValidationError({
-                'destination_bank_account': 'Destination bank account is suspended.'
-            })
-        
+
+        # Validate destination account based on type
+        destination_type = data.get('destination_type', 'bank')
+        destination_bank = data.get('destination_bank_account')
+        destination_cashier = data.get('destination_cashier_account')
+
+        if destination_type == 'cashier':
+            if not destination_cashier:
+                raise serializers.ValidationError({
+                    'destination_cashier_account': 'Destination cashier account is required when destination type is cashier.'
+                })
+            if destination_bank:
+                raise serializers.ValidationError({
+                    'destination_bank_account': 'Bank account should be empty when destination type is cashier.'
+                })
+            if source_type != 'cashier':
+                raise serializers.ValidationError({
+                    'destination_type': 'Bank-to-cashier transfers are not supported. Cashier-to-cashier only.'
+                })
+            source_cashier = data.get('source_cashier_account')
+            if source_cashier and destination_cashier and source_cashier == destination_cashier:
+                raise serializers.ValidationError({
+                    'destination_cashier_account': 'Source and destination cashier accounts must be different.'
+                })
+            if source_cashier and destination_cashier and source_cashier.branch_id != destination_cashier.branch_id:
+                raise serializers.ValidationError({
+                    'destination_cashier_account': 'Cashier-to-cashier transfers must be within the same branch.'
+                })
+            if not destination_cashier.is_active:
+                raise serializers.ValidationError({
+                    'destination_cashier_account': 'Destination cashier account is not active.'
+                })
+            if destination_cashier.is_suspended:
+                raise serializers.ValidationError({
+                    'destination_cashier_account': 'Destination cashier account is suspended.'
+                })
+        else:
+            if not destination_bank:
+                raise serializers.ValidationError({
+                    'destination_bank_account': 'Bank account is required when destination type is bank.'
+                })
+            if destination_cashier:
+                raise serializers.ValidationError({
+                    'destination_cashier_account': 'Cashier account should be empty when destination type is bank.'
+                })
+            if not destination_bank.is_active:
+                raise serializers.ValidationError({
+                    'destination_bank_account': 'Destination bank account is not active.'
+                })
+            if destination_bank.is_suspended:
+                raise serializers.ValidationError({
+                    'destination_bank_account': 'Destination bank account is suspended.'
+                })
+
         return data
 
 

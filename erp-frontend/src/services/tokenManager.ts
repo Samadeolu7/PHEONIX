@@ -26,12 +26,11 @@ class TokenManager {
     });
   }
 
-  // Get current tokens from storage
+  // Get current tokens from storage. Tab-scoped (sessionStorage only) so a
+  // login on one browser tab can never override an active session in another.
   getTokens() {
-    const accessToken =
-      localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-    const refreshToken =
-      localStorage.getItem('refreshToken') || sessionStorage.getItem('refreshToken');
+    const accessToken = sessionStorage.getItem('accessToken');
+    const refreshToken = sessionStorage.getItem('refreshToken');
     return { accessToken, refreshToken };
   }
 
@@ -43,16 +42,10 @@ class TokenManager {
 
   // Store tokens and notify listeners
   setTokens(tokens: { access: string; refresh?: string }) {
-    // Determine storage type based on remember me preference
-    const rememberMe = localStorage.getItem('rememberMe') === 'true';
-    const storage = rememberMe ? localStorage : sessionStorage;
+    sessionStorage.setItem('accessToken', tokens.access);
 
-    // Save new access token
-    storage.setItem('accessToken', tokens.access);
-
-    // Save new refresh token if provided
     if (tokens.refresh) {
-      storage.setItem('refreshToken', tokens.refresh);
+      sessionStorage.setItem('refreshToken', tokens.refresh);
     }
 
     // Notify all listeners about the token refresh

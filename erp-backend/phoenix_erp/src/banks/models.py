@@ -451,14 +451,35 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text="Source bank account (if transferring from bank)"
     )
     
-    # Destination (always a bank account)
+    # Destination
+    destination_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('bank', 'Bank Account'),
+            ('cashier', 'Cashier Account'),
+        ],
+        default='bank',
+        help_text="Type of destination account"
+    )
+
     destination_bank_account = models.ForeignKey(
         BankAccount,
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name='incoming_transfers',
-        help_text="Destination bank account"
+        help_text="Destination bank account (if destination type is bank)"
     )
-    
+
+    destination_cashier_account = models.ForeignKey(
+        'cash_management.CashierAccount',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='incoming_transfers',
+        help_text="Destination cashier account (if destination type is cashier)"
+    )
+
     # Transfer amount
     amount = models.DecimalField(
         max_digits=18,
@@ -630,7 +651,43 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 raise ValidationError({
                     'source_cashier_account': 'Cashier account should be empty when source type is bank.'
                 })
-        
+
+        # Validate destination account based on type
+        if self.destination_type == 'cashier':
+            if not self.destination_cashier_account:
+                raise ValidationError({
+                    'destination_cashier_account': 'Destination cashier account is required when destination type is cashier.'
+                })
+            if self.destination_bank_account:
+                raise ValidationError({
+                    'destination_bank_account': 'Bank account should be empty when destination type is cashier.'
+                })
+            # Scope boundary: bank-to-cashier is not currently supported.
+            if self.source_type != 'cashier':
+                raise ValidationError({
+                    'destination_type': 'Cashier-to-cashier is the only supported cashier destination path. '
+                                         'Bank-to-cashier transfers are not currently supported.'
+                })
+            if self.source_cashier_account_id and self.destination_cashier_account_id and \
+               self.source_cashier_account_id == self.destination_cashier_account_id:
+                raise ValidationError({
+                    'destination_cashier_account': 'Source and destination cashier accounts must be different.'
+                })
+            if self.source_cashier_account_id and self.destination_cashier_account_id and \
+               self.source_cashier_account.branch_id != self.destination_cashier_account.branch_id:
+                raise ValidationError({
+                    'destination_cashier_account': 'Cashier-to-cashier transfers must be within the same branch.'
+                })
+        elif self.destination_type == 'bank':
+            if not self.destination_bank_account:
+                raise ValidationError({
+                    'destination_bank_account': 'Bank account is required when destination type is bank.'
+                })
+            if self.destination_cashier_account:
+                raise ValidationError({
+                    'destination_cashier_account': 'Cashier account should be empty when destination type is bank.'
+                })
+
         # Validate amount
         if self.amount <= 0:
             raise ValidationError({
@@ -652,6 +709,7 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     })
         
         # Cashiers may transfer to any active bank account — no collection-account restriction.
+        # Cashier-to-cashier transfers, however, are restricted to the same branch (see above).
     
     def save(self, *args, **kwargs):
         """Auto-generate transfer number"""
@@ -707,8 +765,10 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.approved_at = timezone.now()
         self.approval_notes = notes
         
-        # Check if dual approval is required
-        if self.destination_bank_account.requires_dual_approval and \
+        # Check if dual approval is required. Cashier-to-cashier transfers never
+        # require dual approval, regardless of any CashierAccount-side flag — this
+        # gate only ever applies to a bank destination.
+        if self.destination_type == 'bank' and self.destination_bank_account.requires_dual_approval and \
            self.destination_bank_account.dual_approval_threshold and \
            self.amount >= self.destination_bank_account.dual_approval_threshold:
             # Require second approval
@@ -725,7 +785,10 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """Second approval for dual approval transfers"""
         if self.status != 'approved':
             raise ValidationError('Transfer must be in approved status for second approval.')
-        
+
+        if self.destination_type == 'cashier':
+            raise ValidationError('Cashier-to-cashier transfers do not support second approval.')
+
         if not self.destination_bank_account.requires_dual_approval:
             raise ValidationError('This transfer does not require dual approval.')
         
@@ -758,8 +821,8 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if self.status == 'completed':
             raise ValidationError('Transfer already completed.')
         
-        # Validate approvals
-        if self.destination_bank_account.requires_dual_approval and \
+        # Validate approvals (cashier-to-cashier is never dual-approval — see approve())
+        if self.destination_type == 'bank' and self.destination_bank_account.requires_dual_approval and \
            self.destination_bank_account.dual_approval_threshold and \
            self.amount >= self.destination_bank_account.dual_approval_threshold:
             if not self.second_approved_by:
@@ -792,10 +855,14 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             source_gl_account = self.source_cashier_account.account
         else:
             source_gl_account = self.source_bank_account.gl_account
-        
-        destination_gl_account = self.destination_bank_account.gl_account
-        
-        # Dr: Destination Bank Account (increase asset)
+
+        # Determine destination account
+        if self.destination_type == 'cashier':
+            destination_gl_account = self.destination_cashier_account.account
+        else:
+            destination_gl_account = self.destination_bank_account.gl_account
+
+        # Dr: Destination Account (increase asset)
         JournalEntryLine.objects.create(
             transaction=journal_entry,
             account=destination_gl_account,
@@ -825,11 +892,17 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if self.source_type == 'cashier':
             self.source_cashier_account.current_balance -= self.amount
             self.source_cashier_account.save(update_fields=['current_balance'])
-        
-        # Sync bank account balances with GL accounts
+
+        # Sync source bank account balance with GL accounts
         if self.source_type == 'bank':
             self.source_bank_account.save()  # Triggers balance sync
-        self.destination_bank_account.save()  # Triggers balance sync
+
+        # Update destination balance
+        if self.destination_type == 'cashier':
+            self.destination_cashier_account.current_balance += self.amount
+            self.destination_cashier_account.save(update_fields=['current_balance'])
+        else:
+            self.destination_bank_account.save()  # Triggers balance sync
 
 
 class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

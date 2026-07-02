@@ -61,16 +61,28 @@ export interface UpdateProfileData {
   email?: string;
 }
 
+// Legacy keys this app used to persist to localStorage before sessions were
+// made tab-scoped. A stale entry here means a previous login is still
+// sitting in browser-wide storage, ready to hijack whichever tab reads it
+// next — always purge them rather than trust anything found there.
+const LEGACY_LOCAL_STORAGE_KEYS = [
+  'accessToken',
+  'refreshToken',
+  'user',
+  'rememberMe',
+  'savedCredentials',
+];
+
 class AuthService {
   private readonly TOKEN_KEY = 'accessToken';
   private readonly REFRESH_TOKEN_KEY = 'refreshToken';
   private readonly USER_KEY = 'user';
-  private readonly REMEMBER_ME_KEY = 'rememberMe';
 
-  async login(
-    credentials: LoginCredentials,
-    rememberMe: boolean = false
-  ): Promise<{ tokens: AuthTokens; user: User }> {
+  constructor() {
+    LEGACY_LOCAL_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
+  }
+
+  async login(credentials: LoginCredentials): Promise<{ tokens: AuthTokens; user: User }> {
     try {
       const response = await api.post('/users/auth/login/', credentials);
 
@@ -101,15 +113,9 @@ class AuthService {
           : user.roles_permission_codes || [];
       user.permissions = effectivePermissions;
 
-      // Store tokens and user based on remember me preference
-      this.setTokens(tokens, rememberMe);
-      this.setUser(user, rememberMe);
-
-      // Store permissions in localStorage for permissionService
-      localStorage.setItem('userPermissions', JSON.stringify(effectivePermissions));
-      if (user.role_permission_codes) {
-        localStorage.setItem('rolePermissions', JSON.stringify(user.role_permission_codes));
-      }
+      // Store tokens and user (tab-scoped — see setTokens/setUser)
+      this.setTokens(tokens);
+      this.setUser(user);
 
       // Initialise the permission service with the new user's data. This
       // sets the in-memory cache (isSuperUser, userRoles, excludedPermissions)
@@ -187,9 +193,7 @@ class AuthService {
         refreshChanged: tokens.refresh !== refreshToken,
       });
 
-      // Preserve the remember me preference when refreshing tokens
-      const rememberMe = this.getRememberMePreference();
-      this.setTokens(tokens, rememberMe);
+      this.setTokens(tokens);
       return tokens;
     } catch (error: any) {
       console.error('Token refresh error:', error);
@@ -202,8 +206,7 @@ class AuthService {
     try {
       const response = await api.get('/users/auth/me/');
       const user = response;
-      const rememberMe = this.getRememberMePreference();
-      this.setUser(user, rememberMe);
+      this.setUser(user);
       return user;
     } catch (error: any) {
       console.error('Get current user error:', error);
@@ -224,8 +227,7 @@ class AuthService {
     try {
       const response = await api.put('/users/auth/update-profile/', data);
       const user = response.user;
-      const rememberMe = this.getRememberMePreference();
-      this.setUser(user, rememberMe);
+      this.setUser(user);
       return user;
     } catch (error: any) {
       console.error('Update profile error:', error);
@@ -252,28 +254,23 @@ class AuthService {
   }
 
   logout(): void {
-    localStorage.removeItem(this.TOKEN_KEY);
-    localStorage.removeItem(this.REFRESH_TOKEN_KEY);
-    localStorage.removeItem(this.USER_KEY);
-    localStorage.removeItem(this.REMEMBER_ME_KEY);
-    localStorage.removeItem('savedCredentials'); // Clear saved login credentials
     sessionStorage.removeItem(this.TOKEN_KEY);
     sessionStorage.removeItem(this.REFRESH_TOKEN_KEY);
     sessionStorage.removeItem(this.USER_KEY);
+    // Defensive: purge any pre-fix localStorage remnants too.
+    LEGACY_LOCAL_STORAGE_KEYS.forEach(key => localStorage.removeItem(key));
   }
 
   getStoredToken(): string | null {
-    return localStorage.getItem(this.TOKEN_KEY) || sessionStorage.getItem(this.TOKEN_KEY);
+    return sessionStorage.getItem(this.TOKEN_KEY);
   }
 
   getRefreshToken(): string | null {
-    return (
-      localStorage.getItem(this.REFRESH_TOKEN_KEY) || sessionStorage.getItem(this.REFRESH_TOKEN_KEY)
-    );
+    return sessionStorage.getItem(this.REFRESH_TOKEN_KEY);
   }
 
   getStoredUser(): User | null {
-    const userStr = localStorage.getItem(this.USER_KEY) || sessionStorage.getItem(this.USER_KEY);
+    const userStr = sessionStorage.getItem(this.USER_KEY);
     if (!userStr) return null;
     try {
       return JSON.parse(userStr);
@@ -282,32 +279,22 @@ class AuthService {
     }
   }
 
-  getRememberMePreference(): boolean {
-    return localStorage.getItem(this.REMEMBER_ME_KEY) === 'true';
-  }
-
   isAuthenticated(): boolean {
     return !!this.getStoredToken();
   }
 
-  private setTokens(tokens: AuthTokens, rememberMe: boolean = false): void {
-    const storage = rememberMe ? localStorage : sessionStorage;
-    storage.setItem(this.TOKEN_KEY, tokens.access);
+  // Tab-scoped by design: sessionStorage is never shared across browser
+  // tabs, so a login on a shared branch terminal can't hijack a session
+  // still active in another tab.
+  private setTokens(tokens: AuthTokens): void {
+    sessionStorage.setItem(this.TOKEN_KEY, tokens.access);
     if (tokens.refresh) {
-      storage.setItem(this.REFRESH_TOKEN_KEY, tokens.refresh);
-    }
-
-    // Store remember me preference in localStorage regardless
-    if (rememberMe) {
-      localStorage.setItem(this.REMEMBER_ME_KEY, 'true');
-    } else {
-      localStorage.removeItem(this.REMEMBER_ME_KEY);
+      sessionStorage.setItem(this.REFRESH_TOKEN_KEY, tokens.refresh);
     }
   }
 
-  private setUser(user: User, rememberMe: boolean = false): void {
-    const storage = rememberMe ? localStorage : sessionStorage;
-    storage.setItem(this.USER_KEY, JSON.stringify(user));
+  private setUser(user: User): void {
+    sessionStorage.setItem(this.USER_KEY, JSON.stringify(user));
   }
 
   hasRole(role: string): boolean {

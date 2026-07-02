@@ -101,9 +101,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // --- Real backend loaders ---
   const loadUserReal = async () => {
     try {
-      // Check for tokens stored by authService (both localStorage and sessionStorage)
-      const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-      const storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
+      // Tab-scoped: sessionStorage only. authService.login() no longer persists
+      // to localStorage, which used to let a login in one tab silently take
+      // over a session still active in another tab on the same machine.
+      const token = sessionStorage.getItem('accessToken');
+      const storedUser = sessionStorage.getItem('user');
 
       if (!token) {
         setUser(null);
@@ -137,10 +139,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (response.ok) {
         const userData = await response.json();
-        // Store user using the same storage type as the token
-        const rememberMe = localStorage.getItem('rememberMe') === 'true';
-        const storage = rememberMe ? localStorage : sessionStorage;
-        storage.setItem('user', JSON.stringify(userData));
+        sessionStorage.setItem('user', JSON.stringify(userData));
         setUser(userData);
 
         // Hydrate permissionService (permissions, scope, page matrix) — the
@@ -152,11 +151,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Set selected role from user roles
         setSelectedRoleFromUser(userData);
       } else {
-        // Clear all storage locations
-        localStorage.removeItem('accessToken');
-        localStorage.removeItem('refreshToken');
-        localStorage.removeItem('user');
-        localStorage.removeItem('rememberMe');
         sessionStorage.removeItem('accessToken');
         sessionStorage.removeItem('refreshToken');
         sessionStorage.removeItem('user');
@@ -187,14 +181,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const data = await response.json();
-    // Store tokens using same keys as authService
+    // Store tokens using same keys/storage as authService (tab-scoped)
     if (data.access) {
-      localStorage.setItem('accessToken', data.access);
-      localStorage.setItem('refreshToken', data.refresh);
+      sessionStorage.setItem('accessToken', data.access);
+      sessionStorage.setItem('refreshToken', data.refresh);
     }
     // Set user from response
     const userData = data.user ?? data;
-    localStorage.setItem('user', JSON.stringify(userData));
+    sessionStorage.setItem('user', JSON.stringify(userData));
     setUser(userData);
 
     // Set selected role from user roles
@@ -202,17 +196,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logoutReal = () => {
-    // Clear all storage locations
-    localStorage.removeItem('accessToken');
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('user');
-    localStorage.removeItem('rememberMe');
-    localStorage.removeItem('savedCredentials');
-    localStorage.removeItem('userPermissions'); // Clear permissions
-    localStorage.removeItem('rolePermissions'); // Clear role permissions
     sessionStorage.removeItem('accessToken');
     sessionStorage.removeItem('refreshToken');
     sessionStorage.removeItem('user');
+    // Defensive: purge any pre-fix localStorage remnants too.
+    ['accessToken', 'refreshToken', 'user', 'rememberMe', 'savedCredentials'].forEach(key =>
+      localStorage.removeItem(key)
+    );
 
     // Clear role selection
     roleService.clearSelectedRole();
@@ -413,13 +403,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loadUserReal();
       });
 
-      // Listen for storage changes (login/logout in same tab)
-      const handleStorageChange = (e: StorageEvent) => {
-        if (e.key === 'accessToken' || e.key === 'user') {
-          loadUserReal();
-        }
-      };
-
       // Listen for custom login event
       const handleLoginEvent = () => {
         loadUserReal();
@@ -434,14 +417,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSelectedRole(null);
       };
 
-      window.addEventListener('storage', handleStorageChange);
       window.addEventListener('auth:login', handleLoginEvent);
       window.addEventListener('role:changed', handleRoleChange as EventListener);
       window.addEventListener('role:cleared', handleRoleCleared);
 
       return () => {
         unsubscribe();
-        window.removeEventListener('storage', handleStorageChange);
         window.removeEventListener('auth:login', handleLoginEvent);
         window.removeEventListener('role:changed', handleRoleChange as EventListener);
         window.removeEventListener('role:cleared', handleRoleCleared);

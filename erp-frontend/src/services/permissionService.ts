@@ -1,7 +1,8 @@
 // src/services/permissionService.ts
 //
 // Scope-aware, elevation-conscious permission service.
-// Reads from the login response and caches in localStorage.
+// Reads from the login response and caches in sessionStorage (tab-scoped —
+// see authService for why this can't be localStorage on shared terminals).
 
 import { getRoleRank } from '../types/roles';
 
@@ -107,16 +108,16 @@ class PermissionService {
       this.effectivePermissions = null;
     }
 
-    localStorage.setItem('userPermissions',     JSON.stringify(this.permissions));
-    localStorage.setItem('rolePermissions',     JSON.stringify(this.rolePermissions));
-    localStorage.setItem('excludedPermissions', JSON.stringify(this.excludedPermissions));
-    localStorage.setItem('userRoles',           JSON.stringify(this.userRoles));
-    localStorage.setItem('userScope',           this.userScope);
-    localStorage.setItem('approvalLimit',       JSON.stringify(this.approvalLimit));
-    localStorage.setItem('hasElevatedOverride', JSON.stringify(this.hasElevatedOverride));
-    localStorage.setItem('elevatedFields',      JSON.stringify(this.elevatedFields));
+    sessionStorage.setItem('userPermissions',     JSON.stringify(this.permissions));
+    sessionStorage.setItem('rolePermissions',     JSON.stringify(this.rolePermissions));
+    sessionStorage.setItem('excludedPermissions', JSON.stringify(this.excludedPermissions));
+    sessionStorage.setItem('userRoles',           JSON.stringify(this.userRoles));
+    sessionStorage.setItem('userScope',           this.userScope);
+    sessionStorage.setItem('approvalLimit',       JSON.stringify(this.approvalLimit));
+    sessionStorage.setItem('hasElevatedOverride', JSON.stringify(this.hasElevatedOverride));
+    sessionStorage.setItem('elevatedFields',      JSON.stringify(this.elevatedFields));
     if (this.effectivePermissions) {
-      localStorage.setItem('effectivePermissions', JSON.stringify(this.effectivePermissions));
+      sessionStorage.setItem('effectivePermissions', JSON.stringify(this.effectivePermissions));
     }
 
     // Bulk module:page matrix (page_permissions.{wildcard,legacy_mode,pages})
@@ -130,7 +131,7 @@ class PermissionService {
     } else {
       this.pageMatrix = { wildcard: false, legacyMode: false, pages: {} };
     }
-    localStorage.setItem('pageMatrix', JSON.stringify(this.pageMatrix));
+    sessionStorage.setItem('pageMatrix', JSON.stringify(this.pageMatrix));
 
     window.dispatchEvent(new CustomEvent('permissions:updated'));
   }
@@ -145,7 +146,7 @@ class PermissionService {
 
   getScope(): string {
     if (this.userScope) return this.userScope;
-    const stored = localStorage.getItem('userScope');
+    const stored = sessionStorage.getItem('userScope');
     if (stored) this.userScope = stored;
     return this.userScope || 'own_branch';
   }
@@ -169,7 +170,7 @@ class PermissionService {
 
   getApprovalLimit(): number | null {
     if (this.approvalLimit === undefined) {
-      const stored = localStorage.getItem('approvalLimit');
+      const stored = sessionStorage.getItem('approvalLimit');
       try { this.approvalLimit = stored ? JSON.parse(stored) : null; } catch { this.approvalLimit = null; }
     }
     if (this.approvalLimit === null) return null;   // unlimited
@@ -186,21 +187,21 @@ class PermissionService {
 
   isElevated(): boolean {
     if (typeof this.hasElevatedOverride === 'boolean') return this.hasElevatedOverride;
-    const stored = localStorage.getItem('hasElevatedOverride');
+    const stored = sessionStorage.getItem('hasElevatedOverride');
     try { this.hasElevatedOverride = stored ? JSON.parse(stored) : false; } catch { this.hasElevatedOverride = false; }
     return this.hasElevatedOverride;
   }
 
   getElevatedFields(): string[] {
     if (this.elevatedFields.length > 0) return this.elevatedFields;
-    const stored = localStorage.getItem('elevatedFields');
+    const stored = sessionStorage.getItem('elevatedFields');
     try { this.elevatedFields = stored ? JSON.parse(stored) : []; } catch { this.elevatedFields = []; }
     return this.elevatedFields;
   }
 
   getEffectivePermissions(): EffectivePermission | null {
     if (this.effectivePermissions) return this.effectivePermissions;
-    const stored = localStorage.getItem('effectivePermissions');
+    const stored = sessionStorage.getItem('effectivePermissions');
     if (stored) {
       try { this.effectivePermissions = JSON.parse(stored); } catch { /* ignore */ }
     }
@@ -213,7 +214,7 @@ class PermissionService {
     if (this.pageMatrix.wildcard || this.pageMatrix.legacyMode || Object.keys(this.pageMatrix.pages).length > 0) {
       return this.pageMatrix;
     }
-    const stored = localStorage.getItem('pageMatrix');
+    const stored = sessionStorage.getItem('pageMatrix');
     if (stored) {
       try { this.pageMatrix = JSON.parse(stored); } catch { /* ignore */ }
     }
@@ -289,7 +290,7 @@ class PermissionService {
 
   getUserRoles(): string[] {
     if (this.userRoles.length === 0) {
-      const stored = localStorage.getItem('userRoles');
+      const stored = sessionStorage.getItem('userRoles');
       if (stored) {
         try { this.userRoles = JSON.parse(stored); } catch (e) { /* ignore */ }
       }
@@ -310,7 +311,7 @@ class PermissionService {
 
   getPermissions(): string[] {
     if (this.permissions.length === 0) {
-      const stored = localStorage.getItem('userPermissions');
+      const stored = sessionStorage.getItem('userPermissions');
       if (stored) {
         try { this.permissions = JSON.parse(stored); } catch (e) { /* ignore */ }
       }
@@ -320,7 +321,7 @@ class PermissionService {
 
   getExcludedPermissions(): string[] {
     if (this.excludedPermissions.length === 0) {
-      const stored = localStorage.getItem('excludedPermissions');
+      const stored = sessionStorage.getItem('excludedPermissions');
       if (stored) {
         try { this.excludedPermissions = JSON.parse(stored); } catch (e) { /* ignore */ }
       }
@@ -330,7 +331,7 @@ class PermissionService {
 
   getRolePermissions(roleName: string): string[] {
     if (this.rolePermissions[roleName]) return this.rolePermissions[roleName];
-    const stored = localStorage.getItem('rolePermissions');
+    const stored = sessionStorage.getItem('rolePermissions');
     if (stored) {
       try {
         this.rolePermissions = JSON.parse(stored);
@@ -399,7 +400,7 @@ class PermissionService {
       'userPermissions', 'rolePermissions', 'excludedPermissions', 'userRoles',
       'userScope', 'approvalLimit', 'hasElevatedOverride', 'elevatedFields',
       'effectivePermissions', 'pageMatrix',
-    ].forEach(k => localStorage.removeItem(k));
+    ].forEach(k => sessionStorage.removeItem(k));
 
     window.dispatchEvent(new CustomEvent('permissions:cleared'));
   }

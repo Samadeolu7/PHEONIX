@@ -185,61 +185,6 @@ describe('LoginPageStyled Toast Integration', () => {
     });
   });
 
-  describe('Saved Credentials Scenarios', () => {
-    it('should show info toast when saved credentials are loaded', async () => {
-      // Set up saved credentials in localStorage
-      localStorage.setItem(
-        'savedCredentials',
-        JSON.stringify({
-          username: 'saveduser',
-          password: 'savedpassword',
-        })
-      );
-      localStorage.setItem('rememberMe', 'true');
-
-      render(
-        <TestWrapper>
-          <LoginPageStyled />
-        </TestWrapper>
-      );
-
-      // Wait for info toast to appear
-      await waitFor(() => {
-        expect(screen.getByText('Saved credentials loaded')).toBeInTheDocument();
-      });
-
-      // Check that the toast has the correct title
-      expect(screen.getByText('Welcome Back')).toBeInTheDocument();
-
-      // Verify form fields are populated
-      expect(screen.getByDisplayValue('saveduser')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('savedpassword')).toBeInTheDocument();
-    });
-
-    it('should show warning toast when saved credentials are corrupted', async () => {
-      // Set up corrupted credentials in localStorage
-      localStorage.setItem('savedCredentials', 'invalid-json');
-      localStorage.setItem('rememberMe', 'true');
-
-      render(
-        <TestWrapper>
-          <LoginPageStyled />
-        </TestWrapper>
-      );
-
-      // Wait for warning toast to appear
-      await waitFor(() => {
-        expect(screen.getByText('Failed to load saved credentials')).toBeInTheDocument();
-      });
-
-      // Check that the toast has the correct title
-      expect(screen.getByText('Credential Error')).toBeInTheDocument();
-
-      // Verify corrupted credentials are removed from localStorage
-      expect(localStorage.getItem('savedCredentials')).toBeNull();
-    });
-  });
-
   describe('Form Interaction with Toasts', () => {
     it('should clear error state and toast when user starts typing', async () => {
       const errorMessage = 'Invalid credentials';
@@ -274,45 +219,6 @@ describe('LoginPageStyled Toast Integration', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
 
-    it('should handle remember me functionality with toast notifications', async () => {
-      const mockUser = {
-        id: '1',
-        username: 'testuser',
-        email: 'test@example.com',
-        role: 'user',
-      };
-
-      (authService.login as any).mockResolvedValue({ user: mockUser });
-
-      render(
-        <TestWrapper>
-          <LoginPageStyled />
-        </TestWrapper>
-      );
-
-      // Fill in login form
-      fireEvent.change(screen.getByPlaceholderText('samuel'), {
-        target: { value: 'testuser' },
-      });
-      fireEvent.change(screen.getByPlaceholderText('••••••••'), {
-        target: { value: 'password123' },
-      });
-
-      // Check remember me
-      fireEvent.click(screen.getByLabelText('Remember me'));
-
-      // Submit form
-      fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
-
-      // Wait for success toast
-      await waitFor(() => {
-        expect(screen.getByText('Welcome back, testuser!')).toBeInTheDocument();
-      });
-
-      // Verify credentials are saved
-      expect(localStorage.getItem('savedCredentials')).toBeTruthy();
-      expect(localStorage.getItem('rememberMe')).toBe('true');
-    });
   });
 
   describe('Toast Accessibility', () => {

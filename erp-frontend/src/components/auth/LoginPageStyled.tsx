@@ -1,6 +1,6 @@
 ﻿// src/components/auth/LoginPageStyled.tsx
 //  Master Moulders International Academy  Branded Login
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { authService } from '../../services/authService';
 import { useToast } from '../../hooks/useToast';
@@ -249,12 +249,6 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     marginBottom: '1.5rem',
   },
-  rememberLbl: {
-    fontSize: '0.82rem',
-    color: C.textSecondary,
-    cursor: 'pointer',
-    marginLeft: '0.4rem',
-  },
   forgotLink: {
     fontSize: '0.82rem',
     fontWeight: 600,
@@ -301,36 +295,13 @@ const LoginPageStyled: React.FC = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
-  const [remember, setRemember] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('savedCredentials');
-    const doRemember = localStorage.getItem('rememberMe') === 'true';
-    if (saved && doRemember) {
-      try {
-        const c = JSON.parse(saved);
-        setFormData({ username: c.username || '', password: c.password || '' });
-        setRemember(true);
-        toast.info('Saved credentials loaded', { title: 'Welcome Back', duration: 2000 });
-      } catch {
-        localStorage.removeItem('savedCredentials');
-      }
-    }
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const { user } = await authService.login(formData, remember);
-      if (remember) {
-        localStorage.setItem('savedCredentials', JSON.stringify(formData));
-        localStorage.setItem('rememberMe', 'true');
-      } else {
-        localStorage.removeItem('savedCredentials');
-        localStorage.removeItem('rememberMe');
-      }
+      const { user } = await authService.login(formData);
       toast.success(`Welcome back, ${user.username || user.email}!`, {
         title: 'Login Successful',
         duration: 3000,
@@ -348,11 +319,6 @@ const LoginPageStyled: React.FC = () => {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData(f => ({ ...f, [e.target.name]: e.target.value }));
     setError('');
-  };
-
-  const handleRemember = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setRemember(e.target.checked);
-    if (!e.target.checked) localStorage.removeItem('savedCredentials');
   };
 
   return (
@@ -519,16 +485,7 @@ const LoginPageStyled: React.FC = () => {
                 </button>
               </div>
 
-              <div style={S.rememberRow}>
-                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={remember}
-                    onChange={handleRemember}
-                    style={{ accentColor: C.navyPrimary, marginRight: '0.4rem' }}
-                  />
-                  <span style={S.rememberLbl}>Remember me</span>
-                </label>
+              <div style={{ ...S.rememberRow, justifyContent: 'flex-end' }}>
                 <Link to="/forgot-password" style={S.forgotLink}>
                   Forgot password?
                 </Link>

@@ -14,11 +14,11 @@ const api = axios.create({
 });
 
 // Add request interceptor to add auth token
-// authService stores tokens in sessionStorage (no remember-me) or localStorage (remember-me),
-// so we must check both.
+// authService stores tokens in sessionStorage only — tab-scoped, so a login
+// in one tab can never override a session still active in another.
 api.interceptors.request.use(
   config => {
-    const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+    const token = sessionStorage.getItem('accessToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -38,37 +38,27 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
 
-      const refreshToken =
-        localStorage.getItem('refreshToken') || sessionStorage.getItem('refreshToken');
+      const refreshToken = sessionStorage.getItem('refreshToken');
       if (refreshToken) {
         try {
           // Refresh using a lightweight token client (no interceptors)
           const tokens = await refreshWithToken(refreshToken);
 
-          // Persist tokens using same storage strategy as authService
-          const remember = localStorage.getItem('rememberMe') === 'true';
-          if (remember) {
-            localStorage.setItem('accessToken', tokens.access);
-            if (tokens.refresh) localStorage.setItem('refreshToken', tokens.refresh);
-          } else {
-            sessionStorage.setItem('accessToken', tokens.access);
-            if (tokens.refresh) sessionStorage.setItem('refreshToken', tokens.refresh);
-          }
+          // Persist tokens using same storage strategy as authService (tab-scoped)
+          sessionStorage.setItem('accessToken', tokens.access);
+          if (tokens.refresh) sessionStorage.setItem('refreshToken', tokens.refresh);
 
           // Retry the original request with new token
           originalRequest.headers.Authorization = `Bearer ${tokens.access}`;
           return api(originalRequest);
         } catch (refreshError) {
-          // Refresh failed, clear all storage and redirect
-          localStorage.removeItem('accessToken');
-          localStorage.removeItem('refreshToken');
+          // Refresh failed, clear storage and redirect
           sessionStorage.removeItem('accessToken');
           sessionStorage.removeItem('refreshToken');
           window.location.href = '/login';
         }
       } else {
-        // No refresh token available anywhere — session truly expired
-        localStorage.removeItem('accessToken');
+        // No refresh token available — session truly expired
         sessionStorage.removeItem('accessToken');
         window.location.href = '/login';
       }
