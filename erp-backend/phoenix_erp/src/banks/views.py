@@ -671,10 +671,25 @@ class BankTransferViewSet(ScopedModelViewSet):
     serializer_class = BankTransferSerializer
     permission_classes = [permissions.IsAuthenticated]
     
+    def _is_transfer_manager(self):
+        """True for directors, admins, and branch managers who oversee all transfers."""
+        user = self.request.user
+        if getattr(user, 'is_system_admin', False):
+            return True
+        try:
+            role = user.staff_profile.role_level
+            return role in ('director', 'admin', 'branch_manager')
+        except Exception:
+            return False
+
     def get_queryset(self):
         """Filter transfers by various criteria"""
         queryset = super().get_queryset()
-        
+
+        # Regular users only see their own transfers; managers/directors see all.
+        if not self._is_transfer_manager():
+            queryset = queryset.filter(initiated_by=self.request.user)
+
         # Filter by status
         status_filter = self.request.query_params.get('status')
         if status_filter:
@@ -750,9 +765,15 @@ class BankTransferViewSet(ScopedModelViewSet):
         return super().update(request, *args, **kwargs)
     
     def destroy(self, request, *args, **kwargs):
-        """Only allow deletion of draft transfers"""
+        """Only allow deletion of own draft transfers"""
         instance = self.get_object()
-        
+
+        if instance.initiated_by != request.user and not self._is_transfer_manager():
+            return Response(
+                {'error': 'You can only delete transfers you initiated.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         if instance.status != 'draft':
             return Response(
                 {'error': f'Cannot delete transfer in {instance.status} status. Only draft transfers can be deleted.'},
@@ -765,7 +786,13 @@ class BankTransferViewSet(ScopedModelViewSet):
     def submit(self, request, pk=None):
         """Submit transfer for approval"""
         transfer = self.get_object()
-        
+
+        if transfer.initiated_by != request.user and not self._is_transfer_manager():
+            return Response(
+                {'error': 'You can only submit transfers you initiated.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         try:
             transfer.submit_for_approval(request.user)
             logger.info(f"Transfer {transfer.transfer_number} submitted by {request.user}")

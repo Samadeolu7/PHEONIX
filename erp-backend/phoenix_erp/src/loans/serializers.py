@@ -160,20 +160,6 @@ class LoanGuarantorSerializer(TenantModelSerializer):
                     )}
                 )
 
-        # Compute the display name from whichever FK is set
-        if guarantor:
-            attrs['_display_name'] = guarantor.full_name
-            attrs['_display_client_id'] = getattr(guarantor, 'client_id', None)
-            attrs['_display_phone'] = getattr(guarantor, 'phone_primary', None) or ''
-            attrs['_display_occupation'] = getattr(guarantor, 'occupation', None) or ''
-            attrs['_display_address'] = getattr(guarantor, 'address_street', None) or ''
-        elif guarantor_person:
-            attrs['_display_name'] = guarantor_person.full_name
-            attrs['_display_client_id'] = None
-            attrs['_display_phone'] = getattr(guarantor_person, 'phone', None) or ''
-            attrs['_display_occupation'] = getattr(guarantor_person, 'occupation', None) or ''
-            attrs['_display_address'] = getattr(guarantor_person, 'address', None) or ''
-
         return attrs
 
     def to_representation(self, instance):

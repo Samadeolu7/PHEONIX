@@ -177,7 +177,9 @@ export const useBankTransfers = (filters?: Parameters<typeof bankService.listBan
   return useQuery({
     queryKey: bankKeys.transfers(filters),
     queryFn: () => bankService.listBankTransfers(filters),
-    staleTime: 30 * 1000,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 };
 

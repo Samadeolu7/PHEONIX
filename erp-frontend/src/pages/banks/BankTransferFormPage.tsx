@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Upload, X } from 'lucide-react';
 import bankService from '../../services/bankService';
 import { cashierAccountService } from '../../services/treasuryService';
 import { useAuth } from '../../contexts/AuthContext';
+import { bankKeys } from '../../hooks/useBanks';
 import type { BankAccount, CreateBankTransferRequest } from '../../types/banks';
 import type { CashierAccount } from '../../types/treasury';
 
@@ -11,6 +13,7 @@ const DECIMAL_INPUT_REGEX = /^\d{0,16}(?:\.\d{0,2})?$/;
 
 const BankTransferFormPage: React.FC = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { user } = useAuth();
   const [sourceType, setSourceType] = useState<'bank' | 'cashier'>('bank');
   const [formData, setFormData] = useState<CreateBankTransferRequest>({
@@ -105,6 +108,10 @@ const BankTransferFormPage: React.FC = () => {
       // Auto-submit so the transfer immediately enters the approval queue
       // (draft transfers are invisible to approvers)
       await bankService.submitTransfer(transfer.id);
+
+      // Force the transfers list to refetch so it shows the correct pending status
+      queryClient.invalidateQueries({ queryKey: bankKeys.transfers() });
+      queryClient.invalidateQueries({ queryKey: bankKeys.pendingApprovals() });
 
       navigate('/banks/transfers');
     } catch (err: any) {
