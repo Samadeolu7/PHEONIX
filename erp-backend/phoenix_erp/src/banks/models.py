@@ -762,10 +762,18 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         which is exactly the class of bug (two independent checks of the
         same rule silently disagreeing) this whole feature was built to fix.
 
-        Checks hr.Staff.role_level directly rather than the tenant-Role-name
-        RolePermissionPolicy system, since that system has no supervisor
-        grant for banks:bank-transfers today and extending it would grant
-        supervisor broader access (see/edit all transfers) than asked here.
+        Checks the user's tenant Role name first (e.g. "Director"), matching
+        the convention PaymentRoutingService._is_director() already uses
+        elsewhere in this codebase — NOT the RolePermissionPolicy grant
+        system (which has no supervisor grant for banks:bank-transfers
+        today, and extending it would grant supervisor broader access than
+        asked here). Falls back to hr.Staff.role_level for users set up only
+        through HR with no tenant Role assigned. These two systems are known
+        to drift apart for a given user (see
+        permissions/management/commands/migrate_bank_transfer_policies.py
+        and users/management/commands/diagnose_user_roles.py) — checking
+        both, in this order, means a user correctly marked "Director" via
+        their tenant Role isn't blocked by a stale/mismatched HR role_level.
         """
         if not user or not getattr(user, 'is_authenticated', False):
             return False
@@ -773,6 +781,16 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             return True
         if callable(getattr(user, 'is_owner', None)) and user.is_owner():
             return True
+        try:
+            role_names = user.roles.filter(is_active=True).values_list('name', flat=True)
+            for name in role_names:
+                name_lower = name.lower()
+                if any(f in name_lower for f in (
+                    'director', 'admin', 'branch manager', 'branch_manager', 'supervisor',
+                )):
+                    return True
+        except Exception:
+            pass
         try:
             return user.staff_profile.role_level in (
                 'branch_manager', 'supervisor', 'director', 'admin',
