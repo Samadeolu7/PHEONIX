@@ -61,6 +61,17 @@ export interface UpdateProfileData {
   email?: string;
 }
 
+// api.ts throws { status, statusText, message, details, response: { data } } on
+// non-2xx responses (see handleResponse in api.ts) - there is no top-level
+// `.error` property, so reading `error.error` here always misses and falls
+// through to the generic fallback, hiding the real backend reason.
+function extractErrorMessage(error: any, fallback: string): string {
+  const backendError = error?.response?.data?.error;
+  if (Array.isArray(backendError)) return backendError.join(' ');
+  if (typeof backendError === 'string' && backendError) return backendError;
+  return error?.message || fallback;
+}
+
 // Legacy keys this app used to persist to localStorage before sessions were
 // made tab-scoped. A stale entry here means a previous login is still
 // sitting in browser-wide storage, ready to hijack whichever tab reads it
@@ -219,7 +230,7 @@ class AuthService {
       await api.post('/users/auth/change-password/', data);
     } catch (error: any) {
       console.error('Change password error:', error);
-      throw new Error(error.error || 'Failed to change password');
+      throw new Error(extractErrorMessage(error, 'Failed to change password'));
     }
   }
 
@@ -231,7 +242,7 @@ class AuthService {
       return user;
     } catch (error: any) {
       console.error('Update profile error:', error);
-      throw new Error(error.error || 'Failed to update profile');
+      throw new Error(extractErrorMessage(error, 'Failed to update profile'));
     }
   }
 
@@ -240,7 +251,7 @@ class AuthService {
       await api.post('/users/auth/reset-password/', { email });
     } catch (error: any) {
       console.error('Password reset error:', error);
-      throw new Error(error.error || 'Failed to request password reset');
+      throw new Error(extractErrorMessage(error, 'Failed to request password reset'));
     }
   }
 
