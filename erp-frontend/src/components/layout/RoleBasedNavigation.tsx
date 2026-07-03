@@ -345,10 +345,14 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
 
               {/* User Menu - Desktop */}
               <div className="hidden lg:flex items-center space-x-3">
-                <div className="flex items-center space-x-2 text-white/80">
+                <Link
+                  to="/profile"
+                  className="flex items-center space-x-2 text-white/80 hover:text-white transition-colors"
+                  title="My Profile / Change Password"
+                >
                   <User className="h-4 w-4" />
                   <span className="text-sm">{userName}</span>
-                </div>
+                </Link>
 
                 <div className="flex items-center space-x-1">
                   <div className="text-white/80 hover:text-white">
@@ -372,13 +376,13 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                     <LayoutDashboard className="h-4 w-4" />
                   </Link>
 
-                  <Link
-                    to="/profile"
+                  <button
+                    onClick={() => navigate('/admin/users')}
                     className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-                    title="My Profile / Change Password"
+                    title="Settings"
                   >
                     <Settings className="h-4 w-4" />
-                  </Link>
+                  </button>
 
                   <button
                     onClick={handleLogout}
@@ -418,7 +422,12 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
           >
             <div className="px-4 py-4 space-y-2">
               {/* Krystar Trust Logo + User Info in mobile menu */}
-              <div className="flex items-center space-x-3 pb-4 border-b border-white/20">
+              <Link
+                to="/profile"
+                onClick={closeMobileMenu}
+                className="flex items-center space-x-3 pb-4 border-b border-white/20"
+                title="My Profile / Change Password"
+              >
                 <img
                   src={BRAND.logoUrl}
                   alt={BRAND.shortName}
@@ -432,7 +441,7 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                   <div className="text-white font-medium">{userName}</div>
                   <div className="text-white/70 text-sm">{normalizedRole} · {BRAND.shortName} ERP</div>
                 </div>
-              </div>
+              </Link>
 
               {/* Navigation Links - Only show accessible modules */}
               <div className="space-y-1 py-2">
@@ -497,15 +506,6 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 >
                   <Settings className="h-5 w-5" />
                   <span>Dashboard Settings</span>
-                </Link>
-
-                <Link
-                  to="/profile"
-                  onClick={closeMobileMenu}
-                  className="flex items-center space-x-3 px-3 py-3 rounded-md text-base font-medium text-white/80 hover:text-white hover:bg-white/10 transition-colors"
-                >
-                  <User className="h-5 w-5" />
-                  <span>My Profile / Change Password</span>
                 </Link>
 
                 <button
