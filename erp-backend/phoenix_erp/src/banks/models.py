@@ -662,12 +662,6 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 raise ValidationError({
                     'destination_bank_account': 'Bank account should be empty when destination type is cashier.'
                 })
-            # Scope boundary: bank-to-cashier is not currently supported.
-            if self.source_type != 'cashier':
-                raise ValidationError({
-                    'destination_type': 'Cashier-to-cashier is the only supported cashier destination path. '
-                                         'Bank-to-cashier transfers are not currently supported.'
-                })
             if self.source_cashier_account_id and self.destination_cashier_account_id and \
                self.source_cashier_account_id == self.destination_cashier_account_id:
                 raise ValidationError({
@@ -677,6 +671,11 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                self.source_cashier_account.branch_id != self.destination_cashier_account.branch_id:
                 raise ValidationError({
                     'destination_cashier_account': 'Cashier-to-cashier transfers must be within the same branch.'
+                })
+            if self.source_type == 'bank' and self.source_bank_account_id and self.destination_cashier_account_id and \
+               self.source_bank_account.branch_id != self.destination_cashier_account.branch_id:
+                raise ValidationError({
+                    'destination_cashier_account': 'Bank-to-cashier transfers must be within the same branch.'
                 })
         elif self.destination_type == 'bank':
             if not self.destination_bank_account:
@@ -745,7 +744,42 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     
     def __str__(self):
         return f"{self.transfer_number} - {self.amount}"
-    
+
+    @staticmethod
+    def can_user_manage_bank_to_cashier(user):
+        """
+        Bank-to-cashier transfers (real bank funds moving into a personal cash
+        float) are restricted to branch manager, supervisor, and director/
+        admin — for BOTH initiating and approving them. Deliberately looser
+        than the director/admin-only gate on bank-to-bank transfers (money
+        actually leaving the institution's bank custody entirely), since
+        bank-to-cashier keeps funds within internal custody, just changing
+        which ledger holds them.
+
+        Single source of truth for this role check — called from both
+        BankTransferSerializer.validate() (initiation) and
+        BankTransferViewSet.approve() (approval) so they can't drift apart,
+        which is exactly the class of bug (two independent checks of the
+        same rule silently disagreeing) this whole feature was built to fix.
+
+        Checks hr.Staff.role_level directly rather than the tenant-Role-name
+        RolePermissionPolicy system, since that system has no supervisor
+        grant for banks:bank-transfers today and extending it would grant
+        supervisor broader access (see/edit all transfers) than asked here.
+        """
+        if not user or not getattr(user, 'is_authenticated', False):
+            return False
+        if getattr(user, 'is_system_admin', False):
+            return True
+        if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+            return True
+        try:
+            return user.staff_profile.role_level in (
+                'branch_manager', 'supervisor', 'director', 'admin',
+            )
+        except Exception:
+            return False
+
     @db_transaction.atomic
     def submit_for_approval(self, user):
         """Submit transfer for approval"""

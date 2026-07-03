@@ -839,7 +839,17 @@ class BankTransferViewSet(ScopedModelViewSet):
         transfer = self.get_object()
         
         # Check approval permission based on source/destination type
-        if transfer.source_type == 'bank':
+        if transfer.source_type == 'bank' and transfer.destination_type == 'cashier':
+            # Bank-to-cashier: same role gate as initiating one (branch manager /
+            # supervisor / director / admin) — see BankTransfer.can_user_manage_bank_to_cashier
+            # for why this is a separate, looser gate than plain bank-to-bank.
+            if not BankTransfer.can_user_manage_bank_to_cashier(request.user):
+                return Response(
+                    {'error': 'Only branch managers, supervisors, and directors can approve '
+                               'bank-to-cashier transfers'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        elif transfer.source_type == 'bank':
             # Bank-to-bank transfers require director/admin approval — driven by
             # RolePermissionPolicy(module='banks', page='bank-transfers').can_approve.
             # See migrate_bank_transfer_policies.py for the equivalent-grant migration

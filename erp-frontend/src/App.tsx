@@ -145,7 +145,6 @@ const AccountsListPage = lazy(() => import('./pages/AccountsListPage'));
 const AccountSummaryPage = lazy(() => import('./pages/AccountSummaryPage'));
 const AccountLedgerPage = lazy(() => import('./pages/AccountLedgerPage'));
 const ProductManagementPage = lazy(() => import('./pages/ProductManagementPage'));
-const AccountSettingsPage = lazy(() => import('./pages/account/AccountSettingsPage'));
 
 // Admin pages
 const UserManagementPage = lazy(() => import('./pages/admin/UserManagementPage'));
@@ -607,9 +606,6 @@ const TransactionReversalPage = lazy(() => import('./pages/admin/TransactionReve
 const ReviewWeekPage = lazy(() => import('./pages/admin/ReviewWeekPage'));
 const CloseYearPage = lazy(() => import('./pages/admin/CloseYearPage'));
 
-// Profile
-const ChangePasswordPage = lazy(() => import('./pages/profile/ChangePasswordPage'));
-
 // Liabilities / Accounts Payable pages
 const PayablesListPage = lazy(() => import('./pages/liabilities/PayablesListPage'));
 const PayableDetailPage = lazy(() => import('./pages/liabilities/PayableDetailPage'));
@@ -965,14 +961,8 @@ function App() {
                                     </ProtectedRoute>
                                   }
                                 />
-                                <Route
-                                  path="/account/settings"
-                                  element={
-                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
-                                      <AccountSettingsPage />
-                                    </ProtectedRoute>
-                                  }
-                                />
+                                {/* Personal account settings - open to all authenticated users, not an accounting page (see /profile). */}
+                                <Route path="/account/settings" element={<Navigate to="/profile" replace />} />
                                 <Route
                                   path="/accounts/new"
                                   element={
@@ -4272,14 +4262,8 @@ function App() {
                                 />
 
                                 {/* ── Profile ──────────────────────────────────────── */}
-                                <Route
-                                  path="/profile/change-password"
-                                  element={
-                                    <ProtectedRoute>
-                                      <ChangePasswordPage />
-                                    </ProtectedRoute>
-                                  }
-                                />
+                                {/* Change-password UI now lives in the Security tab of /profile; redirect old links there. */}
+                                <Route path="/profile/change-password" element={<Navigate to="/profile" replace />} />
 
                                 {/* Dynamic module routes - This must be LAST to avoid conflicts */}
                                 <Route

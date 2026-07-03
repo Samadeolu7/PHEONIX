@@ -376,6 +376,8 @@ class BankTransferSerializer(TenantModelSerializer):
         if obj.status != 'pending':
             return False
 
+        if obj.source_type == 'bank' and obj.destination_type == 'cashier':
+            return BankTransfer.can_user_manage_bank_to_cashier(user)
         if obj.source_type == 'bank':
             from permissions.services import PermissionResolver
             eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers', action='approve')
@@ -408,7 +410,7 @@ class BankTransferSerializer(TenantModelSerializer):
         if obj.completed_by:
             return obj.completed_by.get_full_name() or obj.completed_by.username
         return None
-    
+
     def validate(self, data):
         """Validate transfer data"""
         # Validate source account based on type
@@ -454,9 +456,12 @@ class BankTransferSerializer(TenantModelSerializer):
                 raise serializers.ValidationError({
                     'destination_bank_account': 'Bank account should be empty when destination type is cashier.'
                 })
-            if source_type != 'cashier':
+            request = self.context.get('request')
+            user = getattr(request, 'user', None) if request else None
+            if source_type == 'bank' and not BankTransfer.can_user_manage_bank_to_cashier(user):
                 raise serializers.ValidationError({
-                    'destination_type': 'Bank-to-cashier transfers are not supported. Cashier-to-cashier only.'
+                    'destination_type': 'Only branch managers, supervisors, and directors can move '
+                                         'funds from a bank account into a cashier float.'
                 })
             source_cashier = data.get('source_cashier_account')
             if source_cashier and destination_cashier and source_cashier == destination_cashier:

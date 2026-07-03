@@ -49,20 +49,27 @@ const BankTransferFormPage: React.FC = () => {
   // will always fail.
   const myCashierAccounts = cashierAccounts.filter(acc => acc.cashier === user?.id);
 
-  // Cashier-to-cashier destination: any active cashier account except your own
-  // (you're sending TO someone else) and the currently-selected source account,
-  // restricted to the same branch as the selected source cashier account — the
-  // backend enforces same-branch for cashier-to-cashier transfers, so this
-  // avoids offering a choice that will always fail validation.
+  // Cashier destination: for a cashier source, any active cashier account
+  // except your own (you're sending TO someone else) and the currently-
+  // selected source account. For a bank source, any active cashier account —
+  // moving bank funds back into someone's float doesn't have a "yourself"
+  // concept the way cashier-to-cashier does. Both are restricted to the same
+  // branch as the selected source account, matching the backend's same-branch
+  // enforcement, so the dropdown never offers a choice that will always fail.
   const sourceCashierBranch = cashierAccounts.find(
     acc => acc.id === formData.source_cashier_account
   )?.branch;
-  const destinationCashierAccounts = cashierAccounts.filter(
-    acc =>
-      acc.cashier !== user?.id &&
-      acc.id !== formData.source_cashier_account &&
-      (sourceCashierBranch === undefined || acc.branch === sourceCashierBranch)
-  );
+  const sourceBankBranch = bankAccounts.find(
+    acc => acc.id === formData.source_bank_account
+  )?.branch;
+  const destinationCashierAccounts = cashierAccounts.filter(acc => {
+    if (sourceType === 'cashier') {
+      if (acc.cashier === user?.id) return false;
+      if (acc.id === formData.source_cashier_account) return false;
+      return sourceCashierBranch === undefined || acc.branch === sourceCashierBranch;
+    }
+    return sourceBankBranch === undefined || acc.branch === sourceBankBranch;
+  });
 
   const loadAccounts = async () => {
     const [banksResult, cashiersResult] = await Promise.allSettled([
@@ -77,16 +84,14 @@ const BankTransferFormPage: React.FC = () => {
 
   const handleSourceTypeChange = (st: 'bank' | 'cashier') => {
     setSourceType(st);
-    // Cashier destinations only make sense for a cashier source (bank-to-cashier
-    // isn't supported) — reset to bank destination when switching away.
-    const nextDestinationType = st === 'cashier' ? destinationType : 'bank';
-    setDestinationType(nextDestinationType);
+    // Both source types can go to either a bank or a cashier destination —
+    // keep the current destination type selection, just clear the specific
+    // account chosen since branch scoping differs by source.
     setFormData({
       ...formData,
       source_type: st,
       source_bank_account: undefined,
       source_cashier_account: undefined,
-      destination_type: nextDestinationType,
       destination_bank_account: undefined,
       destination_cashier_account: undefined,
     });
@@ -124,11 +129,6 @@ const BankTransferFormPage: React.FC = () => {
         }
       }
       if (destinationType === 'cashier') {
-        if (sourceType !== 'cashier') {
-          throw new Error(
-            'Cashier destinations are only available for cashier-to-cashier transfers'
-          );
-        }
         if (!formData.destination_cashier_account) {
           throw new Error('Please select a destination cashier account');
         }
@@ -273,31 +273,33 @@ const BankTransferFormPage: React.FC = () => {
             )}
           </div>
 
-          {/* Destination Type — cashier destinations only apply to a cashier source */}
-          {sourceType === 'cashier' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Destination Type
-              </label>
-              <div className="flex gap-4">
-                {(['bank', 'cashier'] as const).map(dt => (
-                  <label key={dt} className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="radio"
-                      name="destinationType"
-                      value={dt}
-                      checked={destinationType === dt}
-                      onChange={() => handleDestinationTypeChange(dt)}
-                      className="accent-blue-600"
-                    />
-                    <span className="text-sm text-gray-700 capitalize">
-                      {dt === 'bank' ? 'Bank Account' : 'Cashier Account'}
-                    </span>
-                  </label>
-                ))}
-              </div>
+          {/* Destination Type */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Destination Type</label>
+            <div className="flex gap-4">
+              {(['bank', 'cashier'] as const).map(dt => (
+                <label key={dt} className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="radio"
+                    name="destinationType"
+                    value={dt}
+                    checked={destinationType === dt}
+                    onChange={() => handleDestinationTypeChange(dt)}
+                    className="accent-blue-600"
+                  />
+                  <span className="text-sm text-gray-700 capitalize">
+                    {dt === 'bank' ? 'Bank Account' : 'Cashier Account'}
+                  </span>
+                </label>
+              ))}
             </div>
-          )}
+            {sourceType === 'bank' && destinationType === 'cashier' && (
+              <p className="text-sm text-amber-600 mt-1">
+                Only branch managers, supervisors, and directors can move funds from a bank account
+                into a cashier float.
+              </p>
+            )}
+          </div>
 
           {/* Destination Account */}
           <div>

@@ -644,7 +644,7 @@ const HomePageWithNavigation: React.FC = () => {
               {user?.first_name || user?.username || user?.email}
             </span>
             <button
-              onClick={() => navigate('/account/settings')}
+              onClick={() => navigate('/profile')}
               style={{
                 padding: '0.5rem 1rem',
                 background: 'rgba(255, 255, 255, 0.2)',

@@ -109,7 +109,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
     color: '#7c3aed',
     description: 'General ledger, chart of accounts, and financial periods',
     pages: [
-      { code: 'chart-of-accounts', title: 'Chart of Accounts', description: 'GL accounts structure', paths: ['/account/settings', '/accounting/journal-vouchers', '/accounting/journal-vouchers/:id', '/accounting/journal-vouchers/create', '/accounting/periods', '/accounts', '/accounts/new'] },
+      { code: 'chart-of-accounts', title: 'Chart of Accounts', description: 'GL accounts structure', paths: ['/accounting/journal-vouchers', '/accounting/journal-vouchers/:id', '/accounting/journal-vouchers/create', '/accounting/periods', '/accounts', '/accounts/new'] },
       { code: 'account-summary', title: 'Account Summary', description: 'Per-account balance summary view', path: '/accounts/:accountId/summary' },
       { code: 'account-ledger', title: 'Account Ledger', description: 'Per-account transaction ledger detail', path: '/accounts/:accountId/ledger' },
       { code: 'account-hierarchy', title: 'Account Hierarchy', description: 'GL chart-of-accounts tree/hierarchy view', path: '/accounts/hierarchy' },

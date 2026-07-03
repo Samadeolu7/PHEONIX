@@ -474,6 +474,29 @@ class Command(BaseCommand):
 
         sav_products = {"N": sav_reg, "D": sav_dc}
 
+        # ── SavingsProduct config for SAV-REG (plain savings, no cycle) ──────────
+        # SavingsAccount.withdraw()/deposit() (via _get_savings_config) require
+        # every SAVINGS product to have a SavingsProduct config row, even a bare
+        # one with no GL accounts attached. Without this, withdrawals on
+        # Regular Savings accounts fail with "No SavingsProduct configuration
+        # found for product 'Regular Savings'."
+        from savings.models import SavingsProduct as SavingsProdConfig
+
+        SavingsProdConfig.objects.get_or_create(
+            product=sav_reg,
+            defaults={
+                "is_daily_contribution": False,
+                "first_deposit_is_income": False,
+                "has_savings_cycle": False,
+                "withdrawal_needs_approval": True,
+                "only_account_manager_can_withdraw": False,
+                "owner": ctx["owner"],
+                "tenant": ctx["tenant"],
+                "branch": ctx["branch"],
+                "created_by": ctx["owner"],
+            },
+        )
+
         # ── SavingsProduct config for SAV-DC (daily contribution + smart savings) ──
         # Three dedicated GL accounts are required by the SavingsProduct model:
         #   • DC Income       → first-deposit-as-income account (INCOME)

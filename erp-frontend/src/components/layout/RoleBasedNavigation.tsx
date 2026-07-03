@@ -372,13 +372,13 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                     <LayoutDashboard className="h-4 w-4" />
                   </Link>
 
-                  <button
-                    onClick={() => navigate('/admin/users')}
+                  <Link
+                    to="/profile"
                     className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-                    title="Settings"
+                    title="My Profile / Change Password"
                   >
                     <Settings className="h-4 w-4" />
-                  </button>
+                  </Link>
 
                   <button
                     onClick={handleLogout}
@@ -497,6 +497,15 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 >
                   <Settings className="h-5 w-5" />
                   <span>Dashboard Settings</span>
+                </Link>
+
+                <Link
+                  to="/profile"
+                  onClick={closeMobileMenu}
+                  className="flex items-center space-x-3 px-3 py-3 rounded-md text-base font-medium text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <User className="h-5 w-5" />
+                  <span>My Profile / Change Password</span>
                 </Link>
 
                 <button

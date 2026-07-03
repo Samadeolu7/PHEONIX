@@ -221,13 +221,18 @@ const UserManagementPage: React.FC = () => {
     try {
       if (editingUser) {
         // Non-privileged users may not update roles or active-status of other users
-        const payload = isPrivilegedUser
-          ? userForm
-          : {
-              first_name: userForm.first_name,
-              last_name: userForm.last_name,
-              email: userForm.email,
-            };
+        let payload: Partial<typeof userForm>;
+        if (isPrivilegedUser) {
+          // Never submit a blank password on edit - it means "leave unchanged".
+          const { password, confirm_password, ...rest } = userForm;
+          payload = userForm.password ? userForm : rest;
+        } else {
+          payload = {
+            first_name: userForm.first_name,
+            last_name: userForm.last_name,
+            email: userForm.email,
+          };
+        }
         await userManagementService.updateUser(editingUser.id, payload);
         toast.success('User updated successfully');
       } else {

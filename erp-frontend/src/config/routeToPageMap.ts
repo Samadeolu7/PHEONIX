@@ -24,7 +24,6 @@ export interface RouteMapping {
 }
 
 export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
-  '/account/settings': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounting/journal-vouchers': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounting/journal-vouchers/:id': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounting/journal-vouchers/create': { module: 'accounts', page: 'chart-of-accounts', action: 'create' },

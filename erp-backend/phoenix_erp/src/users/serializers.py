@@ -149,7 +149,22 @@ class UserSerializer(serializers.ModelSerializer):
         if roles:
             user.roles.set(roles)
         return user
-    
+
+    def update(self, instance, validated_data):
+        # Password is optional on update; only touch it (via set_password, never a raw
+        # assignment) when the client actually sent a non-blank value. Otherwise DRF's
+        # default update() would overwrite the stored hash with an empty string.
+        password = validated_data.pop('password', None)
+        roles = validated_data.pop('roles', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        if roles is not None:
+            instance.roles.set(roles)
+        return instance
+
     def get_role_names(self, obj):
         return [role.name for role in obj.roles.all()]
     
