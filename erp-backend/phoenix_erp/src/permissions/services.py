@@ -608,7 +608,8 @@ class PermissionResolver:
 
         # Filter overrides relevant to this target (same specificity logic as policies).
         # module/page/action may be string codes or model instances — resolve to PKs once.
-        from pages.models import Module, ModulePage, PageAction
+        from pages.models import Module, ModulePage
+        from pages.action_models import PageAction
 
         def _resolve_pk(target, model, code_field='code'):
             if target is None:
