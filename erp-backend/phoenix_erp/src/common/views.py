@@ -89,38 +89,15 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # Officer-scope helper
     # ------------------------------------------------------------------
 
-    # Rank: lower = more restricted. Driven by Role.default_scope only.
-    _SCOPE_RANK = {
-        'assigned_clients': 0,
-        'own_records':       0,
-        'ajo_group':         1,
-        'own_branch':        2,
-        'global':            3,
-    }
-
-    @staticmethod
-    def _user_scope_rank(user):
-        """
-        Return the most-restrictive (lowest) scope rank across all active
-        tenant Roles assigned to this user.
-        Defaults to 2 (own_branch) when the user has no roles configured.
-        """
-        rank = 2  # safe default: branch-level
-        try:
-            for r in user.roles.filter(is_active=True):
-                s = getattr(r, 'default_scope', None)
-                r_rank = ScopedModelViewSet._SCOPE_RANK.get(s)
-                if r_rank is not None and r_rank < rank:
-                    rank = r_rank
-        except Exception:
-            pass
-        return rank
-
     def _apply_officer_scope(self, qs):
         """
-        Restrict queryset to the records this user may see based solely on
-        their tenant Role.default_scope.  Fails closed for restricted users
-        who have no linked Staff record.
+        Restrict queryset to the records this user may see, based on the
+        RolePermissionPolicy scope configured for THIS specific module/page
+        via the Permission Setup UI (permission_module/permission_page class
+        attrs) — not the old single, per-role Role.default_scope field, which
+        was a coarser, page-blind value the Permission Setup UI's per-page
+        Scope dropdown never actually controlled. Fails closed for restricted
+        users who have no linked Staff record.
         """
         lookup = self.officer_client_lookup
         if not lookup:
@@ -133,13 +110,20 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         if callable(getattr(user, 'is_owner', None)) and user.is_owner():
             return qs
 
-        rank = self._user_scope_rank(user)
+        from permissions.services import PermissionResolver
+        eff = PermissionResolver.resolve(
+            user,
+            module=getattr(self, 'permission_module', None),
+            page=getattr(self, 'permission_page', None),
+        )
+        scope = eff.scope
 
-        # own_branch (2) or global (3) — full queryset, no per-officer filter.
-        if rank >= 2:
+        # own_branch / global — no additional officer-level narrowing; the
+        # tenant/branch scoping already applied upstream (for_user()) is enough.
+        if scope in ('own_branch', 'global'):
             return qs
 
-        # assigned_clients (0) or ajo_group (1) require a Staff record.
+        # assigned_clients / own_records / ajo_group all require a Staff record.
         staff = None
         try:
             staff = user.staff_profile
@@ -150,17 +134,18 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
 
         group_lookup = self.officer_group_lookup
 
-        if rank == 0:  # assigned_clients / own_records
-            q = Q(**{lookup: staff})
+        if scope == 'ajo_group':
+            q = (
+                Q(**{lookup: staff}) |
+                Q(**{f'{lookup}__reports_to': staff})
+            )
             if group_lookup:
                 q |= Q(**{group_lookup: staff})
             return qs.filter(q)
 
-        # rank 1: ajo_group / supervisor
-        q = (
-            Q(**{lookup: staff}) |
-            Q(**{f'{lookup}__reports_to': staff})
-        )
+        # own_records / assigned_clients (and any other/unrecognized value) —
+        # narrowest tier, fail toward MORE restriction rather than less.
+        q = Q(**{lookup: staff})
         if group_lookup:
             q |= Q(**{group_lookup: staff})
         return qs.filter(q)

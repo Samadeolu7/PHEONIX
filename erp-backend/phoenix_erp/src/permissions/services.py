@@ -280,6 +280,15 @@ class PermissionResolver:
                 + module_policies.get(mp.module.code, [])
                 + global_policies
             )
+            # True the moment ANY RolePermissionPolicy row targets this page —
+            # including one whose flags are all False. That distinction matters:
+            # an explicit "no access" decision (e.g. an admin unchecking every
+            # box in Permission Setup) must be reported as a definite deny, not
+            # omitted as if no policy existed at all. Omitting it would make the
+            # frontend treat it as 'unknown' and fall back to the legacy flat
+            # permission_codes check — silently undoing the revocation if that
+            # role still happens to hold a matching legacy code.
+            has_explicit_policy = bool(applicable)
 
             if applicable:
                 flags, scope, limit = cls._aggregate_policy_list(applicable)
@@ -294,7 +303,7 @@ class PermissionResolver:
                 scope = SCOPE_OWN_BRANCH
                 limit = None
                 if not any(flags.values()):
-                    continue  # no grant at all for this page — omit (frontend fails closed)
+                    continue  # no explicit policy AND no legacy code match — omit ('unknown', safe to fall back)
 
             applicable_overrides = (
                 page_overrides.get(key, [])
@@ -303,8 +312,9 @@ class PermissionResolver:
             )
             if applicable_overrides:
                 flags, scope, limit = cls._apply_override_list(flags, scope, limit, applicable_overrides)
+                has_explicit_policy = True  # an override is also an explicit administrative decision
 
-            if any(flags.values()):
+            if has_explicit_policy or any(flags.values()):
                 result_pages[f'{key[0]}:{key[1]}'] = {
                     **flags,
                     'scope': scope,

@@ -9,6 +9,7 @@ ROLE_SCOPE_MAP = {
     'credit officer':  'assigned_clients',
     'loan officer':    'assigned_clients',
     'field officer':   'assigned_clients',
+    'registrar':       'assigned_clients',
     'supervisor':      'ajo_group',
     'branch manager':  'own_branch',
     'operations':      'own_branch',
