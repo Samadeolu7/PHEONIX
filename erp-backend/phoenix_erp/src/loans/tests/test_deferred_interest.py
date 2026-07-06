@@ -379,3 +379,114 @@ class AuditLegacyLoanInterestTestCase(TestCase):
         call_command("audit_legacy_loan_interest", confirm=True)
         loan.refresh_from_db()
         self.assertFalse(loan.interest_recognized_at_disbursement)
+
+
+class BackfillLegacyLoanOriginTestCase(TestCase):
+    """
+    backfill_legacy_loan_origin: pre-existing loans that look exactly like
+    import_legacy_data.py output (no disbursement_journal_entry, loan_number
+    matching the legacy "LN-<old_id>" format) get retagged to legacy_import.
+    Native loans (disbursed normally) are untouched. Loans with no
+    disbursement_journal_entry but a native-style loan_number are reported
+    but left alone (ambiguous).
+    """
+
+    def setUp(self):
+        self.owner, self.tenant, self.branch = _make_env("origback")
+        self.approver = User.objects.create_user(username="origback_apr", password="pass")
+        self.approver.tenant = self.tenant
+        self.approver.branch = self.branch
+        self.approver.save()
+
+        self.loan_parent = _make_account(self.owner, self.branch, "Loans Receivable", "1300", Account.LOAN)
+        self.cash_account = _make_account(self.owner, self.branch, "Bank", "1001", Account.ASSET)
+
+        gl_product = Product.objects.create(name="Backfill Loan", code="LOAN-BACKF", product_type="LOAN", owner=self.owner, branch=self.branch)
+        self.product = LoanProduct.objects.create(
+            product=gl_product,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            default_interest_rate=Decimal("10.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            owner=self.owner, branch=self.branch,
+        )
+
+        self.client = Client.objects.create(
+            client_id="CLI-ORIGBACK", first_name="Katherine", last_name="Johnson",
+            gender="female", phone_primary="08030000000",
+            tenant=self.tenant, owner=self.owner, branch=self.branch,
+        )
+
+    def tearDown(self):
+        set_current_tenant(None)
+
+    def _bare_loan(self, loan_number, seq):
+        """A loan created directly (never through disburse()), like import_legacy_data.py does."""
+        account = Account.objects.create(
+            name=f"{loan_number} Loan Account", code=f"15{seq:04d}",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        return LoanAccount.objects.create(
+            client=self.client,
+            product=self.product,
+            account=account,
+            loan_number=loan_number,
+            requested_amount=Decimal("10000.00"),
+            outstanding_principal=Decimal("10000.00"),
+            interest_rate=Decimal("10.00"),
+            term_months=2,
+            repayment_frequency="monthly",
+            status="active",
+            owner=self.owner,
+            branch=self.branch,
+        )
+
+    def test_confirm_retags_legacy_style_loan(self):
+        loan = self._bare_loan("LN-4821", seq=1)
+        self.assertEqual(loan.origin, LoanAccount.ORIGIN_NATIVE)
+
+        call_command("backfill_legacy_loan_origin", confirm=True)
+
+        loan.refresh_from_db()
+        self.assertEqual(loan.origin, LoanAccount.ORIGIN_LEGACY_IMPORT)
+
+    def test_confirm_leaves_natively_disbursed_loan_untouched(self):
+        account = Account.objects.create(
+            name="LN-native Loan Account", code="150099",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        loan = LoanAccount.objects.create(
+            client=self.client,
+            product=self.product,
+            account=account,
+            loan_number="LN-20260706-A1B2C3",
+            requested_amount=Decimal("10000.00"),
+            interest_rate=Decimal("10.00"),
+            term_months=2,
+            repayment_frequency="monthly",
+            status="pending",
+            owner=self.owner,
+            branch=self.branch,
+        )
+        loan.approve(user=self.approver)
+        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        self.assertIsNotNone(loan.disbursement_journal_entry_id)
+
+        call_command("backfill_legacy_loan_origin", confirm=True)
+
+        loan.refresh_from_db()
+        self.assertEqual(loan.origin, LoanAccount.ORIGIN_NATIVE)
+
+    def test_confirm_leaves_ambiguous_loan_untouched(self):
+        # No disbursement_journal_entry, but a native-style loan_number — disagreement
+        # between the two signals means this must be left alone, not guessed at.
+        loan = self._bare_loan("LN-20260706-ZZZZZZ", seq=2)
+
+        call_command("backfill_legacy_loan_origin", confirm=True)
+
+        loan.refresh_from_db()
+        self.assertEqual(loan.origin, LoanAccount.ORIGIN_NATIVE)
