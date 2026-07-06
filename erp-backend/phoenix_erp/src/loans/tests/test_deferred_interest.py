@@ -303,3 +303,79 @@ class DeferredInterestTestCase(TestCase):
 
         written_off_rows = loan.repayment_schedule.filter(interest_written_off=True).count()
         self.assertEqual(written_off_rows, loan.repayment_schedule.count())
+
+
+class AuditLegacyLoanInterestTestCase(TestCase):
+    """
+    audit_legacy_loan_interest: normal legacy loans (outstanding_interest=0) get
+    safeguarded; anything with unexpected outstanding_interest > 0 (e.g. a
+    restructured legacy loan) is reported but left untouched.
+    """
+
+    def setUp(self):
+        self.owner, self.tenant, self.branch = _make_env("legaudit")
+        self.loan_parent = _make_account(self.owner, self.branch, "Loans Receivable", "1300", Account.LOAN)
+        self.cash_account = _make_account(self.owner, self.branch, "Bank", "1001", Account.ASSET)
+
+        gl_product = Product.objects.create(name="Legacy Loan", code="LOAN-LEGACY", product_type="LOAN", owner=self.owner, branch=self.branch)
+        self.product = LoanProduct.objects.create(
+            product=gl_product,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            default_interest_rate=Decimal("10.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            owner=self.owner, branch=self.branch,
+        )
+
+        self.client = Client.objects.create(
+            client_id="CLI-LEGAUDIT", first_name="Grace", last_name="Hopper",
+            gender="female", phone_primary="08020000000",
+            tenant=self.tenant, owner=self.owner, branch=self.branch,
+        )
+
+    def tearDown(self):
+        set_current_tenant(None)
+
+    def _make_legacy_loan(self, loan_number, outstanding_interest=Decimal("0.00")):
+        seq = LoanAccount.objects.count() + 1
+        account = Account.objects.create(
+            name=f"{loan_number} Loan Account", code=f"14{seq:04d}",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        return LoanAccount.objects.create(
+            client=self.client,
+            product=self.product,
+            account=account,
+            loan_number=loan_number,
+            requested_amount=Decimal("10000.00"),
+            outstanding_principal=Decimal("10000.00"),
+            outstanding_interest=outstanding_interest,
+            interest_rate=Decimal("10.00"),
+            term_months=2,
+            repayment_frequency="monthly",
+            status="active",
+            origin=LoanAccount.ORIGIN_LEGACY_IMPORT,
+            owner=self.owner,
+            branch=self.branch,
+        )
+
+    def test_dry_run_does_not_change_anything(self):
+        loan = self._make_legacy_loan("LN-LEGACY-1")
+        call_command("audit_legacy_loan_interest")
+        loan.refresh_from_db()
+        self.assertFalse(loan.interest_recognized_at_disbursement)
+
+    def test_confirm_safeguards_normal_legacy_loan(self):
+        loan = self._make_legacy_loan("LN-LEGACY-2")
+        call_command("audit_legacy_loan_interest", confirm=True)
+        loan.refresh_from_db()
+        self.assertTrue(loan.interest_recognized_at_disbursement)
+
+    def test_confirm_leaves_unexpected_outstanding_interest_untouched(self):
+        loan = self._make_legacy_loan("LN-LEGACY-3", outstanding_interest=Decimal("250.00"))
+        call_command("audit_legacy_loan_interest", confirm=True)
+        loan.refresh_from_db()
+        self.assertFalse(loan.interest_recognized_at_disbursement)
