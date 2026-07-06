@@ -1267,7 +1267,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 'id': entry.id,
                 'date': entry.transaction.date,
                 'reference': entry.transaction.reference_number,
-                'description': entry.description or entry.transaction.description,
+                'description': entry.transaction.description,
                 'debit': str(entry.amount) if entry.side == TransactionEntry.DEBIT else None,
                 'credit': str(entry.amount) if entry.side == TransactionEntry.CREDIT else None,
                 'balance': str(running_balance),
