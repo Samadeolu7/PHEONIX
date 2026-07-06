@@ -46,6 +46,7 @@ export interface MicrofinanceDashboardStats {
   // Approvals & tickets
   pending_approvals: number;
   pending_tickets: number;
+  pending_prospects?: number;
 
   // Staff / HR
   total_staff: number;
@@ -89,6 +90,29 @@ export interface StaffAttendanceSummary {
   late: number;
   on_leave: number;
   attendance_rate: number;
+}
+
+export interface StaffPerformanceRow {
+  staff_id: number;
+  name: string;
+  position: string;
+  portfolio_size: string;
+  loan_count: number;
+  collection_rate: string;
+  disbursed_this_month: string;
+}
+
+export interface CashInflowPoint {
+  date: string;
+  expected: string;
+  actual: string;
+}
+
+export interface LoanPortfolioByProductRow {
+  product_name: string;
+  loan_count: number;
+  outstanding: string;
+  disbursed: string;
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -185,6 +209,48 @@ export const dashboardStatsService = {
         on_leave: 0,
         attendance_rate: 0,
       };
+    }
+  },
+
+  /**
+   * Per-loan-officer scorecard: portfolio size, collection rate, this-month
+   * disbursement volume.
+   */
+  async getStaffPerformance(): Promise<StaffPerformanceRow[]> {
+    try {
+      const response = await api.get('/analytics/staff-performance/');
+      return response.data || [];
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * Expected (scheduled due) vs. actual (collected) cash inflow, by day,
+   * for the given range (defaults to the current calendar month).
+   */
+  async getCashInflowTrend(start?: string, end?: string): Promise<CashInflowPoint[]> {
+    try {
+      const params = new URLSearchParams();
+      if (start) params.set('start', start);
+      if (end) params.set('end', end);
+      const qs = params.toString();
+      const response = await api.get(`/analytics/cash-inflow-trend/${qs ? `?${qs}` : ''}`);
+      return response.data || [];
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * Current outstanding portfolio broken down by loan product.
+   */
+  async getLoanPortfolioByProduct(): Promise<LoanPortfolioByProductRow[]> {
+    try {
+      const response = await api.get('/analytics/loan-portfolio-by-product/');
+      return response.data || [];
+    } catch {
+      return [];
     }
   },
 };

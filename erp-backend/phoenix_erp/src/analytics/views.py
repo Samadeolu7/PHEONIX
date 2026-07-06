@@ -324,6 +324,17 @@ class MicrofinanceDashboardStatsView(APIView):
         except Exception:
             data['pending_tickets'] = 0
 
+        # ── Pending Prospects ─────────────────────────────────────────────────
+        try:
+            from clients.models import Client
+            data['pending_prospects'] = _apply_officer_scope(
+                scope_qs(Client.objects.for_user(user)),
+                user,
+                client_lookup='assigned_officer',
+            ).filter(client_type='pr').count()
+        except Exception:
+            data['pending_prospects'] = 0
+
         # ── Staff ─────────────────────────────────────────────────────────────
         try:
             from hr.models import Staff
@@ -392,10 +403,10 @@ class LoanRepaymentTrendView(APIView):
                 ).aggregate(total=Sum('disbursed_amount'))['total'] or Decimal('0.00')
 
                 repaid = _scoped(LoanRepaymentSchedule.objects.for_user(user), branch).filter(
-                    paid_date__year=year,
-                    paid_date__month=month,
+                    payment_date__year=year,
+                    payment_date__month=month,
                     status='paid',
-                ).aggregate(total=Sum('amount_paid'))['total'] or Decimal('0.00')
+                ).aggregate(total=Sum('total_paid'))['total'] or Decimal('0.00')
             except Exception:
                 disbursed = Decimal('0.00')
                 repaid = Decimal('0.00')
@@ -494,5 +505,216 @@ class StaffAttendanceSummaryView(APIView):
             }
 
         return Response({'success': True, 'data': data})
+
+
+class StaffPerformanceView(APIView):
+    """
+    GET /api/analytics/staff-performance/
+
+    Per-loan-officer scorecard: portfolio size (outstanding), collection rate
+    (paid vs. total obligation — same definition as the overall
+    loan_repayment_rate KPI), and this-month disbursement volume. Grouped by
+    the credit officer (hr.Staff) assigned to each loan's client.
+
+    Director/global users see every officer (optionally narrowed to one
+    branch via X-Branch-ID); a scoped user only ever sees their own row via
+    the same officer-scoping used everywhere else in this module.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from loans.models import LoanAccount
+        from hr.models import Staff
+
+        user = request.user
+        today = timezone.now().date()
+        branch = _get_director_branch(request)
+
+        req_tenant = getattr(request, 'tenant', None)
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch)
+
+        loan_qs = _apply_officer_scope(
+            scope_qs(LoanAccount.objects.for_user(user)),
+            user,
+            client_lookup='client__assigned_officer',
+        )
+
+        portfolio_rows = (
+            loan_qs.filter(status__in=['active', 'disbursed'])
+            .exclude(client__assigned_officer__isnull=True)
+            .values('client__assigned_officer')
+            .annotate(
+                portfolio_size=Sum('outstanding_principal'),
+                paid=Sum('total_paid'),
+                loan_count=Count('id'),
+            )
+        )
+        portfolio_map = {r['client__assigned_officer']: r for r in portfolio_rows}
+
+        disb_rows = (
+            loan_qs.filter(
+                disbursement_date__year=today.year,
+                disbursement_date__month=today.month,
+            )
+            .exclude(client__assigned_officer__isnull=True)
+            .values('client__assigned_officer')
+            .annotate(disbursed=Sum('disbursed_amount'))
+        )
+        disb_map = {r['client__assigned_officer']: (r['disbursed'] or Decimal('0.00')) for r in disb_rows}
+
+        officer_ids = set(portfolio_map) | set(disb_map)
+        staff_qs = scope_qs(Staff.objects.for_user(user)).filter(id__in=officer_ids)
+
+        result = []
+        for staff in staff_qs:
+            p = portfolio_map.get(staff.id, {})
+            portfolio_size = p.get('portfolio_size') or Decimal('0.00')
+            paid = p.get('paid') or Decimal('0.00')
+            total_obligation = paid + portfolio_size
+            collection_rate = (
+                (paid / total_obligation * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+                if total_obligation > 0 else Decimal('0')
+            )
+            result.append({
+                'staff_id': staff.id,
+                'name': f"{staff.first_name} {staff.last_name}".strip(),
+                'position': staff.position,
+                'portfolio_size': str(portfolio_size),
+                'loan_count': p.get('loan_count') or 0,
+                'collection_rate': str(collection_rate),
+                'disbursed_this_month': str(disb_map.get(staff.id, Decimal('0.00'))),
+            })
+
+        result.sort(key=lambda r: Decimal(r['portfolio_size']), reverse=True)
+        return Response({'success': True, 'data': result})
+
+
+class CashInflowTrendView(APIView):
+    """
+    GET /api/analytics/cash-inflow-trend/?start=YYYY-MM-DD&end=YYYY-MM-DD
+
+    Expected (scheduled due) vs. actual (collected) loan repayment cash
+    inflow, bucketed by day, for the given range (defaults to the current
+    calendar month, capped at 90 days). Replaces the old system's rotating
+    daily/weekly/monthly cash-inflow text and separate weekly-inflow /
+    repayment-schedule charts with one real, date-range-able trend.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from loans.models import LoanRepaymentSchedule
+
+        user = request.user
+        branch = _get_director_branch(request)
+        today = timezone.now().date()
+
+        start_raw = request.query_params.get('start')
+        end_raw = request.query_params.get('end')
+        try:
+            start = datetime.date.fromisoformat(start_raw) if start_raw else today.replace(day=1)
+        except ValueError:
+            start = today.replace(day=1)
+        try:
+            end = datetime.date.fromisoformat(end_raw) if end_raw else today
+        except ValueError:
+            end = today
+
+        if end < start:
+            start, end = end, start
+        if (end - start).days > 90:
+            end = start + datetime.timedelta(days=90)
+
+        qs = _apply_officer_scope(
+            _scoped(LoanRepaymentSchedule.objects.for_user(user), branch),
+            user,
+            client_lookup='loan__client__assigned_officer',
+        )
+
+        expected_rows = (
+            qs.filter(due_date__gte=start, due_date__lte=end)
+            .values('due_date')
+            .annotate(total=Sum('total_due'))
+        )
+        expected_map = {r['due_date']: (r['total'] or Decimal('0.00')) for r in expected_rows}
+
+        actual_rows = (
+            qs.filter(payment_date__gte=start, payment_date__lte=end, payment_date__isnull=False)
+            .values('payment_date')
+            .annotate(total=Sum('total_paid'))
+        )
+        actual_map = {r['payment_date']: (r['total'] or Decimal('0.00')) for r in actual_rows}
+
+        result = []
+        d = start
+        one_day = datetime.timedelta(days=1)
+        while d <= end:
+            result.append({
+                'date': str(d),
+                'expected': str(expected_map.get(d, Decimal('0.00'))),
+                'actual': str(actual_map.get(d, Decimal('0.00'))),
+            })
+            d += one_day
+
+        return Response({
+            'success': True,
+            'data': result,
+            'period': {'start': str(start), 'end': str(end)},
+        })
+
+
+class LoanPortfolioByProductView(APIView):
+    """
+    GET /api/analytics/loan-portfolio-by-product/
+
+    Current outstanding portfolio broken down by loan product, for the
+    "loan performance by product" chart (the old system's equivalent broke
+    this down by loan_type — daily/weekly/monthly collection loans).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from loans.models import LoanAccount
+
+        user = request.user
+        branch = _get_director_branch(request)
+
+        req_tenant = getattr(request, 'tenant', None)
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch)
+
+        loan_qs = _apply_officer_scope(
+            scope_qs(LoanAccount.objects.for_user(user)),
+            user,
+            client_lookup='client__assigned_officer',
+        ).filter(status__in=['active', 'disbursed'])
+
+        rows = (
+            loan_qs.values('product__product__name')
+            .annotate(
+                loan_count=Count('id'),
+                outstanding=Sum('outstanding_principal'),
+                disbursed=Sum('disbursed_amount'),
+            )
+            .order_by('-outstanding')
+        )
+
+        result = [
+            {
+                'product_name': r['product__product__name'] or 'Unassigned',
+                'loan_count': r['loan_count'],
+                'outstanding': str(r['outstanding'] or Decimal('0.00')),
+                'disbursed': str(r['disbursed'] or Decimal('0.00')),
+            }
+            for r in rows
+        ]
+
+        return Response({'success': True, 'data': result})
 
 

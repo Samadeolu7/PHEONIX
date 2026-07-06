@@ -571,6 +571,13 @@ const QUICK_ACTIONS = [
     permission: 'reports-view',
   },
   {
+    id: 'portfolio-overview',
+    title: 'Portfolio Overview',
+    icon: BarChart3,
+    path: '/reports/director-portfolio',
+    permission: 'loan-accounts-view',
+  },
+  {
     id: 'approvals',
     title: 'Approvals',
     icon: CheckCircle,

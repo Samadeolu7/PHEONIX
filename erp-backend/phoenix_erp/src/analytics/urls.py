@@ -6,6 +6,9 @@ from .views import (
     LoanRepaymentTrendView,
     ClientGrowthView,
     StaffAttendanceSummaryView,
+    StaffPerformanceView,
+    CashInflowTrendView,
+    LoanPortfolioByProductView,
 )
 
 app_name = 'analytics'
@@ -19,5 +22,8 @@ urlpatterns = [
     path('loan-repayment-trend/', LoanRepaymentTrendView.as_view(), name='loan-repayment-trend'),
     path('client-growth/', ClientGrowthView.as_view(), name='client-growth'),
     path('staff-attendance/', StaffAttendanceSummaryView.as_view(), name='staff-attendance'),
+    path('staff-performance/', StaffPerformanceView.as_view(), name='staff-performance'),
+    path('cash-inflow-trend/', CashInflowTrendView.as_view(), name='cash-inflow-trend'),
+    path('loan-portfolio-by-product/', LoanPortfolioByProductView.as_view(), name='loan-portfolio-by-product'),
 ]
 
