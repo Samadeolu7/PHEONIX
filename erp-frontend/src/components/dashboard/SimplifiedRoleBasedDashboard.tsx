@@ -1249,64 +1249,91 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
         </div>
 
         {/* ── CASHIER BALANCE ALERT ────────────────────────────────────── */}
-        {liveStats.cashier_balance != null && (
-          <div
-            className="rounded-xl px-5 py-4 flex items-center justify-between gap-4"
-            style={
-              parseFloat(liveStats.cashier_balance) !== 0
-                ? { background: '#fef2f2', border: '1.5px solid #fca5a5' }
-                : { background: '#f0fdf4', border: '1.5px solid #86efac' }
-            }
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className="rounded-lg p-2"
-                style={
-                  parseFloat(liveStats.cashier_balance) !== 0
-                    ? { background: '#fee2e2', color: '#dc2626' }
-                    : { background: '#dcfce7', color: '#16a34a' }
-                }
-              >
-                <Wallet className="w-5 h-5" />
-              </div>
-              <div>
-                <p
-                  className="text-xs font-semibold uppercase tracking-wide"
-                  style={{ color: '#6b7280' }}
-                >
-                  My Cash Account Balance
-                  {liveStats.cashier_account_name && (
-                    <span className="ml-1 font-normal normal-case" style={{ color: '#9ca3af' }}>
-                      — {liveStats.cashier_account_name}
-                    </span>
-                  )}
-                </p>
-                <p
-                  className="text-xl font-black mt-0.5"
+        {liveStats.cashier_balance != null &&
+          (() => {
+            const cashierAlertContent = (
+              <>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="rounded-lg p-2"
+                    style={
+                      parseFloat(liveStats.cashier_balance!) !== 0
+                        ? { background: '#fee2e2', color: '#dc2626' }
+                        : { background: '#dcfce7', color: '#16a34a' }
+                    }
+                  >
+                    <Wallet className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p
+                      className="text-xs font-semibold uppercase tracking-wide"
+                      style={{ color: '#6b7280' }}
+                    >
+                      My Cash Account Balance
+                      {liveStats.cashier_account_name && (
+                        <span className="ml-1 font-normal normal-case" style={{ color: '#9ca3af' }}>
+                          — {liveStats.cashier_account_name}
+                        </span>
+                      )}
+                    </p>
+                    <p
+                      className="text-xl font-black mt-0.5"
+                      style={{
+                        color: parseFloat(liveStats.cashier_balance!) !== 0 ? '#dc2626' : '#16a34a',
+                      }}
+                    >
+                      {formatNaira(liveStats.cashier_balance!)}
+                    </p>
+                  </div>
+                </div>
+                <div
+                  className="flex items-center gap-1.5 text-sm font-semibold flex-shrink-0"
                   style={{
-                    color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a',
+                    color: parseFloat(liveStats.cashier_balance!) !== 0 ? '#dc2626' : '#16a34a',
                   }}
                 >
-                  {formatNaira(liveStats.cashier_balance)}
-                </p>
+                  {parseFloat(liveStats.cashier_balance!) !== 0 ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4" /> Must be ₦0.00 at end of day
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" /> Balanced
+                    </>
+                  )}
+                </div>
+              </>
+            );
+            const cashierAlertStyle =
+              parseFloat(liveStats.cashier_balance!) !== 0
+                ? { background: '#fef2f2', border: '1.5px solid #fca5a5' }
+                : { background: '#f0fdf4', border: '1.5px solid #86efac' };
+
+            return liveStats.cashier_account_id != null ? (
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(`/accounts/${liveStats.cashier_account_id}/ledger`)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate(`/accounts/${liveStats.cashier_account_id}/ledger`);
+                  }
+                }}
+                className="rounded-xl px-5 py-4 flex items-center justify-between gap-4 cursor-pointer hover:opacity-90 transition-opacity"
+                style={cashierAlertStyle}
+              >
+                {cashierAlertContent}
               </div>
-            </div>
-            <div
-              className="flex items-center gap-1.5 text-sm font-semibold flex-shrink-0"
-              style={{ color: parseFloat(liveStats.cashier_balance) !== 0 ? '#dc2626' : '#16a34a' }}
-            >
-              {parseFloat(liveStats.cashier_balance) !== 0 ? (
-                <>
-                  <AlertTriangle className="w-4 h-4" /> Must be ₦0.00 at end of day
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="w-4 h-4" /> Balanced
-                </>
-              )}
-            </div>
-          </div>
-        )}
+            ) : (
+              <div
+                className="rounded-xl px-5 py-4 flex items-center justify-between gap-4"
+                style={cashierAlertStyle}
+              >
+                {cashierAlertContent}
+              </div>
+            );
+          })()}
 
         {/* ── QUICK ACTIONS: horizontal pill strip ─────────────────────── */}
         {accessibleQuickActions.length > 0 && (

@@ -305,12 +305,15 @@ class MicrofinanceDashboardStatsView(APIView):
                 balance = _ca.account.balance if _ca.account_id else _ca.current_balance
                 data['cashier_balance'] = str(balance)
                 data['cashier_account_name'] = _ca.name
+                data['cashier_account_id'] = _ca.account_id
             else:
                 data['cashier_balance'] = None
                 data['cashier_account_name'] = None
+                data['cashier_account_id'] = None
         except Exception:
             data['cashier_balance'] = None
             data['cashier_account_name'] = None
+            data['cashier_account_id'] = None
                 
         # ── Pending Tickets ───────────────────────────────────────────────────
         try:

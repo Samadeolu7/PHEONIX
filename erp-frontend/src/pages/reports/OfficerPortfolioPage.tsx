@@ -260,10 +260,14 @@ export default function OfficerPortfolioPage() {
                   </div>
                 )}
                 <Link
-                  to="/treasury/cashier-accounts"
+                  to={
+                    stats.cashier_account_id != null
+                      ? `/accounts/${stats.cashier_account_id}/ledger`
+                      : '/treasury/cashier-accounts'
+                  }
                   className="mt-1 inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
                 >
-                  View cash account <ArrowRight size={11} />
+                  View transactions <ArrowRight size={11} />
                 </Link>
               </div>
             </div>
