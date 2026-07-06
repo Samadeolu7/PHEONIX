@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
 import { BRAND } from '../../constants/brand';
 import { ThreadWidget } from '../threads/ThreadWidget';
+import CashInflowForecastCard from './CashInflowForecastCard';
 import {
   Clock,
   User,
@@ -1245,6 +1246,15 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
               })}
             </div>
           </div>
+
+          {/* Cash inflow forecast — client-requested for daily/weekly/monthly
+              forecasting, Director/Principal only (matches the old system's
+              rotating dash.html boxes) */}
+          {isSuperUser && (
+            <div className="px-7 pb-5">
+              <CashInflowForecastCard variant="compact" />
+            </div>
+          )}
 
           {/* Gold accent line */}
           <div

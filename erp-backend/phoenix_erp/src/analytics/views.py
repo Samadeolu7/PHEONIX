@@ -598,15 +598,22 @@ class CashInflowTrendView(APIView):
     GET /api/analytics/cash-inflow-trend/?start=YYYY-MM-DD&end=YYYY-MM-DD
 
     Expected (scheduled due) vs. actual (collected) loan repayment cash
-    inflow, bucketed by day, for the given range (defaults to the current
-    calendar month, capped at 90 days). Replaces the old system's rotating
-    daily/weekly/monthly cash-inflow text and separate weekly-inflow /
-    repayment-schedule charts with one real, date-range-able trend.
+    inflow, bucketed by day, for the given range (defaults to the FULL
+    current calendar month — 1st through the last day — capped at 90 days).
+    Replaces the old system's rotating daily/weekly/monthly cash-inflow text
+    and separate weekly-inflow/repayment-schedule charts with one real,
+    date-range-able trend.
+
+    Defaulting to the whole month (not just "up to today") is deliberate:
+    "expected" is a forecast — it needs to include installments due later
+    this week/month, not just what's already past. "actual" naturally never
+    exceeds today since payments can't be recorded for the future.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         from loans.models import LoanRepaymentSchedule
+        import calendar
 
         user = request.user
         branch = _get_director_branch(request)
@@ -619,7 +626,11 @@ class CashInflowTrendView(APIView):
         except ValueError:
             start = today.replace(day=1)
         try:
-            end = datetime.date.fromisoformat(end_raw) if end_raw else today
+            if end_raw:
+                end = datetime.date.fromisoformat(end_raw)
+            else:
+                last_day = calendar.monthrange(today.year, today.month)[1]
+                end = today.replace(day=last_day)
         except ValueError:
             end = today
 

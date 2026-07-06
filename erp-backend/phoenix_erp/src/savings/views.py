@@ -301,14 +301,30 @@ class SavingsAccountViewSet(ScopedModelViewSet):
             except ValueError:
                 pass
 
+        # First-deposit-as-income check: if this is the first deposit of the
+        # calendar month on a daily-contribution product configured to treat
+        # the first payment as income, the full amount goes to the income GL
+        # and the savings balance is NOT credited. Mirrors the check applied
+        # in ContributionScheduleViewSet.mark_paid so this generic endpoint
+        # can't be used to bypass it.
+        from .services import handle_first_deposit_income
         try:
-            account.deposit(
+            _journal, was_income = handle_first_deposit_income(
+                savings_account=account,
                 amount=amount,
-                description=description,
+                deposit_date=deposit_date,
                 cashier_account=cashier_account,
                 transacted_by=request.user,
-                date=deposit_date,
             )
+
+            if not was_income:
+                account.deposit(
+                    amount=amount,
+                    description=description,
+                    cashier_account=cashier_account,
+                    transacted_by=request.user,
+                    date=deposit_date,
+                )
         except ValidationError as exc:
             return Response(
                 {'detail': exc.message if hasattr(exc, 'message') else str(exc)},

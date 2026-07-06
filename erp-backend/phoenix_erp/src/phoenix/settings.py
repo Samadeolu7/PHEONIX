@@ -568,6 +568,17 @@ CELERY_BEAT_SCHEDULE = {
         }
     },
 
+    # ── Savings: credit 6% interest to matured (3-month) Smart Savings ─────
+    # Daily @ 04:00 WAT (03:00 UTC) — after the loan status run so it doesn't
+    # contend for DB/worker capacity with the 01:00 UTC job.
+    'apply-smart-savings-interest': {
+        'task': 'savings.tasks.apply_smart_savings_interest',
+        'schedule': crontab(minute=0, hour=3),
+        'options': {
+            'expires': 7200,
+        }
+    },
+
     # ── Assets: post monthly depreciation for all active FixedAssets ───────
     # 1st of each month @ 03:00 WAT (02:00 UTC)
     'post-monthly-asset-depreciation': {
@@ -580,14 +591,47 @@ CELERY_BEAT_SCHEDULE = {
 
     # ── Loans: daily arrears/risk/interest-suspension/penalty update ───────
     # Every day @ 02:00 WAT (01:00 UTC). Do not also schedule
-    # loans.tasks.apply_daily_loan_penalties — it duplicates/conflicts with the
-    # per-installment penalty logic this task already runs.
+    # loans.tasks.apply_daily_loan_penalties or loans.tasks.update_all_loan_arrears
+    # — they duplicate/conflict with the per-installment penalty and arrears
+    # logic this task already runs (see loans/tasks.py module docstring).
     'update-loan-status-daily': {
         'task': 'loans.tasks.update_loan_status_task',
         'schedule': crontab(minute=0, hour=1),
         'options': {
             'expires': 7200,
         }
+    },
+
+    # ── SaaS billing subscription tasks ─────────────────────────────────────
+    'check-subscription-reminders': {
+        'task': 'accounts.tasks.check_subscription_reminders',
+        'schedule': crontab(hour=8, minute=0),  # Daily at 8 AM
+    },
+    'check-overdue-subscriptions': {
+        'task': 'accounts.tasks.check_overdue_subscriptions',
+        'schedule': crontab(hour=1, minute=0),  # Daily at 1 AM
+    },
+    'generate-monthly-invoices': {
+        'task': 'accounts.tasks.generate_monthly_invoices',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight
+    },
+    'track-subscription-usage': {
+        'task': 'accounts.tasks.track_subscription_usage',
+        'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
+    },
+
+    # ── HR payroll automation ────────────────────────────────────────────────
+    'auto-generate-monthly-payroll': {
+        'task': 'hr.tasks.auto_generate_monthly_payroll',
+        'schedule': crontab(hour=0, minute=0, day_of_month=27),  # 27th of every month at midnight
+    },
+
+    # ── Daily collection workflow — 10 AM WAT grace-period notification ────
+    # Notifies supervisors of any unreconciled sheets where the officer's till
+    # is still non-zero.
+    'notify-unreconciled-collection-sheets': {
+        'task': 'cash_management.tasks.notify_unreconciled_sheets',
+        'schedule': crontab(hour=9, minute=0),  # 09:00 UTC = 10:00 WAT (Africa/Lagos UTC+1)
     },
 }
 

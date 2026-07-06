@@ -40,6 +40,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { loanService, PARSummary, CBNReturns } from '../../services/loanService';
+import CashInflowForecastCard from '../../components/dashboard/CashInflowForecastCard';
 import {
   dashboardStatsService,
   MicrofinanceDashboardStats,
@@ -194,6 +195,9 @@ export default function DirectorPortfolioPage() {
         </div>
       ) : stats ? (
         <>
+          {/* ── Cash Inflow Forecast (client-requested, at the top) ── */}
+          <CashInflowForecastCard variant="full" />
+
           {/* ── KPI Cards ── */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
             <KpiCard
