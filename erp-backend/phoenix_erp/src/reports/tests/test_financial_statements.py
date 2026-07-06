@@ -521,7 +521,28 @@ class AFinancialStatementServiceTestCase(TestCase):
         
         self.assertIn('comparative', result)
         self.assertIn('variance', result['comparative'])
-    
+
+    def test_profit_loss_excludes_pre_period_activity(self):
+        """P&L for a sub-period must not fold in revenue/expense from before start_date.
+
+        Revenue entry sits at today-20; window starts at today-10, so it must
+        be excluded entirely (no brought-forward balance for income/expense -
+        they are temporary accounts that close to equity each period).
+        """
+        today = date.today()
+        result = self.service.generate_profit_loss(
+            start_date=today - timedelta(days=10),
+            end_date=today,
+            detail_level='summary',
+            comparative_period=False
+        )
+
+        # Revenue (today-20) falls outside the window -> must not appear
+        self.assertEqual(Decimal(result['revenue']['total']), Decimal('0.00'))
+        # Expenses (today-10 and today-5) fall inside the window
+        self.assertEqual(Decimal(result['expenses']['total']), Decimal('5000.00'))
+        self.assertEqual(Decimal(result['net_profit']), Decimal('-5000.00'))
+
     def test_balance_sheet_generation(self):
         """Test balance sheet generation"""
         result = self.service.generate_balance_sheet(

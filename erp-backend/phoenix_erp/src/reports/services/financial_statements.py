@@ -507,42 +507,55 @@ class FinancialStatementService:
         # CHILD: use stored balance fields as the authoritative source
         is_debit_normal = account.account_type in [Account.ASSET, Account.EXPENSE, Account.LOAN]
 
+        # Income/expense are temporary (P&L) accounts: they close to equity at
+        # period end and never carry a brought-forward balance into the next
+        # period. Including pre-period entries here would silently turn every
+        # P&L date-range request into a since-inception cumulative total.
+        is_temporary_account = account.account_type in [Account.INCOME, Account.EXPENSE]
+
         if start_date:
-            # Date-range view: dynamically computed opening balance + posted period entries.
-            # Instead of relying on the static balance_bf (which is only updated during
-            # year-end close or import), we compute the actual opening balance at start_date
-            # by summing all posted entries before that date.
-            entries_before = TransactionEntry.objects.filter(
-                account=account,
-                transaction__is_deleted=False,
-                posted=True,
-                transaction__date__lt=start_date,
-            )
-            if self.branch:
-                entries_before = entries_before.filter(transaction__branch=self.branch)
-            elif hasattr(self.owner, 'tenant') and self.owner.tenant:
-                entries_before = entries_before.filter(transaction__tenant=self.owner.tenant)
-
-            before_debit = entries_before.filter(side=TransactionEntry.DEBIT).aggregate(
-                total=Sum('amount')
-            )['total'] or Decimal('0.00')
-            before_credit = entries_before.filter(side=TransactionEntry.CREDIT).aggregate(
-                total=Sum('amount')
-            )['total'] or Decimal('0.00')
-
-            # Net opening balance at start_date
-            if is_debit_normal:
-                bbf = Decimal(str(before_debit)) - Decimal(str(before_credit))
+            if is_temporary_account:
+                # Temporary (P&L) account with a date range: no brought-forward
+                # balance, the period's own entries are the entire result.
+                bbf = Decimal('0.00')
+                bbf_debit = Decimal('0.00')
+                bbf_credit = Decimal('0.00')
             else:
-                bbf = Decimal(str(before_credit)) - Decimal(str(before_debit))
+                # Date-range view: dynamically computed opening balance + posted period entries.
+                # Instead of relying on the static balance_bf (which is only updated during
+                # year-end close or import), we compute the actual opening balance at start_date
+                # by summing all posted entries before that date.
+                entries_before = TransactionEntry.objects.filter(
+                    account=account,
+                    transaction__is_deleted=False,
+                    posted=True,
+                    transaction__date__lt=start_date,
+                )
+                if self.branch:
+                    entries_before = entries_before.filter(transaction__branch=self.branch)
+                elif hasattr(self.owner, 'tenant') and self.owner.tenant:
+                    entries_before = entries_before.filter(transaction__tenant=self.owner.tenant)
 
-            # Split opening balance into its debit/credit component based on account type
-            if is_debit_normal:
-                bbf_debit = max(bbf, Decimal('0.00'))
-                bbf_credit = max(-bbf, Decimal('0.00'))
-            else:
-                bbf_credit = max(bbf, Decimal('0.00'))
-                bbf_debit = max(-bbf, Decimal('0.00'))
+                before_debit = entries_before.filter(side=TransactionEntry.DEBIT).aggregate(
+                    total=Sum('amount')
+                )['total'] or Decimal('0.00')
+                before_credit = entries_before.filter(side=TransactionEntry.CREDIT).aggregate(
+                    total=Sum('amount')
+                )['total'] or Decimal('0.00')
+
+                # Net opening balance at start_date
+                if is_debit_normal:
+                    bbf = Decimal(str(before_debit)) - Decimal(str(before_credit))
+                else:
+                    bbf = Decimal(str(before_credit)) - Decimal(str(before_debit))
+
+                # Split opening balance into its debit/credit component based on account type
+                if is_debit_normal:
+                    bbf_debit = max(bbf, Decimal('0.00'))
+                    bbf_credit = max(-bbf, Decimal('0.00'))
+                else:
+                    bbf_credit = max(bbf, Decimal('0.00'))
+                    bbf_debit = max(-bbf, Decimal('0.00'))
 
             # Posted entries in the requested period
             entries = TransactionEntry.objects.filter(
