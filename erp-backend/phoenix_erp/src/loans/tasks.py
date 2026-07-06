@@ -4,27 +4,43 @@ Celery tasks for the loans application.
 
 Scheduled tasks
 ---------------
-update_all_loan_arrears
-    Runs at 00:05 UTC (01:05 WAT) every day.
-    For every active/disbursed loan:
-      - Marks past-due pending/partial schedule installments as 'overdue'
-      - Recalculates days_in_arrears and arrears_amount on the loan
-      - Stamps last_batch_processed_at
-    Replaces the Java App 1 (LoanPortfolioBatchProcessor) daily batch.
+update_loan_status_task
+    Runs daily via CELERY_BEAT_SCHEDULE. Thin wrapper around the
+    `update_loan_status` management command — the single source of truth for
+    arrears, CBN risk classification, interest suspension/reinstatement, and
+    per-installment late-payment penalties (using each product's own configured
+    penalty type/rate and grace period). See loans/management/commands/update_loan_status.py.
 
-apply_daily_loan_penalties
-    Runs at 00:10 UTC (01:10 WAT) every day, AFTER update_all_loan_arrears.
-    Applies a configurable daily penalty charge to loans that are in arrears.
+update_all_loan_arrears, apply_daily_loan_penalties
+    Older, separate implementations of overlapping functionality. Left defined
+    but intentionally NOT scheduled — apply_daily_loan_penalties in particular
+    uses a cruder flat-daily-charge model (with a fixed-type-penalty fallback
+    bug) that would fight with update_loan_status over outstanding_penalties if
+    both ran. Kept only in case they're wanted again; do not schedule alongside
+    update_loan_status_task.
 """
 
 import logging
 from decimal import Decimal
 
 from celery import shared_task
+from django.core.management import call_command
 from django.db import transaction as db_transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task(
+    bind=True,
+    name='loans.tasks.update_loan_status_task',
+    max_retries=3,
+    default_retry_delay=300,
+    acks_late=True,
+)
+def update_loan_status_task(self):
+    """Daily wrapper around `python manage.py update_loan_status`."""
+    call_command('update_loan_status')
 
 DAILY_PENALTY_RATE = Decimal('0.05')  # 5% of overdue balance
 

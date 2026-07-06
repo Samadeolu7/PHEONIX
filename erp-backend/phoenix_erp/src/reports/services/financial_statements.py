@@ -217,7 +217,41 @@ class FinancialStatementService:
             'net_profit': str(net_profit),
             'net_margin_percent': str(net_margin.quantize(Decimal('0.01')))
         }
-        
+
+        # ── Real (post-deferral) net profit ────────────────────────────────
+        # Loan products can use deferred/unearned interest income (see
+        # LoanProduct.unearned_interest_income_account): Interest Income is
+        # booked in full and permanently at disbursement, so net_profit above
+        # overstates true earned profit until that liability unwinds. The
+        # liability carries a negative balance by design, so adding it back
+        # subtracts its magnitude. Only added to the response when at least
+        # one such account is configured, so the response shape is unchanged
+        # for tenants not using this feature.
+        from loans.models import LoanProduct
+        unearned_account_ids = set(
+            LoanProduct.objects.filter(
+                unearned_interest_income_account__isnull=False
+            ).values_list('unearned_interest_income_account_id', flat=True)
+        )
+        if unearned_account_ids:
+            unearned_accounts = Account.objects.filter(
+                id__in=unearned_account_ids, is_deleted=False
+            )
+            if self.branch:
+                unearned_accounts = unearned_accounts.filter(branch=self.branch)
+            elif hasattr(self.owner, 'tenant') and self.owner.tenant:
+                unearned_accounts = unearned_accounts.filter(tenant=self.owner.tenant)
+            unearned_accounts = list(unearned_accounts)
+
+            if unearned_accounts:
+                total_unearned_balance = Decimal('0.00')
+                for account in unearned_accounts:
+                    balance_data = self._calculate_account_balance(
+                        account, start_date, end_date, include_children=False
+                    )
+                    total_unearned_balance += Decimal(balance_data['balance'])
+                result['real_net_profit'] = str(net_profit + total_unearned_balance)
+
         # Add comparative period if requested
         if comparative_period:
             days_diff = (end_date - start_date).days

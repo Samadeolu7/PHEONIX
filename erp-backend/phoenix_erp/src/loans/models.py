@@ -247,7 +247,37 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         on_delete=models.SET_NULL,
         null=True, blank=True,
         related_name='loan_products_accrued_interest',
-        help_text='ASSET account debited in daily interest accrual entries.',
+        help_text=(
+            'ASSET account for interest receivable — debited when an installment\'s '
+            'interest is recognized as earned (due date reached), credited when that '
+            'interest is actually collected. Only used when unearned_interest_income_account '
+            'is also configured.'
+        ),
+    )
+    unearned_interest_income_account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='loan_products_unearned_interest',
+        help_text=(
+            'LIABILITY account for deferred/unearned interest income. Credited at '
+            'disbursement for the full scheduled interest (Interest Income is credited '
+            'in full at the same time and stays permanent); debited as each installment '
+            'is recognized as earned. Carries a debit (negative) balance between '
+            'disbursement and full recognition — this is expected. Leave blank to keep '
+            'the legacy behavior of crediting interest_income_account only at payment time.'
+        ),
+    )
+    interest_writeoff_expense_account = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='loan_products_interest_writeoff_expense',
+        help_text=(
+            'EXPENSE account debited when a loan is written off with remaining '
+            'unrecognized unearned interest — recognizes that permanently-booked '
+            'income will never be collected.'
+        ),
     )
 
     objects = OwnerBranchManager()
@@ -530,6 +560,54 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text='Required provision in Naira (provision_pct × outstanding_principal).',
     )
 
+    # ── Deferred/unearned interest income (set once at disbursement) ──────
+    # NOTE: not the default going-forward behavior (see interest_recognized_at_disbursement
+    # below) — kept available but unused as of this field's introduction.
+    interest_deferral_active = models.BooleanField(
+        default=False,
+        help_text=(
+            'True if this loan was disbursed while its product had the deferred/unearned '
+            'interest income accounts configured — permanently locks this loan onto the '
+            'new GL flow regardless of later product reconfiguration.'
+        ),
+    )
+
+    # ── Interest recognized in full at disbursement (default behavior) ─────
+    # Matches how the legacy system recognized interest: fully and permanently at
+    # disbursement, with repayments afterward being a pure Bank <-> Loan Receivable
+    # transaction that never touches Interest Income again. Set once inside disburse()
+    # and never re-evaluated from live product config afterward, so reconfiguring a
+    # product never retroactively changes how an already-disbursed loan's payments post.
+    interest_recognized_at_disbursement = models.BooleanField(
+        default=False,
+        help_text=(
+            'True if this loan\'s full interest was credited to Interest Income at '
+            'disbursement (the default when the product has interest_income_account '
+            'configured and is not using the deferred/unearned compromise). '
+            'record_payment() then collects the interest portion straight against the '
+            'Loan Receivable instead of crediting Income again.'
+        ),
+    )
+
+    # ── Origin (audit/reporting only — does not gate any GL/posting logic) ─
+    ORIGIN_NATIVE = 'native'
+    ORIGIN_LEGACY_IMPORT = 'legacy_import'
+    ORIGIN_CHOICES = [
+        (ORIGIN_NATIVE, 'Originated in Phoenix'),
+        (ORIGIN_LEGACY_IMPORT, 'Imported from legacy system'),
+    ]
+    origin = models.CharField(
+        max_length=20,
+        choices=ORIGIN_CHOICES,
+        default=ORIGIN_NATIVE,
+        help_text=(
+            'Where this loan record came from. Purely informational for portfolio '
+            'reporting/audits — does not affect GL posting behavior, which is already '
+            'determined by interest_deferral_active and by whether the loan ever goes '
+            'through disburse().'
+        ),
+    )
+
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
     
@@ -675,6 +753,20 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             Dr. Loan Receivable (self.account)   — ASSET goes up, we are owed money
             Cr. Cash / Bank (disbursement_account) — ASSET goes down, cash leaves
 
+            If the product has interest_income_account configured (the default, and
+            how the legacy system recognized interest), two more lines book the full
+            scheduled interest permanently into Interest Income, added onto the Loan
+            Receivable debit so it totals principal+interest:
+            Dr. Loan Receivable (interest portion, in addition to the principal above)
+            Cr. Interest Income (permanent — see interest_recognized_at_disbursement)
+
+            If the product ALSO has unearned_interest_income_account and
+            accrued_interest_account configured, the deferred/unearned compromise is
+            used instead (see LoanProduct.unearned_interest_income_account) — not the
+            default, kept available but unused unless deliberately configured:
+            Dr. Unearned Interest Income (liability, goes negative until earned)
+            Cr. Interest Income (permanent, client-visible from day one)
+
         Args:
             disbursement_date: Date of disbursement (defaults to today).
             disbursement_account: The Cash/Bank GL Account the funds come from.
@@ -769,6 +861,53 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             amount=self.disbursed_amount,
         )
 
+        # ── Interest recognition at disbursement ────────────────────────────
+        # Two mutually exclusive options, both opt-in via product GL config:
+        #
+        # 1. Deferred/unearned compromise (see LoanProduct.unearned_interest_income_account
+        #    help_text) — books the full interest into Income immediately and
+        #    permanently, offset by a liability that carries a debit (negative)
+        #    balance until recognized. Not the default; kept available but unused
+        #    unless a product has all three deferral accounts configured.
+        #
+        # 2. Default — recognizes the full interest in Income immediately and
+        #    permanently too, but with NO deferral: it's added straight onto the
+        #    Loan Receivable debit (so the receivable totals principal+interest),
+        #    matching how the legacy system recognized interest at disbursement.
+        #    record_payment() then treats the interest portion as a plain
+        #    receivable reduction (see record_payment()'s interest_account branch).
+        unearned_account = self.product.unearned_interest_income_account
+        interest_income_account = self.product.interest_income_account
+        interest_receivable_account = self.product.accrued_interest_account
+        if unearned_account and interest_income_account and interest_receivable_account and total_interest > 0:
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=unearned_account,
+                side=JournalEntryLine.DEBIT,
+                amount=total_interest,
+            )
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=interest_income_account,
+                side=JournalEntryLine.CREDIT,
+                amount=total_interest,
+            )
+            self.interest_deferral_active = True
+        elif interest_income_account and total_interest > 0:
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=self.account,
+                side=JournalEntryLine.DEBIT,
+                amount=total_interest,
+            )
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=interest_income_account,
+                side=JournalEntryLine.CREDIT,
+                amount=total_interest,
+            )
+            self.interest_recognized_at_disbursement = True
+
         journal_entry.post()
 
         self.disbursement_journal_entry = journal_entry
@@ -820,6 +959,19 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         When an income account is not configured on the Loan Product the
         corresponding amount is credited to the Loan Receivable account instead
         (conservative fallback that keeps the transaction balanced).
+
+        When interest_recognized_at_disbursement is True (the default — see
+        disburse()), the interest portion of this payment is folded into the
+        Loan Receivable credit instead of touching Income at all — Income was
+        already booked in full and permanently at disbursement, so this is a
+        plain Bank <-> Loan Receivable reduction, matching the legacy system.
+
+        When interest_deferral_active is True instead (see disburse()), the interest
+        credit line above targets accrued_interest_account (Interest Receivable)
+        instead of interest_income_account — Income was already booked in full
+        at disbursement. If this payment fully closes the loan before every
+        installment's due date has passed, any remaining unrecognized interest
+        is caught up and recognized in a companion journal entry (LNACC series).
 
         Args:
             amount: Total payment amount received.
@@ -946,7 +1098,26 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         # ── Credit entries (must collectively equal the debit) ────────────
         # Amounts that lack a dedicated income account are credited to the
         # Loan Receivable account (fallback keeps the transaction balanced).
-        interest_account  = self.product.interest_income_account
+        # Three ways the interest portion of this payment can be treated,
+        # depending on how (or whether) Income was already recognized at
+        # disbursement:
+        if self.interest_deferral_active and self.product.accrued_interest_account:
+            # Deferred/unearned compromise: Income was booked in full at disbursement
+            # (net to zero via the liability) — this payment collects against the
+            # Interest Receivable account instead of re-crediting Income.
+            interest_account = self.product.accrued_interest_account
+        elif self.interest_recognized_at_disbursement:
+            # Default: Income was already booked in full and permanently at
+            # disbursement (see disburse()) — this payment is a plain Bank <-> Loan
+            # Receivable reduction, matching the legacy system. `None` here falls
+            # through to the "no dedicated income account" fallback below, which
+            # folds the amount into loan_account_credit instead of crediting Income.
+            interest_account = None
+        else:
+            # Legacy cash-basis fallback: Income was never recognized at
+            # disbursement (e.g. an older loan disbursed before interest_income_account
+            # was configured on its product) — recognize it now, as it's collected.
+            interest_account = self.product.interest_income_account
         fee_account       = self.product.fee_income_account
         penalty_account   = self.product.penalty_income_account
 
@@ -1014,6 +1185,52 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             fees=fee_payment,
             principal=principal_payment,
         )
+
+        # ── Early-payoff catch-up: recognize any remaining unearned interest ──
+        # If this payment closed the loan out before every installment's due
+        # date had passed, real cash was still received for all of it — recognize
+        # the remainder as earned now instead of leaving it stuck in the
+        # liability forever.
+        if self.interest_deferral_active and self.status == 'paid_off':
+            unrecognized_rows = self.repayment_schedule.filter(
+                interest_recognized=False, interest_written_off=False, interest_due__gt=0,
+            )
+            remaining_unrecognized = unrecognized_rows.aggregate(
+                total=Sum('interest_due')
+            )['total'] or Decimal('0.00')
+            if (remaining_unrecognized > 0
+                    and self.product.accrued_interest_account
+                    and self.product.unearned_interest_income_account):
+                catchup_series, _ = TransactionSeries.objects.get_or_create(
+                    code='LNACC',
+                    defaults={'description': 'Loan Interest Recognition (earned)'},
+                )
+                catchup_journal = JournalEntry.objects.create(
+                    series=catchup_series,
+                    date=payment_date,
+                    description=f"Early payoff interest recognition – {self.loan_number}",
+                    owner=self.owner,
+                    branch=self.branch,
+                    created_by=received_by,
+                )
+                JournalEntryLine.objects.create(
+                    transaction=catchup_journal,
+                    account=self.product.accrued_interest_account,
+                    side=JournalEntryLine.DEBIT,
+                    amount=remaining_unrecognized,
+                )
+                JournalEntryLine.objects.create(
+                    transaction=catchup_journal,
+                    account=self.product.unearned_interest_income_account,
+                    side=JournalEntryLine.CREDIT,
+                    amount=remaining_unrecognized,
+                )
+                catchup_journal.post()
+                unrecognized_rows.update(
+                    interest_recognized=True,
+                    interest_recognized_at=timezone.now(),
+                )
+
         self._calculate_arrears()
 
         from common.models import FinancialAuditLog, log_financial_event
@@ -1169,6 +1386,14 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             Dr. Loan Loss Provision / Bad Debt Expense   (provision_account)
             Cr. Loan Receivable                          (self.account)
 
+            If interest_deferral_active and any schedule interest remains
+            unrecognized, a companion pair of lines flushes it out of the
+            Unearned Interest Income liability into a real expense (Interest
+            Income was already booked permanently at disbursement and can't be
+            un-booked):
+            Dr. Interest Write-off Expense (interest_writeoff_expense_account)
+            Cr. Unearned Interest Income
+
         Args:
             written_off_by:    The User authorising the write-off.
             provision_account: An Account (usually an EXPENSE type GL account)
@@ -1202,7 +1427,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         )
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code='LN-WO',
+            code='LNWO',
             defaults={'description': 'Loan Write-offs'},
         )
 
@@ -1234,6 +1459,35 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             side=JournalEntryLine.CREDIT,
             amount=write_off_amount,
         )
+
+        # ── Deferred/unearned interest write-off (opt-in per product) ──────
+        # Interest Income was already booked in full and permanently at
+        # disbursement — it can't be un-booked. Any interest not yet recognized
+        # as earned will never be collected now, so flush it out of the
+        # liability into a real expense instead.
+        if self.interest_deferral_active:
+            unrecognized_rows = self.repayment_schedule.filter(
+                interest_recognized=False, interest_written_off=False, interest_due__gt=0,
+            )
+            remaining_unrecognized = unrecognized_rows.aggregate(
+                total=Sum('interest_due')
+            )['total'] or Decimal('0.00')
+            if (remaining_unrecognized > 0
+                    and self.product.interest_writeoff_expense_account
+                    and self.product.unearned_interest_income_account):
+                JournalEntryLine.objects.create(
+                    transaction=journal,
+                    account=self.product.interest_writeoff_expense_account,
+                    side=JournalEntryLine.DEBIT,
+                    amount=remaining_unrecognized,
+                )
+                JournalEntryLine.objects.create(
+                    transaction=journal,
+                    account=self.product.unearned_interest_income_account,
+                    side=JournalEntryLine.CREDIT,
+                    amount=remaining_unrecognized,
+                )
+                unrecognized_rows.update(interest_written_off=True)
 
         journal.post()
 
@@ -1506,6 +1760,20 @@ class LoanRepaymentSchedule(TimeStampedModel, BranchScopedModel, SoftDeleteModel
     # Payment tracking
     payment_date = models.DateField(null=True, blank=True)
     days_late = models.PositiveIntegerField(default=0)
+
+    # ── Deferred/unearned interest recognition (only meaningful when the
+    # loan's interest_deferral_active flag is True) ───────────────────────
+    interest_recognized = models.BooleanField(
+        default=False,
+        help_text='True once this installment\'s interest has moved from Unearned '
+                   'Interest Income into Interest Receivable (earned).',
+    )
+    interest_recognized_at = models.DateTimeField(null=True, blank=True)
+    interest_written_off = models.BooleanField(
+        default=False,
+        help_text='True if this installment\'s interest was flushed to expense on '
+                   'loan write-off rather than genuinely recognized as earned.',
+    )
     
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
@@ -2024,7 +2292,7 @@ class LoanWriteOff(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         # ── GL Entry ─────────────────────────────────────────────────────────
         wo_series, _ = TransactionSeries.objects.get_or_create(
-            code='LN-WO',
+            code='LNWO',
             defaults={'description': 'Loan Write-Offs'},
         )
 

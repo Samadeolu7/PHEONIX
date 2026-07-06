@@ -395,6 +395,12 @@ const ProfitLossPage: React.FC = () => {
                     </span>
                   </p>
                 )}
+                {data.real_net_profit !== undefined && (
+                  <p className="text-xs text-amber-700 mt-1">
+                    Real Income (after unearned interest):{' '}
+                    <span className="font-semibold">₦{fmtAmt(data.real_net_profit)}</span>
+                  </p>
+                )}
               </div>
             </div>
 

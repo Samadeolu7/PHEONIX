@@ -32,6 +32,7 @@ export interface LoanProduct {
   processing_fee_percentage: string;
   insurance_rate: string;
   insurance_income_account: number | null;
+  insurance_income_account_name: string | null;
   late_payment_penalty_type: 'fixed' | 'percentage';
   late_payment_penalty: string;
   grace_period_days: number;
@@ -41,6 +42,27 @@ export interface LoanProduct {
   min_guarantors: number;
   requires_approval: boolean;
   is_active: boolean;
+  // GL accounts
+  disbursement_account: number | null;
+  disbursement_account_name: string | null;
+  interest_income_account: number | null;
+  interest_income_account_name: string | null;
+  fee_income_account: number | null;
+  fee_income_account_name: string | null;
+  penalty_income_account: number | null;
+  penalty_income_account_name: string | null;
+  // Deferred/unearned interest income (see LoanAccount.interest_deferral_active) —
+  // set unearned_interest_income_account to opt this product into recognizing
+  // interest income immediately and permanently at disbursement, deferred via
+  // a liability, and recognized as earned per the repayment schedule's due
+  // dates. Leave blank to keep the legacy behavior (interest income credited
+  // only when a payment is collected).
+  accrued_interest_account: number | null;
+  accrued_interest_account_name: string | null;
+  unearned_interest_income_account: number | null;
+  unearned_interest_income_account_name: string | null;
+  interest_writeoff_expense_account: number | null;
+  interest_writeoff_expense_account_name: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -121,6 +143,9 @@ export interface LoanAccount extends LoanAccountList {
   provision_pct: string;
   provision_amount: string;
   contractual_interest_total: string;
+  // Deferred/unearned interest income
+  interest_deferral_active: boolean;
+  unearned_interest_remaining: string;
   restructures: LoanRestructure[];
   repayment_schedule: LoanRepaymentSchedule[];
   collaterals: LoanCollateral[];

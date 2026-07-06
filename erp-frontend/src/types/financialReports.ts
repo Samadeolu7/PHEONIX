@@ -53,6 +53,11 @@ export interface ProfitLossData {
   };
   net_profit: string;
   net_margin_percent: string;
+  // Present only when at least one loan product uses deferred/unearned interest
+  // income (see LoanProduct.unearned_interest_income_account): net_profit minus
+  // the remaining unearned-interest liability, i.e. profit net of interest not
+  // yet actually earned.
+  real_net_profit?: string;
   comparative?: {
     period: {
       start: string;

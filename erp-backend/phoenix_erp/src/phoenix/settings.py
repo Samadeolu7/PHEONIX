@@ -577,6 +577,18 @@ CELERY_BEAT_SCHEDULE = {
             'expires': 7200,
         }
     },
+
+    # ── Loans: daily arrears/risk/interest-suspension/penalty update ───────
+    # Every day @ 02:00 WAT (01:00 UTC). Do not also schedule
+    # loans.tasks.apply_daily_loan_penalties — it duplicates/conflicts with the
+    # per-installment penalty logic this task already runs.
+    'update-loan-status-daily': {
+        'task': 'loans.tasks.update_loan_status_task',
+        'schedule': crontab(minute=0, hour=1),
+        'options': {
+            'expires': 7200,
+        }
+    },
 }
 
 # ==================================================

@@ -18,6 +18,31 @@ class LoanProductSerializer(TenantModelSerializer):
     description = serializers.CharField(source='product.description', read_only=True, default='')
     is_active = serializers.BooleanField(source='product.is_active', read_only=True)
 
+    disbursement_account_name = serializers.CharField(
+        source='disbursement_account.name', read_only=True, default=None
+    )
+    interest_income_account_name = serializers.CharField(
+        source='interest_income_account.name', read_only=True, default=None
+    )
+    fee_income_account_name = serializers.CharField(
+        source='fee_income_account.name', read_only=True, default=None
+    )
+    penalty_income_account_name = serializers.CharField(
+        source='penalty_income_account.name', read_only=True, default=None
+    )
+    insurance_income_account_name = serializers.CharField(
+        source='insurance_income_account.name', read_only=True, default=None
+    )
+    accrued_interest_account_name = serializers.CharField(
+        source='accrued_interest_account.name', read_only=True, default=None
+    )
+    unearned_interest_income_account_name = serializers.CharField(
+        source='unearned_interest_income_account.name', read_only=True, default=None
+    )
+    interest_writeoff_expense_account_name = serializers.CharField(
+        source='interest_writeoff_expense_account.name', read_only=True, default=None
+    )
+
     class Meta:
         model = LoanProduct
         fields = [
@@ -29,12 +54,20 @@ class LoanProductSerializer(TenantModelSerializer):
             'default_interest_rate', 'interest_calculation_method',
             'allowed_repayment_frequencies',
             'processing_fee_type', 'processing_fee_amount', 'processing_fee_percentage',
-            'insurance_rate', 'insurance_income_account',
+            'insurance_rate', 'insurance_income_account', 'insurance_income_account_name',
             'late_payment_penalty_type', 'late_payment_penalty', 'grace_period_days',
             'requires_collateral', 'collateral_percentage',
             'requires_guarantor', 'min_guarantors',
             'requires_approval',
             'is_active',
+            # GL accounts
+            'disbursement_account', 'disbursement_account_name',
+            'interest_income_account', 'interest_income_account_name',
+            'fee_income_account', 'fee_income_account_name',
+            'penalty_income_account', 'penalty_income_account_name',
+            'accrued_interest_account', 'accrued_interest_account_name',
+            'unearned_interest_income_account', 'unearned_interest_income_account_name',
+            'interest_writeoff_expense_account', 'interest_writeoff_expense_account_name',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
@@ -264,6 +297,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
     last_payment_date = serializers.SerializerMethodField()
     restructures = LoanRestructureSerializer(many=True, read_only=True)
     contractual_interest_total = serializers.SerializerMethodField()
+    unearned_interest_remaining = serializers.SerializerMethodField()
 
     class Meta:
         model = LoanAccount
@@ -300,6 +334,8 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'interest_suspended', 'interest_suspended_at',
             'provision_pct', 'provision_amount',
             'contractual_interest_total',
+            # Deferred/unearned interest income
+            'interest_deferral_active', 'unearned_interest_remaining',
             # Java App 1 hooks
             'last_batch_processed_at', 'batch_accrual_posted',
             # Related
@@ -317,6 +353,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'total_repaid', 'interest_method', 'next_due_date', 'last_payment_date',
             'interest_suspended', 'interest_suspended_at', 'provision_pct', 'provision_amount',
             'contractual_interest_total',
+            'interest_deferral_active', 'unearned_interest_remaining',
             'repayment_schedule', 'collaterals', 'guarantors', 'restructures',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
@@ -325,6 +362,16 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
         """Total future interest due from all schedule rows (paid + remaining)."""
         from django.db.models import Sum
         result = obj.repayment_schedule.aggregate(t=Sum('interest_due'))['t']
+        return str(result) if result is not None else '0.00'
+
+    def get_unearned_interest_remaining(self, obj):
+        """Sum of interest_due from schedule rows not yet recognized as earned."""
+        if not obj.interest_deferral_active:
+            return '0.00'
+        from django.db.models import Sum
+        result = obj.repayment_schedule.filter(
+            interest_recognized=False, interest_written_off=False,
+        ).aggregate(t=Sum('interest_due'))['t']
         return str(result) if result is not None else '0.00'
 
     def get_charges_summary(self, obj):

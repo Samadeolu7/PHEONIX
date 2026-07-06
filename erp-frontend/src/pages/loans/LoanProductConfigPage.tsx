@@ -433,6 +433,9 @@ export default function LoanProductConfigPage() {
 
   // Support data
   const [incomeAccounts, setIncomeAccounts] = useState<Account[]>([]);
+  const [assetAccounts, setAssetAccounts] = useState<Account[]>([]);
+  const [liabilityAccounts, setLiabilityAccounts] = useState<Account[]>([]);
+  const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
   const [savingsProducts, setSavingsProducts] = useState<{ id: number; name: string }[]>([]);
 
   // Load product
@@ -461,14 +464,27 @@ export default function LoanProductConfigPage() {
         requires_guarantor: p.requires_guarantor,
         min_guarantors: p.min_guarantors,
         requires_approval: p.requires_approval,
+        interest_income_account: p.interest_income_account,
+        accrued_interest_account: p.accrued_interest_account,
+        unearned_interest_income_account: p.unearned_interest_income_account,
+        interest_writeoff_expense_account: p.interest_writeoff_expense_account,
       });
     }).catch(() => {});
   }, [productId]);
 
-  // Load income GL accounts
+  // Load GL accounts by type (for the Deferred Interest Income section)
   useEffect(() => {
     accountService.getAccounts({ account_type: 'INCOME' }).then(data => {
       setIncomeAccounts(Array.isArray(data) ? data : (data as any)?.results ?? []);
+    }).catch(() => {});
+    accountService.getAccounts({ account_type: 'ASSET' }).then(data => {
+      setAssetAccounts(Array.isArray(data) ? data : (data as any)?.results ?? []);
+    }).catch(() => {});
+    accountService.getAccounts({ account_type: 'LIABILITY' }).then(data => {
+      setLiabilityAccounts(Array.isArray(data) ? data : (data as any)?.results ?? []);
+    }).catch(() => {});
+    accountService.getAccounts({ account_type: 'EXPENSE' }).then(data => {
+      setExpenseAccounts(Array.isArray(data) ? data : (data as any)?.results ?? []);
     }).catch(() => {});
   }, []);
 
@@ -701,6 +717,78 @@ export default function LoanProductConfigPage() {
                     <option value="straight_line">Straight Line</option>
                     <option value="reducing_balance">Reducing Balance</option>
                   </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Deferred / Unearned Interest Income */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">Deferred Interest Income (Optional)</h3>
+              <p className="text-xs text-gray-400 mb-4">
+                Leave these blank to keep the default behavior (interest income credited only
+                when a payment is collected). Set all three to instead book the full scheduled
+                interest immediately and permanently at disbursement, deferred via a liability
+                and recognized as earned per the repayment schedule's due dates.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Interest Income Account</label>
+                  <select
+                    value={settingsForm.interest_income_account ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, interest_income_account: e.target.value ? Number(e.target.value) : null }))}
+                    aria-label="Interest income account"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  >
+                    <option value="">— Select account —</option>
+                    {incomeAccounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Unearned Interest Income (Liability)</label>
+                  <select
+                    value={settingsForm.unearned_interest_income_account ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, unearned_interest_income_account: e.target.value ? Number(e.target.value) : null }))}
+                    aria-label="Unearned interest income account"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  >
+                    <option value="">— Select account —</option>
+                    {liabilityAccounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Interest Receivable Account</label>
+                  <select
+                    value={settingsForm.accrued_interest_account ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, accrued_interest_account: e.target.value ? Number(e.target.value) : null }))}
+                    aria-label="Interest receivable account"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  >
+                    <option value="">— Select account —</option>
+                    {assetAccounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Interest Write-off Expense Account</label>
+                  <select
+                    value={settingsForm.interest_writeoff_expense_account ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, interest_writeoff_expense_account: e.target.value ? Number(e.target.value) : null }))}
+                    aria-label="Interest write-off expense account"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  >
+                    <option value="">— Select account —</option>
+                    {expenseAccounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Used only if a loan under this product is written off with remaining unearned interest.
+                  </p>
                 </div>
               </div>
             </div>

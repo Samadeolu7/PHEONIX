@@ -582,6 +582,28 @@ class Command(BaseCommand):
         )
 
         # ── Loan products ─────────────────────────────────────────────────────
+        # Interest income account — shared by all loan products created below AND
+        # by _import_loan_disbursements' migration-year lump-sum entries (Step 15),
+        # so ongoing payment interest and the one-time historical entries both land
+        # in the same place instead of the products having no income account at all.
+        interest_income_acct, _ = Account.objects.get_or_create(
+            code="4200-LNINT",
+            tenant=ctx["tenant"],
+            branch=ctx["branch"],
+            defaults={
+                "name": "Loan Interest Income",
+                "account_type": Account.INCOME,
+                "account_level": Account.LEVEL_CHILD,
+                "parent": income_parent,
+                "owner": ctx["owner"],
+                "created_by": ctx["owner"],
+                "is_system_account": True,
+                "balance": Decimal("0.00"),
+                "balance_bf": Decimal("0.00"),
+            },
+        )
+        ctx['_loan_interest_income_acct'] = interest_income_acct
+
         loan_products = {}
         loan_parent_account = gl.get("LOAN")
         loan_definitions = [
@@ -605,6 +627,7 @@ class Command(BaseCommand):
                     "branch": ctx["branch"],
                     "created_by": ctx["owner"],
                     "parent_account": loan_parent_account,
+                    "interest_income_account": interest_income_acct,
                     "default_interest_rate": rate,
                     "min_loan_amount": Decimal("1000.00"),
                     "max_loan_amount": Decimal("10000000.00"),
@@ -1228,6 +1251,7 @@ class Command(BaseCommand):
                 days_in_arrears=days_in_arrears,
                 arrears_amount=arrears_amount,
                 risk_classification=risk,
+                origin=LoanAccount.ORIGIN_LEGACY_IMPORT,
                 owner=ctx["owner"],
                 tenant=ctx["tenant"],
                 branch=ctx["branch"],
@@ -2050,23 +2074,28 @@ class Command(BaseCommand):
         bank_acct_map = self._build_bank_account_map(banks_data, Account, gl, ctx)
         suspense      = self._get_suspense_account(Account, gl, ctx)
 
-        # Interest income account — child of the INCOME parent
-        interest_income_acct, _ = Account.objects.get_or_create(
-            code="4200-LNINT",
-            tenant=ctx["tenant"],
-            branch=ctx["branch"],
-            defaults={
-                "name": "Loan Interest Income",
-                "account_type": Account.INCOME,
-                "account_level": Account.LEVEL_CHILD,
-                "parent": gl["INCOME"],
-                "owner": ctx["owner"],
-                "created_by": ctx["owner"],
-                "is_system_account": True,
-                "balance": Decimal("0.00"),
-                "balance_bf": Decimal("0.00"),
-            },
-        )
+        # Interest income account — same account already wired onto the loan
+        # products themselves (Step 2's loan-products setup); reuse it here so
+        # historical migration-year entries land in the same place as ongoing
+        # payment interest, instead of re-fetching/re-creating separately.
+        interest_income_acct = ctx.get('_loan_interest_income_acct')
+        if interest_income_acct is None:
+            interest_income_acct, _ = Account.objects.get_or_create(
+                code="4200-LNINT",
+                tenant=ctx["tenant"],
+                branch=ctx["branch"],
+                defaults={
+                    "name": "Loan Interest Income",
+                    "account_type": Account.INCOME,
+                    "account_level": Account.LEVEL_CHILD,
+                    "parent": gl["INCOME"],
+                    "owner": ctx["owner"],
+                    "created_by": ctx["owner"],
+                    "is_system_account": True,
+                    "balance": Decimal("0.00"),
+                    "balance_bf": Decimal("0.00"),
+                },
+            )
 
         # Loan map is shared with Step 16 via ctx to avoid a second bulk query
         loan_gl_map = ctx.get('_loan_gl_map')
@@ -2082,6 +2111,7 @@ class Command(BaseCommand):
         skipped = 0
         created_txns: list = []
         pending_entries: list = []
+        disbursed_loan_numbers: list = []
 
         for rec in loan_disb_data:
             loan_id = rec.get("loan_id")
@@ -2115,6 +2145,7 @@ class Command(BaseCommand):
             )
             created_txns.append(txn)
             pending_entries.append((gl_loan_acct, cash_acct, interest_income_acct, total, principal, interest))
+            disbursed_loan_numbers.append(loan_number)
 
         if created_txns:
             entry_objs = []
@@ -2135,6 +2166,15 @@ class Command(BaseCommand):
             TransactionEntry.objects.bulk_create(entry_objs, batch_size=1000)
             for txn in created_txns:
                 txn.post()
+
+            # This entry already recognized these loans' full interest at
+            # disbursement — mark them so a future record_payment() collects the
+            # interest portion as a plain Loan Receivable reduction instead of
+            # crediting Interest Income a second time.
+            LoanAccount.objects.filter(
+                tenant=ctx["tenant"], branch=ctx["branch"],
+                loan_number__in=disbursed_loan_numbers,
+            ).update(interest_recognized_at_disbursement=True)
         created = len(created_txns)
 
         self.stdout.write(

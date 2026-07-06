@@ -1257,6 +1257,12 @@ export default function LoanAccountDetailPage() {
                   <p className="font-semibold text-indigo-700">₦{fmt(loan.contractual_interest_total)}</p>
                 </div>
               )}
+              {loan.interest_deferral_active && (
+                <div>
+                  <p className="text-gray-500">Unearned Interest (Not Yet Due)</p>
+                  <p className="font-semibold text-amber-700">₦{fmt(loan.unearned_interest_remaining)}</p>
+                </div>
+              )}
             </div>
 
             {/* CBN Risk & Provision Row */}
