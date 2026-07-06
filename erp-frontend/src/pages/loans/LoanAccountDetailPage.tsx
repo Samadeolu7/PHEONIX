@@ -12,6 +12,7 @@ import {
   Loader2,
   RefreshCw,
   X,
+  XCircle,
   CreditCard,
   CheckCircle,
   DollarSign,
@@ -978,6 +979,30 @@ export default function LoanAccountDetailPage() {
     }
   }
 
+  async function handleReject() {
+    if (!loan) return;
+    const reason = window.prompt('Reason for rejecting this loan application:');
+    if (reason === null) return;
+    if (!reason.trim()) {
+      toast.error('A rejection reason is required.');
+      return;
+    }
+    if (!window.confirm('Reject this loan application? This cannot be undone.')) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await loanService.rejectLoan(loan.id, reason.trim());
+      await load();
+    } catch (e: unknown) {
+      const data = (e as any)?.response?.data;
+      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Rejection failed.';
+      setActionError(msg);
+      toast.error(msg);
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
 
   const nextInstallment = schedule
     .filter((s) => s.status === 'pending' || s.status === 'partial' || s.status === 'overdue')
@@ -1132,6 +1157,18 @@ export default function LoanAccountDetailPage() {
               </button>
             )}
 
+            {loan.status === 'approved' && (
+              <button
+                type="button"
+                onClick={handleReject}
+                disabled={actionLoading}
+                className="flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+              >
+                <XCircle size={14} />
+                Reject
+              </button>
+            )}
+
             {/* For loans that have a verification but need approval */}
             {loan.status === 'pending' && (() => {
               const minRequired = loan.product_requires_guarantor ? (loan.product_min_guarantors || 1) : 0;
@@ -1153,6 +1190,15 @@ export default function LoanAccountDetailPage() {
                   >
                     {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                     Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleReject}
+                    disabled={actionLoading}
+                    className="flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                  >
+                    <XCircle size={14} />
+                    Reject
                   </button>
                 </div>
               );
@@ -1184,6 +1230,13 @@ export default function LoanAccountDetailPage() {
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">
             <AlertCircle size={14} />
             {actionError}
+          </div>
+        )}
+
+        {loan.status === 'rejected' && loan.rejection_reason && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">
+            <XCircle size={14} className="mt-0.5 flex-shrink-0" />
+            <span><span className="font-medium">Rejection reason:</span> {loan.rejection_reason}</span>
           </div>
         )}
       </div>

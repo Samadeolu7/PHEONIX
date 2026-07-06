@@ -63,7 +63,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
       { code: 'loan-products', title: 'Loan Products', description: 'Configure loan product types', paths: ['/loans/products', '/loans/products/:id/config'] },
       { code: 'loan-disbursements', title: 'Disbursements', description: 'Disburse approved loans', paths: ['/loans/disbursements', '/loans/disbursements/:loanId'] },
       { code: 'loan-repayment-requests', title: 'Repayment Requests', description: 'Savings-debit repayment requests' },
-      { code: 'loan-reports', title: 'Loan Reports', description: 'Portfolio, debtors, defaulters, PAR and daily summary reports', paths: ['/reports/daily-summary', '/reports/daily-transactions', '/reports/loans/debtors', '/reports/loans/defaulters', '/reports/loans/par', '/reports/officer-portfolio', '/reports/summary'] },
+      { code: 'loan-reports', title: 'Loan Reports', description: 'Portfolio, debtors, defaulters, PAR and daily summary reports', paths: ['/reports/daily-summary', '/reports/daily-transactions', '/reports/loans/debtors', '/reports/loans/defaulters', '/reports/loans/par', '/reports/officer-portfolio', '/reports/portfolio-performance', '/reports/summary'] },
     ],
   },
   {

@@ -131,6 +131,7 @@ export interface LoanAccount extends LoanAccountList {
   next_due_date: string | null;
   last_payment_date: string | null;
   application_notes: string;
+  rejection_reason: string;
   approval_date: string | null;
   approved_by: number | null;
   first_payment_date: string | null;

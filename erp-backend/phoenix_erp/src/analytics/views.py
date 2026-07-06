@@ -11,8 +11,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum, Count, Q
+from django.http import HttpResponse
 from django.utils import timezone
 from decimal import Decimal, ROUND_HALF_UP
+import csv
 import datetime
 
 def _is_global_user(user):
@@ -123,6 +125,61 @@ def _apply_officer_scope(qs, user, client_lookup: str):
         Q(**{client_lookup: staff}) |
         Q(**{f'{client_lookup}__reports_to': staff})
     )
+
+
+def _parse_date_range(request, default_days=365, max_days=1825):
+    """
+    Parse start/end query params for report endpoints that need a real
+    (non-hardcoded) range. Defaults to the trailing 12 months, clamped to 5
+    years. Unlike CashInflowTrendView's 90-day cap (a per-day series), these
+    are aggregate queries so a much wider range is cheap.
+    """
+    today = timezone.now().date()
+    start_raw = request.query_params.get('start')
+    end_raw = request.query_params.get('end')
+    try:
+        start = (
+            datetime.date.fromisoformat(start_raw) if start_raw
+            else today - datetime.timedelta(days=default_days)
+        )
+    except ValueError:
+        start = today - datetime.timedelta(days=default_days)
+    try:
+        end = datetime.date.fromisoformat(end_raw) if end_raw else today
+    except ValueError:
+        end = today
+
+    if end < start:
+        start, end = end, start
+    if (end - start).days > max_days:
+        start = end - datetime.timedelta(days=max_days)
+    return start, end
+
+
+def _apply_report_filters(qs, request, branch_field='branch_id',
+                           product_field='product__product_id',
+                           officer_field='client__assigned_officer_id'):
+    """Intersect qs with optional ?branch=&product=&officer= query params."""
+    for param, field in (
+        ('branch', branch_field), ('product', product_field), ('officer', officer_field),
+    ):
+        raw = request.query_params.get(param)
+        if raw:
+            try:
+                qs = qs.filter(**{field: int(raw)})
+            except (TypeError, ValueError):
+                pass
+    return qs
+
+
+def _csv_response(filename, headers, rows):
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    writer = csv.writer(response)
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow(row)
+    return response
 
 
 class MicrofinanceDashboardStatsView(APIView):
@@ -727,5 +784,460 @@ class LoanPortfolioByProductView(APIView):
         ]
 
         return Response({'success': True, 'data': result})
+
+
+class PortfolioBreakdownView(APIView):
+    """
+    GET /api/analytics/portfolio-performance/breakdown/
+
+    Portfolio composition cross-cut by branch x product x officer x CBN risk
+    band, for loans disbursed within [start, end] (see _parse_date_range —
+    defaults to the trailing 12 months). The date range filters *which
+    loans are included* (by disbursement_date); outstanding_principal and
+    provision_amount are still *current* balances on those loans — there is
+    no historical balance snapshot, same limitation every other view in
+    this module has.
+
+    Query params: start, end, branch, product, officer, risk_band,
+    group_by (comma list, subset of branch,product,officer,risk_band;
+    default all four), format (json|csv).
+    """
+    permission_classes = [IsAuthenticated]
+
+    ALL_DIMENSIONS = ['branch', 'product', 'officer', 'risk_band']
+    FIELD_MAP = {
+        'branch': 'branch_id',
+        'product': 'product__product_id',
+        'officer': 'client__assigned_officer_id',
+        'risk_band': 'risk_classification',
+    }
+
+    def get(self, request):
+        from loans.models import LoanAccount
+        from branches.models import Branch
+        from hr.models import Staff
+        from products.models import Product
+
+        user = request.user
+        start, end = _parse_date_range(request)
+        branch_filter = _get_director_branch(request)
+        req_tenant = getattr(request, 'tenant', None)
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch_filter)
+
+        loan_qs = _apply_officer_scope(
+            scope_qs(LoanAccount.objects.for_user(user)),
+            user,
+            client_lookup='client__assigned_officer',
+        ).filter(
+            status__in=['active', 'disbursed', 'paid_off', 'defaulted'],
+            disbursement_date__gte=start,
+            disbursement_date__lte=end,
+        )
+        loan_qs = _apply_report_filters(loan_qs, request)
+
+        risk_band = request.query_params.get('risk_band')
+        if risk_band:
+            loan_qs = loan_qs.filter(risk_classification=risk_band)
+
+        group_by_raw = request.query_params.get('group_by', ','.join(self.ALL_DIMENSIONS))
+        group_keys = [g.strip() for g in group_by_raw.split(',') if g.strip() in self.ALL_DIMENSIONS]
+        if not group_keys:
+            group_keys = list(self.ALL_DIMENSIONS)
+
+        value_fields = [self.FIELD_MAP[k] for k in group_keys]
+
+        rows = list(
+            loan_qs.values(*value_fields)
+            .annotate(
+                loan_count=Count('id'),
+                outstanding_principal=Sum('outstanding_principal'),
+                disbursed_amount=Sum('disbursed_amount'),
+                total_paid=Sum('total_paid'),
+                provision_amount=Sum('provision_amount'),
+            )
+            .order_by('-outstanding_principal')
+        )
+
+        branch_names, product_names, officer_names = {}, {}, {}
+        if 'branch' in group_keys:
+            ids = {r['branch_id'] for r in rows if r.get('branch_id')}
+            branch_names = dict(Branch.objects.filter(pk__in=ids).values_list('pk', 'name'))
+        if 'product' in group_keys:
+            ids = {r['product__product_id'] for r in rows if r.get('product__product_id')}
+            product_names = dict(Product.objects.filter(pk__in=ids).values_list('pk', 'name'))
+        if 'officer' in group_keys:
+            ids = {r['client__assigned_officer_id'] for r in rows if r.get('client__assigned_officer_id')}
+            officer_names = {
+                s.pk: f"{s.first_name} {s.last_name}".strip()
+                for s in Staff.objects.filter(pk__in=ids)
+            }
+
+        result = []
+        for r in rows:
+            paid = r['total_paid'] or Decimal('0.00')
+            outstanding = r['outstanding_principal'] or Decimal('0.00')
+            total_obligation = paid + outstanding
+            collection_rate = (
+                (paid / total_obligation * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+                if total_obligation > 0 else Decimal('0')
+            )
+            row_out = {
+                'loan_count': r['loan_count'],
+                'outstanding_principal': str(outstanding),
+                'disbursed_amount': str(r['disbursed_amount'] or Decimal('0.00')),
+                'total_paid': str(paid),
+                'provision_amount': str(r['provision_amount'] or Decimal('0.00')),
+                'collection_rate': str(collection_rate),
+            }
+            if 'branch' in group_keys:
+                row_out['branch_id'] = r.get('branch_id')
+                row_out['branch_name'] = branch_names.get(r.get('branch_id'), 'Unassigned')
+            if 'product' in group_keys:
+                row_out['product_id'] = r.get('product__product_id')
+                row_out['product_name'] = product_names.get(r.get('product__product_id'), 'Unassigned')
+            if 'officer' in group_keys:
+                row_out['officer_id'] = r.get('client__assigned_officer_id')
+                row_out['officer_name'] = officer_names.get(r.get('client__assigned_officer_id'), 'Unassigned')
+            if 'risk_band' in group_keys:
+                row_out['risk_classification'] = r.get('risk_classification') or 'performing'
+            result.append(row_out)
+
+        fmt = request.query_params.get('format', 'json')
+        if fmt == 'csv':
+            headers = list(result[0].keys()) if result else (
+                group_keys + ['loan_count', 'outstanding_principal', 'disbursed_amount', 'total_paid',
+                              'provision_amount', 'collection_rate']
+            )
+            return _csv_response(
+                f'portfolio-breakdown-{start}-to-{end}.csv',
+                headers,
+                [[row.get(h, '') for h in headers] for row in result],
+            )
+        if fmt != 'json':
+            return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
+
+        return Response({
+            'success': True,
+            'period': {'start': str(start), 'end': str(end)},
+            'group_by': group_keys,
+            'data': result,
+        })
+
+
+class InterestIncomeByRecognitionModeView(APIView):
+    """
+    GET /api/analytics/portfolio-performance/interest-income/
+
+    Interest income split by how it was recognized:
+      - at_disbursement / deferred: booked in full at disbursement, so the
+        recognized figure is the loan's repayment schedule interest_due
+        total (fixed at schedule generation, never mutated), filtered by
+        disbursement_date.
+      - legacy_cash_basis: income recognized only as collected, so the
+        figure is interest_paid on schedule rows, filtered by payment_date
+        (deliberately a DIFFERENT date field than the other two modes —
+        this is a genuine cash-basis vs. accrual-basis distinction, not an
+        inconsistency to "fix").
+
+    Query params: start, end, branch, product, officer, format (json|csv).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from loans.models import LoanAccount, LoanRepaymentSchedule
+
+        user = request.user
+        start, end = _parse_date_range(request)
+        branch_filter = _get_director_branch(request)
+        req_tenant = getattr(request, 'tenant', None)
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch_filter)
+
+        base_qs = _apply_report_filters(
+            _apply_officer_scope(
+                scope_qs(LoanAccount.objects.for_user(user)),
+                user,
+                client_lookup='client__assigned_officer',
+            ),
+            request,
+        )
+
+        disb_loans = base_qs.filter(
+            interest_recognized_at_disbursement=True,
+            disbursement_date__gte=start, disbursement_date__lte=end,
+        )
+        at_disb = LoanRepaymentSchedule.objects.filter(loan__in=disb_loans).aggregate(
+            t=Sum('interest_due')
+        )['t'] or Decimal('0.00')
+        at_disb_count = disb_loans.count()
+
+        deferred_loans = base_qs.filter(
+            interest_deferral_active=True,
+            disbursement_date__gte=start, disbursement_date__lte=end,
+        )
+        deferred = LoanRepaymentSchedule.objects.filter(loan__in=deferred_loans).aggregate(
+            t=Sum('interest_due')
+        )['t'] or Decimal('0.00')
+        deferred_count = deferred_loans.count()
+
+        legacy_qs = base_qs.filter(
+            interest_recognized_at_disbursement=False,
+            interest_deferral_active=False,
+        )
+        legacy_rows = LoanRepaymentSchedule.objects.filter(
+            loan__in=legacy_qs,
+            payment_date__gte=start, payment_date__lte=end,
+            payment_date__isnull=False,
+        )
+        legacy_income = legacy_rows.aggregate(t=Sum('interest_paid'))['t'] or Decimal('0.00')
+        legacy_count = legacy_rows.values('loan_id').distinct().count()
+
+        data = {
+            'at_disbursement': {'recognized_income': str(at_disb), 'loan_count': at_disb_count},
+            'deferred': {'recognized_income': str(deferred), 'loan_count': deferred_count},
+            'legacy_cash_basis': {'recognized_income': str(legacy_income), 'loan_count': legacy_count},
+            'total_recognized_income': str(at_disb + deferred + legacy_income),
+        }
+
+        fmt = request.query_params.get('format', 'json')
+        if fmt == 'csv':
+            headers = ['mode', 'recognized_income', 'loan_count']
+            rows = [
+                ['at_disbursement', data['at_disbursement']['recognized_income'], data['at_disbursement']['loan_count']],
+                ['deferred', data['deferred']['recognized_income'], data['deferred']['loan_count']],
+                ['legacy_cash_basis', data['legacy_cash_basis']['recognized_income'], data['legacy_cash_basis']['loan_count']],
+            ]
+            return _csv_response(f'interest-income-by-mode-{start}-to-{end}.csv', headers, rows)
+        if fmt != 'json':
+            return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
+
+        return Response({'success': True, 'period': {'start': str(start), 'end': str(end)}, 'data': data})
+
+
+class ProvisioningComplianceView(APIView):
+    """
+    GET /api/analytics/portfolio-performance/provisioning/
+
+    CBN provisioning compliance — CURRENT SNAPSHOT ONLY, deliberately no
+    date range (post_loan_provisions.py has no run-history model and isn't
+    scheduled anywhere, so a historical trend isn't cheaply/accurately
+    derivable). Required provision is summed per CBN risk band from
+    LoanAccount.provision_amount (kept current by update_risk_classification
+    via update_loan_status). Booked provision is read directly off each
+    LoanProduct.allowance_account's stored Account.balance — the same
+    source of truth post_loan_provisions.py itself relies on — deduped
+    since multiple products may share one GL account.
+
+    Booked provision is only as fresh as the last time post_loan_provisions
+    was actually run; the frontend must surface this as a visible caveat.
+
+    Query params: branch, product, officer, format (json|csv).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from loans.models import LoanAccount
+        from accounts.models import Account
+
+        user = request.user
+        branch_filter = _get_director_branch(request)
+        req_tenant = getattr(request, 'tenant', None)
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch_filter)
+
+        loan_qs = _apply_report_filters(
+            _apply_officer_scope(
+                scope_qs(LoanAccount.objects.for_user(user)),
+                user,
+                client_lookup='client__assigned_officer',
+            ),
+            request,
+        ).filter(status__in=['active', 'disbursed', 'defaulted'])
+
+        by_band_rows = {
+            r['risk_classification']: r
+            for r in loan_qs.values('risk_classification').annotate(
+                loan_count=Count('id'),
+                outstanding_principal=Sum('outstanding_principal'),
+                required_provision=Sum('provision_amount'),
+            )
+        }
+
+        by_band = []
+        for _low, _high, label, rate in LoanAccount._CBN_BUCKETS:
+            r = by_band_rows.get(label, {})
+            by_band.append({
+                'risk_classification': label,
+                'provision_rate_pct': str(rate),
+                'loan_count': r.get('loan_count', 0),
+                'outstanding_principal': str(r.get('outstanding_principal') or Decimal('0.00')),
+                'required_provision': str(r.get('required_provision') or Decimal('0.00')),
+            })
+
+        total_required = loan_qs.aggregate(t=Sum('provision_amount'))['t'] or Decimal('0.00')
+
+        allowance_account_ids = list(
+            loan_qs.values_list('product__allowance_account_id', flat=True)
+            .exclude(product__allowance_account_id__isnull=True)
+            .distinct()
+        )
+        total_booked = Account.objects.filter(pk__in=allowance_account_ids).aggregate(
+            t=Sum('balance')
+        )['t'] or Decimal('0.00')
+
+        data = {
+            'by_risk_band': by_band,
+            'total_required_provision': str(total_required),
+            'total_booked_provision': str(total_booked),
+            'shortfall_or_surplus': str(total_required - total_booked),
+        }
+
+        fmt = request.query_params.get('format', 'json')
+        if fmt == 'csv':
+            headers = ['risk_classification', 'provision_rate_pct', 'loan_count',
+                       'outstanding_principal', 'required_provision']
+            rows = [[b[h] for h in headers] for b in by_band]
+            return _csv_response('provisioning-compliance.csv', headers, rows)
+        if fmt != 'json':
+            return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
+
+        return Response({'success': True, 'as_of': str(timezone.now().date()), 'data': data})
+
+
+class OfficerScorecardTrendView(APIView):
+    """
+    GET /api/analytics/portfolio-performance/officer-trend/?months=6
+
+    Per-officer, per-month scorecard trend: disbursed_amount and
+    loans_disbursed_count (from disbursement_date), amount_due and
+    collections_received (from LoanRepaymentSchedule due_date/payment_date),
+    and a PERIOD collection_rate (paid/due for that month only — distinct
+    from StaffPerformanceView's cumulative collection_rate).
+
+    Historical *outstanding portfolio size* per officer per month is NOT
+    included — outstanding_principal is a live mutable field with no
+    history, and reconstructing it would require a new snapshot model,
+    which is out of scope for this view.
+
+    Query params: months (1-24, default 6), branch, product, officer,
+    format (json|csv).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from loans.models import LoanAccount, LoanRepaymentSchedule
+        from hr.models import Staff
+
+        user = request.user
+        branch_filter = _get_director_branch(request)
+        req_tenant = getattr(request, 'tenant', None)
+        today = timezone.now().date()
+
+        try:
+            months = min(max(int(request.query_params.get('months', 6)), 1), 24)
+        except (TypeError, ValueError):
+            months = 6
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch_filter)
+
+        loan_qs = _apply_report_filters(
+            _apply_officer_scope(
+                scope_qs(LoanAccount.objects.for_user(user)),
+                user,
+                client_lookup='client__assigned_officer',
+            ),
+            request,
+        )
+        sched_qs = LoanRepaymentSchedule.objects.filter(loan__in=loan_qs)
+
+        staff_name_cache = {}
+
+        def staff_name(sid):
+            if sid not in staff_name_cache:
+                try:
+                    s = Staff.objects.get(pk=sid)
+                    staff_name_cache[sid] = (f"{s.first_name} {s.last_name}".strip(), s.position)
+                except Staff.DoesNotExist:
+                    staff_name_cache[sid] = ('Unknown', '')
+            return staff_name_cache[sid]
+
+        month_list = []
+        month_cursor = today.replace(day=1)
+        for _ in range(months):
+            month_list.append(month_cursor)
+            month_cursor = (month_cursor - datetime.timedelta(days=1)).replace(day=1)
+        month_list.reverse()
+
+        result = []
+        for m in month_list:
+            disb_rows = (
+                loan_qs.filter(disbursement_date__year=m.year, disbursement_date__month=m.month)
+                .exclude(client__assigned_officer__isnull=True)
+                .values('client__assigned_officer')
+                .annotate(disbursed=Sum('disbursed_amount'), cnt=Count('id'))
+            )
+            due_rows = (
+                sched_qs.filter(due_date__year=m.year, due_date__month=m.month)
+                .exclude(loan__client__assigned_officer__isnull=True)
+                .values('loan__client__assigned_officer')
+                .annotate(due=Sum('total_due'))
+            )
+            paid_rows = (
+                sched_qs.filter(payment_date__year=m.year, payment_date__month=m.month)
+                .exclude(loan__client__assigned_officer__isnull=True)
+                .values('loan__client__assigned_officer')
+                .annotate(paid=Sum('total_paid'))
+            )
+
+            disb_map = {r['client__assigned_officer']: r for r in disb_rows}
+            due_map = {r['loan__client__assigned_officer']: (r['due'] or Decimal('0.00')) for r in due_rows}
+            paid_map = {r['loan__client__assigned_officer']: (r['paid'] or Decimal('0.00')) for r in paid_rows}
+
+            month_officer_ids = set(disb_map) | set(due_map) | set(paid_map)
+            for sid in month_officer_ids:
+                due = due_map.get(sid, Decimal('0.00'))
+                paid = paid_map.get(sid, Decimal('0.00'))
+                collection_rate = (
+                    (paid / due * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+                    if due > 0 else Decimal('0')
+                )
+                name, position = staff_name(sid)
+                disb = disb_map.get(sid, {})
+                result.append({
+                    'month': m.strftime('%Y-%m'),
+                    'label': m.strftime('%b %Y'),
+                    'staff_id': sid,
+                    'name': name,
+                    'position': position,
+                    'disbursed_amount': str(disb.get('disbursed') or Decimal('0.00')),
+                    'loans_disbursed_count': disb.get('cnt') or 0,
+                    'amount_due': str(due),
+                    'collections_received': str(paid),
+                    'collection_rate': str(collection_rate),
+                })
+
+        fmt = request.query_params.get('format', 'json')
+        if fmt == 'csv':
+            headers = ['month', 'label', 'staff_id', 'name', 'position', 'disbursed_amount',
+                       'loans_disbursed_count', 'amount_due', 'collections_received', 'collection_rate']
+            rows = [[r[h] for h in headers] for r in result]
+            return _csv_response('officer-scorecard-trend.csv', headers, rows)
+        if fmt != 'json':
+            return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
+
+        return Response({'success': True, 'months': months, 'data': result})
 
 

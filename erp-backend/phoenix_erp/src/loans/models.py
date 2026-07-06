@@ -418,7 +418,8 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         default='pending',
         db_index=True
     )
-    
+    rejection_reason = models.TextField(blank=True)
+
     # Important dates
     approval_date = models.DateField(null=True, blank=True)
     approved_by = models.ForeignKey(

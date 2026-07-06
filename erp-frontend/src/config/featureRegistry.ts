@@ -2124,6 +2124,20 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     category: 'Loan Reports',
     isNew: true,
   },
+
+  // ----- Portfolio & Performance Report (Track 2) -----
+  {
+    id: 'portfolio-performance-report',
+    title: '📊 Portfolio & Performance Report',
+    description:
+      'Full drillable report: branch × product × officer × CBN risk-band breakdown, interest income by recognition mode, provisioning compliance snapshot, and officer scorecard trends — with CSV export',
+    path: '/reports/portfolio-performance',
+    icon: BarChart3,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'loans',
+    category: 'Reports',
+    isNew: true,
+  },
 ];
 
 // ==========================================================================

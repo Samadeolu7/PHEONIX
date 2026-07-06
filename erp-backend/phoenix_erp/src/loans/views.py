@@ -384,9 +384,16 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 {'detail': 'Only pending or approved loans can be rejected.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        reason = (request.data.get('reason') or '').strip()
+        if not reason:
+            return Response(
+                {'detail': 'A rejection reason is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         loan.status = 'rejected'
-        loan.save(update_fields=['status', 'updated_at'])
-        return Response({'detail': 'Loan rejected.'})
+        loan.rejection_reason = reason
+        loan.save(update_fields=['status', 'rejection_reason', 'updated_at'])
+        return Response(LoanAccountDetailSerializer(loan, context={'request': request}).data)
 
     @action(detail=True, methods=['post'])
     def write_off(self, request, pk=None):

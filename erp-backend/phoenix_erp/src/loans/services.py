@@ -283,9 +283,9 @@ class DisbursementService:
     @staticmethod
     @db_transaction.atomic
     def reject(disbursement, rejected_by_user, reason: str):
-        """Reject a pending disbursement request with a mandatory reason."""
-        if disbursement.status != 'pending_approval':
-            raise ValidationError("Only pending disbursements can be rejected.")
+        """Reject a pending or approved (not yet executed) disbursement request with a mandatory reason."""
+        if disbursement.status not in ('pending_approval', 'approved'):
+            raise ValidationError("Only pending or approved disbursements can be rejected.")
         if not reason or not reason.strip():
             raise ValidationError("A rejection reason is required.")
 

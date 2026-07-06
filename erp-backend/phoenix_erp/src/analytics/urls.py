@@ -9,6 +9,10 @@ from .views import (
     StaffPerformanceView,
     CashInflowTrendView,
     LoanPortfolioByProductView,
+    PortfolioBreakdownView,
+    InterestIncomeByRecognitionModeView,
+    ProvisioningComplianceView,
+    OfficerScorecardTrendView,
 )
 
 app_name = 'analytics'
@@ -25,5 +29,10 @@ urlpatterns = [
     path('staff-performance/', StaffPerformanceView.as_view(), name='staff-performance'),
     path('cash-inflow-trend/', CashInflowTrendView.as_view(), name='cash-inflow-trend'),
     path('loan-portfolio-by-product/', LoanPortfolioByProductView.as_view(), name='loan-portfolio-by-product'),
+    # Track 2 — Portfolio & Performance Report
+    path('portfolio-performance/breakdown/', PortfolioBreakdownView.as_view(), name='portfolio-performance-breakdown'),
+    path('portfolio-performance/interest-income/', InterestIncomeByRecognitionModeView.as_view(), name='portfolio-performance-interest-income'),
+    path('portfolio-performance/provisioning/', ProvisioningComplianceView.as_view(), name='portfolio-performance-provisioning'),
+    path('portfolio-performance/officer-trend/', OfficerScorecardTrendView.as_view(), name='portfolio-performance-officer-trend'),
 ]
 

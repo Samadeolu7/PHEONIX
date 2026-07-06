@@ -316,7 +316,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'term_months', 'term_unit',
             'repayment_frequency', 'installment_amount', 'number_of_installments',
             # Status & dates
-            'status', 'application_date', 'application_notes',
+            'status', 'rejection_reason', 'application_date', 'application_notes',
             'approval_date', 'approved_by',
             'disbursement_date', 'first_payment_date', 'maturity_date', 'closed_date',
             # Balances
