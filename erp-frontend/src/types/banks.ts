@@ -135,6 +135,11 @@ export interface BankTransfer {
   // director/admin for bank-to-bank, destination cashier for cashier-to-
   // cashier, destination account manager for cashier-to-bank).
   can_approve?: boolean;
+  // Server-computed: can the current user perform the second approval on this
+  // transfer right now (mirrors BankTransferViewSet.second_approve() exactly).
+  // Cashier-destined transfers are single-approval only, so this is always
+  // false for them.
+  can_second_approve?: boolean;
   initiated_by: number;
   initiated_by_name?: string;
   initiated_at: string;

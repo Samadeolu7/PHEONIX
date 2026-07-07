@@ -83,7 +83,11 @@ class RequisitionToPOFlowTest(TransactionTestCase):
         self.approver.tenant = self.tenant
         self.approver.owner = self.tenant
         self.approver.branch = self.branch
-        self.approver.is_staff = True
+        # is_superuser is the only blanket approval-authority bypass IsApprover
+        # honors (common/approval_permissions.py) — is_staff alone no longer
+        # grants approval rights, since it doesn't imply any RolePermissionPolicy
+        # grant and was never meant to be a financial approval authority signal.
+        self.approver.is_superuser = True
         self.approver.save()
         
         # Create supplier

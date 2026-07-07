@@ -679,7 +679,24 @@ class BankTransferViewSet(ScopedModelViewSet):
     queryset = BankTransfer.objects.all()
     serializer_class = BankTransferSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
+    def get_permissions(self):
+        """approve/second_approve/reject bypass the auto-appended
+        HasActionPermission (which would require can_approve on
+        banks:bank-transfers for ALL four transfer-type branches) in favor of
+        _check_approval_permission()'s own, more precise per-transfer-type
+        check. This matters: migrate_bank_transfer_policies.py deliberately
+        does NOT grant can_approve on banks:bank-transfers to branch managers
+        (bank-to-cashier approvers) or to ordinary cashiers/account managers
+        (cashier-to-cashier / cashier-to-bank approvers) — only to directors/
+        admins. Leaving HasActionPermission in place would 403 those three
+        approval paths before the request ever reached the view body, no
+        matter what _check_approval_permission decided.
+        """
+        if self.action in ('approve', 'second_approve', 'reject'):
+            return [permissions.IsAuthenticated()]
+        return super().get_permissions()
+
     def _is_transfer_manager(self):
         """
         True for directors, admins, and branch managers who oversee all transfers.
@@ -829,13 +846,26 @@ class BankTransferViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
-    @action(detail=True, methods=['post'])
-    def approve(self, request, pk=None):
-        """Approve transfer (first approval)"""
-        transfer = self.get_object()
-        
-        # Check approval permission based on source/destination type
-        if transfer.source_type == 'bank' and transfer.destination_type == 'cashier':
+    def _check_approval_permission(self, request, transfer, *, allow_bank_to_cashier=True):
+        """Return a 403 Response if request.user may not act (approve/reject) on
+        this transfer, or None if they may.
+
+        Cashier-destined transfers (destination_type == 'cashier') are gated
+        purely by object identity — the destination cashier, or (for
+        bank-to-cashier funding) the branch-manager-tier role check — with no
+        RolePermissionPolicy/can_approve or elevated-user override. This is a
+        hard invariant: nobody may approve or reject a transfer landing in
+        someone else's cashier float on that cashier's behalf, regardless of
+        rank or permission grants. Only transfers directed at a bank account
+        (bank-to-bank, cashier-to-bank) are governed by the permission-setup
+        system (RolePermissionPolicy.can_approve on banks:bank-transfers).
+
+        allow_bank_to_cashier=False is used by second_approve(), which
+        structurally never reaches a bank-to-cashier transfer (those are
+        single-approval) and omits that branch entirely, matching the
+        original inline logic.
+        """
+        if allow_bank_to_cashier and transfer.source_type == 'bank' and transfer.destination_type == 'cashier':
             # Bank-to-cashier: same role gate as initiating one (branch manager /
             # supervisor / director / admin) — see BankTransfer.can_user_manage_bank_to_cashier
             # for why this is a separate, looser gate than plain bank-to-bank.
@@ -858,7 +888,8 @@ class BankTransferViewSet(ScopedModelViewSet):
                     status=status.HTTP_403_FORBIDDEN
                 )
         elif transfer.destination_type == 'cashier':
-            # Cashier-to-cashier transfers require the destination cashier
+            # Cashier-to-cashier transfers require the destination cashier —
+            # never overridable, see docstring above.
             if not transfer.destination_cashier_account or \
                transfer.destination_cashier_account.cashier != request.user:
                 return Response(
@@ -872,6 +903,16 @@ class BankTransferViewSet(ScopedModelViewSet):
                     {'error': 'Only the destination account manager can approve this transfer'},
                     status=status.HTTP_403_FORBIDDEN
                 )
+        return None
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approve transfer (first approval)"""
+        transfer = self.get_object()
+
+        permission_error = self._check_approval_permission(request, transfer)
+        if permission_error:
+            return permission_error
 
         serializer = BankTransferActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -879,21 +920,21 @@ class BankTransferViewSet(ScopedModelViewSet):
         try:
             transfer.approve(request.user, serializer.validated_data.get('notes', ''))
             logger.info(f"Transfer {transfer.transfer_number} approved by {request.user}")
-            
+
             response_serializer = self.get_serializer(transfer)
             return Response(response_serializer.data)
-        
+
         except Exception as e:
             return Response(
                 {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
     @action(detail=True, methods=['post'])
     def second_approve(self, request, pk=None):
         """Second approval for dual approval transfers"""
         transfer = self.get_object()
-        
+
         # Cashier-to-cashier transfers are single-approval only (see approve()'s
         # dual-approval gate) and structurally never reach this state, but reject
         # explicitly here too rather than relying solely on that being true.
@@ -903,53 +944,45 @@ class BankTransferViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Same check as first approval
-        if transfer.source_type == 'bank':
-            from permissions.services import PermissionResolver
-            eff = PermissionResolver.resolve(request.user, module='banks', page='bank-transfers', action='approve')
-            if not eff.can_approve:
-                return Response(
-                    {'error': 'Only directors can approve bank-to-bank transfers'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-        else:
-            if transfer.destination_bank_account.account_manager != request.user:
-                return Response(
-                    {'error': 'Only the destination account manager can approve this transfer'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        permission_error = self._check_approval_permission(request, transfer, allow_bank_to_cashier=False)
+        if permission_error:
+            return permission_error
 
         serializer = BankTransferActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         try:
             transfer.second_approve(request.user, serializer.validated_data.get('notes', ''))
             logger.info(f"Transfer {transfer.transfer_number} second approved by {request.user}")
-            
+
             response_serializer = self.get_serializer(transfer)
             return Response(response_serializer.data)
-        
+
         except Exception as e:
             return Response(
                 {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Reject transfer"""
         transfer = self.get_object()
-        
+
+        permission_error = self._check_approval_permission(request, transfer)
+        if permission_error:
+            return permission_error
+
         serializer = BankTransferActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         reason = serializer.validated_data.get('reason', '')
         if not reason:
             return Response(
                 {'error': 'Rejection reason is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
             transfer.reject(request.user, reason)
             logger.info(f"Transfer {transfer.transfer_number} rejected by {request.user}")
@@ -1000,18 +1033,16 @@ class BankTransferViewSet(ScopedModelViewSet):
 
 # ── Bank-Recon daily reconciliation views ────────────────────────────────────
 
-import requests as http_requests
-from django.conf import settings as django_settings
 from django.utils import timezone as tz
 
 from .models import ReconciliationBankTransaction, DailyReconciliation, ReconciliationException
 from .parsers import parse_statement_file
-from .reconciliation_utils import fetch_erp_payments
 from .serializers import (
     DailyReconciliationSerializer,
     DailyReconciliationListSerializer,
     ReconciliationExceptionSerializer,
 )
+from .tasks import run_reconciliation_match
 
 
 class StatementUploadView(APIView):
@@ -1030,11 +1061,15 @@ class StatementUploadView(APIView):
       1. Parse the file (format chosen by extension: CSV, Excel, or QIF)
       2. Store parsed lines into ReconciliationBankTransaction, deduped by bank_ref
          (Django owns this storage — Bank-Recon/Java has no database)
-      3. Gather the day's unmatched bank transactions + ERP payments locally
-      4. POST everything to Java's stateless ingest-and-match endpoint
-      5. Persist the matches and exceptions Java returns, set status='completed'
+      3. Create DailyReconciliation (status='processing') and enqueue
+         banks.tasks.run_reconciliation_match, which gathers the day's
+         unmatched bank transactions + ERP payments, calls Java's stateless
+         ingest-and-match endpoint, and persists the matches/exceptions —
+         all in the background, not on this request.
 
-    Branch manager waits for the synchronous Java response (~30-60 seconds).
+    Returns 202 immediately (status='processing') — the matching call can
+    take up to ~90 seconds, so it must not block this request. The frontend
+    polls GET /api/banks/reconciliations/<pk>/ for the result.
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1119,113 +1154,13 @@ class StatementUploadView(APIView):
             branch=getattr(request.user, 'branch', None),
         )
 
-        # --- gather ERP payments locally (no HTTP round-trip — Bank-Recon
-        # has no database and makes no outbound calls of its own) ---
-        erp_credit_payments = fetch_erp_payments(bank_account, reconciliation_date, direction='CREDIT')
-        erp_debit_payments = (
-            fetch_erp_payments(bank_account, reconciliation_date, direction='DEBIT')
-            if include_debits else None
-        )
-
-        # --- call Java's stateless ingest-and-match endpoint ---
-        payload = {
-            'reconciliationId': recon.id,
-            'bankAccountId': bank_account.id,
-            'reconciliationDate': reconciliation_date,
-            'includeDebits': include_debits,
-            'bankTransactions': [
-                {
-                    'id':            str(tx.id),
-                    'bankRef':       tx.bank_ref,
-                    'valueDate':     tx.value_date.isoformat(),
-                    'narration':     tx.narration,
-                    'direction':     tx.direction,
-                    'amount':        str(tx.amount),
-                    'balanceAfter':  str(tx.balance_after) if tx.balance_after is not None else None,
-                }
-                for tx in candidates
-            ],
-            'erpCreditPayments': erp_credit_payments,
-        }
-        if include_debits:
-            payload['erpDebitPayments'] = erp_debit_payments
-
-        java_base_url = getattr(django_settings, 'BANK_RECON_SERVICE_URL', 'http://localhost:8081')
-        java_url = f"{java_base_url}/api/internal/bank-feed/ingest-and-match"
-
-        # Service-to-service token (same token Django uses for internal_api auth)
-        service_token = getattr(django_settings, 'INTERNAL_SERVICE_TOKEN', '')
-        headers = {
-            'Authorization': f'Token {service_token}',
-            'Content-Type': 'application/json',
-        }
-
-        try:
-            java_resp = http_requests.post(
-                java_url,
-                json=payload,
-                headers=headers,
-                timeout=90,  # synchronous matching — allow up to 90 seconds
-            )
-            java_resp.raise_for_status()
-            outcome = java_resp.json()
-        except http_requests.exceptions.Timeout:
-            recon.status = 'failed'
-            recon.error_detail = 'Java matching service timed out after 90 seconds.'
-            recon.save(update_fields=['status', 'error_detail'])
-            return Response({'detail': 'Matching service timed out. Please retry.'}, status=status.HTTP_504_GATEWAY_TIMEOUT)
-        except http_requests.exceptions.RequestException as exc:
-            recon.status = 'failed'
-            recon.error_detail = str(exc)
-            recon.save(update_fields=['status', 'error_detail'])
-            logger.error("Java Bank-Recon service error for recon %s: %s", recon.id, exc)
-            return Response({'detail': 'Matching service unavailable. Please retry later.'}, status=status.HTTP_502_BAD_GATEWAY)
-
-        # --- persist confirmed matches onto ReconciliationBankTransaction ---
-        matches_data = outcome.get('matches', [])
-        if matches_data:
-            match_by_id = {m['bankTransactionId']: m for m in matches_data}
-            matched_txs = [tx for tx in candidates if str(tx.id) in match_by_id]
-            now = tz.now()
-            for tx in matched_txs:
-                m = match_by_id[str(tx.id)]
-                tx.matched = True
-                tx.match_confidence = m.get('confidence', '')
-                tx.matched_erp_payment_id = m.get('erpPaymentId')
-                tx.matched_at = now
-            ReconciliationBankTransaction.objects.bulk_update(
-                matched_txs, ['matched', 'match_confidence', 'matched_erp_payment_id', 'matched_at']
-            )
-
-        # --- save exceptions from Java response ---
-        exceptions_data = outcome.get('exceptions', [])
-        for exc_item in exceptions_data:
-            ReconciliationException.objects.create(
-                reconciliation=recon,
-                exception_type=exc_item.get('exceptionType', 'bank_only'),
-                direction=exc_item.get('direction') or 'CREDIT',
-                bank_transaction_id=exc_item.get('bankTransactionId') or None,
-                bank_amount=exc_item.get('bankAmount') or None,
-                bank_narration=exc_item.get('bankNarration', ''),
-                bank_date=exc_item.get('bankDate') or None,
-                loan_payment_id=exc_item.get('loanPaymentId') or None,
-                erp_amount=exc_item.get('erpAmount') or None,
-                erp_narration=exc_item.get('erpNarration', ''),
-                erp_date=exc_item.get('erpDate') or None,
-            )
-
-        # --- update reconciliation with final counts ---
-        recon.matched_count        = outcome.get('matchedCount', 0)
-        recon.unmatched_bank_count = outcome.get('unmatchedBankCount', 0)
-        recon.unmatched_erp_count  = outcome.get('unmatchedErpCount', 0)
-        recon.status               = 'completed'
-        recon.save(update_fields=[
-            'matched_count', 'unmatched_bank_count', 'unmatched_erp_count',
-            'status', 'updated_at',
-        ])
+        # --- enqueue the actual matching work — see banks/tasks.py. The
+        # candidate pool and ERP payments are re-gathered fresh inside the
+        # task at execution time, not passed in from here. ---
+        run_reconciliation_match.delay(recon.id, include_debits)
 
         serializer = DailyReconciliationSerializer(recon)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
 class DailyReconciliationListView(APIView):

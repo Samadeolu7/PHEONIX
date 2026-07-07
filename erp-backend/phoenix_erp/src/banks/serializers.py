@@ -8,7 +8,7 @@ from django.utils import timezone
 from decimal import Decimal, ROUND_HALF_UP
 
 from common.serializers import TenantModelSerializer
-from .models import Bank, BankAccount, BankTransfer, BankPayment, BankAccountBalanceLog, BankFeedConsent, BankStatementUpload, BankStatementLine
+from .models import Bank, BankAccount, BankTransfer, BankPayment, BankAccountBalanceLog
 from accounts.models import Account
 from cash_management.models import CashierAccount
 from accounts.serializers import AccountSerializer
@@ -274,6 +274,7 @@ class BankTransferSerializer(TenantModelSerializer):
     rejected_by_name = serializers.SerializerMethodField()
     completed_by_name = serializers.SerializerMethodField()
     can_approve = serializers.SerializerMethodField()
+    can_second_approve = serializers.SerializerMethodField()
 
     # Status display
     status_display = serializers.CharField(source='get_status_display', read_only=True)
@@ -286,7 +287,7 @@ class BankTransferSerializer(TenantModelSerializer):
             'source_display', 'destination_type', 'destination_bank_account',
             'destination_cashier_account', 'destination_display',
             'amount', 'description', 'reference_number',
-            'status', 'status_display', 'can_approve',
+            'status', 'status_display', 'can_approve', 'can_second_approve',
             'initiated_by', 'initiated_by_name', 'initiated_at',
             'approved_by', 'approved_by_name', 'approved_at', 'approval_notes',
             'second_approved_by', 'second_approved_by_name', 'second_approved_at', 'second_approval_notes',
@@ -384,6 +385,27 @@ class BankTransferSerializer(TenantModelSerializer):
             return bool(eff.can_approve)
         if obj.destination_type == 'cashier':
             return bool(obj.destination_cashier_account and obj.destination_cashier_account.cashier == user)
+        return bool(obj.destination_bank_account and obj.destination_bank_account.account_manager == user)
+
+    def get_can_second_approve(self, obj):
+        """
+        Whether the requesting user could successfully call second_approve() on
+        this transfer right now — mirrors BankTransferViewSet.second_approve()'s
+        permission branches exactly (bank-to-bank via RolePermissionPolicy,
+        cashier-to-bank via destination account manager). Cashier-to-cashier
+        transfers are single-approval only and never reach this state.
+        """
+        request = self.context.get('request')
+        user = getattr(request, 'user', None) if request else None
+        if not user or not getattr(user, 'is_authenticated', False):
+            return False
+        if obj.status != 'approved' or obj.second_approved_by_id or obj.destination_type == 'cashier':
+            return False
+
+        if obj.source_type == 'bank':
+            from permissions.services import PermissionResolver
+            eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers', action='approve')
+            return bool(eff.can_approve)
         return bool(obj.destination_bank_account and obj.destination_bank_account.account_manager == user)
 
     def get_initiated_by_name(self, obj):

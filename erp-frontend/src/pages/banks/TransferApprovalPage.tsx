@@ -2,10 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
 import bankService from '../../services/bankService';
 import type { BankTransfer } from '../../types/banks';
-import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 
 const TransferApprovalPage: React.FC = () => {
-  const { canUserApprove } = useApprovalGuard();
   const [transfers, setTransfers] = useState<BankTransfer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -200,7 +198,13 @@ const TransferApprovalPage: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-center">
                     <div className="flex gap-2 justify-center">
-                      {canUserApprove && transfer.status === 'pending' && (
+                      {/* Gated solely by the server-computed can_approve/can_second_approve
+                          fields (mirror BankTransferViewSet's actual permission branches) —
+                          no rank-based fallback. A transfer landing in another person's
+                          cashier account can only ever be approved/rejected by that cashier,
+                          regardless of role or permission grants; bank-directed transfers are
+                          governed by the RolePermissionPolicy grant on banks:bank-transfers. */}
+                      {transfer.can_approve && transfer.status === 'pending' && (
                         <>
                           <button
                             onClick={() => openActionModal(transfer, 'approve')}
@@ -218,7 +222,7 @@ const TransferApprovalPage: React.FC = () => {
                           </button>
                         </>
                       )}
-                      {canUserApprove && needsSecondApproval(transfer) && (
+                      {transfer.can_second_approve && needsSecondApproval(transfer) && (
                         <>
                           <button
                             onClick={() => openActionModal(transfer, 'second_approve')}

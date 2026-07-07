@@ -1256,15 +1256,19 @@ class InvoiceViewSet(ScopedModelViewSet):
         from .models import InvoiceItemPayment, PaymentReversalRequest, EntitlementPaymentLog
         from transactions.models import Transaction as JournalEntry
 
-        if not (request.user.is_staff or hasattr(request.user, 'is_approver') and request.user.is_approver):
-            # Secondary check â€” DRF permission class is the primary gate
-            from common.approval_permissions import IsApprover as _IsApprover
-            perm = _IsApprover()
-            if not perm.has_permission(request, self):
-                return Response(
-                    {'error': 'You do not have permission to approve payment reversals'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+        # This is the real approval gate for this action, not a secondary one:
+        # the custom action name 'approve_payment_reversal' isn't recognized by
+        # HasActionPermission's _APPROVE_ACTIONS list (only the literal
+        # 'approve'/'reject'/etc are), so the auto-appended HasActionPermission
+        # checks can_create on incomes:invoices here, not can_approve. IsApprover
+        # (scoped to this view's incomes:invoices permission_module/page) is what
+        # actually enforces approval authority for reversing a posted payment.
+        from common.approval_permissions import IsApprover as _IsApprover
+        if not _IsApprover().has_permission(request, self):
+            return Response(
+                {'error': 'You do not have permission to approve payment reversals'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         invoice = self.get_object()
         request_id = request.data.get('reversal_request_id')
@@ -1410,6 +1414,17 @@ class InvoiceViewSet(ScopedModelViewSet):
           - rejection_reason (str, required): Reason for rejection (min 10 chars).
         """
         from .models import PaymentReversalRequest
+        from common.approval_permissions import IsApprover as _IsApprover
+
+        # Same rationale as approve_payment_reversal: HasActionPermission does
+        # not recognize this custom action name as an approval action, so this
+        # is the only real authority check for reversing/rejecting a posted
+        # payment reversal request.
+        if not _IsApprover().has_permission(request, self):
+            return Response(
+                {'error': 'You do not have permission to reject payment reversals'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         invoice = self.get_object()
         request_id = request.data.get('reversal_request_id')

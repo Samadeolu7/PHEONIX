@@ -13,7 +13,6 @@ import {
   useApproveBankTransfer,
   useRejectBankTransfer,
 } from '../../hooks/useBanks';
-import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 import type { BankTransfer, TransferFilters } from '../../types/banks';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -52,8 +51,6 @@ const formatDate = (iso: string): string => {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 const BankTransferListPage: React.FC = () => {
-  const { canUserApprove } = useApprovalGuard();
-
   // Filter state
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -407,15 +404,13 @@ const BankTransferListPage: React.FC = () => {
                           </>
                         )}
 
-                        {/* Approve / Reject (pending, approver only). canUserApprove is a
-                            coarse, role-rank-only gate (director/principal) that would hide
-                            this from any lower-ranked approver — e.g. the destination cashier
-                            on a cashier-to-cashier transfer, or a bank account manager on a
-                            cashier-to-bank transfer. transfer.can_approve is the precise,
-                            per-transfer, server-computed check (mirrors approve()'s actual
-                            permission branches) — combine both so directors keep working via
-                            the fast global check and everyone else is gated correctly. */}
-                        {transfer.status === 'pending' && (canUserApprove || transfer.can_approve) && (
+                        {/* Approve / Reject (pending, approver only). Gated solely by the
+                            server-computed transfer.can_approve (mirrors approve()'s actual
+                            permission branches exactly) — no rank-based fallback. A director
+                            without an explicit RolePermissionPolicy grant should not see this,
+                            and nobody but the destination cashier may ever approve a transfer
+                            landing in another person's cashier account. */}
+                        {transfer.status === 'pending' && transfer.can_approve && (
                           <>
                             <button
                               onClick={() => handleApprove(transfer)}

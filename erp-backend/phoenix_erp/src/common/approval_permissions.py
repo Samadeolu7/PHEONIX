@@ -12,15 +12,20 @@ from rest_framework.permissions import BasePermission
 APPROVER_ROLES = ('Director', 'Principal')
 
 
-def can_user_approve(user) -> bool:
+def can_user_approve(user, module: str | None = None, page: str | None = None) -> bool:
     """Return True if *user* has approval authority.
 
-    Checks via PermissionResolver first (scope-aware, policy-driven).
+    Checks via PermissionResolver first (scope-aware, policy-driven). Pass the
+    calling view's module/page so the check is scoped to that page's
+    can_approve grant — omitting them matches any can_approve=True policy
+    anywhere, which lets an unrelated grant satisfy approval on a page it was
+    never meant to cover.
+
     Falls back to role-name lookup when the permissions app is not yet available.
     """
     if not user or not user.is_authenticated:
         return False
-    if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
+    if getattr(user, 'is_superuser', False):
         return True
 
     # Primary check: PermissionResolver (respects RolePermissionPolicy + UserPermissionOverride)
@@ -28,8 +33,7 @@ def can_user_approve(user) -> bool:
         from permissions.services import PermissionResolver
         if PermissionResolver._is_wildcard(user):
             return True
-        # Use a generic module/page -- caller-specific checks should use PermissionResolver directly
-        effective = PermissionResolver.resolve(user, module=None, page=None, action='approve')
+        effective = PermissionResolver.resolve(user, module=module, page=page, action='approve')
         return effective.can_approve
     except Exception:
         pass
@@ -39,7 +43,9 @@ def can_user_approve(user) -> bool:
 
 
 class IsApprover(BasePermission):
-    """DRF permission: user must have approval authority per PermissionResolver.
+    """DRF permission: user must have approval authority per PermissionResolver,
+    scoped to the view's permission_module/permission_page (same class attrs
+    HasActionPermission and ScopedModelViewSet.get_scoped_queryset() use).
 
     Prefer adding explicit PermissionResolver.resolve() calls inside action
     methods over using this class, so module/page context is passed correctly.
@@ -47,4 +53,8 @@ class IsApprover(BasePermission):
     message = 'You do not have approval authority to perform this action.'
 
     def has_permission(self, request, view):
-        return can_user_approve(request.user)
+        return can_user_approve(
+            request.user,
+            module=getattr(view, 'permission_module', None),
+            page=getattr(view, 'permission_page', None),
+        )

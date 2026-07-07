@@ -1,9 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Upload, FileText, X } from 'lucide-react';
+import { ArrowLeft, Loader2, Upload, FileText, X } from 'lucide-react';
 import bankService from '../../services/bankService';
 import { reconciliationService } from '../../services/reconciliationService';
-import { ReconciliationWaitState } from '../../components/banks/ReconciliationWaitState';
 import { useToast } from '../../hooks/useToast';
 import type { BankAccount } from '../../types/banks';
 
@@ -71,6 +70,10 @@ const ReconciliationUploadPage: React.FC = () => {
 
     setSubmitting(true);
     try {
+      // The upload request only parses and stores the file — actual
+      // matching runs in the background (see banks/tasks.py), so this
+      // returns almost immediately with status='processing'. The detail
+      // page picks up from there, polling until it completes.
       const recon = await reconciliationService.uploadStatement({
         bank_account_id: bankAccountId,
         reconciliation_date: reconciliationDate,
@@ -83,14 +86,6 @@ const ReconciliationUploadPage: React.FC = () => {
       setFormError(err.message || 'Failed to reconcile statement. Please try again.');
     }
   };
-
-  if (submitting) {
-    return (
-      <div className="p-6 max-w-3xl mx-auto">
-        <ReconciliationWaitState />
-      </div>
-    );
-  }
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -213,15 +208,18 @@ const ReconciliationUploadPage: React.FC = () => {
           <button
             type="button"
             onClick={() => navigate('/banks/reconciliations')}
-            className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+            disabled={submitting}
+            className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
-            className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+            disabled={submitting}
+            className="flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Upload &amp; Reconcile
+            {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            {submitting ? 'Uploading…' : 'Upload & Reconcile'}
           </button>
         </div>
       </form>
