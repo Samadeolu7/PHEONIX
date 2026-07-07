@@ -57,7 +57,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from loans.models import LoanAccount, LoanProduct
         from transactions.models import Transaction, TransactionEntry
-        from common.models import Account
+        from accounts.models import Account
 
         try:
             pooled_account = Account.objects.get(code=POOLED_ACCOUNT_CODE)

@@ -48,7 +48,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from loans.models import LoanProduct
-        from common.models import Account
+        from accounts.models import Account
 
         confirm = options['confirm']
 
