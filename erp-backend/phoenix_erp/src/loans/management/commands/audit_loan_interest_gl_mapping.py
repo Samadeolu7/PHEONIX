@@ -42,7 +42,7 @@ class Command(BaseCommand):
         from loans.models import LoanProduct, LoanAccount
 
         self.stdout.write(self.style.MIGRATE_HEADING('1. LoanProduct -> interest_income_account'))
-        products = LoanProduct.objects.select_related('interest_income_account').filter(is_deleted=False)
+        products = LoanProduct.objects.select_related('product', 'interest_income_account').filter(is_deleted=False)
         if not products.exists():
             self.stdout.write(self.style.WARNING('No LoanProduct rows found in this database.'))
 
@@ -51,6 +51,7 @@ class Command(BaseCommand):
             acct = p.interest_income_account
             freqs = p.allowed_repayment_frequencies or []
             acct_str = f'{acct.code} - {acct.name}' if acct else 'NONE'
+            product_name = p.product.name if p.product_id else f'LoanProduct#{p.pk}'
 
             flags = []
             if not acct:
@@ -62,7 +63,7 @@ class Command(BaseCommand):
                 if freq_word not in acct.name.lower():
                     flags.append(f"account name doesn't mention '{freq_word}' — verify manually")
 
-            line = f'  [{p.name}] freqs={freqs} -> {acct_str}'
+            line = f'  [{product_name}] freqs={freqs} -> {acct_str}'
             if flags:
                 problems += 1
                 self.stdout.write(self.style.WARNING(line + '  ** ' + '; '.join(flags)))
