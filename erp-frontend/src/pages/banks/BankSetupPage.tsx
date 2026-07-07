@@ -68,7 +68,7 @@ const BankSetupPage: React.FC = () => {
       setBanks(banksRes);
       // Only child-level ASSET accounts can be linked to a bank account
       setGlAccounts((glRes as Account[]).filter(a => a.account_level?.toLowerCase() === 'child'));
-      setUsers((Array.isArray(usersRes) ? usersRes : []).filter(u => u.is_active));
+      setUsers(usersRes.filter(u => u.is_active));
 
       // Pre-select bank from ?bank= query param (e.g. navigating from BankFormPage)
       const preselectedBankId = searchParams.get('bank');

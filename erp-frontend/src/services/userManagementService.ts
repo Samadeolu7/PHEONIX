@@ -80,8 +80,13 @@ export interface Dashboard {
 class UserManagementService {
   // User Management
   async getUsers(): Promise<User[]> {
+    // /users/staff-users/ is paginated ({count, next, previous, results}), not
+    // a bare array — unwrap here so every caller gets what this method's type
+    // signature promises, instead of each one re-implementing the same
+    // Array.isArray(...) ? ... : response?.results defensive check.
     const response = await api.get('/users/staff-users/');
-    return response;
+    if (Array.isArray(response)) return response;
+    return (response as unknown as { results?: User[] })?.results ?? [];
   }
 
   async getUser(userId: number): Promise<User> {
