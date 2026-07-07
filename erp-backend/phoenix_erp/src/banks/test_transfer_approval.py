@@ -23,6 +23,12 @@ did not follow the RolePermissionPolicy permission-setup system:
    branch managers, and ordinary cashiers/account managers never had at all.
    Left in place, it would 403 those three approval paths before the view
    body's _check_approval_permission ever ran, regardless of transfer type.
+6. cashier-to-bank approval now also accepts a director (the same
+   banks:bank-transfers RolePermissionPolicy grant used for bank-to-bank),
+   not just the destination account's assigned account_manager.
+7. Maker-checker: whoever initiated a transfer can never approve or reject
+   it themselves, regardless of which other check (account manager, director
+   grant, role) would otherwise let them through.
 
 Most tests call BankTransferViewSet._check_approval_permission() directly
 with unsaved BankAccount/CashierAccount instances (only the cashier/
@@ -126,6 +132,59 @@ class BankTransferApprovalPermissionTests(TestCase):
             destination_bank_account=self.account_manager_bank_account,
         )
         result = self.viewset._check_approval_permission(_request(self.outsider), transfer)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cashier_to_bank_director_may_approve_without_being_account_manager(self):
+        """A director can always step in on a cashier-to-bank transfer via the
+        banks:bank-transfers RolePermissionPolicy grant, even though they are
+        not the specific account's assigned account_manager."""
+        director = User.objects.create_user(username='director', password='x')
+        transfer = BankTransfer(
+            source_type='cashier',
+            destination_type='bank',
+            destination_bank_account=self.account_manager_bank_account,
+        )
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_approve=True)
+            result = self.viewset._check_approval_permission(_request(director), transfer)
+        self.assertIsNone(result)
+
+    # ── Maker-checker: the initiator may never approve their own transfer ──
+
+    def test_initiator_cannot_approve_own_bank_to_bank_transfer(self):
+        """Even a director with a full RolePermissionPolicy grant cannot
+        approve a transfer they initiated themselves."""
+        director = User.objects.create_user(username='director2', password='x')
+        transfer = BankTransfer(source_type='bank', destination_type='bank', initiated_by=director)
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_approve=True)
+            result = self.viewset._check_approval_permission(_request(director), transfer)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status_code, status.HTTP_403_FORBIDDEN)
+        mock_resolve.assert_not_called()  # short-circuited before any branch logic
+
+    def test_initiator_cannot_approve_own_cashier_to_bank_transfer_even_as_manager(self):
+        """A cashier who happens to also be the destination account's manager
+        still can't approve a transfer they personally initiated."""
+        transfer = BankTransfer(
+            source_type='cashier',
+            destination_type='bank',
+            destination_bank_account=self.account_manager_bank_account,
+            initiated_by=self.account_manager,
+        )
+        result = self.viewset._check_approval_permission(_request(self.account_manager), transfer)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_initiator_cannot_reject_own_cashier_to_cashier_transfer(self):
+        transfer = BankTransfer(
+            source_type='cashier',
+            destination_type='cashier',
+            destination_cashier_account=self.destination_cashier_account,
+            initiated_by=self.destination_cashier,
+        )
+        result = self.viewset._check_approval_permission(_request(self.destination_cashier), transfer)
         self.assertIsNotNone(result)
         self.assertEqual(result.status_code, status.HTTP_403_FORBIDDEN)
 

@@ -851,25 +851,41 @@ class BankTransferViewSet(ScopedModelViewSet):
         this transfer, or None if they may.
 
         RolePermissionPolicy.can_approve on banks:bank-transfers (the Permission
-        Setup page) governs ONLY the bank-to-bank branch. The other three are
-        all gated by object identity, not by anything grantable on that page:
-          - cashier-to-cashier: the destination cashier, and no one else.
-          - cashier-to-bank: whoever is set as that specific BankAccount's
-            account_manager field (Banking > Bank Accounts > edit > "Account
-            Manager") — a per-account assignment, not a role/permission grant.
+        Setup page — director-level authority) governs the bank-to-bank branch,
+        and ALSO acts as a fallback for cashier-to-bank so a director can
+        always step in regardless of which specific account is involved. The
+        other two branches are gated purely by object identity, not by
+        anything grantable on that page:
+          - cashier-to-cashier: the destination cashier, and no one else —
+            never overridable, not even by a director. Nobody may approve or
+            reject a transfer landing in someone else's cashier float on that
+            cashier's behalf, regardless of rank or permission grants.
           - bank-to-cashier: the branch-manager-tier role check
-            (BankTransfer.can_user_manage_bank_to_cashier), also not a
-            RolePermissionPolicy grant.
-        This is a hard invariant for the cashier-to-cashier case specifically:
-        nobody may approve or reject a transfer landing in someone else's
-        cashier float on that cashier's behalf, regardless of rank or
-        permission grants.
+            (BankTransfer.can_user_manage_bank_to_cashier), which already
+            includes directors/admins — not a RolePermissionPolicy grant.
+        cashier-to-bank specifically allows EITHER the destination BankAccount's
+        account_manager (Banking > Bank Accounts > edit > "Account Manager")
+        OR a director, so a cashier who happens to also be that account's
+        manager still can't rubber-stamp their own transfer (see the
+        maker-checker guard below, which blocks that regardless).
 
         allow_bank_to_cashier=False is used by second_approve(), which
         structurally never reaches a bank-to-cashier transfer (those are
         single-approval) and omits that branch entirely, matching the
         original inline logic.
+
+        Maker-checker: whoever initiated the transfer may never approve or
+        reject it themselves, no matter which branch below would otherwise
+        allow them through (director authority included) — segregation of
+        duties between the person who moves the money and the person who
+        signs off on it.
         """
+        if transfer.initiated_by_id == request.user.id:
+            return Response(
+                {'error': 'You cannot approve or reject a transfer you initiated.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         if allow_bank_to_cashier and transfer.source_type == 'bank' and transfer.destination_type == 'cashier':
             # Bank-to-cashier: same role gate as initiating one (branch manager /
             # supervisor / director / admin) — see BankTransfer.can_user_manage_bank_to_cashier
@@ -885,9 +901,7 @@ class BankTransferViewSet(ScopedModelViewSet):
             # RolePermissionPolicy(module='banks', page='bank-transfers').can_approve.
             # See migrate_bank_transfer_policies.py for the equivalent-grant migration
             # from the old staff_profile.role_level check this replaces.
-            from permissions.services import PermissionResolver
-            eff = PermissionResolver.resolve(request.user, module='banks', page='bank-transfers', action='approve')
-            if not eff.can_approve:
+            if not self._has_bank_transfer_approve_grant(request.user):
                 return Response(
                     {'error': 'Only directors can approve bank-to-bank transfers'},
                     status=status.HTTP_403_FORBIDDEN
@@ -902,13 +916,29 @@ class BankTransferViewSet(ScopedModelViewSet):
                     status=status.HTTP_403_FORBIDDEN
                 )
         else:
-            # Cashier-to-bank transfers require destination account manager
-            if transfer.destination_bank_account.account_manager != request.user:
+            # Cashier-to-bank transfers require the destination account manager
+            # — OR a director (same RolePermissionPolicy grant as bank-to-bank),
+            # so a director can always step in regardless of transfer type,
+            # while an ordinary cashier still can't approve their own transfer
+            # to an account they don't manage (and the maker-checker guard
+            # above blocks them even if they DO happen to manage it themselves).
+            is_account_manager = transfer.destination_bank_account.account_manager == request.user
+            if not is_account_manager and not self._has_bank_transfer_approve_grant(request.user):
                 return Response(
-                    {'error': 'Only the destination account manager can approve this transfer'},
+                    {'error': 'Only the destination account manager or a director can approve '
+                               'this transfer'},
                     status=status.HTTP_403_FORBIDDEN
                 )
         return None
+
+    @staticmethod
+    def _has_bank_transfer_approve_grant(user):
+        """True if RolePermissionPolicy(module='banks', page='bank-transfers')
+        grants this user can_approve — i.e. they hold director-level approval
+        authority regardless of which specific bank account is involved."""
+        from permissions.services import PermissionResolver
+        eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers', action='approve')
+        return bool(eff.can_approve)
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):

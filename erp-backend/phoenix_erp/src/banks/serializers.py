@@ -17,6 +17,17 @@ from accounts.serializers import AccountSerializer
 User = get_user_model()
 
 
+def _bank_transfer_approve_grant(user) -> bool:
+    """True if RolePermissionPolicy(module='banks', page='bank-transfers')
+    grants this user can_approve — mirrors
+    BankTransferViewSet._has_bank_transfer_approve_grant exactly, so the
+    can_approve/can_second_approve fields shown in the UI never disagree with
+    what the approve()/second_approve() endpoints will actually accept."""
+    from permissions.services import PermissionResolver
+    eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers', action='approve')
+    return bool(eff.can_approve)
+
+
 class BankSerializer(TenantModelSerializer):
     """Serializer for Bank model"""
     
@@ -389,23 +400,28 @@ class BankTransferSerializer(TenantModelSerializer):
             return False
         if obj.status != 'pending':
             return False
+        if obj.initiated_by_id == user.id:
+            return False
 
         if obj.source_type == 'bank' and obj.destination_type == 'cashier':
             return BankTransfer.can_user_manage_bank_to_cashier(user)
         if obj.source_type == 'bank':
-            from permissions.services import PermissionResolver
-            eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers', action='approve')
-            return bool(eff.can_approve)
+            return _bank_transfer_approve_grant(user)
         if obj.destination_type == 'cashier':
             return bool(obj.destination_cashier_account and obj.destination_cashier_account.cashier == user)
-        return bool(obj.destination_bank_account and obj.destination_bank_account.account_manager == user)
+        is_account_manager = bool(
+            obj.destination_bank_account and obj.destination_bank_account.account_manager == user
+        )
+        return is_account_manager or _bank_transfer_approve_grant(user)
 
     def get_can_second_approve(self, obj):
         """
         Whether the requesting user could successfully call second_approve() on
         this transfer right now — mirrors BankTransferViewSet.second_approve()'s
-        permission branches exactly (bank-to-bank via RolePermissionPolicy,
-        cashier-to-bank via destination account manager). Cashier-to-cashier
+        permission branches exactly: bank-to-bank via RolePermissionPolicy,
+        cashier-to-bank via the destination account manager OR that same
+        RolePermissionPolicy grant (a director can always step in). Excludes
+        the transfer's own initiator (maker-checker). Cashier-to-cashier
         transfers are single-approval only and never reach this state.
         """
         request = self.context.get('request')
@@ -414,12 +430,15 @@ class BankTransferSerializer(TenantModelSerializer):
             return False
         if obj.status != 'approved' or obj.second_approved_by_id or obj.destination_type == 'cashier':
             return False
+        if obj.initiated_by_id == user.id:
+            return False
 
         if obj.source_type == 'bank':
-            from permissions.services import PermissionResolver
-            eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers', action='approve')
-            return bool(eff.can_approve)
-        return bool(obj.destination_bank_account and obj.destination_bank_account.account_manager == user)
+            return _bank_transfer_approve_grant(user)
+        is_account_manager = bool(
+            obj.destination_bank_account and obj.destination_bank_account.account_manager == user
+        )
+        return is_account_manager or _bank_transfer_approve_grant(user)
 
     def get_initiated_by_name(self, obj):
         if obj.initiated_by:

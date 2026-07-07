@@ -133,12 +133,14 @@ export interface BankTransfer {
   // Server-computed: can the current user approve this transfer right now
   // (mirrors BankTransferViewSet.approve()'s permission branches exactly —
   // director/admin for bank-to-bank, destination cashier for cashier-to-
-  // cashier, destination account manager for cashier-to-bank).
+  // cashier (never a director override), destination account manager OR a
+  // director for cashier-to-bank. Always false for the transfer's own
+  // initiator — maker-checker).
   can_approve?: boolean;
   // Server-computed: can the current user perform the second approval on this
-  // transfer right now (mirrors BankTransferViewSet.second_approve() exactly).
-  // Cashier-destined transfers are single-approval only, so this is always
-  // false for them.
+  // transfer right now (mirrors BankTransferViewSet.second_approve() exactly,
+  // including the maker-checker exclusion above). Cashier-destined transfers
+  // are single-approval only, so this is always false for them.
   can_second_approve?: boolean;
   initiated_by: number;
   initiated_by_name?: string;
