@@ -181,13 +181,26 @@ class BankAccountSerializer(TenantModelSerializer):
             data.pop('new_bank_code', None)
             data.pop('new_bank_branch', None)
 
-        if not data.get('bank'):
+        # Bank is immutable after creation (see bank_display_name's read-only
+        # use in the edit UI) — only require it when there's no existing
+        # instance to fall back to. Without this, every PATCH that legitimately
+        # omits `bank` (account_manager, notes, etc.) fails validation even
+        # though the account already has a bank.
+        if not data.get('bank') and not (self.instance and self.instance.bank_id):
             raise serializers.ValidationError({
                 'bank': 'Either a bank ID or bank_name must be provided.'
             })
 
-        # Default account_manager to the requesting user if not supplied
-        if not data.get('account_manager') and user and getattr(user, 'is_authenticated', False):
+        # Default account_manager to the requesting user if not supplied — but
+        # only on create. On a PATCH that legitimately doesn't touch this field
+        # (e.g. editing notes), data won't include account_manager either;
+        # defaulting it here would silently reassign the account's manager to
+        # whoever happens to be editing, wiping out an intentionally-set value.
+        if (
+            not data.get('account_manager')
+            and not self.instance
+            and user and getattr(user, 'is_authenticated', False)
+        ):
             data['account_manager'] = user
 
         if data.get('requires_dual_approval') and not data.get('dual_approval_threshold'):
