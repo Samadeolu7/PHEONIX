@@ -142,8 +142,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
       { code: 'bank-accounts', title: 'Bank Accounts', description: 'Company bank account records', paths: ['/banks/accounts', '/banks/accounts/:id', '/banks/accounts/:id/edit', '/banks/accounts/new'] },
       { code: 'bank-transfers', title: 'Bank Transfers', description: 'Transfer between bank accounts', paths: ['/banks/transfers', '/banks/transfers/new', '/banks/transfers/approvals'] },
       { code: 'bank-payments', title: 'Bank Payments', description: 'Record outward bank payments', paths: ['/banks/payments', '/banks/payments/new'] },
-      { code: 'bank-statement-uploads', title: 'Statement Uploads', description: 'Upload bank statement files', path: '/banks/statement-uploads' },
-      { code: 'bank-feed-consent', title: 'Bank Feed Consent', description: 'Open-banking feed consent management' },
+      { code: 'bank-statement-reconciliation', title: 'Statement Reconciliation (Auto-Match)', description: 'Upload bank statements and review matched/unmatched transactions', paths: ['/banks/reconciliations', '/banks/reconciliations/new', '/banks/reconciliations/:id'] },
     ],
   },
   {

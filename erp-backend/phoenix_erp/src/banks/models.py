@@ -4,6 +4,8 @@ Bank Management System
 Manages bank accounts, cashier accounts, and cash transfers with approval workflows
 Integrates with general ledger for proper accounting
 """
+import uuid
+
 from django.db import models, transaction as db_transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -1874,6 +1876,64 @@ class BankStatementLine(TimeStampedModel):
         )
 
 
+# ── Reconciliation Bank Transactions (Bank-Recon Java integration) ─────────────
+# NOTE: this is deliberately NOT named BankFeedTransaction — that name is
+# already taken (below) by a dead model from the abandoned Mono/open-banking
+# consent architecture (never referenced by any view/serializer/url; its
+# migration is left untouched per the same caution applied elsewhere).
+
+class ReconciliationBankTransaction(models.Model):
+    """
+    One line from an uploaded bank statement. Django owns this storage —
+    Bank-Recon (Java) is a stateless matching service with no database of
+    its own; every reconciliation run sends it the current unmatched pool
+    for the target date and persists whatever comes back in the response.
+
+    Deduplicated per (bank_account, bank_ref) so re-uploading the same
+    statement (or a multi-day file that overlaps a previous upload) never
+    double-counts a transaction.
+    """
+    DIRECTION_CHOICES = [
+        ('CREDIT', 'Credit — money in'),
+        ('DEBIT', 'Debit — money out'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bank_account = models.ForeignKey(
+        BankAccount,
+        on_delete=models.PROTECT,
+        related_name='reconciliation_transactions',
+    )
+    bank_ref = models.CharField(
+        max_length=500,
+        help_text="The bank's own reference, or a deterministic hash when none was supplied",
+    )
+    value_date = models.DateField(db_index=True)
+    direction = models.CharField(max_length=10, choices=DIRECTION_CHOICES)
+    amount = models.DecimalField(max_digits=18, decimal_places=2)
+    narration = models.TextField(blank=True)
+    balance_after = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
+
+    # Populated once Java reports a confirmed match
+    matched = models.BooleanField(default=False, db_index=True)
+    match_confidence = models.CharField(max_length=10, blank=True)
+    matched_erp_payment_id = models.IntegerField(null=True, blank=True)
+    matched_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [('bank_account', 'bank_ref')]
+        indexes = [
+            models.Index(fields=['bank_account', 'value_date', 'matched']),
+        ]
+        verbose_name = 'Reconciliation Bank Transaction'
+        verbose_name_plural = 'Reconciliation Bank Transactions'
+
+    def __str__(self):
+        return f"{self.bank_account} — {self.value_date} — {self.direction} {self.amount}"
+
+
 # ── Daily Reconciliation (Bank-Recon Java integration) ─────────────────────────
 
 class DailyReconciliation(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
@@ -1976,6 +2036,14 @@ class ReconciliationException(TimeStampedModel):
         choices=EXCEPTION_TYPE_CHOICES,
         db_index=True,
     )
+    direction = models.CharField(
+        max_length=10,
+        choices=[('CREDIT', 'Credit — money in'), ('DEBIT', 'Debit — money out')],
+        default='CREDIT',
+        db_index=True,
+        help_text='Which side of the statement this exception came from. '
+                   'DEBIT exceptions only appear when a reconciliation opted in to debit checking.',
+    )
 
     # Bank-side details (null for 'erp_only')
     bank_transaction_id = models.UUIDField(
@@ -2011,13 +2079,14 @@ class ReconciliationException(TimeStampedModel):
         indexes = [
             models.Index(fields=['reconciliation', 'exception_type']),
             models.Index(fields=['reconciliation', 'resolved']),
+            models.Index(fields=['reconciliation', 'direction']),
         ]
         verbose_name        = 'Reconciliation Exception'
         verbose_name_plural = 'Reconciliation Exceptions'
 
     def __str__(self):
         return (
-            f"{self.reconciliation} — {self.exception_type} "
+            f"{self.reconciliation} — {self.direction} {self.exception_type} "
             f"(bank={self.bank_amount}, erp={self.erp_amount})"
         )
 

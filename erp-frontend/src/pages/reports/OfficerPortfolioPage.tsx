@@ -85,7 +85,9 @@ interface KpiCardProps {
 
 function KpiCard({ label, value, sub, icon, color, linkTo, linkLabel, alert }: KpiCardProps) {
   return (
-    <div className={`rounded-xl bg-white p-5 shadow-sm border-l-4 ${alert ? 'border-red-400' : color}`}>
+    <div
+      className={`rounded-xl bg-white p-5 shadow-sm border-l-4 ${alert ? 'border-red-400' : color}`}
+    >
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</p>
@@ -94,7 +96,9 @@ function KpiCard({ label, value, sub, icon, color, linkTo, linkLabel, alert }: K
           </p>
           {sub && <p className="mt-0.5 text-xs text-gray-500">{sub}</p>}
         </div>
-        <div className={`rounded-lg p-2 ${alert ? 'bg-red-50 text-red-500' : 'bg-gray-50 text-gray-500'}`}>
+        <div
+          className={`rounded-lg p-2 ${alert ? 'bg-red-50 text-red-500' : 'bg-gray-50 text-gray-500'}`}
+        >
           {icon}
         </div>
       </div>
@@ -127,7 +131,7 @@ export default function OfficerPortfolioPage() {
         loanService.getPARSummary(),
       ]);
       // analytics endpoint wraps in { success, data: {...} }
-      setStats((statsRes as { data: DashboardStats }).data ?? statsRes as DashboardStats);
+      setStats((statsRes as { data: DashboardStats }).data ?? (statsRes as DashboardStats));
       setPar(parRes as unknown as PARSummaryData);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
@@ -137,9 +141,15 @@ export default function OfficerPortfolioPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
-  const today = new Date().toLocaleDateString('en-NG', { day: '2-digit', month: 'long', year: 'numeric' });
+  const today = new Date().toLocaleDateString('en-NG', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -216,17 +226,21 @@ export default function OfficerPortfolioPage() {
 
           {/* ── Cash Account Balance ── */}
           {stats.cashier_balance !== null && (
-            <div className={`rounded-xl p-5 mb-6 flex items-center justify-between border-l-4 shadow-sm ${
-              parseFloat(stats.cashier_balance ?? '0') !== 0
-                ? 'bg-red-50 border-red-500'
-                : 'bg-green-50 border-green-400'
-            }`}>
+            <div
+              className={`rounded-xl p-5 mb-6 flex items-center justify-between border-l-4 shadow-sm ${
+                parseFloat(stats.cashier_balance ?? '0') !== 0
+                  ? 'bg-red-50 border-red-500'
+                  : 'bg-green-50 border-green-400'
+              }`}
+            >
               <div className="flex items-center gap-3">
-                <div className={`rounded-lg p-2 ${
-                  parseFloat(stats.cashier_balance ?? '0') !== 0
-                    ? 'bg-red-100 text-red-600'
-                    : 'bg-green-100 text-green-600'
-                }`}>
+                <div
+                  className={`rounded-lg p-2 ${
+                    parseFloat(stats.cashier_balance ?? '0') !== 0
+                      ? 'bg-red-100 text-red-600'
+                      : 'bg-green-100 text-green-600'
+                  }`}
+                >
                   <Wallet size={22} />
                 </div>
                 <div>
@@ -238,11 +252,13 @@ export default function OfficerPortfolioPage() {
                       </span>
                     )}
                   </p>
-                  <p className={`text-2xl font-bold mt-0.5 ${
-                    parseFloat(stats.cashier_balance ?? '0') !== 0
-                      ? 'text-red-700'
-                      : 'text-green-700'
-                  }`}>
+                  <p
+                    className={`text-2xl font-bold mt-0.5 ${
+                      parseFloat(stats.cashier_balance ?? '0') !== 0
+                        ? 'text-red-700'
+                        : 'text-green-700'
+                    }`}
+                  >
                     ₦{fmt(stats.cashier_balance)}
                   </p>
                 </div>
@@ -346,19 +362,28 @@ export default function OfficerPortfolioPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {par.buckets.map((b) => {
+                    {par.buckets.map(b => {
                       const pct = parseFloat(b.par_pct);
                       const isRisk = b.key !== 'current';
                       return (
-                        <tr key={b.key} className={isRisk && b.loan_count > 0 ? 'bg-red-50' : 'hover:bg-gray-50'}>
-                          <td className={`px-5 py-3 font-medium ${isRisk && b.loan_count > 0 ? 'text-red-700' : 'text-gray-800'}`}>
+                        <tr
+                          key={b.key}
+                          className={isRisk && b.loan_count > 0 ? 'bg-red-50' : 'hover:bg-gray-50'}
+                        >
+                          <td
+                            className={`px-5 py-3 font-medium ${isRisk && b.loan_count > 0 ? 'text-red-700' : 'text-gray-800'}`}
+                          >
                             {b.label}
                           </td>
-                          <td className="px-5 py-3 text-right text-gray-700">{fmtInt(b.loan_count)}</td>
+                          <td className="px-5 py-3 text-right text-gray-700">
+                            {fmtInt(b.loan_count)}
+                          </td>
                           <td className="px-5 py-3 text-right font-medium text-gray-900">
                             ₦{fmt(b.outstanding_balance)}
                           </td>
-                          <td className={`px-5 py-3 text-right font-semibold ${pct > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                          <td
+                            className={`px-5 py-3 text-right font-semibold ${pct > 0 ? 'text-red-600' : 'text-green-600'}`}
+                          >
                             {pct.toFixed(2)}%
                           </td>
                         </tr>
@@ -379,15 +404,55 @@ export default function OfficerPortfolioPage() {
             </div>
             <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-3 lg:grid-cols-4">
               {[
-                { label: 'New Loan Application', path: '/loans/accounts/create', icon: <CreditCard size={16} />, color: 'bg-blue-50 text-blue-700 border-blue-200' },
-                { label: 'Loan Collection', path: '/loans/collection', icon: <DollarSign size={16} />, color: 'bg-green-50 text-green-700 border-green-200' },
-                { label: 'Savings Deposit', path: '/savings/accounts', icon: <Wallet size={16} />, color: 'bg-teal-50 text-teal-700 border-teal-200' },
-                { label: 'Add New Client', path: '/clients/create', icon: <Users size={16} />, color: 'bg-purple-50 text-purple-700 border-purple-200' },
-                { label: 'Defaulters Report', path: '/reports/loans/defaulters', icon: <AlertTriangle size={16} />, color: 'bg-red-50 text-red-700 border-red-200' },
-                { label: 'Collection Sheet', path: '/savings/collection', icon: <BarChart3 size={16} />, color: 'bg-orange-50 text-orange-700 border-orange-200' },
-                { label: 'PAR Report', path: '/reports/loans/par', icon: <TrendingDown size={16} />, color: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-                { label: 'Daily Summary', path: '/reports/daily-summary', icon: <CheckCircle size={16} />, color: 'bg-gray-50 text-gray-700 border-gray-200' },
-              ].map((a) => (
+                {
+                  label: 'New Loan Application',
+                  path: '/loans/accounts/create',
+                  icon: <CreditCard size={16} />,
+                  color: 'bg-blue-50 text-blue-700 border-blue-200',
+                },
+                {
+                  label: 'Loan Collection',
+                  path: '/loans/collection',
+                  icon: <DollarSign size={16} />,
+                  color: 'bg-green-50 text-green-700 border-green-200',
+                },
+                {
+                  label: 'Savings Deposit',
+                  path: '/savings/accounts',
+                  icon: <Wallet size={16} />,
+                  color: 'bg-teal-50 text-teal-700 border-teal-200',
+                },
+                {
+                  label: 'Add New Client',
+                  path: '/clients/create',
+                  icon: <Users size={16} />,
+                  color: 'bg-purple-50 text-purple-700 border-purple-200',
+                },
+                {
+                  label: 'Defaulters Report',
+                  path: '/reports/loans/defaulters',
+                  icon: <AlertTriangle size={16} />,
+                  color: 'bg-red-50 text-red-700 border-red-200',
+                },
+                {
+                  label: 'Collection Sheet',
+                  path: '/savings/collection',
+                  icon: <BarChart3 size={16} />,
+                  color: 'bg-orange-50 text-orange-700 border-orange-200',
+                },
+                {
+                  label: 'PAR Report',
+                  path: '/reports/loans/par',
+                  icon: <TrendingDown size={16} />,
+                  color: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+                },
+                {
+                  label: 'Daily Summary',
+                  path: '/reports/daily-summary',
+                  icon: <CheckCircle size={16} />,
+                  color: 'bg-gray-50 text-gray-700 border-gray-200',
+                },
+              ].map(a => (
                 <Link
                   key={a.path}
                   to={a.path}

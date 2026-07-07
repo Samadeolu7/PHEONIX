@@ -1,0 +1,232 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft, Upload, FileText, X } from 'lucide-react';
+import bankService from '../../services/bankService';
+import { reconciliationService } from '../../services/reconciliationService';
+import { ReconciliationWaitState } from '../../components/banks/ReconciliationWaitState';
+import { useToast } from '../../hooks/useToast';
+import type { BankAccount } from '../../types/banks';
+
+const ACCEPTED_EXTENSIONS = ['.csv', '.txt', '.xlsx', '.qif'];
+
+const ReconciliationUploadPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { error: showError } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(true);
+
+  const [bankAccountId, setBankAccountId] = useState<number | ''>('');
+  const [reconciliationDate, setReconciliationDate] = useState(
+    () => new Date().toISOString().slice(0, 10)
+  );
+  const [file, setFile] = useState<File | null>(null);
+  const [includeDebits, setIncludeDebits] = useState(false);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await bankService.listBankAccounts();
+        setAccounts(data.filter((a) => a.is_active && !a.is_suspended));
+      } catch (err: any) {
+        showError(err.message || 'Failed to load bank accounts');
+      } finally {
+        setLoadingAccounts(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+    const ext = selected.name.slice(selected.name.lastIndexOf('.')).toLowerCase();
+    if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+      showError(`Unsupported file type "${ext}". Use CSV, Excel (.xlsx), or QIF.`);
+      return;
+    }
+    setFile(selected);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+
+    if (!bankAccountId) {
+      setFormError('Please select a bank account.');
+      return;
+    }
+    if (!reconciliationDate) {
+      setFormError('Please select the statement date.');
+      return;
+    }
+    if (!file) {
+      setFormError('Please choose a statement file to upload.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const recon = await reconciliationService.uploadStatement({
+        bank_account_id: bankAccountId,
+        reconciliation_date: reconciliationDate,
+        statement_file: file,
+        include_debits: includeDebits,
+      });
+      navigate(`/banks/reconciliations/${recon.id}`);
+    } catch (err: any) {
+      setSubmitting(false);
+      setFormError(err.message || 'Failed to reconcile statement. Please try again.');
+    }
+  };
+
+  if (submitting) {
+    return (
+      <div className="p-6 max-w-3xl mx-auto">
+        <ReconciliationWaitState />
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto">
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => navigate('/banks/reconciliations')}
+          className="text-gray-500 hover:text-gray-700"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">New Statement Reconciliation</h1>
+          <p className="text-gray-600 mt-1">
+            Upload a bank statement to automatically match transactions against ERP records
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-6">
+        {formError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+            {formError}
+          </div>
+        )}
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Bank Account</label>
+          <select
+            value={bankAccountId}
+            onChange={(e) => setBankAccountId(e.target.value ? Number(e.target.value) : '')}
+            disabled={loadingAccounts}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50"
+          >
+            <option value="">
+              {loadingAccounts ? 'Loading accounts…' : 'Select a bank account'}
+            </option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {account.account_name} — {account.account_number}
+                {account.bank_name ? ` (${account.bank_name})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Statement Date</label>
+          <input
+            type="date"
+            value={reconciliationDate}
+            onChange={(e) => setReconciliationDate(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            The day being reconciled. A multi-day statement file is fine — only transactions
+            dated this day are matched now; the rest are stored for when you reconcile those
+            days.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Statement File</label>
+          {!file ? (
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+              <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <p className="text-sm text-gray-600 mb-1">CSV, Excel (.xlsx), or QIF</p>
+              <p className="text-xs text-gray-400 mb-4">Exported directly from your bank</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_EXTENSIONS.join(',')}
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+              >
+                Choose File
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between border border-gray-300 rounded-lg px-4 py-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="h-5 w-5 text-blue-600 shrink-0" />
+                <span className="text-sm text-gray-900 truncate">{file.name}</span>
+                <span className="text-xs text-gray-400 shrink-0">
+                  ({(file.size / 1024).toFixed(0)} KB)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setFile(null);
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }}
+                className="text-gray-400 hover:text-gray-600 shrink-0"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        <label className="flex items-start gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            checked={includeDebits}
+            onChange={(e) => setIncludeDebits(e.target.checked)}
+            className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+          <span>
+            Also reconcile debits (withdrawals, disbursements, bank charges) — off by default,
+            since most reconciliations only need to confirm incoming payments
+          </span>
+        </label>
+
+        <div className="flex justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={() => navigate('/banks/reconciliations')}
+            className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+          >
+            Upload &amp; Reconcile
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+export default ReconciliationUploadPage;

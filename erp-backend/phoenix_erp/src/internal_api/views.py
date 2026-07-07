@@ -240,93 +240,16 @@ class StatutoryFilingUpdateView(APIView):
 # App 3 – Bank Feed Reconciliation Service
 # ===========================================================================
 
-class BankFeedConsentListView(APIView):
-    """
-    GET /api/internal/banks/feed-consents/
-
-    Query params:
-      - status: pending / active / expired / revoked / failed
-      - bank_code: e.g. "044" (Access Bank)
-
-    Java App 3 calls this to discover which consents it should reconcile.
-    NOTE: consent_token and refresh_token ARE included here (internal only).
-    """
-    authentication_classes = _INTERNAL_AUTH
-    permission_classes = _INTERNAL_PERMS
-
-    def get(self, request):
-        from banks.models import BankFeedConsent
-        qs = BankFeedConsent.objects.filter(is_deleted=False)
-
-        consent_status = request.query_params.get('status')
-        if consent_status:
-            qs = qs.filter(status=consent_status)
-
-        bank_code = request.query_params.get('bank_code')
-        if bank_code:
-            qs = qs.filter(bank_code=bank_code)
-
-        data = list(qs.values(
-            'id', 'client_id', 'bank_name', 'bank_code',
-            'account_number', 'account_name', 'status',
-            'consent_granted_at', 'consent_expires_at',
-            'consent_token', 'refresh_token',
-            'last_sync_at', 'last_sync_status',
-            'phoenix_bank_account_id', 'owner_id', 'branch_id',
-        ))
-        return Response(data)
-
-
-class BankFeedConsentSyncView(APIView):
-    """
-    PATCH /api/internal/banks/feed-consents/<pk>/sync/
-
-    Body:
-        {
-          "last_sync_at": "2025-07-14T02:00:00Z",   # optional, defaults to now
-          "last_sync_status": "success",              # success / failed / partial
-          "sync_error_detail": "...",                 # optional
-          "consent_token": "...",                     # optional, rotated token
-          "refresh_token": "...",                     # optional, rotated token
-          "status": "active"                          # optional status update
-        }
-
-    Java App 3 calls this after each reconciliation cycle.
-    """
-    authentication_classes = _INTERNAL_AUTH
-    permission_classes = _INTERNAL_PERMS
-
-    def patch(self, request, pk):
-        from banks.models import BankFeedConsent
-
-        try:
-            consent = BankFeedConsent.objects.get(pk=pk, is_deleted=False)
-        except BankFeedConsent.DoesNotExist:
-            return Response({'detail': 'BankFeedConsent not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        allowed_fields = {
-            'last_sync_status', 'sync_error_detail',
-            'consent_token', 'refresh_token', 'status',
-        }
-        update_fields = ['updated_at']
-
-        for field in allowed_fields:
-            if field in request.data:
-                setattr(consent, field, request.data[field])
-                update_fields.append(field)
-
-        # Use provided timestamp or default to now
-        consent.last_sync_at = request.data.get('last_sync_at') or timezone.now()
-        update_fields.append('last_sync_at')
-
-        consent.save(update_fields=list(set(update_fields)))
-
-        return Response({
-            'id': consent.pk,
-            'status': consent.status,
-            'last_sync_at': consent.last_sync_at,
-            'last_sync_status': consent.last_sync_status,
-        })
+# NOTE: BankFeedConsentListView, BankFeedConsentSyncView, and
+# ErpPaymentsListView were removed as dead code (2026-07). The consent views
+# backed the Mono/open-banking consent-polling architecture, abandoned in
+# favor of the upload-based flow. ErpPaymentsListView existed so the Java
+# Bank-Recon service could fetch ERP payments over HTTP; Bank-Recon is now a
+# fully stateless compute service with no outbound calls of its own — Django
+# gathers ERP payments locally (banks.reconciliation_utils.fetch_erp_payments,
+# the same extraction logic this view used to expose) and sends everything to
+# Java in one request from StatementUploadView. BankFeedConsent's model and
+# migrations are left untouched.
 
 
 # ===========================================================================

@@ -368,3 +368,68 @@ export interface CreateFeedConsentRequest {
   granted_at?: string | null;
   expires_at?: string | null;
 }
+
+// ── Daily Reconciliation (Bank-Recon Java integration — auto-match) ──────────
+
+export interface ReconciliationException {
+  id: number;
+  exception_type: 'bank_only' | 'erp_only' | 'amount_diff';
+  direction: 'CREDIT' | 'DEBIT';
+  // Bank side (null for 'erp_only')
+  bank_transaction_id: string | null;
+  bank_amount: string | null;
+  bank_narration: string;
+  bank_date: string | null;
+  // ERP side (null for 'bank_only')
+  loan_payment_id: number | null;
+  erp_amount: string | null;
+  erp_narration: string;
+  erp_date: string | null;
+  // Resolution
+  resolved: boolean;
+  resolved_by: number | null;
+  resolved_at: string | null;
+  resolution_notes: string;
+  created_at: string;
+}
+
+export interface DailyReconciliation {
+  id: number;
+  bank_account: number;
+  bank_account_info?: {
+    id: number;
+    account_number: string;
+    account_name: string;
+    bank_name: string;
+  };
+  reconciliation_date: string;
+  uploaded_by: number;
+  uploaded_by_name?: string;
+  uploaded_at: string;
+  statement_file?: string;
+  status: 'processing' | 'completed' | 'failed';
+  total_bank_transactions: number;
+  matched_count: number;
+  unmatched_bank_count: number;
+  unmatched_erp_count: number;
+  error_detail?: string;
+  exceptions?: ReconciliationException[];
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface UploadReconciliationRequest {
+  bank_account_id: number;
+  reconciliation_date: string;
+  statement_file: File;
+  include_debits?: boolean;
+}
+
+export interface ReconciliationFilters {
+  bank_account?: number;
+  status?: 'processing' | 'completed' | 'failed';
+}
+
+export interface ResolveExceptionRequest {
+  resolution_notes: string;
+}

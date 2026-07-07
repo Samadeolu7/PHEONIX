@@ -702,101 +702,11 @@ class BankAccountLedgerSerializer(serializers.Serializer):
     entry_count = serializers.IntegerField()
 
 
-class BankFeedConsentSerializer(TenantModelSerializer):
-    """Full serializer for BankFeedConsent (used by detail and create/update views)."""
-    client_name = serializers.CharField(source='client.full_name', read_only=True)
-    recorded_by_name = serializers.CharField(
-        source='recorded_by.get_full_name', read_only=True, default=None
-    )
-
-    class Meta:
-        model = BankFeedConsent
-        fields = [
-            'id', 'client', 'client_name',
-            'bank_name', 'bank_code', 'account_number', 'account_name',
-            'status',
-            'consent_granted_at', 'consent_expires_at', 'consent_revoked_at',
-            # Tokens intentionally excluded from API output for security
-            'phoenix_bank_account',
-            'last_sync_at', 'last_sync_status', 'sync_error_detail',
-            'recorded_by', 'recorded_by_name', 'notes',
-            'owner', 'branch', 'created_at', 'updated_at',
-        ]
-        read_only_fields = [
-            'id', 'client_name', 'recorded_by_name',
-            'last_sync_at', 'last_sync_status', 'sync_error_detail',
-            'consent_revoked_at',
-            'owner', 'branch', 'created_at', 'updated_at',
-        ]
-        extra_kwargs = {
-            'client': {'required': True},
-            'bank_name': {'required': True},
-            'account_number': {'required': True},
-        }
-
-
-class BankFeedConsentListSerializer(TenantModelSerializer):
-    """Lightweight list serializer for BankFeedConsent."""
-    client_name = serializers.CharField(source='client.full_name', read_only=True)
-
-    class Meta:
-        model = BankFeedConsent
-        fields = [
-            'id', 'client', 'client_name',
-            'bank_name', 'account_number',
-            'status', 'consent_expires_at', 'last_sync_at',
-            'created_at',
-        ]
-        read_only_fields = fields
-
-
-# ---------------------------------------------------------------------------
-# BankStatementUpload serializers
-# ---------------------------------------------------------------------------
-
-class BankStatementLineSerializer(serializers.ModelSerializer):
-    matched_transaction_ref = serializers.SerializerMethodField()
-
-    class Meta:
-        model = BankStatementLine
-        fields = [
-            'id', 'upload', 'value_date', 'description',
-            'credit_amount', 'debit_amount', 'balance', 'reference',
-            'match_status', 'matched_transaction', 'matched_transaction_ref',
-            'match_confidence', 'raw_data',
-        ]
-        read_only_fields = ['id', 'upload', 'match_status', 'matched_transaction', 'match_confidence']
-
-    def get_matched_transaction_ref(self, obj):
-        if obj.matched_transaction_id:
-            return getattr(obj.matched_transaction, 'reference_number', str(obj.matched_transaction_id))
-        return None
-
-
-class BankStatementUploadSerializer(TenantModelSerializer):
-    uploaded_by_name = serializers.SerializerMethodField()
-    bank_account_number = serializers.SerializerMethodField()
-
-    class Meta:
-        model = BankStatementUpload
-        fields = [
-            'id', 'bank_account', 'bank_account_number',
-            'uploaded_by', 'uploaded_by_name',
-            'statement_file', 'statement_date_from', 'statement_date_to',
-            'status', 'row_count', 'matched_count', 'unmatched_count',
-            'error_detail', 'notes',
-            'created_at', 'updated_at',
-        ]
-        read_only_fields = [
-            'id', 'uploaded_by', 'status', 'row_count', 'matched_count',
-            'unmatched_count', 'error_detail', 'created_at', 'updated_at',
-        ]
-
-    def get_uploaded_by_name(self, obj):
-        return obj.uploaded_by.get_full_name() if obj.uploaded_by else None
-
-    def get_bank_account_number(self, obj):
-        return obj.bank_account.account_number if obj.bank_account else None
+# NOTE: BankFeedConsent and BankStatementUpload/BankStatementLine serializers
+# were removed as dead code (2026-07) — they backed a Mono/open-banking
+# consent flow and a parallel manual-line-matching feature, both superseded
+# by the upload-based DailyReconciliation flow below and never reachable from
+# any frontend page. The models and their migrations are left untouched.
 
 
 # ── Daily Reconciliation serializers ────────────────────────────────────────
@@ -810,6 +720,7 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'exception_type',
+            'direction',
             'bank_transaction_id',
             'bank_amount', 'bank_narration', 'bank_date',
             'loan_payment_id',

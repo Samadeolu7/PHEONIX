@@ -390,6 +390,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'bank-statement-reconciliation',
+    title: 'Statement Reconciliation (Auto-Match)',
+    description:
+      'Upload a bank statement (CSV, Excel, or QIF) and automatically match transactions against ERP records, with an exception queue for anything unmatched',
+    path: '/banks/reconciliations',
+    icon: Upload,
+    requiredPermission: '',
+    moduleId: 'bank',
+    category: 'Banking',
+    isNew: true,
+  },
+  {
     id: 'bank-transfer-list',
     title: '💸 Bank Transfer History',
     description:

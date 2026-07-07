@@ -468,6 +468,12 @@ BANK_RECON_SERVICE_URL = os.environ.get(
     'BANK_RECON_SERVICE_URL', 'http://localhost:8081'
 )
 
+# Shared secret Django sends as `Authorization: Token <value>` when calling
+# the Bank-Recon service's ingest-and-match endpoint. Must match the
+# DJANGO_INTERNAL_SERVICE_TOKEN env var configured on the Java service
+# (see application.yml: django.internal.service-token).
+INTERNAL_SERVICE_TOKEN = os.environ.get('INTERNAL_SERVICE_TOKEN', '')
+
 # ==================================================
 # DRF SPECTACULAR (API DOCUMENTATION)
 # ==================================================

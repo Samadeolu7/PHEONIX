@@ -56,17 +56,7 @@ urlpatterns = [
         name='statutory-filing-update',
     ),
 
-    # ------------------------------------------------------------------
-    # App 3 – Bank Feed Reconciliation Service
-    # ------------------------------------------------------------------
-    path(
-        'banks/feed-consents/',
-        views.BankFeedConsentListView.as_view(),
-        name='feed-consent-list',
-    ),
-    path(
-        'banks/feed-consents/<int:pk>/sync/',
-        views.BankFeedConsentSyncView.as_view(),
-        name='feed-consent-sync',
-    ),
+    # NOTE: App 3 (Bank Feed Reconciliation) had endpoints here — removed
+    # 2026-07 now that Bank-Recon (Java) is a stateless service with no
+    # outbound calls; see internal_api/views.py for details.
 ]

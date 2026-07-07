@@ -15,7 +15,7 @@ import logging
 
 from common.views import ScopedModelViewSet
 from common.approval_permissions import IsApprover, can_user_approve
-from .models import Bank, BankAccount, BankTransfer, BankPayment, BankFeedConsent, BankStatementUpload, BankStatementLine
+from .models import Bank, BankAccount, BankTransfer, BankPayment
 from .serializers import (
     BankSerializer,
     BankAccountSerializer,
@@ -24,10 +24,6 @@ from .serializers import (
     BankTransferActionSerializer,
     BankAccountBalanceLogSerializer,
     BankPaymentSerializer,
-    BankFeedConsentSerializer,
-    BankFeedConsentListSerializer,
-    BankStatementUploadSerializer,
-    BankStatementLineSerializer,
 )
 
 
@@ -994,153 +990,12 @@ class BankTransferViewSet(ScopedModelViewSet):
         return Response(serializer.data)
 
 
-class BankFeedConsentViewSet(ScopedModelViewSet):
-    """
-    Manage client bank feed consents for Java App 3 (BankFeedReconciliationService).
-
-    Query params:
-      - client: client PK
-      - status: pending / active / expired / revoked / failed
-    """
-    permission_module = 'banks'
-    permission_page = 'bank-feed-consent'
-    permission_classes = [permissions.IsAuthenticated]
-    queryset = BankFeedConsent.objects.all()
-
-    def get_serializer_class(self):
-        if self.action == 'list':
-            return BankFeedConsentListSerializer
-        return BankFeedConsentSerializer
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        client_id = self.request.query_params.get('client')
-        if client_id:
-            qs = qs.filter(client_id=client_id)
-        consent_status = self.request.query_params.get('status')
-        if consent_status:
-            qs = qs.filter(status=consent_status)
-        return qs
-
-    def perform_create(self, serializer):
-        serializer.save(recorded_by=self.request.user)
-
-    @action(detail=True, methods=['post'])
-    def revoke(self, request, pk=None):
-        """Revoke an active consent."""
-        consent = self.get_object()
-        if consent.status != 'active':
-            return Response(
-                {'detail': 'Only active consents can be revoked.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        consent.status = 'revoked'
-        consent.consent_revoked_at = timezone.now()
-        consent.save(update_fields=['status', 'consent_revoked_at', 'updated_at'])
-        return Response({'detail': 'Consent revoked.'})
-
-
-# ---------------------------------------------------------------------------
-# BankStatementUpload viewset (Feature #2 — Bank Feed Reconciliation)
-# ---------------------------------------------------------------------------
-
-class BankStatementUploadViewSet(ScopedModelViewSet):
-    """
-    Upload and manage bank statement files for reconciliation.
-
-    Actions:
-      lines              — list all parsed statement lines for this upload
-      unmatched_lines    — list only unmatched lines (for manual matching)
-      match_line         — manually match a line to a transaction
-    """
-    permission_module = 'banks'
-    permission_page = 'bank-statement-uploads'
-    queryset = BankStatementUpload.objects.select_related('bank_account', 'uploaded_by').all()
-    serializer_class = BankStatementUploadSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        bank_account_id = self.request.query_params.get('bank_account')
-        if bank_account_id:
-            qs = qs.filter(bank_account_id=bank_account_id)
-        upload_status = self.request.query_params.get('status')
-        if upload_status:
-            qs = qs.filter(status=upload_status)
-        return qs.order_by('-created_at')
-
-    def perform_create(self, serializer):
-        serializer.save(
-            uploaded_by=self.request.user,
-            owner=self.request.user,
-            branch=self.request.user.branch,
-            tenant=getattr(self.request.user, 'tenant', None),
-            status='uploaded',
-        )
-
-    @action(detail=True, methods=['get'])
-    def lines(self, request, pk=None):
-        """Return all parsed lines for this statement upload."""
-        upload = self.get_object()
-        lines_qs = upload.lines.all().order_by('value_date')
-        match_status = request.query_params.get('match_status')
-        if match_status:
-            lines_qs = lines_qs.filter(match_status=match_status)
-        serializer = BankStatementLineSerializer(lines_qs, many=True)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=['get'], url_path='unmatched-lines')
-    def unmatched_lines(self, request, pk=None):
-        """Return only unmatched statement lines."""
-        upload = self.get_object()
-        lines_qs = upload.lines.filter(match_status='unmatched').order_by('value_date')
-        serializer = BankStatementLineSerializer(lines_qs, many=True)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=['post'], url_path='match-line')
-    def match_line(self, request, pk=None):
-        """
-        Manually match a statement line to a transaction.
-
-        Request body:
-          line_id          — PK of BankStatementLine
-          transaction_id   — PK of transactions.Transaction
-        """
-        upload = self.get_object()
-        line_id = request.data.get('line_id')
-        transaction_id = request.data.get('transaction_id')
-
-        if not line_id or not transaction_id:
-            return Response(
-                {'detail': 'line_id and transaction_id are required.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            line = upload.lines.get(pk=line_id)
-        except BankStatementLine.DoesNotExist:
-            return Response({'detail': 'Statement line not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        from transactions.models import Transaction
-        try:
-            tx = Transaction.objects.get(pk=transaction_id)
-        except Transaction.DoesNotExist:
-            return Response({'detail': 'Transaction not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        line.match_status = 'manual_matched'
-        line.matched_transaction = tx
-        line.match_confidence = 100
-        line.save(update_fields=['match_status', 'matched_transaction', 'match_confidence'])
-
-        # Update upload counters
-        total = upload.lines.count()
-        matched = upload.lines.exclude(match_status='unmatched').count()
-        unmatched = total - matched
-        upload.matched_count = matched
-        upload.unmatched_count = unmatched
-        upload.save(update_fields=['matched_count', 'unmatched_count', 'updated_at'])
-
-        return Response(BankStatementLineSerializer(line).data)
+# NOTE: BankFeedConsentViewSet and BankStatementUploadViewSet were removed as
+# dead code (2026-07) — a Mono/open-banking consent flow and a parallel
+# manual-line-matching feature, neither ever reachable from any frontend page
+# and both superseded by the upload-based DailyReconciliation flow below.
+# BankFeedConsent/BankStatementUpload/BankStatementLine models and their
+# migrations are left untouched.
 
 
 # ── Bank-Recon daily reconciliation views ────────────────────────────────────
@@ -1149,8 +1004,9 @@ import requests as http_requests
 from django.conf import settings as django_settings
 from django.utils import timezone as tz
 
-from .models import DailyReconciliation, ReconciliationException
-from .parsers import FirstBankStatementParser
+from .models import ReconciliationBankTransaction, DailyReconciliation, ReconciliationException
+from .parsers import parse_statement_file
+from .reconciliation_utils import fetch_erp_payments
 from .serializers import (
     DailyReconciliationSerializer,
     DailyReconciliationListSerializer,
@@ -1165,14 +1021,18 @@ class StatementUploadView(APIView):
     Accepts a multipart/form-data upload with fields:
       - bank_account_id   (int)
       - reconciliation_date  (YYYY-MM-DD)
-      - statement_file    (CSV file)
+      - statement_file    (CSV, .xlsx, or .qif file)
+      - include_debits    (optional bool, default false — also reconcile
+                            withdrawals/disbursements/charges, not just
+                            incoming payments)
 
     Workflow:
-      1. Parse the CSV with FirstBankStatementParser
-      2. Create DailyReconciliation (status='processing')
-      3. POST parsed transactions to Java IngestAndMatchController
-      4. Write ReconciliationException rows from Java's response
-      5. Update DailyReconciliation with counts and status='completed'
+      1. Parse the file (format chosen by extension: CSV, Excel, or QIF)
+      2. Store parsed lines into ReconciliationBankTransaction, deduped by bank_ref
+         (Django owns this storage — Bank-Recon/Java has no database)
+      3. Gather the day's unmatched bank transactions + ERP payments locally
+      4. POST everything to Java's stateless ingest-and-match endpoint
+      5. Persist the matches and exceptions Java returns, set status='completed'
 
     Branch manager waits for the synchronous Java response (~30-60 seconds).
     """
@@ -1182,6 +1042,9 @@ class StatementUploadView(APIView):
         bank_account_id   = request.data.get('bank_account_id')
         reconciliation_date = request.data.get('reconciliation_date')
         statement_file    = request.FILES.get('statement_file')
+        # Debit-side reconciliation (withdrawals, disbursements, bank charges)
+        # is opt-in — most reconciliations only care about incoming payments.
+        include_debits = str(request.data.get('include_debits', '')).strip().lower() in ('1', 'true', 'yes', 'on')
 
         # --- basic validation ---
         if not bank_account_id:
@@ -1206,14 +1069,43 @@ class StatementUploadView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # --- parse CSV ---
+        # --- parse statement file (CSV / Excel / QIF, by extension) ---
         try:
-            transactions = FirstBankStatementParser.parse(
+            parsed_transactions = parse_statement_file(
                 statement_file,
+                filename=statement_file.name,
                 account_number=bank_account.account_number,
             )
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # --- store parsed lines, deduped by (bank_account, bank_ref) ---
+        # A statement commonly spans more than one day (e.g. a weekly export);
+        # every row gets stored now so whichever day it's later reconciled for
+        # can find it, but only rows for THIS reconciliation_date are sent to
+        # the matcher below.
+        for t in parsed_transactions:
+            ReconciliationBankTransaction.objects.get_or_create(
+                bank_account=bank_account,
+                bank_ref=t.bank_ref,
+                defaults={
+                    'value_date': t.value_date,
+                    'direction': t.direction,
+                    'amount': Decimal(t.amount),
+                    'narration': t.narration,
+                    'balance_after': Decimal(t.balance_after) if t.balance_after else None,
+                },
+            )
+
+        # --- the matching candidate pool: every unmatched transaction dated
+        # this reconciliation day, not just what was parsed from this upload.
+        # A previous (possibly multi-day) upload may already have stored some
+        # of today's transactions without matching them yet.
+        candidates = list(ReconciliationBankTransaction.objects.filter(
+            bank_account=bank_account,
+            value_date=reconciliation_date,
+            matched=False,
+        ))
 
         # --- create DailyReconciliation record ---
         recon = DailyReconciliation.objects.create(
@@ -1222,28 +1114,41 @@ class StatementUploadView(APIView):
             uploaded_by=request.user,
             statement_file=statement_file,
             status='processing',
-            total_bank_transactions=len(transactions),
+            total_bank_transactions=len(candidates),
             owner=getattr(request.user, 'owner', None),
             branch=getattr(request.user, 'branch', None),
         )
 
-        # --- call Java IngestAndMatchController ---
+        # --- gather ERP payments locally (no HTTP round-trip — Bank-Recon
+        # has no database and makes no outbound calls of its own) ---
+        erp_credit_payments = fetch_erp_payments(bank_account, reconciliation_date, direction='CREDIT')
+        erp_debit_payments = (
+            fetch_erp_payments(bank_account, reconciliation_date, direction='DEBIT')
+            if include_debits else None
+        )
+
+        # --- call Java's stateless ingest-and-match endpoint ---
         payload = {
             'reconciliationId': recon.id,
             'bankAccountId': bank_account.id,
             'reconciliationDate': reconciliation_date,
-            'transactions': [
+            'includeDebits': include_debits,
+            'bankTransactions': [
                 {
-                    'bankRef':       t.bank_ref,
-                    'valueDate':     t.value_date,
-                    'narration':     t.narration,
-                    'direction':     t.direction,
-                    'amount':        t.amount,
-                    'balanceAfter':  t.balance_after or None,
+                    'id':            str(tx.id),
+                    'bankRef':       tx.bank_ref,
+                    'valueDate':     tx.value_date.isoformat(),
+                    'narration':     tx.narration,
+                    'direction':     tx.direction,
+                    'amount':        str(tx.amount),
+                    'balanceAfter':  str(tx.balance_after) if tx.balance_after is not None else None,
                 }
-                for t in transactions
+                for tx in candidates
             ],
+            'erpCreditPayments': erp_credit_payments,
         }
+        if include_debits:
+            payload['erpDebitPayments'] = erp_debit_payments
 
         java_base_url = getattr(django_settings, 'BANK_RECON_SERVICE_URL', 'http://localhost:8081')
         java_url = f"{java_base_url}/api/internal/bank-feed/ingest-and-match"
@@ -1276,12 +1181,29 @@ class StatementUploadView(APIView):
             logger.error("Java Bank-Recon service error for recon %s: %s", recon.id, exc)
             return Response({'detail': 'Matching service unavailable. Please retry later.'}, status=status.HTTP_502_BAD_GATEWAY)
 
+        # --- persist confirmed matches onto ReconciliationBankTransaction ---
+        matches_data = outcome.get('matches', [])
+        if matches_data:
+            match_by_id = {m['bankTransactionId']: m for m in matches_data}
+            matched_txs = [tx for tx in candidates if str(tx.id) in match_by_id]
+            now = tz.now()
+            for tx in matched_txs:
+                m = match_by_id[str(tx.id)]
+                tx.matched = True
+                tx.match_confidence = m.get('confidence', '')
+                tx.matched_erp_payment_id = m.get('erpPaymentId')
+                tx.matched_at = now
+            ReconciliationBankTransaction.objects.bulk_update(
+                matched_txs, ['matched', 'match_confidence', 'matched_erp_payment_id', 'matched_at']
+            )
+
         # --- save exceptions from Java response ---
         exceptions_data = outcome.get('exceptions', [])
         for exc_item in exceptions_data:
             ReconciliationException.objects.create(
                 reconciliation=recon,
                 exception_type=exc_item.get('exceptionType', 'bank_only'),
+                direction=exc_item.get('direction') or 'CREDIT',
                 bank_transaction_id=exc_item.get('bankTransactionId') or None,
                 bank_amount=exc_item.get('bankAmount') or None,
                 bank_narration=exc_item.get('bankNarration', ''),

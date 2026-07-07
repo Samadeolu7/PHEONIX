@@ -506,9 +506,6 @@ const ExpenseListPage = lazy(() => import('./pages/expenses/ExpenseListPage'));
 const ExpenseFormPage = lazy(() => import('./pages/expenses/ExpenseFormPage'));
 const ExpenseDetailPage = lazy(() => import('./pages/expenses/ExpenseDetailPage'));
 
-// Bank Statement Reconciliation (Feature #2)
-const BankStatementUploadPage = lazy(() => import('./pages/banks/BankStatementUploadPage'));
-
 // Bank Management pages
 const BankListPage = lazy(() => import('./pages/banks/BankListPage'));
 const BankFormPage = lazy(() => import('./pages/banks/BankFormPage'));
@@ -521,6 +518,9 @@ const BankTransferFormPage = lazy(() => import('./pages/banks/BankTransferFormPa
 const TransferApprovalPage = lazy(() => import('./pages/banks/TransferApprovalPage'));
 const BankPaymentListPage = lazy(() => import('./pages/banks/BankPaymentListPage'));
 const BankPaymentFormPage = lazy(() => import('./pages/banks/BankPaymentFormPage'));
+const ReconciliationListPage = lazy(() => import('./pages/banks/ReconciliationListPage'));
+const ReconciliationUploadPage = lazy(() => import('./pages/banks/ReconciliationUploadPage'));
+const ReconciliationDetailPage = lazy(() => import('./pages/banks/ReconciliationDetailPage'));
 
 // Budget pages
 const BudgetPeriodList = lazy(() => import('./pages/budgets/BudgetPeriodList'));
@@ -3832,21 +3832,36 @@ function App() {
                                     </ProtectedRoute>
                                   }
                                 />
+                                {/* Statement Reconciliation (auto-match via Bank-Recon) */}
+                                <Route
+                                  path="/banks/reconciliations"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
+                                      <ReconciliationListPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/reconciliations/new"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-create" module="banks" page="bank-statement-reconciliation" action="create">
+                                      <ReconciliationUploadPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/reconciliations/:id"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
+                                      <ReconciliationDetailPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
                                 <Route
                                   path="/banks/transfers/approvals"
                                   element={
                                     <ProtectedRoute requiredPermission="bank-approve" module="banks" page="bank-transfers" action="approve">
                                       <TransferApprovalPage />
-                                    </ProtectedRoute>
-                                  }
-                                />
-
-                                {/* Bank Statement Reconciliation (Feature #2) */}
-                                <Route
-                                  path="/banks/statement-uploads"
-                                  element={
-                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-uploads" action="create">
-                                      <BankStatementUploadPage />
                                     </ProtectedRoute>
                                   }
                                 />

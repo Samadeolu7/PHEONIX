@@ -9,8 +9,6 @@ from .views import (
     BankAccountViewSet,
     BankTransferViewSet,
     BankPaymentViewSet,
-    BankFeedConsentViewSet,
-    BankStatementUploadViewSet,
     StatementUploadView,
     DailyReconciliationListView,
     DailyReconciliationDetailView,
@@ -22,8 +20,6 @@ router.register(r'banks', BankViewSet, basename='bank')
 router.register(r'bank-accounts', BankAccountViewSet, basename='bank-account')
 router.register(r'bank-transfers', BankTransferViewSet, basename='bank-transfer')
 router.register(r'bank-payments', BankPaymentViewSet, basename='bank-payment')
-router.register(r'feed-consents', BankFeedConsentViewSet, basename='bankfeedconsent')
-router.register(r'statement-uploads', BankStatementUploadViewSet, basename='statementupload')
 
 urlpatterns = [
     path('', include(router.urls)),
