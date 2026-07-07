@@ -200,10 +200,12 @@ const TransferApprovalPage: React.FC = () => {
                     <div className="flex gap-2 justify-center">
                       {/* Gated solely by the server-computed can_approve/can_second_approve
                           fields (mirror BankTransferViewSet's actual permission branches) —
-                          no rank-based fallback. A transfer landing in another person's
-                          cashier account can only ever be approved/rejected by that cashier,
-                          regardless of role or permission grants; bank-directed transfers are
-                          governed by the RolePermissionPolicy grant on banks:bank-transfers. */}
+                          no rank-based fallback. Only bank-to-bank approval is governed by
+                          the Permission Setup page (RolePermissionPolicy on
+                          banks:bank-transfers); cashier-to-cashier is always the destination
+                          cashier, cashier-to-bank is always that BankAccount's assigned
+                          account_manager, and bank-to-cashier is a branch-manager-tier role
+                          check — none of those three are grantable from Permission Setup. */}
                       {transfer.can_approve && transfer.status === 'pending' && (
                         <>
                           <button

@@ -850,15 +850,20 @@ class BankTransferViewSet(ScopedModelViewSet):
         """Return a 403 Response if request.user may not act (approve/reject) on
         this transfer, or None if they may.
 
-        Cashier-destined transfers (destination_type == 'cashier') are gated
-        purely by object identity — the destination cashier, or (for
-        bank-to-cashier funding) the branch-manager-tier role check — with no
-        RolePermissionPolicy/can_approve or elevated-user override. This is a
-        hard invariant: nobody may approve or reject a transfer landing in
-        someone else's cashier float on that cashier's behalf, regardless of
-        rank or permission grants. Only transfers directed at a bank account
-        (bank-to-bank, cashier-to-bank) are governed by the permission-setup
-        system (RolePermissionPolicy.can_approve on banks:bank-transfers).
+        RolePermissionPolicy.can_approve on banks:bank-transfers (the Permission
+        Setup page) governs ONLY the bank-to-bank branch. The other three are
+        all gated by object identity, not by anything grantable on that page:
+          - cashier-to-cashier: the destination cashier, and no one else.
+          - cashier-to-bank: whoever is set as that specific BankAccount's
+            account_manager field (Banking > Bank Accounts > edit > "Account
+            Manager") — a per-account assignment, not a role/permission grant.
+          - bank-to-cashier: the branch-manager-tier role check
+            (BankTransfer.can_user_manage_bank_to_cashier), also not a
+            RolePermissionPolicy grant.
+        This is a hard invariant for the cashier-to-cashier case specifically:
+        nobody may approve or reject a transfer landing in someone else's
+        cashier float on that cashier's behalf, regardless of rank or
+        permission grants.
 
         allow_bank_to_cashier=False is used by second_approve(), which
         structurally never reaches a bank-to-cashier transfer (those are

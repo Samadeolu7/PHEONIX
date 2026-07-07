@@ -215,7 +215,6 @@ const EntitlementDashboard = lazy(() => import('./pages/EntitlementDashboard'));
 const SupplierListPage = lazy(() => import('./pages/procurement/SupplierListPage'));
 const SupplierFormPage = lazy(() => import('./pages/procurement/SupplierFormPage'));
 const SupplierDetailPage = lazy(() => import('./pages/procurement/SupplierDetailPage'));
-const ProcurementIndexPage = lazy(() => import('./pages/procurement/ProcurementIndexPage'));
 const RequisitionListPage = lazy(() => import('./pages/procurement/RequisitionListPage'));
 const RequisitionFormPageSimplified = lazy(
   () => import('./pages/procurement/RequisitionFormPageSimplified')
@@ -243,13 +242,11 @@ const ApprovalHistoryPage = lazy(() => import('./pages/ApprovalHistoryPage'));
 
 // Inventory and Procurement pages
 const StockMovementTracker = lazy(() => import('./pages/StockMovementTracker'));
-const PurchaseOrderManager = lazy(() => import('./pages/PurchaseOrderManager'));
 const PurchaseOrderListPage = lazy(() => import('./pages/procurement/PurchaseOrderListPage'));
 const PurchaseOrderFormPage = lazy(() => import('./pages/procurement/PurchaseOrderFormPage'));
 const PurchaseOrderDetailPage = lazy(() => import('./pages/procurement/PurchaseOrderDetailPage'));
 
 // Inventory Management pages
-const InventoryIndexPage = lazy(() => import('./pages/inventory/InventoryIndexPage'));
 const InventoryItemsPage = lazy(() => import('./pages/inventory/InventoryItemsPage'));
 const InventoryItemFormPage = lazy(() => import('./pages/inventory/InventoryItemFormPage'));
 const InventoryItemDetailPage = lazy(() => import('./pages/inventory/InventoryItemDetailPage'));
@@ -283,7 +280,6 @@ const StockReorderPage = lazy(() => import('./pages/inventory/StockReorderPage')
 const PhysicalCountListPage = lazy(() => import('./pages/inventory/PhysicalCountList'));
 const PhysicalCountFormPage = lazy(() => import('./pages/inventory/PhysicalCountForm'));
 const InitialStockImportPage = lazy(() => import('./pages/inventory/InitialStockImportPage'));
-const AccountLedger = lazy(() => import('./pages/accounts/AccountLedger'));
 const ClientStatement = lazy(() => import('./pages/clients/ClientStatement'));
 
 // Unified Receivables System pages
@@ -307,7 +303,6 @@ const InvoicesList = lazy(() => import('./pages/sales/InvoicesList'));
 const CreateInvoice = lazy(() => import('./pages/sales/CreateInvoice'));
 const CreateInventoryInvoice = lazy(() => import('./pages/sales/CreateInventoryInvoice'));
 const InvoiceDetail = lazy(() => import('./pages/sales/InvoiceDetail'));
-const InvoiceForm = lazy(() => import('./pages/sales/InvoiceForm'));
 const UnifiedInvoiceForm = lazy(() => import('./pages/sales/CreateUnifiedInvoice'));
 // import CreateUnifiedInvoice from './pages/sales/CreateUnifiedInvoice';
 const CreditNotesList = lazy(() => import('./pages/sales/CreditNotesList'));
@@ -511,7 +506,6 @@ const BankListPage = lazy(() => import('./pages/banks/BankListPage'));
 const BankFormPage = lazy(() => import('./pages/banks/BankFormPage'));
 const BankSetupPage = lazy(() => import('./pages/banks/BankSetupPage'));
 const BankAccountListPage = lazy(() => import('./pages/banks/BankAccountListPage'));
-const BankAccountFormPage = lazy(() => import('./pages/banks/BankAccountFormPage'));
 const BankAccountDetailPage = lazy(() => import('./pages/banks/BankAccountDetailPage'));
 const BankTransferListPage = lazy(() => import('./pages/banks/BankTransferListPage'));
 const BankTransferFormPage = lazy(() => import('./pages/banks/BankTransferFormPage'));

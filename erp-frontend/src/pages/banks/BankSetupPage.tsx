@@ -11,6 +11,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import bankService from '../../services/bankService';
 import { accountService } from '../../services/accountService';
+import { userManagementService, type User } from '../../services/userManagementService';
 import type { Bank } from '../../types/banks';
 import type { Account } from '../../types/accounts';
 
@@ -28,6 +29,7 @@ const BankSetupPage: React.FC = () => {
   // ── reference data ─────────────────────────────────────────────
   const [banks, setBanks] = useState<Bank[]>([]);
   const [glAccounts, setGlAccounts] = useState<Account[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
 
   // ── Section 1: Bank Institution ───────────────────────────────
   // In create mode: pick existing bank or enter new
@@ -45,6 +47,7 @@ const BankSetupPage: React.FC = () => {
     currency: 'NGN',
     is_cashier_collection_account: false,
     notes: '',
+    account_manager: '',
   });
 
   // ── Section 3: GL Link ────────────────────────────────────────
@@ -57,13 +60,15 @@ const BankSetupPage: React.FC = () => {
   // ── Load reference data & existing record ─────────────────────
   const loadReferenceData = useCallback(async () => {
     try {
-      const [banksRes, glRes] = await Promise.all([
+      const [banksRes, glRes, usersRes] = await Promise.all([
         bankService.listBanks({ is_active: true }),
         accountService.getAccounts({ account_type: 'ASSET', is_active: true }),
+        userManagementService.getUsers(),
       ]);
       setBanks(banksRes);
       // Only child-level ASSET accounts can be linked to a bank account
       setGlAccounts((glRes as Account[]).filter(a => a.account_level?.toLowerCase() === 'child'));
+      setUsers((Array.isArray(usersRes) ? usersRes : []).filter(u => u.is_active));
 
       // Pre-select bank from ?bank= query param (e.g. navigating from BankFormPage)
       const preselectedBankId = searchParams.get('bank');
@@ -89,6 +94,7 @@ const BankSetupPage: React.FC = () => {
         currency: data.currency ?? 'NGN',
         is_cashier_collection_account: data.is_cashier_collection_account ?? false,
         notes: data.notes ?? '',
+        account_manager: data.account_manager ? String(data.account_manager) : '',
       });
       if (data.gl_account) {
         setGlMode('existing');
@@ -146,6 +152,11 @@ const BankSetupPage: React.FC = () => {
         is_cashier_collection_account: acct.is_cashier_collection_account,
         notes: acct.notes,
       };
+      // Omit when unset so the backend's own default (the creating user) still
+      // applies on create; on edit, an explicit selection always overrides it.
+      if (acct.account_manager) {
+        payload.account_manager = Number(acct.account_manager);
+      }
 
       if (!isEdit) {
         if (bankMode === 'existing') {
@@ -374,6 +385,31 @@ const BankSetupPage: React.FC = () => {
                 <option value="GBP">GBP — British Pound</option>
                 <option value="EUR">EUR — Euro</option>
               </select>
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Account manager
+              </label>
+              <select
+                title="Account manager"
+                value={acct.account_manager}
+                onChange={e => setAcctField('account_manager', e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="">
+                  {isEdit ? '— Keep current manager —' : '— Defaults to you if left blank —'}
+                </option>
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name} ({u.username})
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Only this person can approve transfers landing in this specific account — each
+                account can have a different manager, even at the same bank.
+              </p>
             </div>
           </div>
 
