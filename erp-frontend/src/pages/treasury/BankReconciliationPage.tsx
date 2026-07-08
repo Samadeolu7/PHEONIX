@@ -22,6 +22,10 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 
 import { Button } from '@/components/ui/Button';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
+import { Label } from '@/components/ui/Label';
+import { Input } from '@/components/ui/Input';
+import { Calendar } from '@/components/ui/Calendar';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/Popover';
 import {

@@ -205,9 +205,16 @@ export const navigationModules: NavigationModule[] = [
       },
       {
         id: 'bank-reconciliation',
-        title: 'Bank Reconciliation',
+        title: 'Bank Reconciliation (Manual)',
         path: '/treasury/bank-reconciliation',
         icon: BarChart3,
+        isNew: true,
+      },
+      {
+        id: 'bank-statement-reconciliation',
+        title: 'Statement Reconciliation (Auto-Match)',
+        path: '/banks/reconciliations',
+        icon: Upload,
         isNew: true,
       },
       {
