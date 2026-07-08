@@ -314,6 +314,62 @@ export interface GroupCollectionRow {
   status: 'pending' | 'partial' | 'overdue';
 }
 
+export interface RemittanceDueRow {
+  client_id: number;
+  client_name: string;
+  loan_number: string;
+  officer_name: string;
+  due_date: string;
+  principal_due: string;
+  interest_due: string;
+  fees_due: string;
+  penalty_due: string;
+  total_due: string;
+  total_paid: string;
+  remaining: string;
+  status: 'pending' | 'partial' | 'overdue' | 'paid';
+}
+
+export interface RemittanceLoanCollectionRow {
+  client_id: number | null;
+  client_name: string;
+  loan_number: string;
+  officer_name: string;
+  amount: string;
+  principal: string;
+  interest: string;
+  fees: string;
+  penalty: string;
+  payment_mode: 'cash' | 'bank_transfer' | 'other';
+  bank_reference: string;
+  acted_by_name: string;
+  journal_entry_id: string | null;
+}
+
+export interface RemittanceSavingsCollectionRow {
+  client_id: number | null;
+  client_name: string;
+  account_number: string;
+  amount: string;
+  payment_mode: 'cash' | 'bank_transfer' | 'other';
+  acted_by_name: string;
+  journal_entry_id: string | null;
+}
+
+export interface RemittanceReport {
+  date: string;
+  due: RemittanceDueRow[];
+  loan_collections: RemittanceLoanCollectionRow[];
+  savings_collections: RemittanceSavingsCollectionRow[];
+  summary: {
+    total_due: string;
+    total_collected: string;
+    total_cash: string;
+    total_bank: string;
+    officer_count: number;
+  };
+}
+
 export interface BulkRepayPayment {
   loan_account_id: number;
   amount: string;
@@ -423,6 +479,13 @@ export const loanService = {
 
   async repayLoan(id: number, data: RepayLoanPayload): Promise<RepayLoanResult> {
     return api.post(`${BASE}/accounts/${id}/repay/`, data);
+  },
+
+  async getRemittanceReport(date?: string, search?: string): Promise<RemittanceReport> {
+    const params: Record<string, string> = {};
+    if (date) params.date = date;
+    if (search) params.search = search;
+    return api.get(`${BASE}/accounts/remittance-report/`, { params });
   },
 
   async getGroupCollection(groupId: number, date?: string): Promise<GroupCollectionRow[]> {

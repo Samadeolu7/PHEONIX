@@ -1,7 +1,12 @@
 /**
  * Remittance Report (Daily Transactions) Page
- * Shows all collections received on a given date.
- * Uses the DailyCollectionSheet (cash-management) API as the primary source.
+ * Shows what's due today and what's actually been collected today.
+ *
+ * Sourced from LoanAccountViewSet.remittance_report — a single endpoint that
+ * unions LoanRepaymentSchedule (due dates) with FinancialAuditLog collection
+ * events, so every repayment path (direct repay, bulk-repay, repayment
+ * requests, offline/field collections, and collection-sheet postings) shows
+ * up here, not just officers who use the daily collection sheet workflow.
  * Route: /reports/daily-transactions
  */
 
@@ -15,12 +20,15 @@ import {
   Banknote,
   CreditCard,
   Users,
+  CalendarClock,
 } from 'lucide-react';
 import {
-  collectionSheetService,
-  CollectionSheetItem,
-  DailyCollectionSheet,
-} from '../../../services/collectionSheetService';
+  loanService,
+  RemittanceReport,
+  RemittanceDueRow,
+  RemittanceLoanCollectionRow,
+  RemittanceSavingsCollectionRow,
+} from '../../../services/loanService';
 import { BRAND } from '../../../constants/brand';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -52,60 +60,73 @@ const todayLabel = () =>
 const PAYMENT_MODE_BADGE: Record<string, string> = {
   cash:          'bg-green-100 text-green-700',
   bank_transfer: 'bg-blue-100 text-blue-700',
-  mobile_money:  'bg-purple-100 text-purple-700',
+  other:         'bg-gray-100 text-gray-600',
 };
 
 const PAYMENT_MODE_LABEL: Record<string, string> = {
   cash:          'Cash',
   bank_transfer: 'Bank Transfer',
-  mobile_money:  'Mobile Money',
+  other:         'Other',
 };
 
-// ── Row type ───────────────────────────────────────────────────────────────────
+const DUE_STATUS_BADGE: Record<string, string> = {
+  pending: 'bg-gray-100 text-gray-600',
+  partial: 'bg-amber-100 text-amber-700',
+  overdue: 'bg-red-100 text-red-700',
+  paid:    'bg-green-100 text-green-700',
+};
 
-interface RemittanceRow {
-  id: number;
+// ── Row type (flattened collections for the table) ────────────────────────────
+
+interface CollectionRow {
+  key: string;
   client_name: string;
-  loan_number: string;
-  amount_collected: string;
+  loan_or_account: string;
+  collection_type: 'Loan Repayment' | 'Savings Deposit';
+  amount: string;
   payment_mode: string;
-  collection_date: string;
   officer_name: string;
-  collection_type: string;
-  sheet_id: number;
-  status: string;
+  acted_by_name: string;
 }
 
 // ── CSV export ─────────────────────────────────────────────────────────────────
 
-function exportCSV(rows: RemittanceRow[], date: string) {
-  const headers = [
-    '#', 'Client Name', 'Loan #', 'Amount Paid (₦)',
-    'Payment Mode', 'Collection Type', 'Date', 'Officer', 'Status',
-  ];
-  const data = rows.map((r, i) => [
-    i + 1,
-    r.client_name,
-    r.loan_number,
-    parseFloat(r.amount_collected || '0').toFixed(2),
-    PAYMENT_MODE_LABEL[r.payment_mode] || r.payment_mode,
-    r.collection_type,
-    r.collection_date,
-    r.officer_name,
-    r.status,
-  ]);
-
-  const csv = [headers, ...data]
+function toCsv(headers: string[], rows: (string | number)[][]): string {
+  return [headers, ...rows]
     .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
     .join('\n');
+}
 
-  const blob = new Blob([`Remittance Report - Date: ${date}\n\n`, csv], {
-    type: 'text/csv;charset=utf-8;',
-  });
+function exportCSV(report: RemittanceReport, rows: CollectionRow[]) {
+  const dueCsv = toCsv(
+    ['#', 'Client Name', 'Loan #', 'Officer', 'Due Date', 'Amount Due (₦)', 'Amount Paid (₦)', 'Remaining (₦)', 'Status'],
+    report.due.map((r, i) => [
+      i + 1, r.client_name, r.loan_number, r.officer_name, r.due_date,
+      parseFloat(r.total_due).toFixed(2), parseFloat(r.total_paid).toFixed(2),
+      parseFloat(r.remaining).toFixed(2), r.status,
+    ])
+  );
+
+  const collectedCsv = toCsv(
+    ['#', 'Client Name', 'Loan/Account #', 'Type', 'Amount Paid (₦)', 'Payment Mode', 'Officer', 'Recorded By'],
+    rows.map((r, i) => [
+      i + 1, r.client_name, r.loan_or_account, r.collection_type,
+      parseFloat(r.amount || '0').toFixed(2),
+      PAYMENT_MODE_LABEL[r.payment_mode] || r.payment_mode,
+      r.officer_name, r.acted_by_name,
+    ])
+  );
+
+  const csv =
+    `Remittance Report - Date: ${report.date}\n\n` +
+    `DUE TODAY\n${dueCsv}\n\n` +
+    `COLLECTED TODAY\n${collectedCsv}\n`;
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `remittance-report-${date}.csv`;
+  a.download = `remittance-report-${report.date}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -113,8 +134,7 @@ function exportCSV(rows: RemittanceRow[], date: string) {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function RemittanceReportPage() {
-  const [rows, setRows] = useState<RemittanceRow[]>([]);
-  const [sheets, setSheets] = useState<DailyCollectionSheet[]>([]);
+  const [report, setReport] = useState<RemittanceReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [date, setDate] = useState(todayStr());
@@ -123,49 +143,12 @@ export default function RemittanceReportPage() {
     setLoading(true);
     setError(null);
     try {
-      // Fetch all collection sheets for the selected date
-      const sheetList = await collectionSheetService.list({ collection_date: date });
-      setSheets(sheetList);
-
-      if (sheetList.length === 0) {
-        setRows([]);
-        setLoading(false);
-        return;
-      }
-
-      // Fetch items from every sheet in parallel
-      const itemArrays = await Promise.all(
-        sheetList.map((s) => collectionSheetService.listItems(s.id))
-      );
-
-      // Flatten and build display rows
-      const allRows: RemittanceRow[] = [];
-      sheetList.forEach((sheet, si) => {
-        const items: CollectionSheetItem[] = itemArrays[si] ?? [];
-        items
-          .filter((item) => parseFloat(item.amount_collected || '0') > 0)
-          .forEach((item) => {
-            allRows.push({
-              id: item.id,
-              client_name: item.client_name ?? '—',
-              loan_number: item.loan_account
-                ? `L-${String(item.loan_account).padStart(6, '0')}`
-                : '—',
-              amount_collected: item.amount_collected,
-              payment_mode: item.payment_mode,
-              collection_date: sheet.collection_date,
-              officer_name: sheet.credit_officer_name ?? '—',
-              collection_type: item.collection_type_display || item.collection_type,
-              sheet_id: sheet.id,
-              status: item.status_display || item.status,
-            });
-          });
-      });
-
-      setRows(allRows);
+      const data = await loanService.getRemittanceReport(date);
+      setReport(data);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setError(err?.detail ?? err?.message ?? 'Failed to load remittance data.');
+      setReport(null);
     } finally {
       setLoading(false);
     }
@@ -175,22 +158,40 @@ export default function RemittanceReportPage() {
     loadData();
   }, [loadData]);
 
-  // Summary stats
-  const totalCollected = rows.reduce(
-    (s, r) => s + parseFloat(r.amount_collected || '0'),
-    0
-  );
-  const cashRows = rows.filter((r) => r.payment_mode === 'cash');
-  const transferRows = rows.filter((r) => r.payment_mode === 'bank_transfer');
-  const uniqueOfficers = new Set(rows.map((r) => r.officer_name)).size;
-  const totalCash = cashRows.reduce(
-    (s, r) => s + parseFloat(r.amount_collected || '0'),
-    0
-  );
-  const totalTransfer = transferRows.reduce(
-    (s, r) => s + parseFloat(r.amount_collected || '0'),
-    0
-  );
+  const due: RemittanceDueRow[] = report?.due ?? [];
+  const loanCollections: RemittanceLoanCollectionRow[] = report?.loan_collections ?? [];
+  const savingsCollections: RemittanceSavingsCollectionRow[] = report?.savings_collections ?? [];
+
+  const rows: CollectionRow[] = [
+    ...loanCollections.map((r, i) => ({
+      key: `loan-${i}`,
+      client_name: r.client_name,
+      loan_or_account: r.loan_number,
+      collection_type: 'Loan Repayment' as const,
+      amount: r.amount,
+      payment_mode: r.payment_mode,
+      officer_name: r.officer_name,
+      acted_by_name: r.acted_by_name,
+    })),
+    ...savingsCollections.map((r, i) => ({
+      key: `savings-${i}`,
+      client_name: r.client_name,
+      loan_or_account: r.account_number,
+      collection_type: 'Savings Deposit' as const,
+      amount: r.amount,
+      payment_mode: r.payment_mode,
+      officer_name: '—',
+      acted_by_name: r.acted_by_name,
+    })),
+  ];
+
+  const summary = report?.summary;
+  const totalCollected = parseFloat(summary?.total_collected ?? '0');
+  const totalDue = parseFloat(summary?.total_due ?? '0');
+  const totalCash = parseFloat(summary?.total_cash ?? '0');
+  const totalBank = parseFloat(summary?.total_bank ?? '0');
+  const cashCount = rows.filter((r) => r.payment_mode === 'cash').length;
+  const bankCount = rows.filter((r) => r.payment_mode === 'bank_transfer').length;
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 print:bg-white print:p-0">
@@ -203,7 +204,7 @@ export default function RemittanceReportPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Remittance Report</h1>
             <p className="mt-0.5 text-sm opacity-75">
-              {BRAND.companyName} — Daily collections &amp; transactions
+              {BRAND.companyName} — Due dates &amp; daily collections
             </p>
           </div>
           <div className="flex items-center gap-3 print:hidden">
@@ -217,8 +218,8 @@ export default function RemittanceReportPage() {
               />
             </div>
             <button
-              onClick={() => exportCSV(rows, date)}
-              disabled={loading || rows.length === 0}
+              onClick={() => report && exportCSV(report, rows)}
+              disabled={loading || !report}
               className="flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-sm font-medium hover:bg-white/20 disabled:opacity-50"
             >
               <Download size={14} /> Export CSV
@@ -241,30 +242,29 @@ export default function RemittanceReportPage() {
       </div>
 
       {/* Summary Cards */}
-      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
-        <div className="col-span-2 rounded-xl bg-white p-5 shadow-sm">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="rounded-xl bg-white p-5 shadow-sm">
+          <p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-gray-500">
+            <CalendarClock size={12} /> Due Today
+          </p>
+          <p className="mt-1 text-2xl font-bold tabular-nums text-gray-900">₦{fmt(totalDue)}</p>
+          <p className="mt-0.5 text-xs text-gray-400">{fmtInt(due.length)} installment(s)</p>
+        </div>
+        <div className="rounded-xl bg-white p-5 shadow-sm">
           <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
             Total Collected
           </p>
           <p className="mt-1 text-2xl font-bold tabular-nums text-gray-900">
             ₦{fmt(totalCollected)}
           </p>
-          <p className="mt-0.5 text-xs text-gray-400">For {date}</p>
-        </div>
-        <div className="rounded-xl bg-white p-5 shadow-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-            # Transactions
-          </p>
-          <p className="mt-1 text-2xl font-bold tabular-nums text-gray-900">
-            {fmtInt(rows.length)}
-          </p>
+          <p className="mt-0.5 text-xs text-gray-400">{fmtInt(rows.length)} transaction(s)</p>
         </div>
         <div className="rounded-xl bg-green-50 p-5 shadow-sm">
           <p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-green-600">
             <Banknote size={12} /> Cash
           </p>
           <p className="mt-1 text-lg font-bold tabular-nums text-green-700">
-            {fmtInt(cashRows.length)} · ₦{fmt(totalCash)}
+            {fmtInt(cashCount)} · ₦{fmt(totalCash)}
           </p>
         </div>
         <div className="rounded-xl bg-blue-50 p-5 shadow-sm">
@@ -272,17 +272,17 @@ export default function RemittanceReportPage() {
             <CreditCard size={12} /> Bank Transfer
           </p>
           <p className="mt-1 text-lg font-bold tabular-nums text-blue-700">
-            {fmtInt(transferRows.length)} · ₦{fmt(totalTransfer)}
+            {fmtInt(bankCount)} · ₦{fmt(totalBank)}
           </p>
         </div>
-        <div className="rounded-xl bg-white p-5 shadow-sm">
+        <div className="col-span-2 rounded-xl bg-white p-5 shadow-sm sm:col-span-1">
           <p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-gray-500">
             <Users size={12} /> Officers
           </p>
           <p className="mt-1 text-2xl font-bold tabular-nums text-gray-900">
-            {fmtInt(uniqueOfficers)}
+            {fmtInt(summary?.officer_count ?? 0)}
           </p>
-          <p className="mt-0.5 text-xs text-gray-400">{fmtInt(sheets.length)} sheet(s)</p>
+          <p className="mt-0.5 text-xs text-gray-400">collected today</p>
         </div>
       </div>
 
@@ -293,8 +293,78 @@ export default function RemittanceReportPage() {
         </div>
       )}
 
-      {/* Table */}
+      {/* Due Today */}
+      <div className="mb-6 overflow-hidden rounded-xl bg-white shadow-sm">
+        <div
+          className="px-5 py-3 text-sm font-semibold text-white"
+          style={{ background: BRAND.colors.navyPrimary }}
+        >
+          Due Today — use this to inform clients of their due date
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 size={24} className="animate-spin text-blue-600" />
+          </div>
+        ) : due.length === 0 ? (
+          <div className="py-16 text-center text-sm text-gray-500">
+            No installments due on {date}.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                  <th className="px-4 py-3">#</th>
+                  <th className="px-4 py-3">Client Name</th>
+                  <th className="px-4 py-3">Loan #</th>
+                  <th className="px-4 py-3">Officer</th>
+                  <th className="px-4 py-3 text-right">Amount Due (₦)</th>
+                  <th className="px-4 py-3 text-right">Paid So Far (₦)</th>
+                  <th className="px-4 py-3 text-right">Remaining (₦)</th>
+                  <th className="px-4 py-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {due.map((r, idx) => (
+                  <tr key={`${r.loan_number}-${idx}`} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-gray-400 tabular-nums">{idx + 1}</td>
+                    <td className="px-4 py-3 font-medium text-gray-900">{r.client_name}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-700">{r.loan_number}</td>
+                    <td className="px-4 py-3 text-xs text-gray-600">{r.officer_name}</td>
+                    <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">
+                      {fmt(r.total_due)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+                      {fmt(r.total_paid)}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+                      {fmt(r.remaining)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
+                          DUE_STATUS_BADGE[r.status] ?? 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Collected Today */}
       <div className="overflow-hidden rounded-xl bg-white shadow-sm">
+        <div
+          className="px-5 py-3 text-sm font-semibold text-white"
+          style={{ background: BRAND.colors.navyLight }}
+        >
+          Collected Today
+        </div>
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 size={24} className="animate-spin text-blue-600" />
@@ -302,40 +372,31 @@ export default function RemittanceReportPage() {
         ) : rows.length === 0 ? (
           <div className="py-20 text-center text-sm text-gray-500">
             No collections recorded for {date}.
-            {sheets.length === 0 && (
-              <p className="mt-1 text-xs text-gray-400">No collection sheets found for this date.</p>
-            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr
-                  className="border-b text-left text-xs font-semibold uppercase tracking-wide text-white"
-                  style={{ background: BRAND.colors.navyPrimary }}
-                >
+                <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                   <th className="px-4 py-3">#</th>
                   <th className="px-4 py-3">Client Name</th>
-                  <th className="px-4 py-3">Loan #</th>
-                  <th className="px-4 py-3">Collection Type</th>
+                  <th className="px-4 py-3">Loan/Account #</th>
+                  <th className="px-4 py-3">Type</th>
                   <th className="px-4 py-3 text-right">Amount Paid (₦)</th>
                   <th className="px-4 py-3">Payment Mode</th>
-                  <th className="px-4 py-3">Date</th>
                   <th className="px-4 py-3">Officer</th>
-                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Recorded By</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {rows.map((row, idx) => (
-                  <tr key={row.id} className="hover:bg-gray-50">
+                  <tr key={row.key} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-gray-400 tabular-nums">{idx + 1}</td>
                     <td className="px-4 py-3 font-medium text-gray-900">{row.client_name}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-700">{row.loan_number}</td>
-                    <td className="px-4 py-3 text-xs capitalize text-gray-600">
-                      {row.collection_type}
-                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-700">{row.loan_or_account}</td>
+                    <td className="px-4 py-3 text-xs text-gray-600">{row.collection_type}</td>
                     <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">
-                      {fmt(row.amount_collected)}
+                      {fmt(row.amount)}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -346,13 +407,11 @@ export default function RemittanceReportPage() {
                         {PAYMENT_MODE_LABEL[row.payment_mode] || row.payment_mode}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-xs text-gray-600">{row.collection_date}</td>
                     <td className="px-4 py-3 text-xs text-gray-600">{row.officer_name}</td>
-                    <td className="px-4 py-3 text-xs capitalize text-gray-500">{row.status}</td>
+                    <td className="px-4 py-3 text-xs text-gray-600">{row.acted_by_name}</td>
                   </tr>
                 ))}
               </tbody>
-              {/* Totals row */}
               <tfoot>
                 <tr
                   className="border-t-2 text-sm font-semibold text-white"
@@ -361,67 +420,14 @@ export default function RemittanceReportPage() {
                   <td className="px-4 py-3" colSpan={4}>
                     Totals ({fmtInt(rows.length)} transactions)
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {fmt(totalCollected)}
-                  </td>
-                  <td colSpan={4} />
+                  <td className="px-4 py-3 text-right tabular-nums">{fmt(totalCollected)}</td>
+                  <td colSpan={3} />
                 </tr>
               </tfoot>
             </table>
           </div>
         )}
       </div>
-
-      {/* Officer breakdown (if multiple sheets) */}
-      {sheets.length > 1 && !loading && (
-        <div className="mt-6 overflow-hidden rounded-xl bg-white shadow-sm">
-          <div
-            className="px-5 py-3 text-sm font-semibold text-white"
-            style={{ background: BRAND.colors.navyPrimary }}
-          >
-            Breakdown by Credit Officer
-          </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                <th className="px-5 py-3">Officer</th>
-                <th className="px-5 py-3 text-right"># Transactions</th>
-                <th className="px-5 py-3 text-right">Cash (₦)</th>
-                <th className="px-5 py-3 text-right">Bank Transfer (₦)</th>
-                <th className="px-5 py-3 text-right">Total Collected (₦)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {sheets.map((s) => {
-                const officerRows = rows.filter((r) => r.officer_name === (s.credit_officer_name ?? '—'));
-                const officerTotal = parseFloat(s.total_collected || '0');
-                const officerCash  = parseFloat(s.total_collected_cash || '0');
-                const officerTx    = parseFloat(s.total_confirmed_transfers || '0') +
-                                     parseFloat(s.total_unconfirmed_transfers || '0');
-                return (
-                  <tr key={s.id} className="hover:bg-gray-50">
-                    <td className="px-5 py-3 font-medium text-gray-900">
-                      {s.credit_officer_name ?? '—'}
-                    </td>
-                    <td className="px-5 py-3 text-right tabular-nums text-gray-700">
-                      {fmtInt(officerRows.length)}
-                    </td>
-                    <td className="px-5 py-3 text-right tabular-nums text-green-700">
-                      {fmt(officerCash)}
-                    </td>
-                    <td className="px-5 py-3 text-right tabular-nums text-blue-700">
-                      {fmt(officerTx)}
-                    </td>
-                    <td className="px-5 py-3 text-right tabular-nums font-semibold text-gray-900">
-                      {fmt(officerTotal)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       {/* Print footer */}
       <div className="mt-6 hidden text-center text-xs text-gray-400 print:block">

@@ -707,12 +707,26 @@ LOGGING = {
 # CACHE CONFIGURATION
 # ==================================================
 
-# Use dummy cache for tests to avoid Redis dependency
+# Use dummy cache for tests, and for local DEBUG development, so nobody
+# needs a Redis server running locally just to log in — DRF's login
+# throttling reads/writes the cache on every request, so without this,
+# runserver 500s on every request the moment Redis isn't reachable.
+# Production (DEBUG=False) always uses real Redis. Set FORCE_REDIS_CACHE=1
+# to opt into Redis locally too (e.g. to test throttling shared across
+# multiple worker processes, which LocMemCache can't do).
 if 'test' in sys.argv:
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
             'LOCATION': 'test-cache',
+        }
+    }
+    SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+elif DEBUG and not os.environ.get('FORCE_REDIS_CACHE'):
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'dev-cache',
         }
     }
     SESSION_ENGINE = 'django.contrib.sessions.backends.db'

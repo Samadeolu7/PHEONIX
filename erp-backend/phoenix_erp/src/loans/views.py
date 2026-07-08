@@ -248,13 +248,15 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         results = []
         for loan in qs:
-            # An installment is overdue as of `as_of` when its due_date is on
-            # or before that date and it was not yet fully paid by then.
-            # Uses <= so a payment due *on* the as_of date counts as arrears.
+            # An installment is overdue as of `as_of` when its due_date is
+            # strictly before that date and it was not yet fully paid by
+            # then. Uses < (not <=) so an installment due *on* as_of itself
+            # — not yet late, days_in_arrears would be 0 — is excluded; this
+            # is a defaulters/arrears report, not a due-today report.
             overdue = [
                 inst
                 for inst in loan.repayment_schedule.all()
-                if inst.due_date <= as_of
+                if inst.due_date < as_of
                 and (inst.payment_date is None or inst.payment_date > as_of)
             ]
             if not overdue:
@@ -277,6 +279,234 @@ class LoanAccountViewSet(ScopedModelViewSet):
             'previous': None,
             'results': results,
             'as_of': str(as_of),
+        })
+
+    @action(detail=False, methods=['get'], url_path='remittance-report')
+    def remittance_report(self, request):
+        """
+        Daily remittance report: what's due today, plus what's actually been
+        collected today — regardless of which endpoint recorded the payment.
+
+        repay / bulk-repay / repayment-request approval / offline-payment
+        approval / collection-sheet posting all ultimately call
+        LoanAccount.record_payment() or SavingsAccount.deposit(), which
+        unconditionally write a FinancialAuditLog entry. That log is used
+        here as the single unified source of "what was collected", instead
+        of reading only from cash_management.DailyCollectionSheet (which is
+        an optional per-officer worksheet, not a ledger of truth).
+
+        Query params:
+          - date (YYYY-MM-DD, optional): defaults to today.
+          - search: filter the "due" side by loan number / client name.
+        """
+        from datetime import date as date_type
+        from decimal import Decimal
+        from django.utils import timezone as tz
+        from common.models import FinancialAuditLog
+        from transactions.models import TransactionEntry
+        from cash_management.models import CashierAccount
+        from banks.models import BankAccount
+        from clients.models import Client
+
+        date_raw = request.query_params.get('date')
+        if date_raw:
+            try:
+                report_date = date_type.fromisoformat(date_raw)
+            except ValueError:
+                return Response(
+                    {'detail': 'Invalid date format. Use YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            report_date = tz.localdate()
+
+        loans_qs = self.get_queryset().select_related('client', 'client__assigned_officer')
+
+        search = request.query_params.get('search', '').strip()
+        if search:
+            loans_qs = loans_qs.filter(
+                Q(loan_number__icontains=search)
+                | Q(client__first_name__icontains=search)
+                | Q(client__last_name__icontains=search)
+                | Q(client__client_id__icontains=search)
+            )
+
+        # Client-level visibility (not derived from loans_qs — a client with
+        # no loan, e.g. a pure savings/thrift member, must still be visible
+        # to the officer who's assigned to them).
+        user = request.user
+        clients_qs = Client.objects.all()
+        is_unrestricted = (
+            getattr(user, 'is_system_admin', False)
+            or (callable(getattr(user, 'is_owner', None)) and user.is_owner())
+        )
+        if not is_unrestricted:
+            staff = getattr(user, 'staff_profile', None)
+            if staff:
+                clients_qs = clients_qs.filter(
+                    Q(assigned_officer=staff) | Q(assigned_officer__reports_to=staff)
+                )
+            else:
+                clients_qs = clients_qs.none()
+        visible_client_ids = set(clients_qs.values_list('id', flat=True))
+
+        # ── Due today ──────────────────────────────────────────────────────
+        due_schedules = (
+            LoanRepaymentSchedule.objects
+            .filter(
+                loan__in=loans_qs,
+                due_date=report_date,
+                status__in=['pending', 'partial', 'overdue'],
+            )
+            .select_related('loan', 'loan__client', 'loan__client__assigned_officer')
+            .order_by('loan__client__last_name', 'loan__client__first_name')
+        )
+
+        due = []
+        total_due = Decimal('0.00')
+        for inst in due_schedules:
+            loan = inst.loan
+            client = loan.client
+            officer = getattr(client, 'assigned_officer', None)
+            remaining = inst.total_due - inst.total_paid
+            total_due += remaining
+            due.append({
+                'client_id': client.id,
+                'client_name': client.full_name,
+                'loan_number': loan.loan_number,
+                'officer_name': f"{officer.first_name} {officer.last_name}" if officer else '—',
+                'due_date': str(inst.due_date),
+                'principal_due': str(inst.principal_due),
+                'interest_due': str(inst.interest_due),
+                'fees_due': str(inst.fees_due),
+                'penalty_due': str(inst.penalty_due),
+                'total_due': str(inst.total_due),
+                'total_paid': str(inst.total_paid),
+                'remaining': str(remaining),
+                'status': inst.status,
+            })
+
+        # ── Collected today (unified across every repayment path) ──────────
+        loan_audit_logs = [
+            log for log in FinancialAuditLog.objects.filter(
+                event_type=FinancialAuditLog.LOAN_REPAY,
+                timestamp__date=report_date,
+            ).select_related('acted_by')
+            if log.extra.get('client_id') and int(log.extra['client_id']) in visible_client_ids
+        ]
+        savings_audit_logs = [
+            log for log in FinancialAuditLog.objects.filter(
+                event_type=FinancialAuditLog.SAVINGS_DEPOSIT,
+                timestamp__date=report_date,
+            ).select_related('acted_by')
+            if log.extra.get('client_id') and int(log.extra['client_id']) in visible_client_ids
+        ]
+
+        # Batch-resolve payment mode from the DEBIT leg of each journal entry:
+        # debited a CashierAccount's GL account → cash; a BankAccount's → bank
+        # transfer / mobile money. No payment_mode is stored on the audit log
+        # itself, so this is a best-effort classification for the summary cards.
+        journal_ids = [
+            int(jid) for jid in (
+                log.extra.get('journal_entry_id')
+                for log in (loan_audit_logs + savings_audit_logs)
+            ) if jid
+        ]
+        debit_account_by_txn = dict(
+            TransactionEntry.objects.filter(
+                transaction_id__in=journal_ids, side=TransactionEntry.DEBIT,
+            ).values_list('transaction_id', 'account_id')
+        )
+        cash_account_ids = set(CashierAccount.objects.values_list('account_id', flat=True))
+        bank_account_ids = set(BankAccount.objects.values_list('gl_account_id', flat=True))
+
+        def _payment_mode(journal_entry_id):
+            if not journal_entry_id:
+                return 'other'
+            account_id = debit_account_by_txn.get(int(journal_entry_id))
+            if account_id in cash_account_ids:
+                return 'cash'
+            if account_id in bank_account_ids:
+                return 'bank_transfer'
+            return 'other'
+
+        client_ids = {
+            int(log.extra['client_id'])
+            for log in (loan_audit_logs + savings_audit_logs)
+        }
+        clients_by_id = {
+            c.id: c for c in
+            Client.objects.filter(id__in=client_ids).select_related('assigned_officer')
+        }
+
+        loan_collections = []
+        total_cash = Decimal('0.00')
+        total_bank = Decimal('0.00')
+        for log in loan_audit_logs:
+            client = clients_by_id.get(int(log.extra['client_id']))
+            officer = getattr(client, 'assigned_officer', None) if client else None
+            mode = _payment_mode(log.extra.get('journal_entry_id'))
+            amount = log.amount or Decimal('0.00')
+            if mode == 'cash':
+                total_cash += amount
+            elif mode == 'bank_transfer':
+                total_bank += amount
+            loan_collections.append({
+                'client_id': client.id if client else None,
+                'client_name': client.full_name if client else '—',
+                'loan_number': log.extra.get('loan_number', '—'),
+                'officer_name': f"{officer.first_name} {officer.last_name}" if officer else '—',
+                'amount': str(amount),
+                'principal': log.extra.get('principal', '0.00'),
+                'interest': log.extra.get('interest', '0.00'),
+                'fees': log.extra.get('fees', '0.00'),
+                'penalty': log.extra.get('penalty', '0.00'),
+                'payment_mode': mode,
+                'bank_reference': log.extra.get('bank_reference', ''),
+                'acted_by_name': log.acted_by.get_full_name() if log.acted_by else '—',
+                'journal_entry_id': log.extra.get('journal_entry_id'),
+            })
+
+        savings_collections = []
+        for log in savings_audit_logs:
+            client = clients_by_id.get(int(log.extra['client_id']))
+            mode = _payment_mode(log.extra.get('journal_entry_id'))
+            amount = log.amount or Decimal('0.00')
+            if mode == 'cash':
+                total_cash += amount
+            elif mode == 'bank_transfer':
+                total_bank += amount
+            savings_collections.append({
+                'client_id': client.id if client else None,
+                'client_name': client.full_name if client else '—',
+                'account_number': log.extra.get('account_number', '—'),
+                'amount': str(amount),
+                'payment_mode': mode,
+                'acted_by_name': log.acted_by.get_full_name() if log.acted_by else '—',
+                'journal_entry_id': log.extra.get('journal_entry_id'),
+            })
+
+        loan_collections.sort(key=lambda r: r['client_name'])
+        savings_collections.sort(key=lambda r: r['client_name'])
+
+        total_collected = sum(
+            (Decimal(r['amount']) for r in loan_collections + savings_collections),
+            Decimal('0.00'),
+        )
+        officer_names = {r['officer_name'] for r in loan_collections if r['officer_name'] != '—'}
+
+        return Response({
+            'date': str(report_date),
+            'due': due,
+            'loan_collections': loan_collections,
+            'savings_collections': savings_collections,
+            'summary': {
+                'total_due': str(total_due),
+                'total_collected': str(total_collected),
+                'total_cash': str(total_cash),
+                'total_bank': str(total_bank),
+                'officer_count': len(officer_names),
+            },
         })
 
     @action(detail=True, methods=['get'])
