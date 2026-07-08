@@ -34,6 +34,12 @@ did not follow the RolePermissionPolicy permission-setup system:
    destination cashier (who may be a junior staff member) to be the only
    possible approver was unworkable. A director is the escalation path.
    Maker-checker (item 7) still applies on top of this.
+9. pending_approvals() (the list an approver checks) now accepts can_view
+   OR can_approve on banks:bank-transfers, not just can_view — previously an
+   admin granting only can_approve (the obviously relevant flag for "this
+   role can approve transfers") left that role able to reach the approvals
+   route but unable to load the list of what's pending, since the
+   auto-appended HasActionPermission mapped this GET action to can_view only.
 
 Most tests call BankTransferViewSet._check_approval_permission() directly
 with unsaved BankAccount/CashierAccount instances (only the cashier/
@@ -47,6 +53,8 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework import status
+from rest_framework.request import Request
+from rest_framework.test import APIRequestFactory
 
 from banks.models import BankAccount, BankTransfer
 from banks.views import BankTransferViewSet
@@ -357,3 +365,48 @@ class CanUserApproveBypassTests(TestCase):
     def test_plain_user_with_no_grant_denied(self):
         user = User.objects.create_user(username='plain', password='x')
         self.assertFalse(can_user_approve(user, module='banks', page='bank-payments'))
+
+
+class PendingApprovalsPermissionTests(TestCase):
+    """Fix 9: pending_approvals() accepts can_view OR can_approve, not just
+    can_view — regression test for the exact bug reported live: an admin
+    granted only 'Approve' on Banking > Bank Transfers for Branch Manager,
+    who could then reach /banks/transfers/approvals (gated by can_approve)
+    but the page's own pending-approvals list call 403'd (gated by can_view
+    under the old, unscoped HasActionPermission GET-method default)."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.user = User.objects.create_user(username='bm', password='x')
+
+    def _call(self):
+        django_request = self.factory.get('/api/bank-transfers/pending-approvals/')
+        # Wrap directly in a DRF Request (adds .query_params etc.) rather than
+        # ViewSetMixin.initialize_request(), which needs self.action_map —
+        # only set by .as_view()/the URL router, not present when calling the
+        # action method directly like this.
+        drf_request = Request(django_request)
+        drf_request.user = self.user
+        viewset = BankTransferViewSet()
+        viewset.format_kwarg = None
+        viewset.action = 'pending_approvals'
+        viewset.request = drf_request
+        return viewset.pending_approvals(drf_request)
+
+    def test_can_approve_without_can_view_still_allowed(self):
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_view=False, can_approve=True, can_edit=False)
+            response = self._call()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_can_view_without_can_approve_still_allowed(self):
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_view=True, can_approve=False, can_edit=False)
+            response = self._call()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_neither_flag_denied(self):
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_view=False, can_approve=False, can_edit=False)
+            response = self._call()
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

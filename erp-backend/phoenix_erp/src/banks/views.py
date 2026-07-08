@@ -692,8 +692,17 @@ class BankTransferViewSet(ScopedModelViewSet):
         admins. Leaving HasActionPermission in place would 403 those three
         approval paths before the request ever reached the view body, no
         matter what _check_approval_permission decided.
+
+        pending_approvals is also exempted: it's the list an approver checks
+        to see what needs their action, so gating it by the generic can_view
+        flag (HasActionPermission's default for a GET action) creates the
+        same trap — an admin who grants only can_approve (the obviously
+        relevant flag for "can this role approve transfers") without also
+        remembering to separately tick can_view leaves the approver unable to
+        even see the list they're supposed to act on. See the manual check
+        inside pending_approvals() below: can_view OR can_approve satisfies it.
         """
-        if self.action in ('approve', 'second_approve', 'reject'):
+        if self.action in ('approve', 'second_approve', 'reject', 'pending_approvals'):
             return [permissions.IsAuthenticated()]
         return super().get_permissions()
 
@@ -1040,7 +1049,20 @@ class BankTransferViewSet(ScopedModelViewSet):
     
     @action(detail=False, methods=['get'], url_path='pending-approvals')
     def pending_approvals(self, request):
-        """Get transfers pending approval"""
+        """Get transfers pending approval.
+
+        Accessible to anyone with can_view OR can_approve on
+        banks:bank-transfers — see get_permissions() docstring for why this
+        can't just be the default can_view-only check.
+        """
+        from permissions.services import PermissionResolver
+        eff = PermissionResolver.resolve(request.user, module='banks', page='bank-transfers')
+        if not (eff.can_view or eff.can_approve):
+            return Response(
+                {'error': 'You do not have permission to view pending approvals.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         transfers = self.get_queryset().filter(
             status__in=['pending', 'approved']
         )
