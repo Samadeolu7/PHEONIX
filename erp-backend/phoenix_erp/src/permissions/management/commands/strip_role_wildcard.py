@@ -30,6 +30,13 @@ RolePermissionPolicy" behaviour goes away. can_approve is deliberately left
 False by default; grant it back per-page via the Permission Setup UI for
 whichever pages this role should legitimately be able to approve on.
 
+RESTRICTED_PAGES (users:roles, users:staff-users,
+permissions:role-permission-policies, permissions:user-permission-overrides,
+pages:pages, tenants:tenants) get view-only instead of the normal
+view/create/edit/delete=True default — granting edit/delete there would let a
+role modify its own permissions or reassign roles to itself, defeating the
+whole point of removing the wildcard.
+
 Usage
 -----
     # Step 1 — always run this first and read it carefully.
@@ -47,6 +54,21 @@ but running them separately with a review pass in between is safer for a
 live system.
 """
 from django.core.management.base import BaseCommand
+
+# Administrative/meta pages that control who-can-do-what itself. Granting the
+# normal view/create/edit/delete=True default here would let a role edit its
+# own (or any other role's) RolePermissionPolicy rows, reassign user roles, or
+# re-add '*' to its own permission_codes — a privilege-escalation path that
+# defeats the entire point of removing the wildcard. These get view-only
+# instead: can_view=True, everything else False.
+RESTRICTED_PAGES = {
+    ('users', 'roles'),
+    ('users', 'staff-users'),
+    ('permissions', 'role-permission-policies'),
+    ('permissions', 'user-permission-overrides'),
+    ('pages', 'pages'),
+    ('tenants', 'tenants'),
+}
 
 
 class Command(BaseCommand):
@@ -112,15 +134,20 @@ class Command(BaseCommand):
 
             prefix = '[DRY RUN] ' if dry_run else ''
             for mp in to_create:
-                self.stdout.write(
-                    f'  {prefix}+ {mp.module.code}:{mp.code} -> '
-                    f'view/create/edit/delete=True, approve/export=False'
-                )
+                restricted = (mp.module.code, mp.code) in RESTRICTED_PAGES
+                if restricted:
+                    flags = dict(can_view=True, can_create=False, can_edit=False,
+                                 can_delete=False, can_approve=False, can_export=False)
+                    label = 'view=True, everything else False (admin/meta page)'
+                else:
+                    flags = dict(can_view=True, can_create=True, can_edit=True,
+                                 can_delete=True, can_approve=False, can_export=False)
+                    label = 'view/create/edit/delete=True, approve/export=False'
+                self.stdout.write(f'  {prefix}+ {mp.module.code}:{mp.code} -> {label}')
                 if backfill_only and not dry_run:
                     RolePermissionPolicy.objects.create(
                         role=role, module=mp.module, page=mp, action=None,
-                        can_view=True, can_create=True, can_edit=True, can_delete=True,
-                        can_approve=False, can_export=False,
+                        **flags,
                         scope=role.default_scope or SCOPE_OWN_BRANCH,
                         approval_limit=None,
                     )
