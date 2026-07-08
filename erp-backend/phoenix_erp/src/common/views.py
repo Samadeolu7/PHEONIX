@@ -133,11 +133,20 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
             return qs.none()
 
         group_lookup = self.officer_group_lookup
+        # Every caller of this scoping tier documents unassigned records
+        # (officer_client_lookup IS NULL) as visible to everyone, not just
+        # the officers they'd otherwise be scoped to — e.g. ClientViewSet's
+        # own docstring: "credit_officer → only their assigned clients +
+        # unassigned clients". Include that OR-clause in both narrowed
+        # branches below so the actual filtering matches that documented
+        # behavior instead of silently hiding unassigned records.
+        unassigned = Q(**{f'{lookup}__isnull': True})
 
         if scope == 'ajo_group':
             q = (
                 Q(**{lookup: staff}) |
-                Q(**{f'{lookup}__reports_to': staff})
+                Q(**{f'{lookup}__reports_to': staff}) |
+                unassigned
             )
             if group_lookup:
                 q |= Q(**{group_lookup: staff})
@@ -145,7 +154,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
 
         # own_records / assigned_clients (and any other/unrecognized value) —
         # narrowest tier, fail toward MORE restriction rather than less.
-        q = Q(**{lookup: staff})
+        q = Q(**{lookup: staff}) | unassigned
         if group_lookup:
             q |= Q(**{group_lookup: staff})
         return qs.filter(q)

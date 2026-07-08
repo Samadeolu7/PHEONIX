@@ -457,7 +457,15 @@ export const clientService = {
     is_active?: boolean;
     page_size?: number;
   }): Promise<ClientGroup[]> {
-    const res = await api.get('/clients/groups/', { params });
+    // Callers (ClientGroupsPage, GroupReportPage) treat the result as the
+    // complete list — no "load more"/pagination UI — but the backend's
+    // default DRF pagination caps a page at 20 results and this only ever
+    // reads page 1. Default page_size to the backend's max (1000) so tenants
+    // with more than 20 groups don't silently see a truncated list; callers
+    // can still override for an actual paginated view.
+    const res = await api.get('/clients/groups/', {
+      params: { page_size: 1000, ...params },
+    });
     return Array.isArray(res) ? res : (res?.results ?? []);
   },
 
