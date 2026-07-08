@@ -33,7 +33,14 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/accounts/:accountId/ledger': { module: 'accounts', page: 'account-ledger', action: 'view' },
   '/accounts/:accountId/summary': { module: 'accounts', page: 'account-summary', action: 'view' },
   '/accounts/hierarchy': { module: 'accounts', page: 'account-hierarchy', action: 'view' },
-  '/accounts/ledger-search': { module: 'accounts', page: 'ledger-search', action: 'view' },
+  // LedgerSearchPage calls GET /accounts/ (AccountViewSet), which the backend
+  // gates by accounts:chart-of-accounts (accounts/views.py) — not a dedicated
+  // accounts:ledger-search endpoint, despite that being a distinct registry
+  // entry. Mapped to chart-of-accounts here so visibility actually matches
+  // what the underlying data call requires; previously a user could see/open
+  // this card while still 403'ing on load if their ledger-search and
+  // chart-of-accounts grants differed.
+  '/accounts/ledger-search': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounts/new': { module: 'accounts', page: 'chart-of-accounts', action: 'create' },
   '/admin/access-control': { module: 'users', page: 'staff-users', action: 'view' },
   '/admin/branches': { module: 'branches', page: 'branches', action: 'view' },

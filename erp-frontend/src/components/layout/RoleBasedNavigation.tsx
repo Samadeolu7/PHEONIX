@@ -102,7 +102,15 @@ function BranchSwitcher() {
   );
 }
 
-// Module definitions with their paths and required permissions
+// Module definitions with their paths and permissionRegistry.ts module codes.
+// `relatedRegistryModules` mirrors the pattern in SimplifiedRoleBasedDashboard.tsx's
+// MODULES array: a tab is shown iff the user can view at least one page across
+// these registry modules, resolved live from the backend permission matrix via
+// hasAnyPageAccessInModule(). This replaces the old `requiredPermissions` field,
+// which checked legacy flat permission_codes strings that the RolePermissionPolicy
+// backfill (strip_role_wildcard.py) never populates — those codes silently went
+// stale for any role that used to rely on the '*' wildcard, hiding entire tabs
+// even though the user's real page-level grants were fine.
 const NAV_MODULES = [
   {
     id: 'financial',
@@ -110,13 +118,7 @@ const NAV_MODULES = [
     path: '/financial-management',
     icon: DollarSign,
     description: 'Revenue, expenses, and financial reporting',
-    requiredPermissions: [
-      'invoice-list',
-      'receivables-list',
-      'fee-structure-list',
-      'entitlement-list',
-      'accounts-view',
-    ],
+    relatedRegistryModules: ['accounts', 'budgets'],
   },
   {
     id: 'client-services',
@@ -124,7 +126,7 @@ const NAV_MODULES = [
     path: '/client-services',
     icon: Users,
     description: 'Borrower profiles, KYC, loan applications, and account management',
-    requiredPermissions: ['clients-view', 'client-list', 'loan-accounts-view', 'savings-accounts-view', 'entitlement-list'],
+    relatedRegistryModules: ['clients', 'savings', 'loans'],
   },
   {
     id: 'administration',
@@ -132,7 +134,7 @@ const NAV_MODULES = [
     path: '/administration',
     icon: Users,
     description: 'HR, payroll, and system administration',
-    requiredPermissions: ['staff-list', 'branch-list', 'payroll-list', 'leave-list'],
+    relatedRegistryModules: ['hr', 'branches', 'users'],
   },
   {
     id: 'treasury',
@@ -140,7 +142,7 @@ const NAV_MODULES = [
     path: '/treasury',
     icon: Wallet,
     description: 'Petty cash, expenses, and bank management',
-    requiredPermissions: ['accounts-view'],
+    relatedRegistryModules: ['cash-management', 'banks', 'expenses'],
   },
   {
     id: 'all-access',
@@ -148,7 +150,7 @@ const NAV_MODULES = [
     path: '/all-access',
     icon: Grid,
     description: 'Search and access every feature available to your role',
-    requiredPermissions: [], // Always show
+    relatedRegistryModules: [], // Always show
   },
 ];
 
@@ -176,7 +178,7 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
   onOpenSidebar,
 }) => {
   const { user, selectedRole, logout } = useAuth();
-  const { hasPermission } = usePermission();
+  const { hasAnyPageAccessInModule } = usePermission();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -207,12 +209,16 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
   // Rank 4+ (Principal, Director) bypass all permission checks — they see every module
   const isSuperUser = getRoleRank(selectedRole) >= 4;
 
-  // Filter modules based on user permissions (superusers always see all modules)
+  // Tab visibility derived from the live page-permission matrix: shown iff the
+  // user can view at least one page across the tab's relatedRegistryModules
+  // (empty array = always shown, e.g. "All Access"). Superusers bypass via
+  // isSuperUser, but hasAnyPageAccessInModule also returns true for them
+  // automatically once selectedRole resolves through the wildcard check.
   const accessibleModules = NAV_MODULES.filter(
     module =>
       isSuperUser ||
-      module.requiredPermissions.length === 0 ||
-      module.requiredPermissions.some(perm => hasPermission(perm))
+      module.relatedRegistryModules.length === 0 ||
+      module.relatedRegistryModules.some(rm => hasAnyPageAccessInModule(rm))
   );
 
   const closeMobileMenu = () => {

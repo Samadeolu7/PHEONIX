@@ -978,7 +978,10 @@ function App() {
                                 <Route
                                   path="/accounts/ledger-search"
                                   element={
-                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="ledger-search">
+                                    // page="chart-of-accounts" — LedgerSearchPage's actual data call
+                                    // (GET /accounts/) is gated by accounts:chart-of-accounts on the
+                                    // backend, not a dedicated ledger-search page. See routeToPageMap.ts.
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
                                       <LedgerSearchPage />
                                     </ProtectedRoute>
                                   }

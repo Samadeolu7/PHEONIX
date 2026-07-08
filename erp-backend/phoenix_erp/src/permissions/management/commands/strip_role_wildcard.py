@@ -23,12 +23,10 @@ rows at all:
 
 This command neutralizes that trap by explicitly creating the safe
 (view/create/edit/delete=True, approve/export=False) row for every
-module/page the role doesn't already have a specific grant for, BEFORE the
-wildcard is removed — so behaviour for everything not already configured
-stays exactly as it was, and only the wildcard's "silently ignores
-RolePermissionPolicy" behaviour goes away. can_approve is deliberately left
-False by default; grant it back per-page via the Permission Setup UI for
-whichever pages this role should legitimately be able to approve on.
+module/page the role doesn't already have a specific grant for. can_approve
+is deliberately left False by default; grant it back per-page via the
+Permission Setup UI for whichever pages this role should legitimately be
+able to approve on.
 
 RESTRICTED_PAGES (users:roles, users:staff-users,
 permissions:role-permission-policies, permissions:user-permission-overrides,
@@ -37,23 +35,34 @@ view/create/edit/delete=True default — granting edit/delete there would let a
 role modify its own permissions or reassign roles to itself, defeating the
 whole point of removing the wildcard.
 
+IMPORTANT — backfill and wildcard removal are atomic together
+----------------------------------------------------------------
+--remove-wildcard ALWAYS runs the backfill first, in the same database
+transaction, regardless of whether --backfill-only was also passed or
+whether a previous run already backfilled some pages. There is no way to
+remove '*' from a role's permission_codes without the missing-page backfill
+having just been (re-)verified complete in that same call. An earlier
+version of this command required the two steps to be run separately, which
+allowed '*' to be removed while pages were still missing their fallback
+grant — silently denying that role access to those pages entirely. Never
+recreate that gap: always compute+create missing rows immediately before
+touching permission_codes, in the same transaction.
+
 Usage
 -----
-    # Step 1 — always run this first and read it carefully.
+    # Preview only — nothing is written.
     python manage.py strip_role_wildcard "Branch Manager" --dry-run
 
-    # Step 2 — create the backfill rows (permission_codes untouched so far).
+    # Create backfill rows only. Does not touch permission_codes. Useful to
+    # review grants via Permission Setup before removing the wildcard.
     python manage.py strip_role_wildcard "Branch Manager" --backfill-only
 
-    # Step 3 — after reviewing/adjusting grants via Permission Setup if
-    # needed, remove the wildcard itself.
+    # Backfill (idempotent — only creates what's still missing) AND remove
+    # the wildcard, atomically.
     python manage.py strip_role_wildcard "Branch Manager" --remove-wildcard
-
-Steps 2 and 3 can be combined in one run (--backfill-only --remove-wildcard),
-but running them separately with a review pass in between is safer for a
-live system.
 """
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
 # Administrative/meta pages that control who-can-do-what itself. Granting the
 # normal view/create/edit/delete=True default here would let a role edit its
@@ -80,7 +89,7 @@ class Command(BaseCommand):
         parser.add_argument('--backfill-only', action='store_true',
                              help='Create missing RolePermissionPolicy rows. Does not touch permission_codes.')
         parser.add_argument('--remove-wildcard', action='store_true',
-                             help="Remove '*' from permission_codes. Run --backfill-only first and review.")
+                             help="Backfill (if needed) and remove '*' from permission_codes, atomically.")
         parser.add_argument('--tenant-id', type=int, default=None)
 
     def handle(self, *args, **options):
@@ -111,54 +120,63 @@ class Command(BaseCommand):
 
         for role in roles_qs:
             self.stdout.write(f'\n=== {role.name} (pk={role.pk}, tenant={role.tenant_id}) ===')
-            if '*' not in (role.permission_codes or []):
-                self.stdout.write('  permission_codes has no "*" — nothing to do for this role.')
-                continue
 
-            existing_page_grants = set(
-                RolePermissionPolicy.objects.filter(role=role, page__isnull=False)
-                .values_list('module_id', 'page_id')
-            )
-            existing_module_grants = set(
-                RolePermissionPolicy.objects.filter(role=role, page__isnull=True, module__isnull=False)
-                .values_list('module_id', flat=True)
-            )
+            with transaction.atomic():
+                # Missing-page backfill always runs (unless pure --dry-run),
+                # independent of whether '*' is still present — this is what
+                # keeps --remove-wildcard safe even if a previous run already
+                # backfilled some pages, or if backfilling was never run at all.
+                existing_page_grants = set(
+                    RolePermissionPolicy.objects.filter(role=role, page__isnull=False)
+                    .values_list('module_id', 'page_id')
+                )
+                existing_module_grants = set(
+                    RolePermissionPolicy.objects.filter(role=role, page__isnull=True, module__isnull=False)
+                    .values_list('module_id', flat=True)
+                )
 
-            to_create = []
-            for mp in pages:
-                if (mp.module_id, mp.id) in existing_page_grants:
-                    continue
-                if mp.module_id in existing_module_grants:
-                    continue  # a module-level policy already covers this page
-                to_create.append(mp)
+                to_create = [
+                    mp for mp in pages
+                    if (mp.module_id, mp.id) not in existing_page_grants
+                    and mp.module_id not in existing_module_grants
+                ]
 
-            prefix = '[DRY RUN] ' if dry_run else ''
-            for mp in to_create:
-                restricted = (mp.module.code, mp.code) in RESTRICTED_PAGES
-                if restricted:
-                    flags = dict(can_view=True, can_create=False, can_edit=False,
-                                 can_delete=False, can_approve=False, can_export=False)
-                    label = 'view=True, everything else False (admin/meta page)'
-                else:
-                    flags = dict(can_view=True, can_create=True, can_edit=True,
-                                 can_delete=True, can_approve=False, can_export=False)
-                    label = 'view/create/edit/delete=True, approve/export=False'
-                self.stdout.write(f'  {prefix}+ {mp.module.code}:{mp.code} -> {label}')
-                if backfill_only and not dry_run:
-                    RolePermissionPolicy.objects.create(
-                        role=role, module=mp.module, page=mp, action=None,
-                        **flags,
-                        scope=role.default_scope or SCOPE_OWN_BRANCH,
-                        approval_limit=None,
-                    )
+                prefix = '[DRY RUN] ' if dry_run else ''
+                will_write = (backfill_only or remove_wildcard) and not dry_run
+                for mp in to_create:
+                    restricted = (mp.module.code, mp.code) in RESTRICTED_PAGES
+                    if restricted:
+                        flags = dict(can_view=True, can_create=False, can_edit=False,
+                                     can_delete=False, can_approve=False, can_export=False)
+                        label = 'view=True, everything else False (admin/meta page)'
+                    else:
+                        flags = dict(can_view=True, can_create=True, can_edit=True,
+                                     can_delete=True, can_approve=False, can_export=False)
+                        label = 'view/create/edit/delete=True, approve/export=False'
+                    self.stdout.write(f'  {prefix}+ {mp.module.code}:{mp.code} -> {label}')
+                    if will_write:
+                        RolePermissionPolicy.objects.create(
+                            role=role, module=mp.module, page=mp, action=None,
+                            **flags,
+                            scope=role.default_scope or SCOPE_OWN_BRANCH,
+                            approval_limit=None,
+                        )
 
-            action_word = 'Would backfill' if (dry_run or not backfill_only) else 'Backfilled'
-            self.stdout.write(f'  {action_word} {len(to_create)} page(s).')
+                action_word = 'Would backfill' if (dry_run or not will_write) else 'Backfilled'
+                self.stdout.write(f'  {action_word} {len(to_create)} page(s).')
 
-            if remove_wildcard:
+                if remove_wildcard:
+                    has_wildcard = '*' in (role.permission_codes or [])
+                    if not has_wildcard:
+                        self.stdout.write('  permission_codes has no "*" already — nothing to remove.')
+                    elif dry_run:
+                        self.stdout.write('  [DRY RUN] Would remove "*" from permission_codes.')
+                    else:
+                        role.permission_codes = [c for c in (role.permission_codes or []) if c != '*']
+                        role.save(update_fields=['permission_codes'])
+                        self.stdout.write(f'  Removed "*". permission_codes is now: {role.permission_codes}')
+
                 if dry_run:
-                    self.stdout.write('  [DRY RUN] Would remove "*" from permission_codes.')
-                else:
-                    role.permission_codes = [c for c in (role.permission_codes or []) if c != '*']
-                    role.save(update_fields=['permission_codes'])
-                    self.stdout.write(f'  Removed "*". permission_codes is now: {role.permission_codes}')
+                    # Never commit anything from a dry run, even though nothing
+                    # above should have queued a write in that branch anyway.
+                    transaction.set_rollback(True)
