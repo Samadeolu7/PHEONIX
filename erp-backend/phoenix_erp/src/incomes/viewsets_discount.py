@@ -37,6 +37,8 @@ class DiscountProgramViewSet(ScopedModelViewSet):
     - budget/{id}: Get budget details
     - statistics/{id}: Get detailed statistics
     """
+    permission_module = 'discounts'
+    permission_page = 'discount-programs'
     queryset = DiscountProgram.objects.all()
     serializer_class = DiscountProgramSerializer
     permission_classes = [IsAuthenticated]
@@ -240,6 +242,8 @@ class DiscountApplicationViewSet(ScopedModelViewSet):
     - revoke/{id}: Revoke approved application
     - my-applications/: Get current user's applications
     """
+    permission_module = 'discounts'
+    permission_page = 'discount-applications'
     queryset = DiscountApplication.objects.select_related(
         'program', 'client', 'reviewed_by'
     ).all()
@@ -526,6 +530,8 @@ class AppliedDiscountViewSet(ScopedModelViewSet):
     - reverse/{id}: Reverse applied discount
     - client-summary/: Get discount summary for client
     """
+    permission_module = 'discounts'
+    permission_page = 'applied-discounts'
     queryset = AppliedDiscount.objects.select_related(
         'application', 'application__program', 'application__client',
         'receivable', 'posted_by', 'reversed_by'

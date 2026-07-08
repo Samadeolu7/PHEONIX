@@ -89,6 +89,8 @@ class SupplierViewSet(ScopedModelViewSet):
     """
     API endpoint for suppliers
     """
+    permission_module = 'procurement'
+    permission_page = 'suppliers'
     serializer_class = SupplierSerializer
     permission_classes = [IsAuthenticated]
     queryset = Supplier.objects.none()  # For schema generation
@@ -167,6 +169,8 @@ class SupplierDocumentViewSet(ScopedModelViewSet):
     API endpoint for supplier document management.
     Supports upload, list, retrieve, and delete of supplier documents.
     """
+    permission_module = 'procurement'
+    permission_page = 'suppliers'
     serializer_class = SupplierDocumentSerializer
     permission_classes = [IsAuthenticated]
     queryset = SupplierDocument.objects.none()
@@ -1068,6 +1072,8 @@ class GoodsReceivedNoteViewSet(ScopedModelViewSet):
     """
     API endpoint for goods received notes
     """
+    permission_module = 'procurement'
+    permission_page = 'goods-received'
     serializer_class = GoodsReceivedNoteSerializer
     permission_classes = [IsAuthenticated]
     queryset = GoodsReceivedNote.objects.none()  # For schema generation
@@ -1247,6 +1253,8 @@ class PurchaseReturnViewSet(ScopedModelViewSet):
     """
     API endpoint for purchase returns
     """
+    permission_module = 'procurement'
+    permission_page = 'purchase-returns'
     serializer_class = PurchaseReturnSerializer
     permission_classes = [IsAuthenticated]
     queryset = PurchaseReturn.objects.none()  # For schema generation
@@ -1427,6 +1435,8 @@ class SupplierQuoteViewSet(ScopedModelViewSet):
     """
     API endpoint for supplier quotes
     """
+    permission_module = 'procurement'
+    permission_page = 'supplier-quotes'
     serializer_class = SupplierQuoteSerializer
     permission_classes = [IsAuthenticated]
     queryset = SupplierQuote.objects.none()  # For schema generation
@@ -1614,6 +1624,8 @@ class ProcurementConfigViewSet(ScopedModelViewSet):
     
     Typically one config per branch, but supports multiple if needed
     """
+    permission_module = 'procurement'
+    permission_page = 'procurement-config'
     serializer_class = ProcurementConfigSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['branch', 'enable_three_way_matching']

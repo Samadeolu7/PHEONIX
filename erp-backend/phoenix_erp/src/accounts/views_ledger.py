@@ -60,9 +60,17 @@ class AccountLedgerSerializer:
 class AccountLedgerViewSet(ScopedModelViewSet):
     """
     ViewSet for Account Ledger Reports
-    
+
     Provides detailed transaction history for accounts with running balances
     """
+    # Matches permissionRegistry.ts's 'account-ledger' page (accounts module) and
+    # routeToPageMap.ts's /accounts/:accountId/ledger mapping. Previously unset,
+    # which left this endpoint permanently ungoverned by Permission Setup — a
+    # non-wildcard role could never be granted access here no matter what pages
+    # were toggled on, since HasActionPermission had no module/page to resolve
+    # against at all.
+    permission_module = 'accounts'
+    permission_page = 'account-ledger'
     queryset = Account.objects.all()
     # Use the read serializer for Account list/retrieve operations.
     serializer_class = AccountReadSerializer

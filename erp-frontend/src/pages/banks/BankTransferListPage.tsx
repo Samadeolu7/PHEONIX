@@ -407,9 +407,11 @@ const BankTransferListPage: React.FC = () => {
                         {/* Approve / Reject (pending, approver only). Gated solely by the
                             server-computed transfer.can_approve (mirrors approve()'s actual
                             permission branches exactly) — no rank-based fallback. A director
-                            without an explicit RolePermissionPolicy grant should not see this,
-                            and nobody but the destination cashier may ever approve a transfer
-                            landing in another person's cashier account. */}
+                            without an explicit RolePermissionPolicy grant should not see this.
+                            Cashier-to-cashier transfers can be approved by the destination
+                            cashier OR a director (business decision: senior staff can hold a
+                            cashier float too, so requiring the literal destination cashier —
+                            who may be junior — to be the only approver was unworkable). */}
                         {transfer.status === 'pending' && transfer.can_approve && (
                           <>
                             <button

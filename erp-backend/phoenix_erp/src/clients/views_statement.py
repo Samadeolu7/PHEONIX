@@ -85,6 +85,8 @@ class ClientStatementViewSet(ScopedModelViewSet):
     - Payment history
     - Outstanding balances
     """
+    permission_module = 'clients'
+    permission_page = 'clients'
     queryset = Client.objects.all()
     permission_classes = [IsAuthenticated]
     officer_client_lookup = 'assigned_officer'

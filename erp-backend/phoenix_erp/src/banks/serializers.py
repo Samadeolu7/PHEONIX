@@ -408,7 +408,10 @@ class BankTransferSerializer(TenantModelSerializer):
         if obj.source_type == 'bank':
             return _bank_transfer_approve_grant(user)
         if obj.destination_type == 'cashier':
-            return bool(obj.destination_cashier_account and obj.destination_cashier_account.cashier == user)
+            is_destination_cashier = bool(
+                obj.destination_cashier_account and obj.destination_cashier_account.cashier == user
+            )
+            return is_destination_cashier or _bank_transfer_approve_grant(user)
         is_account_manager = bool(
             obj.destination_bank_account and obj.destination_bank_account.account_manager == user
         )

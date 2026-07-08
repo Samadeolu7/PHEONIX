@@ -71,6 +71,8 @@ def _build_scoped_qs(qs, user):
 
 class LoanProductViewSet(ScopedModelViewSet):
     """CRUD for loan products (DC, Weekly, Monthly, etc.)."""
+    permission_module = 'loans'
+    permission_page = 'loan-products'
     queryset = LoanProduct.objects.select_related('product').all()
     serializer_class = LoanProductSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
@@ -1808,6 +1810,8 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
 
 class LoanCollateralViewSet(ScopedModelViewSet):
+    permission_module = 'loans'
+    permission_page = 'loan-accounts'
     queryset = LoanCollateral.objects.all()
     serializer_class = LoanCollateralSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
@@ -1822,6 +1826,8 @@ class LoanCollateralViewSet(ScopedModelViewSet):
 
 
 class LoanGuarantorViewSet(ScopedModelViewSet):
+    permission_module = 'loans'
+    permission_page = 'loan-accounts'
     queryset = LoanGuarantor.objects.select_related(
         'guarantor', 'guarantor_person', 'loan'
     ).all()
@@ -1848,6 +1854,8 @@ class LoanVerificationRequestViewSet(ScopedModelViewSet):
       run_check  — (re)run the LoanVerifier against the client NIN and save results
       verdict    — BM/supervisor updates the verdict (pass/refer/decline)
     """
+    permission_module = 'loans'
+    permission_page = 'loan-verification'
     queryset = LoanVerificationRequest.objects.select_related('loan', 'reviewed_by').all()
     serializer_class = LoanVerificationRequestSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
@@ -2166,6 +2174,8 @@ class LoanProductFeeViewSet(ScopedModelViewSet):
     CRUD for dynamic fee lines on a loan product.
     Nested: GET/POST /api/loans/products/{product_pk}/fees/
     """
+    permission_module = 'loans'
+    permission_page = 'loan-products'
     serializer_class = LoanProductFeeSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = LoanProductFee.objects.all()
@@ -2194,6 +2204,8 @@ class LoanProductSavingsRequirementViewSet(ScopedModelViewSet):
     CRUD for savings requirements on a loan product.
     Nested: GET/POST /api/loans/products/{product_pk}/savings-requirements/
     """
+    permission_module = 'loans'
+    permission_page = 'loan-products'
     serializer_class = LoanProductSavingsRequirementSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = LoanProductSavingsRequirement.objects.all()
@@ -2215,6 +2227,8 @@ class LoanFeeApplicationViewSet(ScopedModelViewSet):
     GET /api/loans/accounts/{loan_pk}/fee-applications/
     POST /api/loans/accounts/{loan_pk}/fee-applications/apply/?trigger=disbursement
     """
+    permission_module = 'loans'
+    permission_page = 'loan-accounts'
     serializer_class = LoanFeeApplicationSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = LoanFeeApplication.objects.all()
@@ -2280,6 +2294,8 @@ class FeesPreviewView(ScopedModelViewSet):
     GET /api/loans/products/{product_pk}/fees/preview/?amount=500000
     Returns a list of calculated fee amounts for the given loan amount (no DB writes).
     """
+    permission_module = 'loans'
+    permission_page = 'loan-products'
     http_method_names = ['get', 'head', 'options']
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = LoanProductFee.objects.none()  # needed for router, not used
@@ -2481,6 +2497,8 @@ class OfflinePaymentRecordViewSet(ScopedModelViewSet):
     POST /api/loans/offline-payments/:id/approve/  — supervisor posts GL
     POST /api/loans/offline-payments/:id/reject/   — supervisor rejects
     """
+    permission_module = 'loans'
+    permission_page = 'loan-collection'
     queryset = OfflinePaymentRecord.objects.select_related(
         'loan', 'loan__client', 'recorded_by', 'reviewed_by',
     ).all()

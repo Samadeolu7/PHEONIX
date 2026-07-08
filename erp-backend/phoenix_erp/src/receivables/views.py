@@ -599,6 +599,8 @@ class CustomerReceivableViewSet(ScopedModelViewSet):
 
 class ReceivableActivityLogViewSet(ScopedModelViewSet):
     '''Activity log viewset (read-only)'''
+    permission_module = 'receivables'
+    permission_page = 'receivable-activity'
     queryset = ReceivableActivityLog.objects.select_related(
         'receivable', 'performed_by'
     ).all()
@@ -609,6 +611,8 @@ class ReceivableActivityLogViewSet(ScopedModelViewSet):
 
 class CustomerStatementViewSet(ScopedModelViewSet):
     '''Customer statement viewset'''
+    permission_module = 'receivables'
+    permission_page = 'customer-statements'
     queryset = CustomerStatement.objects.select_related(
         'client', 'generated_by'
     ).all()

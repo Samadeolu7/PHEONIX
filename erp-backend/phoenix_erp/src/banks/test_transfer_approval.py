@@ -7,11 +7,10 @@ did not follow the RolePermissionPolicy permission-setup system:
 1. BankTransferViewSet.reject() now requires the same approval authority as
    approve()/second_approve() (previously anyone who could view a transfer
    could reject it).
-2. Cashier-destined transfers (destination_type == 'cashier') can only ever
-   be approved/rejected by the actual destination cashier — a hard
-   invariant that no role, rank, or RolePermissionPolicy grant may override.
-   Bank-directed transfers (bank-to-bank, cashier-to-bank) ARE governed by
-   the permission-setup system.
+2. Cashier-to-cashier transfers (destination_type == 'cashier', source
+   'cashier') can be approved/rejected by the actual destination cashier OR
+   a director (banks:bank-transfers RolePermissionPolicy grant) — see item 8
+   below for why this was loosened from an original hard, no-override rule.
 3. IsApprover/can_user_approve() is now scoped to the calling view's
    module/page instead of resolving with module=None, page=None.
 4. can_user_approve() no longer treats is_staff as a blanket approval
@@ -29,6 +28,12 @@ did not follow the RolePermissionPolicy permission-setup system:
 7. Maker-checker: whoever initiated a transfer can never approve or reject
    it themselves, regardless of which other check (account manager, director
    grant, role) would otherwise let them through.
+8. cashier-to-cashier approval now also accepts a director, same as
+   cashier-to-bank (item 6) — changed per a later business decision: senior
+   staff can themselves hold a cashier float, and requiring the literal
+   destination cashier (who may be a junior staff member) to be the only
+   possible approver was unworkable. A director is the escalation path.
+   Maker-checker (item 7) still applies on top of this.
 
 Most tests call BankTransferViewSet._check_approval_permission() directly
 with unsaved BankAccount/CashierAccount instances (only the cashier/
@@ -70,7 +75,7 @@ class BankTransferApprovalPermissionTests(TestCase):
         self.destination_cashier_account = CashierAccount(cashier=self.destination_cashier)
         self.account_manager_bank_account = BankAccount(account_manager=self.account_manager)
 
-    # ── Cashier-to-cashier: hard invariant, never overridable ──────────────
+    # ── Cashier-to-cashier: destination cashier OR a director ──────────────
 
     def test_cashier_to_cashier_destination_cashier_may_approve(self):
         transfer = BankTransfer(
@@ -93,6 +98,9 @@ class BankTransferApprovalPermissionTests(TestCase):
         self.assertIsNone(result)
 
     def test_cashier_to_cashier_other_user_forbidden(self):
+        """An unrelated user with no director grant still can't approve —
+        the loosened rule only adds a director escalation path, it doesn't
+        open this up to just anyone."""
         transfer = BankTransfer(
             source_type='cashier',
             destination_type='cashier',
@@ -102,9 +110,10 @@ class BankTransferApprovalPermissionTests(TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.status_code, status.HTTP_403_FORBIDDEN)
 
-    def test_cashier_to_cashier_superuser_cannot_bypass(self):
-        """No role, rank, or grant — not even is_superuser — may approve a
-        transfer landing in another person's cashier account on their behalf."""
+    def test_cashier_to_cashier_superuser_without_grant_cannot_bypass(self):
+        """is_superuser alone (the Django flag) still isn't enough — only an
+        actual banks:bank-transfers RolePermissionPolicy grant (i.e. being a
+        director) lets someone other than the destination cashier through."""
         transfer = BankTransfer(
             source_type='cashier',
             destination_type='cashier',
@@ -113,6 +122,39 @@ class BankTransferApprovalPermissionTests(TestCase):
         result = self.viewset._check_approval_permission(_request(self.superuser), transfer)
         self.assertIsNotNone(result)
         self.assertEqual(result.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cashier_to_cashier_director_may_approve_without_being_destination_cashier(self):
+        """A director can now step in on a cashier-to-cashier transfer via
+        the banks:bank-transfers RolePermissionPolicy grant, even though they
+        are not the destination cashier — the compromise for senior staff
+        cashiers whose float would otherwise only be confirmable by a junior
+        staff member holding that specific cashier account."""
+        director = User.objects.create_user(username='director3', password='x')
+        transfer = BankTransfer(
+            source_type='cashier',
+            destination_type='cashier',
+            destination_cashier_account=self.destination_cashier_account,
+        )
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_approve=True)
+            result = self.viewset._check_approval_permission(_request(director), transfer)
+        self.assertIsNone(result)
+
+    def test_cashier_to_cashier_director_cannot_approve_own_initiated_transfer(self):
+        """Maker-checker still wins even for a director with a full grant."""
+        director = User.objects.create_user(username='director4', password='x')
+        transfer = BankTransfer(
+            source_type='cashier',
+            destination_type='cashier',
+            destination_cashier_account=self.destination_cashier_account,
+            initiated_by=director,
+        )
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_approve=True)
+            result = self.viewset._check_approval_permission(_request(director), transfer)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.status_code, status.HTTP_403_FORBIDDEN)
+        mock_resolve.assert_not_called()  # maker-checker short-circuits first
 
     # ── Cashier-to-bank: destination account manager only ──────────────────
 

@@ -572,6 +572,8 @@ class SavingsProductConfigViewSet(ScopedModelViewSet):
     GET/POST /api/savings/product-configs/
     GET/PUT/PATCH /api/savings/product-configs/{id}/
     """
+    permission_module = 'products'
+    permission_page = 'products'
     queryset = SavingsProduct.objects.all()
     serializer_class = SavingsProductSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
@@ -590,6 +592,8 @@ class WithdrawalApprovalTierViewSet(ScopedModelViewSet):
     Admin-only write access.
     GET/POST /api/savings/withdrawal-tiers/
     """
+    permission_module = 'savings'
+    permission_page = 'savings-withdrawals'
     queryset = WithdrawalApprovalTier.objects.all()
     serializer_class = WithdrawalApprovalTierSerializer
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
@@ -619,6 +623,8 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
     POST  /api/savings/withdrawals/{id}/disburse/      — release funds (3rd maker-checker role)
     POST  /api/savings/withdrawals/{id}/cancel/        — cancel (before approvals)
     """
+    permission_module = 'savings'
+    permission_page = 'savings-withdrawals'
     officer_client_lookup = 'savings_account__client__assigned_officer'
     queryset = SavingsWithdrawalRequest.objects.select_related(
         'savings_account__client',

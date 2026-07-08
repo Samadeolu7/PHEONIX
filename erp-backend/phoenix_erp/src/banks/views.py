@@ -852,22 +852,25 @@ class BankTransferViewSet(ScopedModelViewSet):
 
         RolePermissionPolicy.can_approve on banks:bank-transfers (the Permission
         Setup page — director-level authority) governs the bank-to-bank branch,
-        and ALSO acts as a fallback for cashier-to-bank so a director can
-        always step in regardless of which specific account is involved. The
-        other two branches are gated purely by object identity, not by
+        and ALSO acts as a fallback for cashier-to-bank AND cashier-to-cashier,
+        so a director can always step in regardless of which specific account
+        or cashier is involved. This was deliberately NOT the case originally
+        (cashier-to-cashier was a hard, no-override invariant) — changed per a
+        business decision that senior staff can themselves hold a cashier
+        float, and requiring a junior staff member (as the literal destination
+        cashier) to be the only one who can confirm receipt into a senior's
+        float was unworkable. A director now serves as the escalation path.
+        The remaining branch is gated purely by object identity, not by
         anything grantable on that page:
-          - cashier-to-cashier: the destination cashier, and no one else —
-            never overridable, not even by a director. Nobody may approve or
-            reject a transfer landing in someone else's cashier float on that
-            cashier's behalf, regardless of rank or permission grants.
           - bank-to-cashier: the branch-manager-tier role check
             (BankTransfer.can_user_manage_bank_to_cashier), which already
             includes directors/admins — not a RolePermissionPolicy grant.
-        cashier-to-bank specifically allows EITHER the destination BankAccount's
-        account_manager (Banking > Bank Accounts > edit > "Account Manager")
-        OR a director, so a cashier who happens to also be that account's
-        manager still can't rubber-stamp their own transfer (see the
-        maker-checker guard below, which blocks that regardless).
+        Both cashier-to-bank and cashier-to-cashier allow EITHER the relevant
+        object-identity check (destination BankAccount's account_manager, or
+        destination CashierAccount's cashier) OR a director, so a cashier who
+        happens to also be that account's manager still can't rubber-stamp
+        their own transfer (see the maker-checker guard below, which blocks
+        that regardless).
 
         allow_bank_to_cashier=False is used by second_approve(), which
         structurally never reaches a bank-to-cashier transfer (those are
@@ -908,11 +911,15 @@ class BankTransferViewSet(ScopedModelViewSet):
                 )
         elif transfer.destination_type == 'cashier':
             # Cashier-to-cashier transfers require the destination cashier —
-            # never overridable, see docstring above.
-            if not transfer.destination_cashier_account or \
-               transfer.destination_cashier_account.cashier != request.user:
+            # OR a director (see docstring above for why this is no longer a
+            # hard, no-override invariant).
+            is_destination_cashier = bool(
+                transfer.destination_cashier_account
+                and transfer.destination_cashier_account.cashier == request.user
+            )
+            if not is_destination_cashier and not self._has_bank_transfer_approve_grant(request.user):
                 return Response(
-                    {'error': 'Only the destination cashier can approve this transfer'},
+                    {'error': 'Only the destination cashier or a director can approve this transfer'},
                     status=status.HTTP_403_FORBIDDEN
                 )
         else:

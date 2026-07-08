@@ -59,6 +59,8 @@ class InventoryLedgerViewSet(ScopedModelViewSet):
     """
     ViewSet for Inventory Item Lifecycle Ledger and Cost Analysis.
     """
+    permission_module = 'inventory'
+    permission_page = 'inventory-items'
     queryset = InventoryItem.objects.all()
     permission_classes = [IsAuthenticated]
 

@@ -39,6 +39,12 @@ class InvoiceViewSet(ScopedModelViewSet):
     - Automatic COGS and revenue recognition
     - Overdue invoice tracking
     """
+    # permissionRegistry.ts's incomes:invoices page explicitly includes
+    # /sales/invoices/create-inventory in its paths — this inventory-specific
+    # Invoice model (distinct from incomes.Invoice) is still governed by the
+    # same permission page from the frontend's perspective.
+    permission_module = 'incomes'
+    permission_page = 'invoices'
     queryset = Invoice.objects.all()
     serializer_class = InvoiceSerializer
     permission_classes = [IsAuthenticated]

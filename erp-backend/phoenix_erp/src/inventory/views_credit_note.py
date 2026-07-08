@@ -43,6 +43,8 @@ class CreditNoteViewSet(ScopedModelViewSet):
     - GET /credit-notes/{id}/pdf/ - Download credit note PDF
     """
     
+    permission_module = 'incomes'
+    permission_page = 'invoices'
     queryset = CreditNote.objects.all()
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -353,6 +355,8 @@ class CreditNoteItemViewSet(ScopedModelViewSet):
     Typically managed through parent credit note, but can be accessed directly.
     """
     
+    permission_module = 'incomes'
+    permission_page = 'invoices'
     queryset = CreditNoteItem.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = CreditNoteItemSerializer

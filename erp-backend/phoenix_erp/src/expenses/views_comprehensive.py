@@ -49,6 +49,8 @@ class ExpenseCategoryViewSet(ScopedModelViewSet):
     - DELETE /expense-categories/{id}/ - Soft delete category
     """
     
+    permission_module = 'expenses'
+    permission_page = 'expense-categories'
     queryset = ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
     permission_classes = [IsAuthenticated]
@@ -125,6 +127,8 @@ class ExpenseViewSet(ScopedModelViewSet):
     - GET /expenses/pending_approval/ - Get expenses pending approval
     """
     
+    permission_module = 'expenses'
+    permission_page = 'expenses'
     queryset = Expense.objects.all()
     permission_classes = [IsAuthenticated]
     pagination_class = PageNumberPagination
@@ -386,6 +390,8 @@ class PrepaidExpenseViewSet(ScopedModelViewSet):
     - POST /prepaid-expenses/{id}/post_to_accounts/ - Create GL entry + AP payable for supplier
     """
     
+    permission_module = 'expenses'
+    permission_page = 'prepaid-vouchers'
     queryset = PrepaidExpense.objects.all()
     serializer_class = PrepaidExpenseSerializer
     permission_classes = [IsAuthenticated]
