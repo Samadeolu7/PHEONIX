@@ -1905,7 +1905,42 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     
     def __str__(self):
         return f"{self.voucher_number} - {self.purpose} (₦{self.amount})"
-    
+
+    @staticmethod
+    def is_authorized_to_disburse(user, fund):
+        """
+        True if `user` may disburse vouchers against `fund`: the fund's
+        custodian or alternate_custodian, OR a director - so a director can
+        step in and disburse regardless of who's currently holding the till
+        (e.g. the custodian is unreachable, or the fund was just reassigned
+        and the old custodian is the one trying to act). The audit trail
+        (disbursed_by) always records who actually performed the action, not
+        the custodian, so nothing about who acted is lost by allowing this.
+
+        Checks role name first (matching the convention
+        banks.BankTransfer.can_user_manage_bank_to_cashier /
+        cash_management.services.payment_routing.PaymentRoutingService._is_director
+        already use elsewhere in this codebase, so privileged-role checks
+        don't drift apart), falling back to hr.Staff.role_level for users
+        set up only through HR with no tenant Role assigned.
+        """
+        if user == fund.custodian or user == fund.alternate_custodian:
+            return True
+        if getattr(user, 'is_system_admin', False):
+            return True
+        if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+            return True
+        try:
+            role_names = user.roles.filter(is_active=True).values_list('name', flat=True)
+            if any('director' in name.lower() for name in role_names):
+                return True
+        except Exception:
+            pass
+        try:
+            return user.staff_profile.role_level == 'director'
+        except Exception:
+            return False
+
     @db_transaction.atomic
     def submit(self):
         """Submit voucher for approval"""
@@ -1964,9 +1999,10 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if self.status != 'approved':
             raise ValidationError("Only approved vouchers can be disbursed")
 
-        # Check user is custodian
-        if user != self.fund.custodian and user != self.fund.alternate_custodian:
-            raise ValidationError("Only fund custodian can disburse cash")
+        if not self.is_authorized_to_disburse(user, self.fund):
+            raise ValidationError(
+                "Only the fund custodian, alternate custodian, or a director can disburse cash"
+            )
 
         # Use requested amount if actual not specified
         actual_amount = amount or self.amount
