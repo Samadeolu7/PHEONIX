@@ -1,9 +1,79 @@
 // src/pages/treasury/CashierAccountListPage.tsx
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, CheckCircle, PauseCircle, Plus, Search, Users } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertCircle, CheckCircle, PauseCircle, Plus, Search, UserCog, Users } from 'lucide-react';
+import { toast } from 'sonner';
 import { cashierAccountService } from '../../services/treasuryService';
+import type { CashierAccount } from '../../types/treasury';
+import Dialog, {
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/Dialog';
+import { Button } from '@/components/ui/Button';
+import { Label } from '../../components/ui/Label';
+import { UserSelect } from '../../components/ui/UserSelect';
+
+const ReassignCashierDialog: React.FC<{
+  account: CashierAccount | null;
+  onClose: () => void;
+}> = ({ account, onClose }) => {
+  const queryClient = useQueryClient();
+  const [newCashier, setNewCashier] = useState<number | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: (cashierId: number) =>
+      cashierAccountService.reassignCashier(account!.id, cashierId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cashier-accounts'] });
+      toast.success('Cashier account reassigned');
+      onClose();
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || 'Failed to reassign cashier account');
+    },
+  });
+
+  return (
+    <Dialog open={!!account} onOpenChange={open => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Reassign Cashier Account</DialogTitle>
+          <DialogDescription>
+            {account &&
+              `Change who's responsible for ${account.name} (${account.account_number}). ` +
+                `The till, its balance, and its transaction history are unaffected — only the ` +
+                `assigned cashier changes.`}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 py-2">
+          <Label htmlFor="new-cashier" className="text-sm font-medium text-gray-700">
+            New Cashier
+          </Label>
+          <UserSelect
+            value={newCashier}
+            onChange={setNewCashier}
+            placeholder="Search and select a user"
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={mutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => newCashier && mutation.mutate(newCashier)}
+            disabled={!newCashier || mutation.isPending}
+          >
+            {mutation.isPending ? 'Reassigning…' : 'Reassign'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 const fmt = (v: string | number | undefined) =>
   v !== undefined && v !== null
@@ -16,6 +86,7 @@ const fmt = (v: string | number | undefined) =>
 
 const CashierAccountListPage: React.FC = () => {
   const [search, setSearch] = useState('');
+  const [reassignTarget, setReassignTarget] = useState<CashierAccount | null>(null);
 
   const { data: accounts = [], isLoading } = useQuery({
     queryKey: ['cashier-accounts'],
@@ -126,6 +197,7 @@ const CashierAccountListPage: React.FC = () => {
                   <th className="text-right px-4 py-3 font-semibold text-gray-600">Daily Limit</th>
                   <th className="text-center px-4 py-3 font-semibold text-gray-600">Status</th>
                   <th className="text-center px-4 py-3 font-semibold text-gray-600">Recon</th>
+                  <th className="text-center px-4 py-3 font-semibold text-gray-600">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -184,6 +256,17 @@ const CashierAccountListPage: React.FC = () => {
                         />
                       )}
                     </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setReassignTarget(a)}
+                        title="Reassign cashier"
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-blue-600 transition-colors"
+                      >
+                        <UserCog size={14} />
+                        Reassign
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -191,6 +274,8 @@ const CashierAccountListPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      <ReassignCashierDialog account={reassignTarget} onClose={() => setReassignTarget(null)} />
     </div>
   );
 };

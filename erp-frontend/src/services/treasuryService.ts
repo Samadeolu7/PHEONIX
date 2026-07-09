@@ -76,6 +76,21 @@ export const cashierAccountService = {
     const response = await api.post<CashierAccount>(`${BASE_URL}/cashier-accounts/`, data);
     return response;
   },
+
+  /**
+   * Reassign this account to a different cashier (e.g. the previous cashier
+   * moved branches or left). The till itself - GL account, balance, and
+   * transaction history - is untouched; only who's responsible changes.
+   * If this account backs a petty cash fund, the fund's custodian and name
+   * are updated in the same atomic operation on the backend.
+   */
+  reassignCashier: async (id: number, newCashierId: number): Promise<CashierAccount> => {
+    const response = await api.post<CashierAccount>(
+      `${BASE_URL}/cashier-accounts/${id}/reassign_cashier/`,
+      { cashier: newCashierId }
+    );
+    return response;
+  },
 };
 
 /**
