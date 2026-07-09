@@ -8,5 +8,4 @@ class CashManagementConfig(AppConfig):
     verbose_name = 'Cash Collection & Custody Management'
     
     def ready(self):
-        # Import signals if you have any
-        pass
+        import cash_management.signals  # noqa: F401 – registers signal handlers

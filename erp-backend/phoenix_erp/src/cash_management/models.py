@@ -180,7 +180,8 @@ class CashierAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         super().save(*args, **kwargs)
     
     def __str__(self):
-        return f"{self.name} - {self.cashier.get_full_name()} (Balance: {self.current_balance})"
+        cashier_label = self.cashier.get_full_name() if self.cashier else 'Unassigned'
+        return f"{self.name} - {cashier_label} (Balance: {self.current_balance})"
     
     def has_outstanding_balance(self):
         """Check if cashier has unremitted cash"""

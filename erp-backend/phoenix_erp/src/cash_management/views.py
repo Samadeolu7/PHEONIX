@@ -75,9 +75,66 @@ class CashierAccountViewSet(viewsets.ModelViewSet):
         cashier = self.get_object()
         date_str = request.query_params.get('date')
         date = timezone.datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else timezone.now().date()
-        
+
         summary = CashierAccountService.get_cashier_summary(cashier, date)
         return Response(summary)
+
+    @action(detail=True, methods=['post'])
+    def reassign_cashier(self, request, pk=None):
+        """
+        Change who is responsible for this cashier account (e.g. the previous
+        cashier moved branches or left). The till itself - its GL account,
+        balance, and transaction history - is untouched; only the
+        responsible-person field changes.
+
+        If this account's GL account is also linked to a PettyCashFund (the
+        petty-cash-as-a-cashier-account setup), that fund's custodian is
+        updated in the same atomic operation, since PettyCashVoucher.disburse()
+        checks authority against PettyCashFund.custodian, not
+        CashierAccount.cashier - updating only one would let them silently
+        disagree about who's actually allowed to disburse. The fund's
+        fund_name is also refreshed to name the new custodian, so it never
+        needs a manual rename after a reassignment (this is also the fix for
+        a fund that was previously named after an unrelated bank, e.g.
+        "MoniePoint" - the next reassignment corrects it automatically).
+        """
+        from django.contrib.auth import get_user_model
+        from django.db import transaction as db_transaction
+
+        User = get_user_model()
+        cashier_account = self.get_object()
+
+        new_cashier_id = request.data.get('cashier')
+        if not new_cashier_id:
+            return Response(
+                {'detail': 'cashier is required.'}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            new_cashier = User.objects.get(pk=new_cashier_id)
+        except User.DoesNotExist:
+            return Response(
+                {'detail': f'No user with id={new_cashier_id}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_cashier_label = new_cashier.get_full_name() or new_cashier.username
+
+        with db_transaction.atomic():
+            cashier_account.cashier = new_cashier
+            cashier_account.save(update_fields=['cashier'])
+
+            if cashier_account.account_id:
+                PettyCashFund.objects.filter(
+                    petty_cash_account=cashier_account.account
+                ).update(
+                    custodian=new_cashier,
+                    fund_name=f'{new_cashier_label} - Petty Cash',
+                )
+
+        cashier_account.refresh_from_db()
+        serializer = self.get_serializer(cashier_account)
+        return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
     def pending_reconciliations(self, request):
