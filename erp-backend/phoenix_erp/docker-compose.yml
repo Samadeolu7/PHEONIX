@@ -135,6 +135,11 @@ services:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
       - PYTHONPATH=/app/src
+      # Bank-Recon (Java) call — only celery_worker needs these, since
+      # banks.tasks.run_reconciliation_match is what actually calls it,
+      # not the gunicorn/backend process.
+      - BANK_RECON_SERVICE_URL=${BANK_RECON_SERVICE_URL}
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
     depends_on:
       postgres:
         condition: service_healthy
@@ -230,6 +235,10 @@ services:
 networks:
   phoenix_kti_backend:
     driver: bridge
+    # Explicit name (not the Compose-project-prefixed default) so the
+    # separate Bank-Recon compose stack can join it via `external: true`
+    # without needing to guess the auto-generated name.
+    name: phoenix_kti_backend
   traefik_public:
     external: true
     name: traefik_public
