@@ -559,7 +559,8 @@ class PettyCashFundSerializer(serializers.ModelSerializer):
     needs_replenishment = serializers.ReadOnlyField()
     disbursed_amount = serializers.ReadOnlyField()
     pending_vouchers_count = serializers.SerializerMethodField()
-    
+    cashier_account = serializers.SerializerMethodField()
+
     class Meta:
         from .models import PettyCashFund
         model = PettyCashFund
@@ -571,27 +572,50 @@ class PettyCashFundSerializer(serializers.ModelSerializer):
             'single_transaction_limit', 'status', 'established_date',
             'last_replenishment_date', 'last_audit_date',
             'needs_replenishment', 'disbursed_amount', 'pending_vouchers_count',
+            'cashier_account',
             'branch', 'branch_name', 'notes', 'created_at', 'updated_at'
         ]
         read_only_fields = ['current_balance', 'last_replenishment_date', 'created_at', 'updated_at']
-    
+
     def get_custodian_name(self, obj):
         return obj.custodian.get_full_name() if obj.custodian else None
-    
+
     def get_alternate_custodian_name(self, obj):
         return obj.alternate_custodian.get_full_name() if obj.alternate_custodian else None
-    
+
     def get_petty_cash_account_name(self, obj):
         return obj.petty_cash_account.name if obj.petty_cash_account else None
-    
+
     def get_petty_cash_account_code(self, obj):
         return obj.petty_cash_account.code if obj.petty_cash_account else None
-    
+
     def get_branch_name(self, obj):
         return obj.branch.name if obj.branch else None
-    
+
     def get_pending_vouchers_count(self, obj):
         return obj.vouchers.filter(status='pending').count()
+
+    def get_cashier_account(self, obj):
+        """
+        The CashierAccount (if any) wrapping this fund's GL account - lets the
+        frontend show whether petty cash has been set up as a cashier till yet
+        (see PettyCashFundViewSet.link_cashier_account).
+        """
+        if not obj.petty_cash_account_id:
+            return None
+        from .models import CashierAccount
+        ca = CashierAccount.objects.filter(
+            account_id=obj.petty_cash_account_id, is_deleted=False
+        ).first()
+        if not ca:
+            return None
+        return {
+            'id': ca.id,
+            'account_number': ca.account_number,
+            'name': ca.name,
+            'current_balance': str(ca.current_balance),
+            'cashier_name': ca.cashier.get_full_name() if ca.cashier else None,
+        }
 
 
 class PettyCashVoucherSerializer(serializers.ModelSerializer):

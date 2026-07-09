@@ -17,12 +17,14 @@ import {
   ClockIcon,
   CheckCircle2Icon,
   AlertCircleIcon,
+  UserCogIcon,
 } from 'lucide-react';
 import {
   usePettyCashFund,
   usePettyCashFundSummary,
   usePettyCashVouchers,
   usePettyCashReplenishments,
+  useLinkPettyCashCashierAccount,
 } from '../../hooks/usePettyCash';
 
 /** Safely format a nullable/undefined date string; returns fallback on invalid values. */
@@ -45,6 +47,8 @@ export const PettyCashFundDetail: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'vouchers' | 'replenishments'>(
     'overview'
   );
+
+  const linkCashierAccount = useLinkPettyCashCashierAccount();
 
   // Fetch fund data
   const { data: fund, isLoading: loadingFund } = usePettyCashFund(fundId);
@@ -264,6 +268,47 @@ export const PettyCashFundDetail: React.FC = () => {
             <p className="text-sm text-gray-600">Created</p>
             <p className="font-medium">{safeDate(fund.created_at, 'MMM dd, yyyy')}</p>
           </div>
+        </div>
+
+        {/* Cashier till linkage */}
+        <div className="mt-4 pt-4 border-t">
+          <p className="text-sm text-gray-600 mb-2">Cashier Till</p>
+          {fund.cashier_account ? (
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">
+                  {fund.cashier_account.account_number} &middot; {fund.cashier_account.name}
+                </p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Cashier: {fund.cashier_account.cashier_name ?? 'Unassigned'} &middot; Balance: ₦
+                  {parseFloat(fund.cashier_account.current_balance).toLocaleString()}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/treasury/cashier-accounts')}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                View in Cashier Accounts
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-gray-500">
+                Not yet set up as a cashier till, so it cannot be funded via bank transfer or
+                reconciled.
+              </p>
+              <button
+                type="button"
+                onClick={() => linkCashierAccount.mutate(fundId)}
+                disabled={linkCashierAccount.isPending}
+                className="shrink-0 ml-4 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                <UserCogIcon className="h-4 w-4" />
+                {linkCashierAccount.isPending ? 'Setting up…' : 'Set Up as Cashier Till'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

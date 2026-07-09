@@ -31,7 +31,6 @@ Usage
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand, CommandError
-from django.db import transaction as db_transaction
 
 
 class Command(BaseCommand):
@@ -104,29 +103,14 @@ class Command(BaseCommand):
                 f'{"Would restore" if dry_run else "Restoring"} soft-deleted '
                 f'CashierAccount {dead.account_number!r} for this GL account.'
             )
-            if not dry_run:
-                with db_transaction.atomic():
-                    dead.is_deleted = False
-                    dead.is_active = True
-                    dead.cashier = fund.custodian
-                    dead.save(update_fields=['is_deleted', 'is_active', 'cashier'])
-                    gl_account.refresh_from_db(fields=['balance'])
-                    CashierAccount.objects.filter(pk=dead.pk).update(
-                        current_balance=gl_account.balance
-                    )
-                self.stdout.write(self.style.SUCCESS(
-                    f'Restored CashierAccount {dead.account_number!r}.'
-                ))
-            return
-
-        account_number = f'PETTY-{fund.fund_code}'
-        name = f'{fund.fund_name} - Cashier Till'
-
-        self.stdout.write(
-            f'{"Would create" if dry_run else "Creating"} CashierAccount '
-            f'{account_number!r} ({name!r}), cashier='
-            f'{fund.custodian.get_full_name() or fund.custodian.username}.'
-        )
+        else:
+            account_number = f'PETTY-{fund.fund_code}'
+            name = f'{fund.fund_name} - Cashier Till'
+            self.stdout.write(
+                f'{"Would create" if dry_run else "Creating"} CashierAccount '
+                f'{account_number!r} ({name!r}), cashier='
+                f'{fund.custodian.get_full_name() or fund.custodian.username}.'
+            )
 
         if dry_run:
             self.stdout.write(self.style.WARNING(
@@ -134,25 +118,13 @@ class Command(BaseCommand):
             ))
             return
 
-        with db_transaction.atomic():
-            cashier_account = CashierAccount.objects.create(
-                cashier=fund.custodian,
-                account=gl_account,
-                account_number=account_number,
-                name=name,
-                branch=branch,
-                owner=fund.owner,
-                is_active=True,
-                requires_dual_approval=False,
-            )
-            gl_account.refresh_from_db(fields=['balance'])
-            CashierAccount.objects.filter(pk=cashier_account.pk).update(
-                current_balance=gl_account.balance
-            )
-            cashier_account.refresh_from_db(fields=['current_balance'])
+        # Delegates the actual create-or-restore to PettyCashFund.get_or_create_cashier_account(),
+        # the same method PettyCashFundViewSet.link_cashier_account() calls, so the two never
+        # drift out of agreement about how this is done.
+        cashier_account = fund.get_or_create_cashier_account()
 
         self.stdout.write(self.style.SUCCESS(
-            f'\nCreated CashierAccount {cashier_account.account_number!r} '
-            f'linked to GL {gl_account.code}, current_balance='
+            f'\nLinked CashierAccount {cashier_account.account_number!r} '
+            f'to GL {gl_account.code}, current_balance='
             f'{cashier_account.current_balance}.'
         ))

@@ -72,6 +72,19 @@ export const pettyCashService = {
     return response;
   },
 
+  /**
+   * Wrap this fund's GL account in a CashierAccount (custodian as cashier),
+   * so it can be funded via ordinary BankTransfer, covered by daily
+   * CashReconciliation, and shown in the cashier summary dashboard
+   * alongside other tills. Idempotent - safe to call again.
+   */
+  async linkCashierAccount(id: number): Promise<PettyCashFund> {
+    const response = await api.post(
+      `/cash-management/petty-cash-funds/${id}/link_cashier_account/`
+    );
+    return response;
+  },
+
   // ============================================
   // PETTY CASH VOUCHERS
   // ============================================

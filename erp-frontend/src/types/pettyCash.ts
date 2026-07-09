@@ -21,6 +21,14 @@ export interface PettyCashFund {
   needs_replenishment: boolean;
   disbursed_amount: string;
   pending_vouchers_count: number;
+  /** The CashierAccount wrapping this fund's GL account, if one has been set up (see link_cashier_account). */
+  cashier_account: {
+    id: number;
+    account_number: string;
+    name: string;
+    current_balance: string;
+    cashier_name: string | null;
+  } | null;
   branch: number;
   branch_name: string;
   notes: string;

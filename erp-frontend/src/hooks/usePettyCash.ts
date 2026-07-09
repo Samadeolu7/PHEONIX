@@ -127,6 +127,22 @@ export const useSetupPettyCashFund = () => {
   });
 };
 
+export const useLinkPettyCashCashierAccount = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => pettyCashService.linkCashierAccount(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.fundDetail(id) });
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.funds() });
+      toast.success('Petty cash is now set up as a cashier till');
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || 'Failed to set up cashier account');
+    },
+  });
+};
+
 // ============================================
 // PETTY CASH VOUCHER HOOKS
 // ============================================

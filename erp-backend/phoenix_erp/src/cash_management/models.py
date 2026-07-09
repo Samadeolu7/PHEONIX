@@ -1419,11 +1419,64 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     def get_pending_vouchers(self):
         """Get pending vouchers"""
         return self.vouchers.filter(status='pending')
-    
+
     def get_approved_vouchers(self):
         """Get approved vouchers"""
         return self.vouchers.filter(status='approved')
-    
+
+    @db_transaction.atomic
+    def get_or_create_cashier_account(self):
+        """
+        Get or create the CashierAccount that wraps this fund's GL account,
+        with the fund's custodian as its cashier.
+
+        PettyCashFund alone isn't wired into BankTransfer, CashReconciliation,
+        or the cashier summary dashboard - wrapping its GL account in a
+        CashierAccount gets all of that for free, without changing how
+        PettyCashVoucher/PettyCashReplenishment post GL entries.
+
+        Idempotent: returns the existing CashierAccount (restoring it first
+        if it was soft-deleted) if one already wraps this fund's GL account.
+        Shared by both the link_petty_cash_cashier_account management
+        command and PettyCashFundViewSet.link_cashier_account, so the two
+        never drift out of agreement about how this is done.
+        """
+        if self.petty_cash_account_id is None:
+            raise ValidationError(
+                'This fund has no linked GL account (petty_cash_account is null).'
+            )
+
+        existing = CashierAccount.objects.filter(account=self.petty_cash_account)
+        active = existing.filter(is_deleted=False).first()
+        if active:
+            return active
+
+        dead = existing.filter(is_deleted=True).first()
+        if dead:
+            dead.is_deleted = False
+            dead.is_active = True
+            dead.cashier = self.custodian
+            dead.save(update_fields=['is_deleted', 'is_active', 'cashier'])
+            cashier_account = dead
+        else:
+            cashier_account = CashierAccount.objects.create(
+                cashier=self.custodian,
+                account=self.petty_cash_account,
+                account_number=f'PETTY-{self.fund_code}',
+                name=f'{self.fund_name} - Cashier Till',
+                branch=self.branch,
+                owner=self.owner,
+                is_active=True,
+                requires_dual_approval=False,
+            )
+
+        self.petty_cash_account.refresh_from_db(fields=['balance'])
+        CashierAccount.objects.filter(pk=cashier_account.pk).update(
+            current_balance=self.petty_cash_account.balance
+        )
+        cashier_account.refresh_from_db(fields=['current_balance'])
+        return cashier_account
+
     @db_transaction.atomic
     def establish_fund(self, source_account, user):
         """

@@ -2,6 +2,7 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.core.exceptions import ValidationError
 from django.db.models import Sum, Q
 from .permissions import CanPostTodayPermission
 from django.utils import timezone
@@ -854,6 +855,24 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(fund)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='link_cashier_account')
+    def link_cashier_account(self, request, pk=None):
+        """
+        Wrap this fund's GL account in a CashierAccount (custodian as
+        cashier), so petty cash can be funded via ordinary BankTransfer,
+        covered by daily CashReconciliation, and shown in the cashier summary
+        dashboard alongside other tills. Idempotent - returns the existing
+        CashierAccount if one is already linked.
+        """
+        fund = self.get_object()
+        try:
+            fund.get_or_create_cashier_account()
+        except ValidationError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = self.get_serializer(fund)
+        return Response(serializer.data)
 
     @action(detail=True, methods=['post'])
     def setup(self, request, pk=None):
