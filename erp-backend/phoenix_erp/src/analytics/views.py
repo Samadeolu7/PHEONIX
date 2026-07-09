@@ -235,10 +235,12 @@ class MicrofinanceDashboardStatsView(APIView):
 
             data['active_loans'] = loan_qs.filter(status__in=['active', 'disbursed']).count()
 
-            total_book = loan_qs.filter(
-                status__in=['active', 'disbursed']
-            ).aggregate(total=Sum('outstanding_principal'))['total'] or Decimal('0.00')
-            data['total_loan_book'] = str(total_book)
+            # Gross Loan Portfolio — must match the PAR report's definition
+            # (loans/views.py par_summary/cbn_returns), which includes
+            # 'defaulted' loans since they still carry outstanding balances.
+            active_qs = loan_qs.filter(status__in=['active', 'disbursed', 'defaulted'])
+            glp = active_qs.aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0.00')
+            data['total_loan_book'] = str(glp)
 
             disbursed_this_month = loan_qs.filter(
                 disbursement_date__year=today.year,
@@ -268,8 +270,6 @@ class MicrofinanceDashboardStatsView(APIView):
             data['defaulting_loans'] = loan_qs.filter(status='defaulted').count()
 
             # PAR30 — outstanding balance of loans > 30 days in arrears
-            active_qs = loan_qs.filter(status__in=['active', 'disbursed', 'defaulted'])
-            glp = active_qs.aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0')
             par30_bal = active_qs.filter(
                 days_in_arrears__gte=30
             ).aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0')
