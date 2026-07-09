@@ -258,7 +258,9 @@ class SavingsAccountViewSet(ScopedModelViewSet):
     def deposit(self, request, pk=None):
         """
         Record a direct deposit to a savings account.
-        Body: {amount, description, payment_date (optional), cashier_account_id (optional)}
+        Body: {amount, description, payment_date (optional), payment_method ('cash'|'bank',
+        default 'cash'), cashier_account_id (optional, cash only),
+        bank_account_id (required when payment_method='bank')}
         """
         from decimal import Decimal
         account = self.get_object()
@@ -275,16 +277,26 @@ class SavingsAccountViewSet(ScopedModelViewSet):
         if amount <= 0:
             return Response({'detail': 'Amount must be positive.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        payment_method = request.data.get('payment_method', 'cash')
+        bank_account_id = request.data.get('bank_account_id') or request.data.get('bank_account')
         cashier_account_id = request.data.get('cashier_account_id')
         from cash_management.services.payment_routing import PaymentRoutingService
         from django.core.exceptions import ValidationError
         try:
-            cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
-                request.user,
-                owner=account.owner,
-                branch=account.branch,
-                cashier_account_id=cashier_account_id,
-            )
+            if payment_method == 'bank':
+                if not bank_account_id:
+                    return Response(
+                        {'detail': 'bank_account_id is required for bank deposits.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                cashier_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id)
+            else:
+                cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
+                    request.user,
+                    owner=account.owner,
+                    branch=account.branch,
+                    cashier_account_id=cashier_account_id,
+                )
         except ValidationError as exc:
             return Response(
                 {'detail': str(exc.message if hasattr(exc, 'message') else exc)},

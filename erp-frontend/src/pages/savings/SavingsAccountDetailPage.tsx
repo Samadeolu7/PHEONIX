@@ -76,6 +76,7 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'bank'>('cash');
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [selectedBankAccount, setSelectedBankAccount] = useState<number | ''>('');
 
@@ -90,6 +91,10 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
       setError('Please enter a valid amount.');
       return;
     }
+    if (paymentMethod === 'bank' && !selectedBankAccount) {
+      setError('Please select a destination bank account.');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -97,7 +102,8 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
         amount,
         description: description || 'Deposit',
         payment_date: paymentDate,
-        bank_account: selectedBankAccount,
+        payment_method: paymentMethod,
+        ...(paymentMethod === 'bank' ? { bank_account_id: selectedBankAccount } : {}),
       });
       setSuccess(true);
       setTimeout(onSuccess, 1200);
@@ -153,30 +159,63 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Destination Bank Account
-              </label>
-
-              <select
-                value={selectedBankAccount}
-                onChange={e => setSelectedBankAccount(e.target.value ? Number(e.target.value) : '')}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                required
-              >
-                <option value="">Select bank account</option>
-
-                {bankAccounts.map(account => (
-                  <option key={account.id} value={account.id}>
-                    {account.bank_name}
-                    {' — '}
-                    {account.account_number}
-                    {' ('}
-                    {account.account_name}
-                    {')'}
-                  </option>
-                ))}
-              </select>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Payment Method</label>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('cash')}
+                  className={`flex-1 rounded-lg border-2 py-2 text-sm font-medium transition-colors ${
+                    paymentMethod === 'cash'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 text-gray-500 hover:border-green-300'
+                  }`}
+                >
+                  💵 Cash
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod('bank')}
+                  className={`flex-1 rounded-lg border-2 py-2 text-sm font-medium transition-colors ${
+                    paymentMethod === 'bank'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 text-gray-500 hover:border-green-300'
+                  }`}
+                >
+                  🏦 Bank
+                </button>
+              </div>
             </div>
+            {paymentMethod === 'bank' && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Destination Bank Account
+                </label>
+
+                <select
+                  aria-label="Destination Bank Account"
+                  title="Destination Bank Account"
+                  value={selectedBankAccount}
+                  onChange={e =>
+                    setSelectedBankAccount(e.target.value ? Number(e.target.value) : '')
+                  }
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                  required
+                >
+                  <option value="">Select bank account</option>
+
+                  {bankAccounts.map(account => (
+                    <option key={account.id} value={account.id}>
+                      {account.bank_name}
+                      {' — '}
+                      {account.account_number}
+                      {' ('}
+                      {account.account_name}
+                      {')'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
               <input
