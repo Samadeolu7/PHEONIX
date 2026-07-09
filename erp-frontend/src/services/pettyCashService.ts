@@ -85,6 +85,20 @@ export const pettyCashService = {
     return response;
   },
 
+  /**
+   * Repoint this fund at an already-existing CashierAccount's GL account
+   * (e.g. a branch cashier's own till) instead of creating a new one. Any
+   * balance still sitting on the fund's current GL account is moved over via
+   * a proper journal entry first, so nothing is lost.
+   */
+  async linkExistingCashierAccount(id: number, cashierAccountId: number): Promise<PettyCashFund> {
+    const response = await api.post(
+      `/cash-management/petty-cash-funds/${id}/link_existing_cashier_account/`,
+      { cashier_account: cashierAccountId }
+    );
+    return response;
+  },
+
   // ============================================
   // PETTY CASH VOUCHERS
   // ============================================

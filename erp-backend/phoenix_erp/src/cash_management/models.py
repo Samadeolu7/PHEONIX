@@ -1478,6 +1478,91 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         return cashier_account
 
     @db_transaction.atomic
+    def link_existing_cashier_account(self, cashier_account, user):
+        """
+        Repoint this fund at an already-existing CashierAccount's GL account,
+        instead of creating a new till (see get_or_create_cashier_account for
+        that path). Use this when petty cash should be handled by someone who
+        already has their own cashier till (e.g. a branch cashier), rather
+        than spinning up a separate "PETTY-xxx" account for them.
+
+        If the fund's current petty_cash_account carries a non-zero balance,
+        it is moved to the new account via a proper double-entry journal
+        (Dr new account / Cr old account) before repointing, so the money is
+        never silently orphaned. The fund's custodian is updated to the
+        target account's cashier, matching the reassign_cashier action's
+        rule that PettyCashFund.custodian and CashierAccount.cashier must
+        always agree about who's responsible.
+
+        A CashierAccount previously auto-created for this fund by
+        get_or_create_cashier_account() (account_number == f'PETTY-{fund_code}')
+        is soft-deleted as part of the switch, since it would otherwise be
+        left behind pointing at an account this fund no longer uses.
+        """
+        if cashier_account.account_id is None:
+            raise ValidationError(
+                f'CashierAccount {cashier_account.account_number!r} has no linked GL account.'
+            )
+        if cashier_account.cashier_id is None:
+            raise ValidationError(
+                f'CashierAccount {cashier_account.account_number!r} has no assigned cashier - '
+                f'assign one (see Reassign) before linking it to a petty cash fund.'
+            )
+
+        old_account = self.petty_cash_account
+        new_account = cashier_account.account
+
+        if new_account.pk == old_account.pk:
+            return  # already linked to this exact account - nothing to do
+
+        old_account.refresh_from_db(fields=['balance'])
+        if old_account.balance != Decimal('0.00'):
+            from transactions.models import Transaction, TransactionEntry, TransactionSeries
+
+            series, _ = TransactionSeries.objects.get_or_create(
+                code='RECL',
+                defaults={'description': 'GL Reclassification / Correction Entries'},
+            )
+            journal = Transaction.objects.create(
+                series=series,
+                date=timezone.now().date(),
+                description=(
+                    f'Petty cash relink: moving {old_account.balance} from '
+                    f'{old_account.code} to {new_account.code} '
+                    f'({cashier_account.account_number})'
+                ),
+                owner=self.owner,
+                branch=self.branch,
+                created_by=user,
+            )
+            TransactionEntry.objects.create(
+                transaction=journal, account=new_account,
+                side=TransactionEntry.DEBIT, amount=old_account.balance,
+            )
+            TransactionEntry.objects.create(
+                transaction=journal, account=old_account,
+                side=TransactionEntry.CREDIT, amount=old_account.balance,
+            )
+            journal.post()
+
+        # Retire the till previously auto-created for this fund, if any - it
+        # would otherwise be left pointing at an account this fund no longer uses.
+        CashierAccount.objects.filter(
+            account=old_account, account_number=f'PETTY-{self.fund_code}', is_deleted=False,
+        ).update(is_deleted=True, is_active=False)
+
+        self.petty_cash_account = new_account
+        self.custodian = cashier_account.cashier
+        self.save(update_fields=['petty_cash_account', 'custodian'])
+
+        new_account.refresh_from_db(fields=['balance'])
+        CashierAccount.objects.filter(pk=cashier_account.pk).update(
+            current_balance=new_account.balance
+        )
+        PettyCashFund.objects.filter(pk=self.pk).update(current_balance=new_account.balance)
+        self.refresh_from_db(fields=['current_balance'])
+
+    @db_transaction.atomic
     def establish_fund(self, source_account, user):
         """
         Establish petty cash fund with initial GL entry.

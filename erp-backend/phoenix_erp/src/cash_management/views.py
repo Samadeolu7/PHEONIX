@@ -874,6 +874,41 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(fund)
         return Response(serializer.data)
 
+    @action(detail=True, methods=['post'], url_path='link_existing_cashier_account')
+    def link_existing_cashier_account(self, request, pk=None):
+        """
+        Repoint this fund at an already-existing CashierAccount's GL account
+        (e.g. a branch cashier's own till), instead of creating a new
+        "PETTY-xxx" account for it. Any balance still sitting on the fund's
+        current GL account is moved to the new one via a proper journal
+        entry first, so nothing is silently lost.
+        """
+        from .models import CashierAccount
+
+        fund = self.get_object()
+
+        cashier_account_id = request.data.get('cashier_account')
+        if not cashier_account_id:
+            return Response(
+                {'detail': 'cashier_account is required.'}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            cashier_account = CashierAccount.objects.get(pk=cashier_account_id, is_deleted=False)
+        except CashierAccount.DoesNotExist:
+            return Response(
+                {'detail': f'No CashierAccount with id={cashier_account_id}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            fund.link_existing_cashier_account(cashier_account, request.user)
+        except ValidationError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = self.get_serializer(fund)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'])
     def setup(self, request, pk=None):
         """

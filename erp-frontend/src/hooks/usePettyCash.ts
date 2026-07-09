@@ -143,6 +143,24 @@ export const useLinkPettyCashCashierAccount = () => {
   });
 };
 
+export const useLinkExistingPettyCashCashierAccount = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, cashierAccountId }: { id: number; cashierAccountId: number }) =>
+      pettyCashService.linkExistingCashierAccount(id, cashierAccountId),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.fundDetail(id) });
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.funds() });
+      queryClient.invalidateQueries({ queryKey: ['cashier-accounts'] });
+      toast.success('Petty cash is now linked to the selected cashier');
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || 'Failed to link cashier account');
+    },
+  });
+};
+
 // ============================================
 // PETTY CASH VOUCHER HOOKS
 // ============================================

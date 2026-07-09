@@ -25,7 +25,18 @@ import {
   usePettyCashVouchers,
   usePettyCashReplenishments,
   useLinkPettyCashCashierAccount,
+  useLinkExistingPettyCashCashierAccount,
 } from '../../hooks/usePettyCash';
+import { useAllCashierAccounts } from '../../hooks/useTreasury';
+import Dialog, {
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../components/ui/Dialog';
+import { Button } from '@/components/ui/Button';
+import { Label } from '../../components/ui/Label';
 
 /** Safely format a nullable/undefined date string; returns fallback on invalid values. */
 const safeDate = (value: string | null | undefined, fmt: string, fallback = '\u2014'): string => {
@@ -39,6 +50,83 @@ const safeDate = (value: string | null | undefined, fmt: string, fallback = '\u2
   }
 };
 
+const LinkExistingCashierDialog: React.FC<{
+  fundId: number;
+  currentCashierAccountId: number | undefined;
+  open: boolean;
+  onClose: () => void;
+}> = ({ fundId, currentCashierAccountId, open, onClose }) => {
+  const { data: accounts = [] } = useAllCashierAccounts();
+  const [selected, setSelected] = useState<number | ''>('');
+  const linkExisting = useLinkExistingPettyCashCashierAccount();
+
+  const options = accounts.filter(a => a.id !== currentCashierAccountId);
+  const selectedAccount = options.find(a => a.id === selected);
+
+  const handleClose = () => {
+    setSelected('');
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={o => !o && handleClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Link to Existing Cashier</DialogTitle>
+          <DialogDescription>
+            Point petty cash at a cashier who already has their own till, instead of a separate
+            petty-cash-only account. If petty cash currently holds a balance, it is moved to the
+            selected till first, so nothing is lost.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 py-2">
+          <Label htmlFor="existing-cashier" className="text-sm font-medium text-gray-700">
+            Cashier Account
+          </Label>
+          <select
+            id="existing-cashier"
+            title="Cashier Account"
+            value={selected}
+            onChange={e => setSelected(e.target.value ? Number(e.target.value) : '')}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="">Select a cashier account\u2026</option>
+            {options.map(a => (
+              <option key={a.id} value={a.id}>
+                {a.account_number} &middot; {a.name}
+                {a.cashier_name ? ` (${a.cashier_name})` : ''}
+              </option>
+            ))}
+          </select>
+          {selectedAccount && (
+            <p className="text-xs text-gray-500">
+              Current balance on this till: \u20a6
+              {parseFloat(selectedAccount.current_balance).toLocaleString()}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={handleClose} disabled={linkExisting.isPending}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              if (typeof selected !== 'number') return;
+              linkExisting.mutate(
+                { id: fundId, cashierAccountId: selected },
+                { onSuccess: handleClose }
+              );
+            }}
+            disabled={typeof selected !== 'number' || linkExisting.isPending}
+          >
+            {linkExisting.isPending ? 'Linking\u2026' : 'Link'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export const PettyCashFundDetail: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -49,6 +137,7 @@ export const PettyCashFundDetail: React.FC = () => {
   );
 
   const linkCashierAccount = useLinkPettyCashCashierAccount();
+  const [showLinkExisting, setShowLinkExisting] = useState(false);
 
   // Fetch fund data
   const { data: fund, isLoading: loadingFund } = usePettyCashFund(fundId);
@@ -284,13 +373,22 @@ export const PettyCashFundDetail: React.FC = () => {
                   {parseFloat(fund.cashier_account.current_balance).toLocaleString()}
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => navigate('/treasury/cashier-accounts')}
-                className="text-sm text-blue-600 hover:underline"
-              >
-                View in Cashier Accounts
-              </button>
+              <div className="flex items-center gap-3 shrink-0 ml-4">
+                <button
+                  type="button"
+                  onClick={() => setShowLinkExisting(true)}
+                  className="text-sm text-gray-600 hover:underline"
+                >
+                  Switch to Existing Cashier
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/treasury/cashier-accounts')}
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  View in Cashier Accounts
+                </button>
+              </div>
             </div>
           ) : (
             <div className="flex items-center justify-between">
@@ -298,19 +396,35 @@ export const PettyCashFundDetail: React.FC = () => {
                 Not yet set up as a cashier till, so it cannot be funded via bank transfer or
                 reconciled.
               </p>
-              <button
-                type="button"
-                onClick={() => linkCashierAccount.mutate(fundId)}
-                disabled={linkCashierAccount.isPending}
-                className="shrink-0 ml-4 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-              >
-                <UserCogIcon className="h-4 w-4" />
-                {linkCashierAccount.isPending ? 'Setting up…' : 'Set Up as Cashier Till'}
-              </button>
+              <div className="flex items-center gap-3 shrink-0 ml-4">
+                <button
+                  type="button"
+                  onClick={() => setShowLinkExisting(true)}
+                  className="text-sm text-gray-600 hover:underline"
+                >
+                  Link Existing Cashier
+                </button>
+                <button
+                  type="button"
+                  onClick={() => linkCashierAccount.mutate(fundId)}
+                  disabled={linkCashierAccount.isPending}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  <UserCogIcon className="h-4 w-4" />
+                  {linkCashierAccount.isPending ? 'Setting up…' : 'Set Up as Cashier Till'}
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      <LinkExistingCashierDialog
+        fundId={fundId}
+        currentCashierAccountId={fund.cashier_account?.id}
+        open={showLinkExisting}
+        onClose={() => setShowLinkExisting(false)}
+      />
 
       {/* Tabs */}
       <div className="bg-white rounded-lg shadow">
