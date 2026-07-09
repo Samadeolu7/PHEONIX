@@ -304,7 +304,10 @@ class SavingsAccountViewSet(ScopedModelViewSet):
             )
 
         description = request.data.get('description', 'Deposit')
-        payment_date_raw = request.data.get('payment_date')
+        # Frontend callers (SavingsDepositPage, ThriftMultiDayPage, GroupCombinedReceiptPage,
+        # CombinedReceiptPage) all send the deposit date as `date`, not `payment_date` —
+        # accept both so backdated deposits actually land on the entered date.
+        payment_date_raw = request.data.get('payment_date') or request.data.get('date')
         deposit_date = None
         if payment_date_raw:
             from datetime import date as dt_date
