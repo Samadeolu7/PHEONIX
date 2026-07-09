@@ -987,6 +987,18 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             ValidationError: if the loan is not active/disbursed, if no
                 payment_account is provided, or if amount exceeds total outstanding.
         """
+        # Lock this loan row for the duration of the transaction so two
+        # overlapping repayment postings (double-submit, retried request,
+        # concurrent collection-sheet items) can never race: without this,
+        # both could read the same "next pending" schedule row and the same
+        # starting balances, each independently believe they filled it, and
+        # the loan's aggregate totals (self.total_paid, outstanding_*) would
+        # advance correctly while one schedule installment is silently
+        # skipped — the underlying cause of the paid/pending drift this
+        # lock closes.
+        type(self).objects.select_for_update().get(pk=self.pk)
+        self.refresh_from_db()
+
         if self.status not in ['active', 'disbursed', 'defaulted']:
             raise ValidationError("Cannot record payment for inactive loan")
 
