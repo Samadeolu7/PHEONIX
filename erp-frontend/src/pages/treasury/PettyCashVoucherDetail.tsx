@@ -74,7 +74,12 @@ export const PettyCashVoucherDetail: React.FC = () => {
       await submitMutation.mutateAsync(voucherId);
       navigate('/treasury/petty-cash');
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to submit voucher');
+      setError(
+        err.response?.data?.error ||
+          err.response?.data?.detail ||
+          err.response?.data?.message ||
+          'Failed to submit voucher'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -106,7 +111,12 @@ export const PettyCashVoucherDetail: React.FC = () => {
       setActionDialog({ visible: false, type: null });
       setActionComments('');
     } catch (err: any) {
-      setError(err.response?.data?.message || `Failed to ${actionDialog.type} voucher`);
+      setError(
+        err.response?.data?.error ||
+          err.response?.data?.detail ||
+          err.response?.data?.message ||
+          `Failed to ${actionDialog.type} voucher`
+      );
     } finally {
       setSubmitting(false);
     }

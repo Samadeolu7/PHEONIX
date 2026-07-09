@@ -1489,10 +1489,10 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         If the fund's current petty_cash_account carries a non-zero balance,
         it is moved to the new account via a proper double-entry journal
         (Dr new account / Cr old account) before repointing, so the money is
-        never silently orphaned. The fund's custodian is updated to the
-        target account's cashier, matching the reassign_cashier action's
-        rule that PettyCashFund.custodian and CashierAccount.cashier must
-        always agree about who's responsible.
+        never silently orphaned. The fund's custodian AND fund_name are
+        updated to match the target account's cashier - same rule as
+        reassign_cashier, so a fund can never keep displaying a stale name
+        (e.g. "MoniePoint") after being handed to someone else.
 
         A CashierAccount previously auto-created for this fund by
         get_or_create_cashier_account() (account_number == f'PETTY-{fund_code}')
@@ -1551,9 +1551,14 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             account=old_account, account_number=f'PETTY-{self.fund_code}', is_deleted=False,
         ).update(is_deleted=True, is_active=False)
 
+        new_custodian_label = (
+            cashier_account.cashier.get_full_name() or cashier_account.cashier.username
+        )
+
         self.petty_cash_account = new_account
         self.custodian = cashier_account.cashier
-        self.save(update_fields=['petty_cash_account', 'custodian'])
+        self.fund_name = f'{new_custodian_label} - Petty Cash'
+        self.save(update_fields=['petty_cash_account', 'custodian', 'fund_name'])
 
         new_account.refresh_from_db(fields=['balance'])
         CashierAccount.objects.filter(pk=cashier_account.pk).update(
