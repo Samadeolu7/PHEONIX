@@ -336,6 +336,15 @@ class LoanAccountViewSet(ScopedModelViewSet):
         # Client-level visibility (not derived from loans_qs — a client with
         # no loan, e.g. a pure savings/thrift member, must still be visible
         # to the officer who's assigned to them).
+        #
+        # This must mirror _apply_officer_scope's tiers (same PermissionResolver
+        # scope this viewset already uses for the "due" side via get_queryset()),
+        # not a hardcoded assigned_officer/reports_to check — otherwise a user
+        # whose configured scope is own_branch/global (a branch manager, ops
+        # staff, director — anyone not literally is_system_admin or the tenant
+        # owner) would correctly see every branch loan in "due" but have
+        # "collected" silently narrowed to only their own directly-assigned
+        # clients, making same-day collections by colleagues disappear.
         user = request.user
         clients_qs = Client.objects.all()
         is_unrestricted = (
@@ -343,13 +352,25 @@ class LoanAccountViewSet(ScopedModelViewSet):
             or (callable(getattr(user, 'is_owner', None)) and user.is_owner())
         )
         if not is_unrestricted:
-            staff = getattr(user, 'staff_profile', None)
-            if staff:
-                clients_qs = clients_qs.filter(
-                    Q(assigned_officer=staff) | Q(assigned_officer__reports_to=staff)
-                )
-            else:
-                clients_qs = clients_qs.none()
+            from permissions.services import PermissionResolver
+            scope = PermissionResolver.resolve(
+                user, module='loans', page='loan-accounts',
+            ).scope
+            if scope not in ('own_branch', 'global'):
+                staff = getattr(user, 'staff_profile', None)
+                if not staff:
+                    clients_qs = clients_qs.none()
+                elif scope == 'ajo_group':
+                    clients_qs = clients_qs.filter(
+                        Q(assigned_officer=staff)
+                        | Q(assigned_officer__reports_to=staff)
+                        | Q(group__assigned_officer=staff)
+                        | Q(assigned_officer__isnull=True)
+                    )
+                else:
+                    clients_qs = clients_qs.filter(
+                        Q(assigned_officer=staff) | Q(assigned_officer__isnull=True)
+                    )
         visible_client_ids = set(clients_qs.values_list('id', flat=True))
 
         # ── Due today ──────────────────────────────────────────────────────

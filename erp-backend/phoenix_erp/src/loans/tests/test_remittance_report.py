@@ -26,7 +26,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from common.managers import set_current_tenant
-from users.models import Tenant, User
+from users.models import Tenant, User, Role
 from branches.models import Branch
 from accounts.models import Account
 from products.models import Product
@@ -265,3 +265,47 @@ class RemittanceReportTestCase(TestCase):
         expected_total = bob_schedule.interest_due + cathy_schedule.interest_due + Decimal("200.00")
         self.assertEqual(Decimal(data["summary"]["total_collected"]), expected_total)
         self.assertEqual(Decimal(data["summary"]["total_cash"]), expected_total)
+
+    def test_own_branch_scope_user_sees_collections_for_clients_not_assigned_to_them(self):
+        """
+        Regression test: a user whose configured permission scope is
+        own_branch/global (the default for any Role — see Role.default_scope)
+        must see every collection in their branch, not just clients directly
+        assigned to them. The "due" side already got this right via
+        get_queryset() -> _apply_officer_scope(); the "collected" side used to
+        hardcode an assigned_officer/reports_to check that ignored scope
+        entirely, so a branch manager viewing the report would see the correct
+        "due today" list but a collection made by a colleague's client would
+        silently vanish from "collected today".
+        """
+        # Cathy is assigned to self.officer — the viewing user below has no
+        # staff/officer relationship to her at all.
+        cathy_loan = self._make_loan(self.cathy, "LN-CATHY-2")
+        cathy_schedule = cathy_loan.repayment_schedule.order_by("due_date").first()
+        cathy_loan.record_payment(
+            amount=cathy_schedule.interest_due,
+            payment_date=self.today,
+            payment_account=self.cashier_gl_account,
+            received_by=self.owner,
+        )
+
+        branch_manager = User.objects.create_user(username="remit_bm", password="pass")
+        branch_manager.tenant = self.tenant
+        branch_manager.branch = self.branch
+        branch_manager.save()
+        role = Role.objects.create(
+            tenant=self.tenant, name="Branch Manager",
+            default_scope=Role.SCOPE_OWN_BRANCH,
+        )
+        branch_manager.roles.add(role)
+
+        client = APIClient()
+        client.force_authenticate(user=branch_manager)
+        response = client.get(
+            "/api/loans/accounts/remittance-report/", {"date": str(self.today)}
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        collected_clients = {row["client_name"] for row in data["loan_collections"]}
+        self.assertIn(self.cathy.full_name, collected_clients)
