@@ -530,6 +530,25 @@ export const loanService = {
     return api.post(`${BASE}/repayment-requests/${id}/reject/`, { rejection_reason });
   },
 
+  // ===== RESTRUCTURE REQUESTS (director approval) =====
+
+  async proposeRestructure(loanId: number, data: ProposeRestructurePayload): Promise<LoanRestructureRequest> {
+    return api.post(`${BASE}/accounts/${loanId}/propose_restructure/`, data);
+  },
+
+  async listRestructureRequests(params?: { status?: string }): Promise<LoanRestructureRequest[]> {
+    const res = await api.get(`${BASE}/restructure-requests/`, { params });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  async approveRestructureRequest(id: number): Promise<LoanRestructureRequest> {
+    return api.post(`${BASE}/restructure-requests/${id}/approve/`);
+  },
+
+  async rejectRestructureRequest(id: number, rejection_reason: string): Promise<LoanRestructureRequest> {
+    return api.post(`${BASE}/restructure-requests/${id}/reject/`, { rejection_reason });
+  },
+
   // ===== OFFLINE PAYMENT RECORDS (field collection) =====
 
   async createOfflinePayment(data: OfflinePaymentPayload): Promise<OfflinePaymentRecord> {
@@ -683,10 +702,6 @@ export const loanService = {
 
   // ===== CBN COMPLIANCE =====
 
-  async restructureLoan(id: number, data: RestructureLoanPayload): Promise<RestructureLoanResult> {
-    return api.post(`${BASE}/accounts/${id}/restructure/`, data);
-  },
-
   async getLoanStatement(id: number): Promise<LoanStatement> {
     return api.get(`${BASE}/accounts/${id}/statement/`);
   },
@@ -814,22 +829,55 @@ export interface LoanRestructure {
   new_repayment_frequency: string;
   new_installment_amount: string;
   new_maturity_date: string | null;
+  carried_interest: string;
+  carried_penalties: string;
+  normal_interest_amount: string;
+  restructure_interest_amount: string;
+  journal_entry: number | null;
   created_at: string;
 }
 
-export interface RestructureLoanPayload {
+/** Submitted by an officer — the interest rate is derived at approval time, never typed in. */
+export interface ProposeRestructurePayload {
   new_term: number;
-  new_term_unit: 'days' | 'weeks' | 'months';
-  new_interest_rate: string;
-  new_repayment_frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
   effective_date?: string;
   reason?: string;
   notes?: string;
 }
 
-export interface RestructureLoanResult {
-  restructure: LoanRestructure;
-  loan: LoanAccount;
+export interface RestructurePreview {
+  new_interest_rate: string;
+  total_new_interest: string;
+  normal_interest_amount: string;
+  restructure_interest_amount: string;
+}
+
+export interface LoanRestructureRequest {
+  id: number;
+  loan: number;
+  loan_number: string;
+  client_name: string;
+  current_term: number;
+  current_term_unit: string;
+  current_interest_rate: string;
+  outstanding_principal: string;
+  new_term: number;
+  effective_date: string | null;
+  reason: string;
+  notes: string;
+  preview: RestructurePreview | null;
+  requested_by: number;
+  requested_by_name: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewed_by: number | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string;
+  restructure: number | null;
+  owner: number;
+  branch: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface LoanStatement {

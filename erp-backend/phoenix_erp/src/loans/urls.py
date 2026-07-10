@@ -6,6 +6,7 @@ from .views import (
     LoanProductFeeViewSet, LoanProductSavingsRequirementViewSet,
     LoanFeeApplicationViewSet, FeesPreviewView,
     LoanRepaymentRequestViewSet,
+    LoanRestructureRequestViewSet,
     OfflinePaymentRecordViewSet,
 )
 
@@ -22,6 +23,7 @@ router.register(r'product-savings-requirements', LoanProductSavingsRequirementVi
 router.register(r'fee-applications', LoanFeeApplicationViewSet, basename='loanaccount-feeapps')
 router.register(r'fees-preview', FeesPreviewView, basename='loanproduct-fees-preview')
 router.register(r'repayment-requests', LoanRepaymentRequestViewSet, basename='loanrepaymentrequest')
+router.register(r'restructure-requests', LoanRestructureRequestViewSet, basename='loanrestructurerequest')
 router.register(r'offline-payments', OfflinePaymentRecordViewSet, basename='offlinepaymentrecord')
 
 app_name = 'loans'

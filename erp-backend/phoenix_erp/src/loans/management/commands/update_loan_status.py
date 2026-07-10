@@ -4,10 +4,14 @@ Management command: update_loan_status
 Run daily (cron/Celery beat). For every active loan:
   1. Recalculates arrears (days_in_arrears, arrears_amount, overdue installments)
   2. Updates CBN risk classification + provision amount
-  3. Suspends interest on loans crossing 90 DPD (CBN NPL rule)
-  4. Reinstates interest when a loan cures below 90 DPD
-  5. Applies late-payment penalties per product configuration
-  6. Flags status='defaulted' for loans 90+ DPD (configurable via --default-threshold)
+  3. Applies late-payment penalties per product configuration
+  4. Flags status='defaulted' for loans 90+ DPD (configurable via --default-threshold)
+
+Interest is recognized in full at disbursement (see LoanAccount.disburse()), so
+there is no periodic interest accrual to suspend/reinstate on NPL loans — this
+command intentionally does not touch LoanAccount.interest_suspended. status
+still transitions to 'defaulted' as before (used by AR aging / portfolio
+dashboards); repayments remain postable on defaulted loans either way.
 
 Usage:
     python manage.py update_loan_status
@@ -22,7 +26,7 @@ from django.utils import timezone
 
 
 class Command(BaseCommand):
-    help = 'Daily loan status update: arrears, classification, interest suspension, penalties.'
+    help = 'Daily loan status update: arrears, classification, penalties, default flagging.'
 
     def add_arguments(self, parser):
         parser.add_argument('--dry-run', action='store_true')
@@ -56,7 +60,7 @@ class Command(BaseCommand):
         total = loans.count()
         self.stdout.write(f'Processing {total} loans as of {today}…')
 
-        stats = dict(updated=0, suspended=0, reinstated=0, penalised=0, defaulted=0, errors=0)
+        stats = dict(updated=0, penalised=0, defaulted=0, errors=0)
 
         for loan in loans:
             try:
@@ -71,21 +75,7 @@ class Command(BaseCommand):
                     # 2. Update risk classification
                     loan.update_risk_classification()
 
-                    # 3. Interest suspension / reinstatement
-                    if loan.days_in_arrears >= 90 and not loan.interest_suspended:
-                        loan.suspend_interest(today=today)
-                        stats['suspended'] += 1
-                        self.stdout.write(
-                            f'  [{loan.loan_number}] SUSPENDED interest ({loan.days_in_arrears} DPD)'
-                        )
-                    elif loan.days_in_arrears < 90 and loan.interest_suspended:
-                        loan.reinstate_interest()
-                        stats['reinstated'] += 1
-                        self.stdout.write(
-                            f'  [{loan.loan_number}] REINSTATED interest ({loan.days_in_arrears} DPD)'
-                        )
-
-                    # 4. Auto-penalty: apply to overdue installments. Recomputes from
+                    # 3. Auto-penalty: apply to overdue installments. Recomputes from
                     # the current days_late every run (not gated on penalty_due=0) so
                     # a percentage penalty keeps growing as more repayment periods
                     # (weeks/months, per the loan's frequency) elapse overdue,
@@ -110,7 +100,7 @@ class Command(BaseCommand):
                         loan.outstanding_penalties += penalty_total
                         stats['penalised'] += 1
 
-                    # 5. Mark defaulted at threshold
+                    # 4. Mark defaulted at threshold
                     if (
                         loan.days_in_arrears >= default_threshold
                         and loan.status != 'defaulted'
@@ -136,7 +126,6 @@ class Command(BaseCommand):
                 )
 
         self.stdout.write(self.style.SUCCESS(
-            f'Done. updated={stats["updated"]} suspended={stats["suspended"]} '
-            f'reinstated={stats["reinstated"]} penalised={stats["penalised"]} '
+            f'Done. updated={stats["updated"]} penalised={stats["penalised"]} '
             f'defaulted={stats["defaulted"]} errors={stats["errors"]}'
         ))

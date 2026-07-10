@@ -16,7 +16,7 @@ from common.views import ScopedModelViewSet
 from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest, LoanRestructure,
-    OfflinePaymentRecord,
+    LoanRestructureRequest, OfflinePaymentRecord,
 )
 from .serializers import (
     LoanProductSerializer,
@@ -24,6 +24,7 @@ from .serializers import (
     LoanRepaymentScheduleSerializer, LoanCollateralSerializer, LoanGuarantorSerializer,
     LoanVerificationRequestSerializer, LoanDisbursementSerializer,
     LoanRepaymentRequestSerializer, LoanRestructureSerializer,
+    LoanRestructureRequestSerializer,
     OfflinePaymentRecordSerializer,
 )
 from .utils import LoanVerifier
@@ -1320,34 +1321,34 @@ class LoanAccountViewSet(ScopedModelViewSet):
     # ── CBN Compliance endpoints ──────────────────────────────────────────
 
     @action(detail=True, methods=['post'])
-    def restructure(self, request, pk=None):
+    def propose_restructure(self, request, pk=None):
         """
-        Restructure a loan — change terms, regenerate schedule from outstanding principal.
+        Submit a restructure proposal for director approval — does NOT touch
+        the loan's schedule or GL. Only a new term is supplied; the interest
+        rate is derived at approval time (see LoanAccount.restructure()).
 
         Body:
-          new_term              (int, required)
-          new_term_unit         ('days'|'weeks'|'months', required)
-          new_interest_rate     (Decimal, required)
-          new_repayment_frequency ('daily'|'weekly'|'biweekly'|'monthly'|'quarterly', required)
-          effective_date        (YYYY-MM-DD, optional — defaults to today)
-          reason                (str, optional)
-          notes                 (str, optional)
+          new_term        (int, required) — proposed new term, in the loan's current term_unit
+          effective_date  (YYYY-MM-DD, optional — defaults to today at approval time)
+          reason          (str, optional)
+          notes           (str, optional)
         """
-        from decimal import Decimal
         from django.utils import timezone
 
         loan = self.get_object()
 
-        required_fields = ['new_term', 'new_term_unit', 'new_interest_rate', 'new_repayment_frequency']
-        for field in required_fields:
-            if not request.data.get(field):
-                return Response({'detail': f'{field} is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if loan.status not in ('active', 'disbursed', 'defaulted', 'overdue'):
+            return Response(
+                {'detail': f"Cannot restructure a loan with status '{loan.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
+        if not request.data.get('new_term'):
+            return Response({'detail': 'new_term is required.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             new_term = int(request.data['new_term'])
-            new_interest_rate = Decimal(str(request.data['new_interest_rate']))
         except (ValueError, TypeError):
-            return Response({'detail': 'new_term must be an integer and new_interest_rate must be a number.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'new_term must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
 
         effective_date_raw = request.data.get('effective_date')
         if effective_date_raw:
@@ -1357,29 +1358,25 @@ class LoanAccountViewSet(ScopedModelViewSet):
             except ValueError:
                 return Response({'detail': 'Invalid effective_date. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            effective_date = timezone.localdate()
+            effective_date = None
 
-        try:
-            restructure_record = loan.restructure(
-                new_term=new_term,
-                new_term_unit=request.data['new_term_unit'],
-                new_interest_rate=new_interest_rate,
-                new_repayment_frequency=request.data['new_repayment_frequency'],
-                effective_date=effective_date,
-                restructured_by=request.user,
-                reason=request.data.get('reason', ''),
-                notes=request.data.get('notes', ''),
-            )
-        except ValidationError as exc:
-            return Response(
-                {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        tenant, branch = _resolve_scope(request.user, loan)
+        req = LoanRestructureRequest.objects.create(
+            loan=loan,
+            new_term=new_term,
+            effective_date=effective_date,
+            reason=request.data.get('reason', ''),
+            notes=request.data.get('notes', ''),
+            requested_by=request.user,
+            owner=request.user,
+            branch=branch,
+            tenant=tenant,
+        )
 
-        return Response({
-            'restructure': LoanRestructureSerializer(restructure_record).data,
-            'loan': LoanAccountDetailSerializer(loan, context={'request': request}).data,
-        })
+        return Response(
+            LoanRestructureRequestSerializer(req, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=True, methods=['get'])
     def statement(self, request, pk=None):
@@ -2506,6 +2503,136 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
 
         return Response(
             LoanRepaymentRequestSerializer(req, context={'request': request}).data,
+        )
+
+
+class LoanRestructureRequestViewSet(ScopedModelViewSet):
+    """
+    Director's inbox for pending restructure proposals.
+
+    GET  /api/loans/restructure-requests/              — list (filter ?status=)
+    POST /api/loans/restructure-requests/:id/approve/  — director applies the restructure
+    POST /api/loans/restructure-requests/:id/reject/   — director rejects (loan untouched)
+    """
+    permission_module = 'loans'
+    permission_page = 'loan-accounts'
+    queryset = LoanRestructureRequest.objects.select_related(
+        'loan', 'loan__client', 'requested_by', 'reviewed_by',
+    ).all()
+    serializer_class = LoanRestructureRequestSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+    officer_client_lookup = 'loan__client__assigned_officer'
+
+    def get_queryset(self):
+        qs = LoanRestructureRequest.objects.select_related(
+            'loan', 'loan__client', 'requested_by', 'reviewed_by',
+        ).all()
+        qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
+        qs = self._apply_officer_scope(qs)
+        qs = self._apply_director_branch_override(qs)
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Director approves: LoanAccount.restructure() runs (same permission gate as LoanAccount.approve())."""
+        from django.utils import timezone
+
+        req = self.get_object()
+
+        if req.status != LoanRestructureRequest.STATUS_PENDING:
+            return Response(
+                {'detail': f"Request is already '{req.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Maker-checker: the person who submitted the proposal cannot approve it
+        if req.requested_by_id and request.user.pk == req.requested_by_id:
+            return Response(
+                {'detail': 'The person who submitted this restructure proposal cannot also approve it (maker-checker violation).'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            from permissions.services import PermissionResolver
+            effective = PermissionResolver.resolve(
+                request.user, module='loans', page='loan-accounts', action='approve',
+            )
+            if not effective.can_approve:
+                return Response(
+                    {'detail': 'You do not have permission to approve loan restructures.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        except Exception:
+            pass  # Fail-open during rollout; HasActionPermission also covers this
+
+        try:
+            restructure_record = req.loan.restructure(
+                new_term=req.new_term,
+                effective_date=req.effective_date,
+                restructured_by=request.user,
+                reason=req.reason,
+                notes=req.notes,
+            )
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        req.status = LoanRestructureRequest.STATUS_APPROVED
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.restructure = restructure_record
+        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'restructure'])
+
+        return Response(
+            LoanRestructureRequestSerializer(req, context={'request': request}).data,
+        )
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Director rejects: the loan is untouched and continues exactly as it was."""
+        from django.utils import timezone
+
+        req = self.get_object()
+
+        if req.status != LoanRestructureRequest.STATUS_PENDING:
+            return Response(
+                {'detail': f"Request is already '{req.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from permissions.services import PermissionResolver
+            effective = PermissionResolver.resolve(
+                request.user, module='loans', page='loan-accounts', action='approve',
+            )
+            if not effective.can_approve:
+                return Response(
+                    {'detail': 'You do not have permission to reject loan restructures.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        except Exception:
+            pass  # Fail-open during rollout
+
+        rejection_reason = request.data.get('rejection_reason', '').strip()
+        if not rejection_reason:
+            return Response(
+                {'detail': 'rejection_reason is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        req.status = LoanRestructureRequest.STATUS_REJECTED
+        req.reviewed_by = request.user
+        req.reviewed_at = timezone.now()
+        req.rejection_reason = rejection_reason
+        req.save(update_fields=['status', 'reviewed_by', 'reviewed_at', 'rejection_reason'])
+
+        return Response(
+            LoanRestructureRequestSerializer(req, context={'request': request}).data,
         )
 
 

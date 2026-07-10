@@ -1233,6 +1233,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'loan-restructure-approvals',
+    title: '🔁 Restructure Approvals',
+    description:
+      'Director inbox for pending loan restructure proposals — approve to apply the new term/rate, reject to leave the loan untouched',
+    path: '/loans/restructure-approvals',
+    icon: ClipboardList,
+    requiredPermission: 'loan-accounts-approve',
+    moduleId: 'client-services',
+    category: 'Loans',
+    isNew: true,
+  },
+  {
     id: 'loan-products',
     title: '🏷️ Loan Products',
     description: 'Manage loan product types, interest rates, terms, fees, and eligibility criteria',

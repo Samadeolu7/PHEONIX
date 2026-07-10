@@ -8,7 +8,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models import Sum, Q
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
@@ -86,6 +86,20 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         related_name='loan_products_insurance_income',
         limit_choices_to={'account_type': Account.INCOME},
         help_text="Income GL account for insurance premiums collected on this loan product"
+    )
+    restructure_interest_income_account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='loan_products_restructure_interest_income',
+        limit_choices_to={'account_type': Account.INCOME},
+        help_text=(
+            "Separate income GL account for the incremental interest charged on "
+            "term-extension restructures (kept apart from interest_income_account "
+            "so restructure revenue can be monitored on its own). Required before "
+            "any restructure on this product can be approved."
+        )
     )
 
     # Interest calculation
@@ -447,6 +461,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     )
     
     disbursement_date = models.DateField(null=True, blank=True)
+    original_disbursement_date = models.DateField(
+        null=True, blank=True,
+        help_text=(
+            "Set once, at the loan's first disburse() and never touched again. "
+            "disbursement_date itself gets overwritten on restructure() (it marks "
+            "the current repayment cycle's start), so vintage/cohort reporting "
+            "should key off this field instead."
+        ),
+    )
     first_payment_date = models.DateField(null=True, blank=True)
     maturity_date = models.DateField(null=True, blank=True)
     closed_date = models.DateField(null=True, blank=True)
@@ -819,6 +842,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         self.status = 'disbursed'
         self.disbursement_date = disbursement_date or timezone.now().date()
+        self.original_disbursement_date = self.disbursement_date
         self.disbursed_amount = self.approved_amount
 
         # Set outstanding principal
@@ -943,10 +967,10 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                    'journal_entry_id': str(journal_entry.pk)},
         )
 
-    def _generate_repayment_schedule(self):
+    def _generate_repayment_schedule(self, principal_override=None):
         """Delegate schedule generation to RepaymentScheduleService."""
         from .schedule_service import RepaymentScheduleService
-        RepaymentScheduleService.generate(self)
+        RepaymentScheduleService.generate(self, principal_override=principal_override)
     
     @transaction.atomic
     def record_payment(self, amount: Decimal, payment_date=None,
@@ -1596,16 +1620,42 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     def restructure(
         self,
         new_term: int,
-        new_term_unit: str,
-        new_interest_rate: Decimal,
-        new_repayment_frequency: str,
+        new_term_unit: str = None,
         effective_date=None,
         restructured_by=None,
         reason: str = '',
         notes: str = '',
     ):
         """
-        Restructure a loan: save old terms, apply new ones, regenerate schedule.
+        Restructure a loan onto a new term for its current outstanding
+        principal. Same LoanAccount row throughout — no new loan is created.
+
+        The new interest rate is DERIVED, not supplied: it scales
+        proportionally from the loan's current contracted rate/term to the
+        new term. E.g. 12% over 6 months implies 2%/month; extending to 10
+        months implies 20%. That derived total interest, charged on
+        outstanding_principal, splits into two GL postings on approval:
+          - the portion at the loan's CURRENT rate (12% in the example)
+            books to the product's ordinary interest_income_account.
+          - the incremental portion caused purely by the term extension (8%
+            in the example) books separately to
+            LoanProduct.restructure_interest_income_account, so restructure
+            revenue can be monitored on its own. Both accounts must be
+            configured on the product for any amount they'd need to carry.
+
+        This can be repeated indefinitely: each restructure derives its
+        ratio from the loan's CURRENT rate/term — i.e. wherever the last
+        restructure (or original disbursement) left it — not the original
+        product configuration.
+
+        Any unpaid interest/penalties already on the loan
+        (self.outstanding_interest, self.outstanding_penalties) are not
+        collected separately — they're folded into the new schedule, spread
+        evenly across its installments' interest_due/penalty_due (last row
+        absorbs rounding), so the client repays them through the normal
+        restructured repayment schedule rather than as a standing side
+        balance. The totals themselves are untouched, only where they're
+        tracked changes.
 
         Old pending/overdue installments are cancelled ('restructured').
         A LoanRestructure audit record is created.
@@ -1613,10 +1663,11 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         Args:
             new_term: New term value (interpreted in new_term_unit).
-            new_term_unit: 'days' | 'weeks' | 'months'.
-            new_interest_rate: New annual interest rate (%).
-            new_repayment_frequency: 'daily'|'weekly'|'biweekly'|'monthly'|'quarterly'.
-            effective_date: Date the restructure takes effect (defaults to today).
+            new_term_unit: 'days' | 'weeks' | 'months'. Defaults to the
+                loan's current term_unit — the rate-derivation ratio assumes
+                old and new term are in the same unit, so changing units
+                mid-restructure is not supported.
+            effective_date: Date the new schedule starts (defaults to today).
             restructured_by: User authorising the restructure.
             reason: Short reason code/label.
             notes: Free-text notes.
@@ -1627,9 +1678,44 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             )
         if self.outstanding_principal <= 0:
             raise ValidationError("Cannot restructure a fully repaid loan.")
+        if not self.term_months or self.term_months <= 0:
+            raise ValidationError("Loan has no current term to derive a rate from.")
+
+        new_term_unit = new_term_unit or self.term_unit
+        if new_term_unit != self.term_unit:
+            raise ValidationError(
+                f"Cannot change term unit on restructure (loan is in '{self.term_unit}', "
+                f"got '{new_term_unit}')."
+            )
 
         from django.utils import timezone as _tz
         effective_date = effective_date or _tz.now().date()
+
+        # ── Derive the new rate proportionally from the CURRENT rate/term ──
+        old_rate = self.interest_rate
+        old_term = Decimal(str(self.term_months))
+        rate_per_unit = old_rate / old_term
+        new_rate = (rate_per_unit * Decimal(str(new_term))).quantize(Decimal('0.01'))
+
+        balance = self.outstanding_principal
+        total_new_interest = (balance * new_rate / Decimal('100')).quantize(Decimal('0.01'))
+        normal_interest_amount = (balance * old_rate / Decimal('100')).quantize(Decimal('0.01'))
+        restructure_interest_amount = total_new_interest - normal_interest_amount
+
+        if normal_interest_amount != 0 and not self.product.interest_income_account:
+            raise ValidationError(
+                "This product has no interest_income_account configured — "
+                "required before restructuring loans under it."
+            )
+        if restructure_interest_amount != 0 and not self.product.restructure_interest_income_account:
+            raise ValidationError(
+                "This product has no restructure_interest_income_account configured — "
+                "required before restructuring loans under it, so restructure "
+                "revenue can be monitored separately from ordinary interest."
+            )
+
+        carried_interest = self.outstanding_interest
+        carried_penalties = self.outstanding_penalties
 
         # ── Snapshot old terms ────────────────────────────────────────────
         restructure = LoanRestructure(
@@ -1640,53 +1726,139 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             notes=notes,
             old_term=self.term_months,
             old_term_unit=self.term_unit,
-            old_interest_rate=self.interest_rate,
+            old_interest_rate=old_rate,
             old_repayment_frequency=self.repayment_frequency,
-            old_outstanding_principal=self.outstanding_principal,
+            old_outstanding_principal=balance,
             old_installment_amount=self.installment_amount,
             old_maturity_date=self.maturity_date,
+            carried_interest=carried_interest,
+            carried_penalties=carried_penalties,
+            normal_interest_amount=normal_interest_amount,
+            restructure_interest_amount=restructure_interest_amount,
         )
 
         # ── Cancel remaining installments ─────────────────────────────────
+        # outstanding_penalties' TOTAL is left untouched below (self.outstanding_penalties
+        # is never reassigned) — its value carries forward unchanged, but it now
+        # also gets broken out across the new schedule's penalty_due fields below.
         self.repayment_schedule.filter(
             status__in=['pending', 'partial', 'overdue']
         ).update(status='restructured')
 
-        # ── Apply new terms ───────────────────────────────────────────────
+        # ── Apply new terms (same repayment_frequency, same term_unit) ────
         self.term_months = new_term
-        self.term_unit = new_term_unit
-        self.interest_rate = new_interest_rate
-        self.repayment_frequency = new_repayment_frequency
-        self.disbursement_date = effective_date   # regenerate from today
+        self.interest_rate = new_rate
+        self.disbursement_date = effective_date   # marks this new repayment cycle's start
 
-        # Reset arrears — restructure is a fresh start
+        # Reset arrears — restructure is a fresh start on the new schedule
         self.days_in_arrears = 0
         self.arrears_amount = Decimal('0.00')
         self.status = 'active'
         self.interest_suspended = False
 
-        # Regenerate schedule from outstanding principal
-        self._generate_repayment_schedule()
+        # Regenerate schedule for the OUTSTANDING balance, not the original
+        # disbursed_amount (which stays fixed as the historical disbursement figure).
+        self._generate_repayment_schedule(principal_override=balance)
 
-        # Recalculate outstanding interest from new pending schedule
-        new_schedules = self.repayment_schedule.filter(
-            status='pending'
-        ).order_by('due_date')
-        if new_schedules.exists():
-            total_interest = new_schedules.aggregate(
-                total=Sum('interest_due')
-            )['total'] or Decimal('0')
-            self.outstanding_interest = total_interest
-            self.first_payment_date = new_schedules.first().due_date
-            self.maturity_date = new_schedules.last().due_date
+        new_schedules = list(self.repayment_schedule.filter(status='pending').order_by('due_date'))
+        if new_schedules:
+            self.first_payment_date = new_schedules[0].due_date
+            self.maturity_date = new_schedules[-1].due_date
+
+            # ── Fold carried-forward interest/penalties into the new schedule ──
+            # The client doesn't pay these separately — they're spread evenly
+            # across the new installments (last row absorbs rounding), same as
+            # how the new restructure interest itself is spread by flat_schedule().
+            n = len(new_schedules)
+            if carried_interest > 0:
+                share = (carried_interest / n).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                allocated = Decimal('0.00')
+                for i, sched in enumerate(new_schedules):
+                    portion = (carried_interest - allocated) if i == n - 1 else share
+                    sched.interest_due += portion
+                    sched.total_due += portion
+                    allocated += portion
+                    sched.save(update_fields=['interest_due', 'total_due'])
+            if carried_penalties > 0:
+                share = (carried_penalties / n).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                allocated = Decimal('0.00')
+                for i, sched in enumerate(new_schedules):
+                    portion = (carried_penalties - allocated) if i == n - 1 else share
+                    sched.penalty_due += portion
+                    sched.total_due += portion
+                    allocated += portion
+                    sched.save(update_fields=['penalty_due', 'total_due'])
+
+            self.installment_amount = new_schedules[0].total_due
+
+        # Carried-forward interest plus this restructure's new interest — now
+        # matches the sum of interest_due across the new pending schedule rows.
+        self.outstanding_interest = carried_interest + total_new_interest
+        # outstanding_penalties is unchanged (still carried_penalties) — it's
+        # the same total, now also broken out across the new schedule's
+        # penalty_due so payments apply against it installment by installment.
 
         self.save()
+
+        # ── GL Journal Entry — books only the NEW interest. Whatever was
+        # already owed (carried_interest/carried_penalties) was already
+        # recognized (or remains unrecognized) exactly as it was — untouched.
+        if total_new_interest != 0:
+            from transactions.models import (
+                Transaction as JournalEntry,
+                TransactionEntry as JournalEntryLine,
+                TransactionSeries,
+            )
+            series, _ = TransactionSeries.objects.get_or_create(
+                code='LNRESTR',
+                defaults={'description': 'Loan Restructures'},
+            )
+            journal_entry = JournalEntry.objects.create(
+                series=series,
+                date=effective_date,
+                description=f"Loan restructure – {self.loan_number}",
+                owner=self.owner,
+                branch=self.branch,
+                created_by=restructured_by,
+            )
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=self.account,
+                side=JournalEntryLine.DEBIT,
+                amount=total_new_interest,
+            )
+            if normal_interest_amount > 0:
+                JournalEntryLine.objects.create(
+                    transaction=journal_entry,
+                    account=self.product.interest_income_account,
+                    side=JournalEntryLine.CREDIT,
+                    amount=normal_interest_amount,
+                )
+            if restructure_interest_amount > 0:
+                JournalEntryLine.objects.create(
+                    transaction=journal_entry,
+                    account=self.product.restructure_interest_income_account,
+                    side=JournalEntryLine.CREDIT,
+                    amount=restructure_interest_amount,
+                )
+            elif restructure_interest_amount < 0:
+                # Term was shortened relative to the current rate/term ratio,
+                # so the term-extension premium is negative — debit the
+                # monitoring account (contra) instead of crediting it.
+                JournalEntryLine.objects.create(
+                    transaction=journal_entry,
+                    account=self.product.restructure_interest_income_account,
+                    side=JournalEntryLine.DEBIT,
+                    amount=-restructure_interest_amount,
+                )
+            journal_entry.post()
+            restructure.journal_entry = journal_entry
 
         # ── Save restructure record with new installment amount ───────────
         restructure.new_term = new_term
         restructure.new_term_unit = new_term_unit
-        restructure.new_interest_rate = new_interest_rate
-        restructure.new_repayment_frequency = new_repayment_frequency
+        restructure.new_interest_rate = new_rate
+        restructure.new_repayment_frequency = self.repayment_frequency
         restructure.new_maturity_date = self.maturity_date
         restructure.new_installment_amount = self.installment_amount
         restructure.save()
@@ -1735,6 +1907,24 @@ class LoanRestructure(models.Model):
     new_installment_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
     new_maturity_date = models.DateField(blank=True, null=True)
 
+    # Unpaid balances from before this restructure, carried forward unchanged
+    # onto the new schedule (restructuring never alters what was already owed).
+    carried_interest = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    carried_penalties = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    # New interest split: the portion at the pre-restructure rate (ordinary
+    # Interest Income) vs. the incremental portion caused by the term
+    # extension (LoanProduct.restructure_interest_income_account).
+    normal_interest_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    restructure_interest_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_restructure_journals',
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1743,6 +1933,74 @@ class LoanRestructure(models.Model):
 
     def __str__(self):
         return f"Restructure #{self.pk} — {self.loan.loan_number} on {self.effective_date}"
+
+
+class LoanRestructureRequest(TimeStampedModel, BranchScopedModel):
+    """
+    Loan restructure proposal pending director approval.
+
+    Workflow:
+      1. Officer submits a proposed new_term (status='pending') — no schedule
+         or GL change yet. The rate is never typed in; it's derived from the
+         loan's current rate/term by LoanAccount.restructure() at approval
+         time (see that method's docstring for the formula).
+      2. Director approves: LoanAccount.restructure() runs, the new schedule
+         is generated, and the resulting LoanRestructure audit record is
+         linked here. status='approved'.
+      3. Director rejects: status='rejected', the loan is untouched and
+         continues exactly as it was — rejection is a no-op on the loan.
+    """
+
+    STATUS_PENDING  = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING,  'Pending Approval'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    loan = models.ForeignKey(
+        LoanAccount,
+        on_delete=models.CASCADE,
+        related_name='restructure_requests',
+    )
+    new_term = models.PositiveIntegerField(help_text="Proposed new term value, in the loan's current term_unit.")
+    effective_date = models.DateField(null=True, blank=True, help_text='Defaults to today at approval time if left blank.')
+    reason = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='submitted_loan_restructure_requests',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='reviewed_loan_restructure_requests',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+    restructure = models.ForeignKey(
+        LoanRestructure,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='requests',
+        help_text='Set once approved — the audit record the approval produced.',
+    )
+
+    objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"RestructureRequest #{self.pk} — {self.loan.loan_number} ({self.status})"
 
 
 class LoanRepaymentSchedule(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

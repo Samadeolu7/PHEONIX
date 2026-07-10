@@ -56,7 +56,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
     color: '#0891b2',
     description: 'Loan origination, disbursement, repayment, and collections',
     pages: [
-      { code: 'loan-accounts', title: 'Loan Accounts', description: 'Create and manage loan accounts', paths: ['/loans/accounts', '/loans/accounts/:id', '/loans/accounts/create'] },
+      { code: 'loan-accounts', title: 'Loan Accounts', description: 'Create and manage loan accounts', paths: ['/loans/accounts', '/loans/accounts/:id', '/loans/accounts/create', '/loans/restructure-approvals'] },
       { code: 'loan-verification', title: 'Loan Verification', description: 'Verify loan applications before disbursement', paths: ['/loans/verification', '/loans/verification/:loanId'] },
       { code: 'loan-collection', title: 'Loan Collection', description: 'Field loan repayment collection', path: '/loans/collection' },
       { code: 'loan-repayment-approvals', title: 'Repayment Approvals', description: 'Approve savings-debit repayment requests', path: '/loans/repayment-approvals' },

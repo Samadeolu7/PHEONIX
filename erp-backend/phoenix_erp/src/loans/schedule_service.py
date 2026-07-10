@@ -187,7 +187,7 @@ class RepaymentScheduleService:
     """
 
     @classmethod
-    def generate(cls, loan) -> None:
+    def generate(cls, loan, principal_override: Decimal = None) -> None:
         """
         Build and persist the full amortisation schedule for `loan`.
 
@@ -196,10 +196,16 @@ class RepaymentScheduleService:
             loan.term_unit              — 'days' | 'weeks' | 'months'
             loan.repayment_frequency    — 'daily' | 'weekly' | … | 'quarterly'
             loan.disbursement_date      — start date
-            loan.disbursed_amount       — principal
+            loan.disbursed_amount       — principal (unless principal_override is given)
             loan.interest_rate          — flat % of principal (flat) or per-period % (reducing balance)
             loan.product.interest_calculation_method
             loan.product.first_repayment_buffer_days
+
+        Args:
+            principal_override: Amortise this amount instead of loan.disbursed_amount.
+                Used by LoanAccount.restructure(), which amortises the current
+                outstanding_principal (the remaining balance), not the original
+                disbursed amount.
 
         Writes to:
             loan.number_of_installments
@@ -212,6 +218,7 @@ class RepaymentScheduleService:
         term_unit   = getattr(loan, 'term_unit', 'months') or 'months'
         frequency   = loan.repayment_frequency
         buffer_days = int(getattr(loan.product, 'first_repayment_buffer_days', 0) or 0)
+        principal   = principal_override if principal_override is not None else loan.disbursed_amount
 
         date_increment, _ = FREQ_CONFIG.get(frequency, _DEFAULT_FREQ)
 
@@ -226,13 +233,13 @@ class RepaymentScheduleService:
         method = loan.product.interest_calculation_method
         if method == 'reducing_balance':
             rows = reducing_balance_schedule(
-                loan.disbursed_amount,
+                principal,
                 Decimal(str(loan.interest_rate)),
                 num_installments,
             )
         else:
             rows = flat_schedule(
-                loan.disbursed_amount,
+                principal,
                 Decimal(str(loan.interest_rate)),
                 num_installments,
             )

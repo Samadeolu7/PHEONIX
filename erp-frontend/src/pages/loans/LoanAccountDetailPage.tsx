@@ -37,7 +37,7 @@ import {
   LoanRepaymentSchedule,
   LoanTransactionRow,
   RepayLoanPayload,
-  RestructureLoanPayload,
+  ProposeRestructurePayload,
 } from '../../services/loanService';
 import { clientService, ClientOption } from '../../services/clientService';
 import { guarantorService, GuarantorProfile } from '../../services/guarantorService';
@@ -355,9 +355,6 @@ interface RestructureModalProps {
 
 function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
   const [newTerm, setNewTerm] = useState(String(loan.term_months));
-  const [newTermUnit, setNewTermUnit] = useState(loan.term_unit ?? 'months');
-  const [newRate, setNewRate] = useState(loan.interest_rate);
-  const [newFreq, setNewFreq] = useState(loan.repayment_frequency);
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
@@ -367,28 +364,25 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!newTerm || !newRate || !newFreq) {
-      setError('All fields are required.');
+    if (!newTerm) {
+      setError('New term is required.');
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
-      const payload: RestructureLoanPayload = {
+      const payload: ProposeRestructurePayload = {
         new_term: parseInt(newTerm, 10),
-        new_term_unit: newTermUnit as 'days' | 'weeks' | 'months',
-        new_interest_rate: newRate,
-        new_repayment_frequency: newFreq as RestructureLoanPayload['new_repayment_frequency'],
         effective_date: effectiveDate,
         reason,
         notes,
       };
-      await loanService.restructureLoan(loan.id, payload);
+      await loanService.proposeRestructure(loan.id, payload);
       setSuccess(true);
       setTimeout(() => { onSuccess(); }, 1200);
     } catch (e: unknown) {
       const data = (e as any)?.response?.data;
-      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Restructure failed.';
+      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Could not submit restructure proposal.';
       setError(msg);
       toast.error(msg);
       setSubmitting(false);
@@ -402,53 +396,34 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
           className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100">
           <X size={18} />
         </button>
-        <h2 className="mb-1 text-lg font-semibold text-gray-900">Restructure Loan</h2>
+        <h2 className="mb-1 text-lg font-semibold text-gray-900">Propose Restructure</h2>
         <p className="mb-4 text-sm text-gray-500">
-          {loan.loan_number} — Outstanding: ₦{fmt(loan.outstanding_principal)}
+          {loan.loan_number} — Outstanding principal: ₦{fmt(loan.outstanding_principal)}
         </p>
         <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
-          Old schedule will be cancelled. A new schedule is generated from outstanding principal using the new terms.
+          This submits a proposal for director approval — nothing changes on the loan yet.
+          The new interest rate isn't typed in: it's derived from the loan's current rate/term
+          scaled to the new term you propose (e.g. 12% over 6 months implies 20% over 10 months).
+          Any interest/penalties already owed are folded into the new schedule's installments,
+          not collected separately.
         </div>
         {success ? (
           <div className="flex flex-col items-center py-6 text-center">
             <CheckCircle size={40} className="mb-2 text-green-500" />
-            <p className="font-medium text-gray-900">Loan restructured successfully</p>
+            <p className="font-medium text-gray-900">Restructure proposal submitted</p>
+            <p className="mt-1 text-sm text-gray-500">Awaiting director approval.</p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="rs-term" className="mb-1 block text-sm font-medium text-gray-700">New Term</label>
-                <input id="rs-term" type="number" min="1" title="New loan term" value={newTerm} onChange={e => setNewTerm(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
-              </div>
-              <div>
-                <label htmlFor="rs-term-unit" className="mb-1 block text-sm font-medium text-gray-700">Term Unit</label>
-                <select id="rs-term-unit" title="Term unit" value={newTermUnit} onChange={e => setNewTermUnit(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                  <option value="days">Days</option>
-                  <option value="weeks">Weeks</option>
-                  <option value="months">Months</option>
-                </select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="rs-rate" className="mb-1 block text-sm font-medium text-gray-700">New Interest Rate (%)</label>
-                <input id="rs-rate" type="number" step="0.01" min="0" title="New annual interest rate" value={newRate} onChange={e => setNewRate(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
-              </div>
-              <div>
-                <label htmlFor="rs-freq" className="mb-1 block text-sm font-medium text-gray-700">Repayment Frequency</label>
-                <select id="rs-freq" title="Repayment frequency" value={newFreq} onChange={e => setNewFreq(e.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="biweekly">Bi-weekly</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                </select>
-              </div>
+            <div>
+              <label htmlFor="rs-term" className="mb-1 block text-sm font-medium text-gray-700">
+                New Term ({loan.term_unit ?? 'months'})
+              </label>
+              <input id="rs-term" type="number" min="1" title="Proposed new loan term" value={newTerm} onChange={e => setNewTerm(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
+              <p className="mt-1 text-xs text-gray-400">
+                Currently {loan.term_months} {loan.term_unit ?? 'months'} at {loan.interest_rate}%.
+              </p>
             </div>
             <div>
               <label htmlFor="rs-date" className="mb-1 block text-sm font-medium text-gray-700">Effective Date</label>
@@ -478,7 +453,7 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
               <button type="submit" disabled={submitting}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
                 {submitting ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
-                Restructure Loan
+                Submit for Approval
               </button>
             </div>
           </form>
@@ -896,6 +871,7 @@ export default function LoanAccountDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [showRepayModal, setShowRepayModal] = useState(false);
   const [showRestructureModal, setShowRestructureModal] = useState(false);
+  const [pendingRestructureRequestId, setPendingRestructureRequestId] = useState<number | null>(null);
   const [showAddGuarantorModal, setShowAddGuarantorModal] = useState(false);
   const [removingGuarantorId, setRemovingGuarantorId] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -920,6 +896,15 @@ export default function LoanAccountDetailPage() {
       setLoan(loanData);
       setSchedule(scheduleData);
       setGuarantors(guarantorData);
+
+      // Non-fatal: used only to disable "Restructure" while a proposal is pending
+      try {
+        const pending = await loanService.listRestructureRequests({ status: 'pending' });
+        const match = pending.find(r => r.loan === loanData.id);
+        setPendingRestructureRequestId(match ? match.id : null);
+      } catch {
+        setPendingRestructureRequestId(null);
+      }
     } catch (e: unknown) {
       const data = (e as any)?.response?.data;
       setError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load loan details.');
@@ -1031,6 +1016,9 @@ export default function LoanAccountDetailPage() {
   const isOverdue = loan.days_in_arrears > 0 && isActive;
 
   const canRestructure = ['active', 'disbursed', 'defaulted'].includes(loan.status);
+  // Matches the backend's record_payment() gate (models.py) — defaulted loans can
+  // still take repayments, they just can't be newly disbursed/approved etc.
+  const canRepay = ['active', 'disbursed', 'defaulted'].includes(loan.status);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1205,16 +1193,26 @@ export default function LoanAccountDetailPage() {
             })()}
 
             {canRestructure && (
-              <button
-                onClick={() => setShowRestructureModal(true)}
-                className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"
-              >
-                <RotateCcw size={14} />
-                Restructure
-              </button>
+              pendingRestructureRequestId ? (
+                <span
+                  className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700"
+                  title="A restructure proposal is already pending director approval for this loan"
+                >
+                  <Loader2 size={14} />
+                  Restructure Pending
+                </span>
+              ) : (
+                <button
+                  onClick={() => setShowRestructureModal(true)}
+                  className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100"
+                >
+                  <RotateCcw size={14} />
+                  Restructure
+                </button>
+              )
             )}
 
-            {isActive && (
+            {canRepay && (
               <button
                 onClick={() => setShowRepayModal(true)}
                 className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"

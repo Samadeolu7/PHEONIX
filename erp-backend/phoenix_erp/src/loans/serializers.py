@@ -6,7 +6,7 @@ from .models import (
     LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement,
     LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
-    LoanRepaymentRequest, LoanRestructure, OfflinePaymentRecord,
+    LoanRepaymentRequest, LoanRestructure, LoanRestructureRequest, OfflinePaymentRecord,
 )
 
 
@@ -264,6 +264,9 @@ class LoanRestructureSerializer(serializers.ModelSerializer):
             'old_installment_amount', 'old_maturity_date',
             'new_term', 'new_term_unit', 'new_interest_rate',
             'new_repayment_frequency', 'new_installment_amount', 'new_maturity_date',
+            'carried_interest', 'carried_penalties',
+            'normal_interest_amount', 'restructure_interest_amount',
+            'journal_entry',
             'created_at',
         ]
         read_only_fields = fields
@@ -640,6 +643,79 @@ class LoanRepaymentRequestSerializer(TenantModelSerializer):
             'status', 'reviewed_by', 'reviewed_by_name',
             'reviewed_at', 'rejection_reason', 'journal_entry',
             'covered_installments_detail',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+
+
+class LoanRestructureRequestSerializer(TenantModelSerializer):
+    loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
+    client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
+    current_term = serializers.IntegerField(source='loan.term_months', read_only=True)
+    current_term_unit = serializers.CharField(source='loan.term_unit', read_only=True)
+    current_interest_rate = serializers.DecimalField(
+        source='loan.interest_rate', max_digits=5, decimal_places=2, read_only=True,
+    )
+    outstanding_principal = serializers.DecimalField(
+        source='loan.outstanding_principal', max_digits=18, decimal_places=2, read_only=True,
+    )
+    requested_by_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
+    preview = serializers.SerializerMethodField()
+
+    def get_requested_by_name(self, obj):
+        return obj.requested_by.get_full_name() if obj.requested_by else None
+
+    def get_reviewed_by_name(self, obj):
+        return obj.reviewed_by.get_full_name() if obj.reviewed_by else None
+
+    def get_preview(self, obj):
+        """
+        Preview the rate/interest split an approval would produce right now,
+        without applying anything — lets the approver see exactly what
+        they're signing off on. Recomputed live since outstanding_principal
+        may have moved since the request was submitted.
+        """
+        if obj.status != obj.STATUS_PENDING:
+            return None
+        loan = obj.loan
+        try:
+            old_rate = loan.interest_rate
+            old_term = loan.term_months
+            if not old_term:
+                return None
+            from decimal import Decimal
+            rate_per_unit = old_rate / Decimal(str(old_term))
+            new_rate = (rate_per_unit * Decimal(str(obj.new_term))).quantize(Decimal('0.01'))
+            balance = loan.outstanding_principal
+            total_new_interest = (balance * new_rate / Decimal('100')).quantize(Decimal('0.01'))
+            normal_interest_amount = (balance * old_rate / Decimal('100')).quantize(Decimal('0.01'))
+            restructure_interest_amount = total_new_interest - normal_interest_amount
+            return {
+                'new_interest_rate': str(new_rate),
+                'total_new_interest': str(total_new_interest),
+                'normal_interest_amount': str(normal_interest_amount),
+                'restructure_interest_amount': str(restructure_interest_amount),
+            }
+        except Exception:
+            return None
+
+    class Meta:
+        model = LoanRestructureRequest
+        fields = [
+            'id', 'loan', 'loan_number', 'client_name',
+            'current_term', 'current_term_unit', 'current_interest_rate', 'outstanding_principal',
+            'new_term', 'effective_date', 'reason', 'notes', 'preview',
+            'requested_by', 'requested_by_name',
+            'status', 'reviewed_by', 'reviewed_by_name',
+            'reviewed_at', 'rejection_reason', 'restructure',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'loan_number', 'client_name',
+            'current_term', 'current_term_unit', 'current_interest_rate', 'outstanding_principal', 'preview',
+            'requested_by', 'requested_by_name',
+            'status', 'reviewed_by', 'reviewed_by_name',
+            'reviewed_at', 'rejection_reason', 'restructure',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
 

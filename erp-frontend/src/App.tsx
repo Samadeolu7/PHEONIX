@@ -562,6 +562,9 @@ const LoanCollectionPage = lazy(() => import('./pages/loans/LoanCollectionPage')
 // Loan repayment approvals (director inbox)
 const LoanRepaymentApprovalsPage = lazy(() => import('./pages/loans/LoanRepaymentApprovalsPage'));
 
+// Loan restructure approvals (director inbox)
+const LoanRestructureApprovalsPage = lazy(() => import('./pages/loans/LoanRestructureApprovalsPage'));
+
 // Loan new application form & products
 const LoanAccountFormPage = lazy(() => import('./pages/loans/LoanAccountFormPage'));
 const LoanProductsPage = lazy(() => import('./pages/loans/LoanProductsPage'));
@@ -4047,6 +4050,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-repayment-approvals" action="approve">
                                       <LoanRepaymentApprovalsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Restructure approvals (director inbox) */}
+                                <Route
+                                  path="/loans/restructure-approvals"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-accounts" action="approve">
+                                      <LoanRestructureApprovalsPage />
                                     </ProtectedRoute>
                                   }
                                 />
