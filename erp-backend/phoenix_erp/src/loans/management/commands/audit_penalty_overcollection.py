@@ -13,25 +13,28 @@ the old formula was live may have been overcharged — that's money actually
 collected, not just a balance to correct, so it needs a human decision
 (credit/refund/write-down) rather than an automated fix.
 
-This command re-estimates what each *fully settled* installment's penalty
-should have been under the corrected (periods-late) formula, using the
-days_late and per-component amounts already recorded on that
-LoanRepaymentSchedule row, and flags where penalty_paid exceeds that
-estimate.
+This command re-estimates what each installment's penalty should have been
+under the corrected (periods-late) formula, and flags where penalty_paid
+exceeds that estimate, in two ways depending on the row's status:
 
-Approximation, by necessity: the historical formula was evaluated against
-"outstanding_amount" at whatever the arrears balance happened to be on each
-daily batch run — we don't have a day-by-day snapshot of that. This command
-substitutes the installment's own (principal_due + interest_due + fees_due)
-as the base, which is a reasonable stand-in for a single settled installment
-but is still an estimate, not a reconciled ledger figure. Flagged loans
-should be manually verified against the actual payment/journal history
-before any refund or credit is issued.
+  - Fully settled ('paid') rows: uses the days_late recorded at settlement
+    (final and won't change).
+  - Still-open ('partial'/'overdue') rows with penalty_paid > 0: computes
+    days-late LIVE as (today - due_date) — reliable even though the row
+    isn't settled, since the due date is fixed and "today" is well-defined.
+    Because days-late (and therefore the corrected penalty) can only grow
+    the longer a row stays unpaid, any amount already paid in excess of
+    TODAY's corrected estimate is a safe lower-bound signal of
+    overcollection — it will not shrink on its own.
 
-Only fully-paid ('paid') schedule rows are auto-estimated, since days_late
-and payment_date are only reliably recorded at full settlement. Rows with
-penalty_paid > 0 that are still 'partial'/'overdue' are listed separately
-under "needs manual review" rather than guessed at.
+Approximation, by necessity either way: the historical formula was
+evaluated against "outstanding_amount" at whatever the arrears balance
+happened to be on each daily batch run — we don't have a day-by-day
+snapshot of that. This command substitutes the installment's own
+(principal_due + interest_due + fees_due) as the base, a reasonable
+stand-in but still an estimate, not a reconciled ledger figure. Flagged
+loans should be manually verified against the actual payment/journal
+history before any refund or credit is issued.
 
 Usage:
     python manage.py audit_penalty_overcollection
@@ -41,6 +44,7 @@ Usage:
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 
 class Command(BaseCommand):
@@ -66,10 +70,11 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from loans.models import LoanAccount, LoanRepaymentSchedule
+        from loans.models import LoanRepaymentSchedule
 
         loan_number = options['loan_number']
         min_overcollected = Decimal(options['min_overcollected'])
+        today = timezone.localdate()
 
         schedules = LoanRepaymentSchedule.all_objects.filter(
             penalty_paid__gt=0,
@@ -79,41 +84,63 @@ class Command(BaseCommand):
             schedules = schedules.filter(loan__loan_number=loan_number)
 
         settled_flags = []
+        open_flags = []
         needs_review = []
         total_estimated_overcollection = Decimal('0.00')
 
         for sched in schedules.iterator():
             loan = sched.loan
-            if sched.status != 'paid' or not sched.days_late:
+            base_amount = sched.principal_due + sched.interest_due + sched.fees_due
+
+            if sched.status == 'paid':
+                if not sched.days_late:
+                    needs_review.append(sched)
+                    continue
+                days_late = sched.days_late
+                bucket = settled_flags
+                still_open = False
+            elif sched.status in ('partial', 'overdue'):
+                days_late = (today - sched.due_date).days
+                if days_late <= 0:
+                    needs_review.append(sched)
+                    continue
+                bucket = open_flags
+                still_open = True
+            else:
                 needs_review.append(sched)
                 continue
 
-            base_amount = sched.principal_due + sched.interest_due + sched.fees_due
             corrected_penalty = loan.product.calculate_late_penalty(
-                base_amount, sched.days_late, loan.repayment_frequency,
+                base_amount, days_late, loan.repayment_frequency,
             )
             overcollected = (sched.penalty_paid - corrected_penalty).quantize(Decimal('0.01'))
 
             if overcollected > min_overcollected:
-                settled_flags.append((loan, sched, corrected_penalty, overcollected))
+                bucket.append((loan, sched, days_late, corrected_penalty, overcollected, still_open))
                 total_estimated_overcollection += overcollected
 
-        self.stdout.write(f"Fully-settled installments with penalty_paid > 0 checked: "
-                           f"{schedules.filter(status='paid').count()}")
-        self.stdout.write(f"Flagged as possibly overcollected: {len(settled_flags)}")
-        self.stdout.write(f"Needs manual review (not fully settled / no days_late recorded): "
-                           f"{len(needs_review)}")
+        self.stdout.write(f"Rows with penalty_paid > 0 checked: {schedules.count()}")
+        self.stdout.write(f"Flagged, fully settled: {len(settled_flags)}")
+        self.stdout.write(f"Flagged, still open (estimate as of today, may still change): {len(open_flags)}")
+        self.stdout.write(f"Needs manual review (no reliable days-late basis): {len(needs_review)}")
 
-        if settled_flags:
-            self.stdout.write("\n--- Estimated overcollection (fully settled installments) ---")
-            for loan, sched, corrected_penalty, overcollected in settled_flags:
+        def _print_flags(title, flags):
+            self.stdout.write(f"\n--- {title} ---")
+            for loan, sched, days_late, corrected_penalty, overcollected, still_open in flags:
+                tag = ' (as of today — may grow if it stays unpaid)' if still_open else ''
                 self.stdout.write(
                     f"  {loan.loan_number:24s} installment #{sched.installment_number:<3d} "
-                    f"due={sched.due_date} days_late={sched.days_late:<4d} "
+                    f"due={sched.due_date} days_late={days_late:<4d} "
                     f"penalty_paid={sched.penalty_paid:>10,.2f}  "
                     f"corrected_est={corrected_penalty:>10,.2f}  "
-                    f"overcollected_est={overcollected:>10,.2f}"
+                    f"overcollected_est={overcollected:>10,.2f}{tag}"
                 )
+
+        if settled_flags:
+            _print_flags('Estimated overcollection — fully settled installments', settled_flags)
+        if open_flags:
+            _print_flags('Estimated overcollection — still-open installments (lower-bound estimate)', open_flags)
+        if settled_flags or open_flags:
             self.stdout.write(
                 self.style.WARNING(
                     f"\nTotal estimated overcollection: {total_estimated_overcollection:,.2f} "
@@ -122,7 +149,7 @@ class Command(BaseCommand):
             )
 
         if needs_review:
-            self.stdout.write("\n--- Needs manual review (penalty_paid > 0, not cleanly auto-estimable) ---")
+            self.stdout.write("\n--- Needs manual review (no reliable days-late basis) ---")
             for sched in needs_review:
                 self.stdout.write(
                     f"  {sched.loan.loan_number:24s} installment #{sched.installment_number:<3d} "
@@ -130,5 +157,5 @@ class Command(BaseCommand):
                     f"penalty_paid={sched.penalty_paid:>10,.2f} days_late_recorded={sched.days_late}"
                 )
 
-        if not settled_flags and not needs_review:
+        if not settled_flags and not open_flags and not needs_review:
             self.stdout.write(self.style.SUCCESS("No penalty payments found to review."))
