@@ -3,7 +3,7 @@
  * Shows loan summary, client info, repayment schedule, and stage-appropriate action buttons.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -60,6 +60,39 @@ function fmtDate(d: string | null | undefined): string {
     month: 'short',
     year: 'numeric',
   });
+}
+
+function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+interface RestructurePreviewEstimate {
+  newRate: number;
+  totalNewInterest: number;
+  normalInterestAmount: number;
+  restructureInterestAmount: number;
+}
+
+/**
+ * Client-side estimate only — the authoritative figure is computed server-side
+ * by LoanAccount.restructure() at approval time (same formula, Decimal-precise).
+ * This just lets the officer see roughly what they're proposing before they submit.
+ */
+function estimateRestructurePreview(loan: LoanAccount, newTermRaw: string): RestructurePreviewEstimate | null {
+  const oldRate = parseFloat(loan.interest_rate);
+  const oldTerm = loan.term_months;
+  const newTerm = parseInt(newTermRaw, 10);
+  const balance = parseFloat(loan.outstanding_principal);
+  if (!oldTerm || oldTerm <= 0 || !Number.isFinite(oldRate) || !Number.isFinite(balance)) return null;
+  if (!newTermRaw || isNaN(newTerm) || newTerm <= 0) return null;
+
+  const ratePerUnit = oldRate / oldTerm;
+  const newRate = round2(ratePerUnit * newTerm);
+  const totalNewInterest = round2((balance * newRate) / 100);
+  const normalInterestAmount = round2((balance * oldRate) / 100);
+  const restructureInterestAmount = round2(totalNewInterest - normalInterestAmount);
+
+  return { newRate, totalNewInterest, normalInterestAmount, restructureInterestAmount };
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -362,6 +395,8 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  const preview = useMemo(() => estimateRestructurePreview(loan, newTerm), [loan, newTerm]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!newTerm) {
@@ -425,6 +460,23 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
                 Currently {loan.term_months} {loan.term_unit ?? 'months'} at {loan.interest_rate}%.
               </p>
             </div>
+
+            {preview && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
+                <p className="mb-1.5 font-medium text-blue-900">Estimated outcome (final figures set at approval)</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-blue-800">
+                  <span>New rate</span>
+                  <span className="text-right font-medium">{preview.newRate.toFixed(2)}%</span>
+                  <span>Total new interest</span>
+                  <span className="text-right font-medium">₦{fmt(preview.totalNewInterest)}</span>
+                  <span>— at current rate ({loan.interest_rate}%)</span>
+                  <span className="text-right">₦{fmt(preview.normalInterestAmount)}</span>
+                  <span>— restructure income (term extension)</span>
+                  <span className="text-right">₦{fmt(preview.restructureInterestAmount)}</span>
+                </div>
+              </div>
+            )}
+
             <div>
               <label htmlFor="rs-date" className="mb-1 block text-sm font-medium text-gray-700">Effective Date</label>
               <input id="rs-date" type="date" title="Restructure effective date" value={effectiveDate} onChange={e => setEffectiveDate(e.target.value)}
