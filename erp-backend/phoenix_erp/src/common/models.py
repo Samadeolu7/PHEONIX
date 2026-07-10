@@ -372,6 +372,7 @@ class FinancialAuditLog(models.Model):
     LOAN_APPROVE        = 'loan_approve'
     LOAN_DISBURSE       = 'loan_disburse'
     LOAN_REPAY          = 'loan_repay'
+    LOAN_BALANCE_CORRECTION = 'loan_balance_correction'
     SAVINGS_DEPOSIT     = 'savings_deposit'
     SAVINGS_WITHDRAW    = 'savings_withdraw'
     JOURNAL_POST        = 'journal_post'
@@ -382,6 +383,7 @@ class FinancialAuditLog(models.Model):
         (LOAN_APPROVE,      'Loan Approved'),
         (LOAN_DISBURSE,     'Loan Disbursed'),
         (LOAN_REPAY,        'Loan Repayment'),
+        (LOAN_BALANCE_CORRECTION, 'Loan Balance Correction'),
         (SAVINGS_DEPOSIT,   'Savings Deposit'),
         (SAVINGS_WITHDRAW,  'Savings Withdrawal'),
         (JOURNAL_POST,      'Journal Entry Posted'),
