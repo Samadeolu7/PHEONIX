@@ -300,15 +300,31 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """Calculate insurance premium for given loan amount."""
         return (loan_amount * self.insurance_rate) / 100
 
-    def calculate_late_penalty(self, outstanding_amount: Decimal, days_late: int) -> Decimal:
+    # Days per repayment period, used to convert days-late into periods-late
+    # for penalty assessment — a percentage penalty is charged once per missed
+    # repayment period (e.g. once per week for a weekly loan, once per month
+    # for a monthly loan), not once per calendar day.
+    _PERIOD_DAYS = {
+        'daily': 1,
+        'weekly': 7,
+        'biweekly': 14,
+        'monthly': 30,
+        'quarterly': 90,
+    }
+
+    def calculate_late_penalty(
+        self, outstanding_amount: Decimal, days_late: int, repayment_frequency: str = None
+    ) -> Decimal:
         """Calculate late payment penalty"""
         if days_late <= self.grace_period_days:
             return Decimal('0.00')
-        
+
         if self.late_payment_penalty_type == 'fixed':
             return self.late_payment_penalty
-        else:  # percentage per day
-            return (outstanding_amount * self.late_payment_penalty * days_late) / 100
+        else:  # percentage, charged once per missed repayment period
+            period_days = self._PERIOD_DAYS.get(repayment_frequency or 'monthly', 30)
+            periods_late = max(1, days_late // period_days)
+            return (outstanding_amount * self.late_payment_penalty * periods_late) / 100
 
 
 class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

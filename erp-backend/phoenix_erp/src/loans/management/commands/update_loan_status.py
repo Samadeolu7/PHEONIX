@@ -87,8 +87,9 @@ class Command(BaseCommand):
 
                     # 4. Auto-penalty: apply to overdue installments. Recomputes from
                     # the current days_late every run (not gated on penalty_due=0) so
-                    # a percentage-per-day penalty keeps growing as a loan stays
-                    # overdue longer, instead of freezing at its first-assessed value.
+                    # a percentage penalty keeps growing as more repayment periods
+                    # (weeks/months, per the loan's frequency) elapse overdue,
+                    # instead of freezing at its first-assessed value.
                     # Only the delta is applied to outstanding_penalties since
                     # penalty_due is an absolute (not incremental) figure.
                     overdue_schedules = loan.repayment_schedule.filter(status='overdue')
@@ -96,7 +97,8 @@ class Command(BaseCommand):
                     for sched in overdue_schedules:
                         days_late = (today - sched.due_date).days
                         new_penalty = loan.product.calculate_late_penalty(
-                            sched.total_due - sched.total_paid, days_late
+                            sched.total_due - sched.total_paid, days_late,
+                            loan.repayment_frequency,
                         )
                         delta = new_penalty - sched.penalty_due
                         if delta > 0:
