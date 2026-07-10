@@ -755,7 +755,7 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
         Returns 404 only when the chart of accounts has not been set up yet.
         """
         from accounts.models import Account
-        from django.db import IntegrityError
+        from django.db import IntegrityError, transaction
         from django.db.models import QuerySet as DjQuerySet
 
         branch = getattr(request.user, 'branch', None)
@@ -834,7 +834,10 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
             create_kwargs['branch'] = branch
 
         try:
-            fund = PettyCashFund.objects.create(**create_kwargs)
+            # Nested atomic() creates a savepoint so a collision here only
+            # rolls back this attempt, not the whole request transaction.
+            with transaction.atomic():
+                fund = PettyCashFund.objects.create(**create_kwargs)
         except IntegrityError:
             # fund_code='PC-001' already exists but wasn't visible through the
             # tenant-scoped manager (e.g. tenant=NULL on existing record).

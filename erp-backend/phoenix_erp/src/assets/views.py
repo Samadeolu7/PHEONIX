@@ -1607,7 +1607,7 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
     def perform_create(self, serializer):
         import random
         from datetime import datetime
-        from django.db import IntegrityError
+        from django.db import IntegrityError, transaction
         from rest_framework.exceptions import ValidationError
 
         for attempt in range(10):
@@ -1615,13 +1615,16 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
             ar_number = f"AR-{date_str}-{random.randint(1000, 9999)}"
             if not AssetRequisition.objects.filter(ar_number=ar_number).exists():
                 try:
-                    serializer.save(
-                        ar_number=ar_number,
-                        requested_by=self.request.user,
-                        owner=self.request.user,
-                        branch=self.request.user.branch,
-                        tenant=getattr(self.request.user, 'tenant', None),
-                    )
+                    # Nested atomic() creates a savepoint so a collision here only
+                    # rolls back this attempt, not the whole request transaction.
+                    with transaction.atomic():
+                        serializer.save(
+                            ar_number=ar_number,
+                            requested_by=self.request.user,
+                            owner=self.request.user,
+                            branch=self.request.user.branch,
+                            tenant=getattr(self.request.user, 'tenant', None),
+                        )
                     return
                 except IntegrityError as e:
                     if 'ar_number' in str(e) and attempt < 9:

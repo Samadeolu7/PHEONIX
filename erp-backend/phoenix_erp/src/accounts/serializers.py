@@ -253,8 +253,9 @@ class AccountCategorySerializer(TenantModelSerializer):
 
         # Create via all_objects manager to bypass default filtering during tests/migrations
         try:
-            from django.db import IntegrityError
-            category = AccountCategory.all_objects.create(**validated_data)
+            from django.db import IntegrityError, transaction
+            with transaction.atomic():
+                category = AccountCategory.all_objects.create(**validated_data)
             try:
                 import logging
                 logger = logging.getLogger(__name__)

@@ -492,10 +492,10 @@ class LeaveTypeViewSet(ScopedModelViewSet):
     
     def perform_create(self, serializer):
         """Create leave type with auto-generated code"""
-        from django.db import IntegrityError
+        from django.db import IntegrityError, transaction
         from rest_framework.exceptions import ValidationError
         import re
-        
+
         # Generate code from name
         name = serializer.validated_data.get('name', '')
         base_code = re.sub(r'[^A-Z]', '', name.upper())[:4]  # Take first 4 uppercase letters
@@ -521,11 +521,14 @@ class LeaveTypeViewSet(ScopedModelViewSet):
                 branch=self.request.user.branch
             ).exists():
                 try:
-                    serializer.save(
-                        code=code,
-                        owner=self.request.user,
-                        branch=self.request.user.branch
-                    )
+                    # Nested atomic() creates a savepoint so a collision here only
+                    # rolls back this attempt, not the whole request transaction.
+                    with transaction.atomic():
+                        serializer.save(
+                            code=code,
+                            owner=self.request.user,
+                            branch=self.request.user.branch
+                        )
                     return
                 except IntegrityError as e:
                     if 'code' in str(e) and attempt < max_attempts - 1:

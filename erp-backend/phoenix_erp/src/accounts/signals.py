@@ -751,23 +751,26 @@ def _generate_module_page(account: Account, form_schema):
         # Once we hold the lock, do a simple get_or_create. This serializes
         # concurrent creators so only one will perform the insert.
         try:
-            accounts_module, created = module_qs.get_or_create(
-                owner_id=owner_id,
-                branch_id=branch_id,
-                code='accounts',
-                defaults={
-                    'tenant_id': tenant_id,
-                    'name': 'Accounts',
-                    'description': 'Chart of Accounts Management',
-                    'icon': 'book',
-                    'color': '#2563eb',
-                    'order': 0,
-                    'is_deleted': False,
-                    'is_active': True,
-                    'created_by_id': created_by_id,
-                    'required_permission': ''
-                }
-            )
+            # Nested atomic() creates a savepoint so a collision here only
+            # rolls back this attempt, not the whole outer transaction.
+            with transaction.atomic():
+                accounts_module, created = module_qs.get_or_create(
+                    owner_id=owner_id,
+                    branch_id=branch_id,
+                    code='accounts',
+                    defaults={
+                        'tenant_id': tenant_id,
+                        'name': 'Accounts',
+                        'description': 'Chart of Accounts Management',
+                        'icon': 'book',
+                        'color': '#2563eb',
+                        'order': 0,
+                        'is_deleted': False,
+                        'is_active': True,
+                        'created_by_id': created_by_id,
+                        'required_permission': ''
+                    }
+                )
         except IntegrityError:
             # If insert still failed, attempt to fetch the existing record
             logger.info(
@@ -819,24 +822,27 @@ def _generate_module_page(account: Account, form_schema):
         with connection.cursor() as cur:
             cur.execute('SELECT pg_advisory_lock(%s)', [page_lock_key])
         try:
-            module_page, created = page_qs.get_or_create(
-                module_id=module_id,
-                code=page_code,
-                defaults={
-                    'owner_id': owner_id,
-                    'branch_id': branch_id,
-                    'tenant_id': page_tenant_id,
-                    'created_by_id': created_by_id,
-                    'title': f'{account.name} Transaction',
-                    'description': f'Record transactions for {account.name}',
-                    'icon': 'file-text',
-                    'page_type': 'form',
-                    'page_config': page_config_json,
-                    'show_in_menu': True,
-                    'is_deleted': False,
-                    'is_active': True
-                }
-            )
+            # Nested atomic() creates a savepoint so a collision here only
+            # rolls back this attempt, not the whole outer transaction.
+            with transaction.atomic():
+                module_page, created = page_qs.get_or_create(
+                    module_id=module_id,
+                    code=page_code,
+                    defaults={
+                        'owner_id': owner_id,
+                        'branch_id': branch_id,
+                        'tenant_id': page_tenant_id,
+                        'created_by_id': created_by_id,
+                        'title': f'{account.name} Transaction',
+                        'description': f'Record transactions for {account.name}',
+                        'icon': 'file-text',
+                        'page_type': 'form',
+                        'page_config': page_config_json,
+                        'show_in_menu': True,
+                        'is_deleted': False,
+                        'is_active': True
+                    }
+                )
         except IntegrityError:
             logger.info('IntegrityError creating ModulePage after lock, fetching (module=%s code=%s)', module_id, page_code)
             module_page = page_qs.filter(module_id=module_id, code=page_code).first()

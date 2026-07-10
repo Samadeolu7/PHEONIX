@@ -172,7 +172,10 @@ class AccountsPayable(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 self.reference_number = f"{prefix}-{next_sequence:04d}"
                 
                 try:
-                    super().save(*args, **kwargs)
+                    # Nested atomic() creates a savepoint so a collision here only
+                    # rolls back this attempt, not the whole outer transaction.
+                    with transaction.atomic():
+                        super().save(*args, **kwargs)
                     return  # Success!
                 except IntegrityError as e:
                     if 'reference_number' in str(e).lower() and attempt < 9:

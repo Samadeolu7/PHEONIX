@@ -356,7 +356,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Create with owner and branch, handling database errors gracefully"""
-        from django.db import IntegrityError
+        from django.db import IntegrityError, transaction
         from rest_framework.exceptions import ValidationError
         import logging
 
@@ -382,10 +382,14 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
 
-            if branch is None:
-                serializer.save(owner=user, tenant=getattr(user, 'tenant', None))
-            else:
-                serializer.save(owner=user, branch=branch, tenant=getattr(user, 'tenant', None))
+            # Nested atomic() creates a savepoint so an IntegrityError here only
+            # rolls back this attempt, not the whole request transaction — otherwise
+            # the error-message-lookup queries below raise TransactionManagementError.
+            with transaction.atomic():
+                if branch is None:
+                    serializer.save(owner=user, tenant=getattr(user, 'tenant', None))
+                else:
+                    serializer.save(owner=user, branch=branch, tenant=getattr(user, 'tenant', None))
         except IntegrityError as e:
             # Convert database integrity errors to validation errors
             error_message = str(e)
@@ -536,14 +540,17 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         """Update with error handling"""
-        from django.db import IntegrityError
+        from django.db import IntegrityError, transaction
         from rest_framework.exceptions import ValidationError
         import logging
-        
+
         logger = logging.getLogger(__name__)
-        
+
         try:
-            serializer.save()
+            # Nested atomic() creates a savepoint so an IntegrityError here only
+            # rolls back this attempt, not the whole request transaction.
+            with transaction.atomic():
+                serializer.save()
         except IntegrityError as e:
             error_message = str(e)
             logger.error(f"IntegrityError in perform_update: {error_message}", exc_info=True)
@@ -575,23 +582,23 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     
     def perform_destroy(self, instance):
         """Soft delete if model supports it, otherwise hard delete"""
-        from django.db import IntegrityError
+        from django.db import IntegrityError, transaction
         from rest_framework.exceptions import ValidationError
         import logging
-        
+
         logger = logging.getLogger(__name__)
-        
+
         try:
-            import logging
-            logger = logging.getLogger(__name__)
-            # Debug: log instance identity and tenant before delete
-            if hasattr(instance, 'is_deleted'):
-                # Soft delete
-                instance.is_deleted = True
-                instance.save()
-            else:
-                # Hard delete
-                instance.delete()
+            # Nested atomic() creates a savepoint so an IntegrityError here only
+            # rolls back this attempt, not the whole request transaction.
+            with transaction.atomic():
+                if hasattr(instance, 'is_deleted'):
+                    # Soft delete
+                    instance.is_deleted = True
+                    instance.save()
+                else:
+                    # Hard delete
+                    instance.delete()
         except IntegrityError as e:
             error_message = str(e)
             logger.error(f"IntegrityError in perform_destroy: {error_message}", exc_info=True)

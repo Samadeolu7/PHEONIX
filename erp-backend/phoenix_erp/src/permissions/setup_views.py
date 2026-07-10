@@ -105,19 +105,21 @@ class PermissionSetupSyncView(APIView):
                 module_obj = Module.objects.filter(code=code, branch=None, tenant=None).first()
                 if not module_obj:
                     try:
-                        module_obj = Module.objects.create(
-                            code=code,
-                            name=mod_data.get('name', code.title()),
-                            icon=mod_data.get('icon', 'Package'),
-                            color=mod_data.get('color', '#6366f1'),
-                            description=mod_data.get('description', ''),
-                            order=idx,
-                            is_active=True,
-                            tenant=None,
-                            branch=None,
-                        )
+                        with db_tx.atomic():
+                            module_obj = Module.objects.create(
+                                code=code,
+                                name=mod_data.get('name', code.title()),
+                                icon=mod_data.get('icon', 'Package'),
+                                color=mod_data.get('color', '#6366f1'),
+                                description=mod_data.get('description', ''),
+                                order=idx,
+                                is_active=True,
+                                tenant=None,
+                                branch=None,
+                            )
                         created_modules += 1
                     except IntegrityError:
+                        # Savepoint above rolled back; the outer transaction is still usable.
                         module_obj = Module.objects.filter(code=code, branch=None, tenant=None).first()
                         if not module_obj:
                             logger.warning('Could not create or find Module code=%s', code)
@@ -144,20 +146,22 @@ class PermissionSetupSyncView(APIView):
                     page_obj = ModulePage.objects.filter(module=module_obj, code=pcode).first()
                     if not page_obj:
                         try:
-                            page_obj = ModulePage.objects.create(
-                                module=module_obj,
-                                code=pcode,
-                                title=page_data.get('title', pcode.title()),
-                                description=page_data.get('description', ''),
-                                page_type='list',
-                                order=pidx,
-                                is_active=True,
-                                tenant=None,
-                                branch=None,
-                            )
+                            with db_tx.atomic():
+                                page_obj = ModulePage.objects.create(
+                                    module=module_obj,
+                                    code=pcode,
+                                    title=page_data.get('title', pcode.title()),
+                                    description=page_data.get('description', ''),
+                                    page_type='list',
+                                    order=pidx,
+                                    is_active=True,
+                                    tenant=None,
+                                    branch=None,
+                                )
                             created_pages += 1
                         except IntegrityError:
-                            # url_path already exists (another tenant's sync ran first)
+                            # url_path already exists (another tenant's sync ran first).
+                            # Savepoint above rolled back; the outer transaction is still usable.
                             page_obj = ModulePage.objects.filter(module=module_obj, code=pcode).first()
                             if not page_obj:
                                 logger.warning(
