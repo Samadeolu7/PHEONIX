@@ -884,6 +884,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=self.owner,
             branch=self.branch,
             created_by=disbursed_by or self.approved_by,
+            tenant=self.tenant,
         )
 
         # Debit: Loan Receivable (LOAN/ASSET type) — balance INCREASES
@@ -1137,6 +1138,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=self.owner,
             branch=self.branch,
             created_by=received_by,
+            tenant=self.tenant,
         )
 
         # Debit: Cash received — total collected from client (loan portion + any spillover)
@@ -1265,6 +1267,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     owner=self.owner,
                     branch=self.branch,
                     created_by=received_by,
+                    tenant=self.tenant,
                 )
                 JournalEntryLine.objects.create(
                     transaction=catchup_journal,
@@ -1496,6 +1499,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=self.owner,
             branch=self.branch,
             created_by=written_off_by,
+            tenant=self.tenant,
         )
 
         # Dr. Loan Loss Provision / Expense — cost recognised
@@ -1820,6 +1824,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 owner=self.owner,
                 branch=self.branch,
                 created_by=restructured_by,
+                tenant=self.tenant,
             )
             JournalEntryLine.objects.create(
                 transaction=journal_entry,
@@ -2591,6 +2596,7 @@ class LoanWriteOff(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=loan.owner,
             branch=loan.branch,
             created_by=approving_user,
+            tenant=loan.tenant,
         )
 
         # Dr. Provision for Loan Losses (reduces provision asset on books)

@@ -615,6 +615,7 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         child_data['account_level'] = cls.LEVEL_CHILD
         child_data['account_type'] = parent.account_type
         child_data['category'] = parent.category
+        child_data.setdefault('tenant', parent.tenant)
 
         return cls.objects.create(**child_data)
     
@@ -636,7 +637,8 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         create_kwargs = {
             'branch': branch,
             'category': category,
-            'name': name
+            'name': name,
+            'tenant': branch.tenant
         }
         if owner is not None:
             create_kwargs['owner'] = owner

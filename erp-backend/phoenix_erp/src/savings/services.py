@@ -101,6 +101,7 @@ def handle_first_deposit_income(
         owner=savings_account.owner,
         branch=savings_account.branch,
         created_by=transacted_by,
+        tenant=savings_account.tenant,
     )
 
     # Debit: Cash / Cashier account (ASSET)
@@ -188,6 +189,7 @@ def apply_cycle_interest(savings_account: SavingsAccount, transacted_by) -> obje
         owner=savings_account.owner,
         branch=savings_account.branch,
         created_by=transacted_by,
+        tenant=savings_account.tenant,
     )
 
     TransactionEntry.objects.create(
@@ -290,6 +292,7 @@ def apply_cycle_break_penalty(
         owner=savings_account.owner,
         branch=savings_account.branch,
         created_by=transacted_by,
+        tenant=savings_account.tenant,
     )
 
     TransactionEntry.objects.create(

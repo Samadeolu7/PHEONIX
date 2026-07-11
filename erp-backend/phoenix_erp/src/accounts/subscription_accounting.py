@@ -32,6 +32,7 @@ def generate_invoice_transactions(invoice):
         admin_tx = Transaction.objects.create(
             owner=subscription.income_account.owner,
             branch=subscription.income_account.branch,
+            tenant=subscription.income_account.tenant,
             transaction_type='journal',
             date=invoice.invoice_date,
             description=f"Subscription invoice for {subscription.tenant_owner.email}",
@@ -69,6 +70,7 @@ def generate_invoice_transactions(invoice):
         tenant_tx = Transaction.objects.create(
             owner=subscription.tenant_owner,
             branch=subscription.tenant_owner.branch,
+            tenant=subscription.tenant_owner.tenant,
             transaction_type='journal',
             date=invoice.invoice_date,
             description=f"SaaS subscription expense for {invoice.period_start} to {invoice.period_end}",
@@ -139,6 +141,7 @@ def record_payment_transactions(invoice, payment_proof):
         admin_payment_tx = Transaction.objects.create(
             owner=subscription.income_account.owner,
             branch=subscription.income_account.branch,
+            tenant=subscription.income_account.tenant,
             transaction_type='receipt',
             date=payment_proof.payment_date,
             description=f"Payment received from {subscription.tenant_owner.email}",
@@ -187,6 +190,7 @@ def record_payment_transactions(invoice, payment_proof):
         tenant_payment_tx = Transaction.objects.create(
             owner=subscription.tenant_owner,
             branch=subscription.tenant_owner.branch,
+            tenant=subscription.tenant_owner.tenant,
             transaction_type='payment',
             date=payment_proof.payment_date,
             description=f"SaaS subscription payment",

@@ -80,8 +80,9 @@ class ExpenseAccountingService:
             branch=self.expense.branch,
             owner=self.expense.owner,
             created_by=posted_by,
+            tenant=self.expense.tenant,
         )
-        
+
         # DR: Expense Account
         JournalEntryLine.objects.create(
             transaction=journal_entry,
@@ -160,6 +161,7 @@ class ExpenseAccountingService:
             branch=self.expense.branch,
             owner=self.expense.owner,
             created_by=paid_by,
+            tenant=self.expense.tenant,
         )
         
         # DR: Accounts Payable
@@ -344,6 +346,7 @@ class PrepaidExpenseAccountingService:
             branch=self.prepaid_expense.branch,
             owner=self.prepaid_expense.owner,
             created_by=paid_by,
+            tenant=self.prepaid_expense.tenant,
         )
         
         # DR: Prepaid Expense (Asset)
@@ -429,6 +432,7 @@ class PrepaidExpenseAccountingService:
             branch=self.prepaid_expense.branch,
             owner=self.prepaid_expense.owner,
             created_by=posted_by,
+            tenant=self.prepaid_expense.tenant,
         )
         
         # DR: Expense Account
@@ -528,6 +532,7 @@ class PrepaidExpenseAccountingService:
             branch=self.prepaid_expense.branch,
             owner=self.prepaid_expense.owner,
             created_by=posted_by,
+            tenant=self.prepaid_expense.tenant,
         )
 
         # DR: Prepaid Expense (Asset)

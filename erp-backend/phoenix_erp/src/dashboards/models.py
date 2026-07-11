@@ -744,18 +744,20 @@ class DashboardTemplate(TimeStampedModel, SoftDeleteModel, BranchScopedModel):
         dashboard = Dashboard.objects.create(
             owner=owner,
             branch=branch,
+            tenant=self.tenant,
             name=name or f"{self.name} (Copy)",
             description=self.description,
             theme=self.default_theme,
             **self.template_config.get('dashboard_settings', {})
         )
-        
+
         # Create widgets
         for widget_config in self.template_config.get('widgets', []):
             Widget.objects.create(
                 dashboard=dashboard,
                 owner=owner,
                 branch=branch,
+                tenant=self.tenant,
                 **widget_config
             )
         

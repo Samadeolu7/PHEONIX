@@ -258,7 +258,7 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         if count == 0:
             # No config yet — create one
-            return cls.objects.create(branch=branch, **defaults)
+            return cls.objects.create(branch=branch, tenant=branch.tenant, **defaults)
 
         config = qs.first()
 

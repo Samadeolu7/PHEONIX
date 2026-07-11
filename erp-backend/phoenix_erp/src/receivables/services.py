@@ -60,7 +60,8 @@ class ReceivablesService:
                     amount=interest,
                     description=f"Overdue interest applied at {receivable.overdue_interest_rate}% annual",
                     owner=receivable.owner,
-                    branch=receivable.branch
+                    branch=receivable.branch,
+                    tenant=receivable.tenant,
                 )
         
         return count

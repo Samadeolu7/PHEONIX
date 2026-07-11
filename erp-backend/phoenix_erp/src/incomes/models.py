@@ -930,7 +930,8 @@ class Invoice(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     workflow_reference=self.invoice_number,
                     owner=self.owner,
                     branch=self.branch,
-                    created_by=user
+                    created_by=user,
+                    tenant=self.tenant,
                 )
 
                 revenue_total = sum(revenue_map.values())

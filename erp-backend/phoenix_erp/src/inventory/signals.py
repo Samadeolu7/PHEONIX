@@ -281,7 +281,8 @@ def process_invoice_stock_reduction(invoice):
                     workflow_reference=invoice.invoice_number,
                     owner=invoice.owner,
                     branch=invoice.branch,
-                    created_by=invoice.created_by
+                    created_by=invoice.created_by,
+                    tenant=invoice.tenant,
                 )
 
                 # Create debit entries for COGS (one per COGS account)

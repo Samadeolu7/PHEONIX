@@ -76,6 +76,7 @@ def collect_client_registration_fees(
         owner=client.owner,
         branch=client.branch,
         created_by=transacted_by,
+        tenant=client.tenant,
     )
 
     # Cash received at counter

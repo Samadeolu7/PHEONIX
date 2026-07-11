@@ -443,6 +443,7 @@ class AccountsPayable(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 branch=self.branch,
                 owner=self.owner,
                 created_by=posted_by,
+                tenant=self.tenant,
             )
 
             # DR: Accounts Payable — clears the liability from the balance sheet

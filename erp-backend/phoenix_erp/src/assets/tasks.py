@@ -115,6 +115,7 @@ def post_monthly_depreciation(self):  # noqa: ARG002
                     ),
                     owner=asset.owner,
                     branch=asset.branch,
+                    tenant=asset.tenant,
                 )
 
                 JournalEntryLine.objects.create(
@@ -152,6 +153,7 @@ def post_monthly_depreciation(self):  # noqa: ARG002
                     journal_entry=journal,
                     owner=asset.owner,
                     branch=asset.branch,
+                    tenant=asset.tenant,
                 )
 
                 # ── Update asset book value ───────────────────────────────

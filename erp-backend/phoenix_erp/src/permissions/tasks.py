@@ -136,6 +136,7 @@ def _notify_expiry(override, action: str):
             user=user,
             message=msg,
             notification_type='permission_expiry',
+            tenant=tenant,
         )
 
         # Notify the granter
@@ -144,6 +145,7 @@ def _notify_expiry(override, action: str):
                 user=override.granted_by,
                 message=f'Permission override you granted to {user} on "{target_label}" has expired ({action}).',
                 notification_type='permission_expiry',
+                tenant=tenant,
             )
 
         # Notify auditors (users with roles named 'Auditor' in the same tenant)
@@ -160,6 +162,7 @@ def _notify_expiry(override, action: str):
                     user=auditor,
                     message=f'Elevated permission override for {user} on "{target_label}" expired ({action}).',
                     notification_type='permission_expiry',
+                    tenant=tenant,
                 )
     except Exception as exc:
         logger.warning('Could not send expiry notification for override %s: %s', override.pk, exc)
@@ -171,6 +174,7 @@ def _send_expiry_warning(override, hours_left):
         from notifications.models import Notification
 
         user         = override.user
+        tenant       = getattr(user, 'tenant', None)
         target       = override.action or override.page or override.module
         target_label = str(target) if target else 'all permissions'
         hours_str    = f'{hours_left:.0f}' if hours_left is not None else 'less than 24'
@@ -182,6 +186,7 @@ def _send_expiry_warning(override, hours_left):
                 f'in approximately {hours_str} hour(s).'
             ),
             notification_type='permission_expiry_warning',
+            tenant=tenant,
         )
     except Exception as exc:
         logger.warning('Could not send expiry warning for override %s: %s', override.pk, exc)

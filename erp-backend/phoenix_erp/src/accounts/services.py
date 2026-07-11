@@ -90,6 +90,7 @@ def year_end_close(owner, branch, year):
         date=next_date,
         owner=owner,
         branch=branch,
+        tenant=owner.tenant,
         description=f"Opening Balance for {year+1}",
     )
 
@@ -189,6 +190,7 @@ def year_end_close(owner, branch, year):
             date=next_date,
             owner=owner,
             branch=branch,
+            tenant=owner.tenant,
             description=f"Transfer Net Income to Retained Earnings for {year}",
         )
 

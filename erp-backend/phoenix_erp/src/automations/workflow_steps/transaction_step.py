@@ -70,6 +70,7 @@ class TransactionStepHandler:
                 owner=run.owner,
                 branch=run.branch,
                 created_by=run.created_by,
+                tenant=run.tenant,
                 workflow_reference=step_workflow_ref
             )
             

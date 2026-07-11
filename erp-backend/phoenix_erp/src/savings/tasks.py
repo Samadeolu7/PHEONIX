@@ -57,6 +57,7 @@ def _get_or_create_smart_savings_interest_expense_account(owner, branch):
         parent=parent,
         is_system_account=True,
         allow_manual_entries=False,
+        tenant=getattr(branch, 'tenant', None),
     )
     return acct
 
@@ -163,6 +164,7 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                     ),
                     owner=savings.owner,
                     branch=savings.branch,
+                    tenant=savings.tenant,
                 )
 
                 # Dr. Interest Expense (EXPENSE account — balance increases on DEBIT)
@@ -352,6 +354,7 @@ def post_monthly_savings_interest(self):  # noqa: ARG002
                     ),
                     owner=savings.owner,
                     branch=savings.branch,
+                    tenant=savings.tenant,
                 )
 
                 JournalEntryLine.objects.create(

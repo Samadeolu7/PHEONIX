@@ -88,9 +88,10 @@ class InventoryAccountingService:
             total_amount=total_cost,
             owner=item.owner,
             branch=item.branch,
-            created_by=user
+            created_by=user,
+            tenant=item.tenant,
         )
-        
+
         # Dr. Inventory Asset
         JournalEntryLine.objects.create(
             transaction=journal_entry,
@@ -144,7 +145,8 @@ class InventoryAccountingService:
             total_amount=total_cost,
             owner=item.owner,
             branch=item.branch,
-            created_by=user
+            created_by=user,
+            tenant=item.tenant,
         )
         
         # Dr. COGS
@@ -226,7 +228,8 @@ class InventoryAccountingService:
             total_amount=total_amount,
             owner=owner,
             branch=branch,
-            created_by=user
+            created_by=user,
+            tenant=getattr(owner, 'tenant', None),
         )
         
         # Dr. Cash/AR
@@ -294,7 +297,8 @@ class InventoryAccountingService:
             total_amount=total_value,
             owner=item.owner,
             branch=item.branch,
-            created_by=user
+            created_by=user,
+            tenant=item.tenant,
         )
         
         if adjustment_quantity > 0:
@@ -362,7 +366,8 @@ class InventoryAccountingService:
             total_amount=total_cogs,
             owner=redemption.owner,
             branch=redemption.branch,
-            created_by=user
+            created_by=user,
+            tenant=redemption.tenant,
         )
         
         # Dr. COGS

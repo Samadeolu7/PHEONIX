@@ -464,7 +464,8 @@ class InvoiceViewSet(ScopedModelViewSet):
                 total_amount=invoice.total_amount,
                 owner=request.user,
                 branch=invoice.branch,
-                created_by=request.user
+                created_by=request.user,
+                tenant=invoice.tenant,
             )
             
             # Dr. Accounts Receivable (Asset increases)

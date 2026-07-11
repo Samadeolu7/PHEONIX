@@ -371,6 +371,7 @@ class BulkLoanAccrualView(APIView):
                             branch=loan.branch,
                             # Service-account postings have no human created_by
                             created_by=None,
+                            tenant=loan.tenant,
                         )
 
                         # Debit: Loan Receivable — interest earned, owed by borrower

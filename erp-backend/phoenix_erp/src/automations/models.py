@@ -204,6 +204,7 @@ class FormSubmission(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                         owner=self.owner,
                         branch=self.branch,
                         created_by=self.created_by,
+                        tenant=self.tenant,
                         form_submission=self
                     )
                     
@@ -526,7 +527,8 @@ class WorkflowBinding(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             context=context,
             owner=self.owner,
             branch=self.branch,
-            created_by=user
+            created_by=user,
+            tenant=self.tenant
         )
         
         # Update usage stats

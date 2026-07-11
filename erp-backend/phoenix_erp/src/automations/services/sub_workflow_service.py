@@ -62,7 +62,8 @@ class SubWorkflowExecutor:
             status='running',
             context=sub_workflow_inputs,
             owner=self.parent_execution.owner,
-            created_by=self.parent_execution.created_by
+            created_by=self.parent_execution.created_by,
+            tenant=self.parent_execution.tenant
         )
         
         try:

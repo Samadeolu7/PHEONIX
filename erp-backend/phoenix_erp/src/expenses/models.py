@@ -1615,8 +1615,9 @@ class ResourceConsumption(MakerCheckerMixin, TimeStampedModel, BranchScopedModel
             branch=self.branch,
             owner=self.owner,
             created_by=self.posted_by,
+            tenant=self.tenant,
         )
-        
+
         # Debit: Expense Account
         JournalEntryLine.objects.create(
             transaction=journal_entry,
@@ -1624,7 +1625,7 @@ class ResourceConsumption(MakerCheckerMixin, TimeStampedModel, BranchScopedModel
             side=JournalEntryLine.DEBIT,
             amount=self.total_cost
         )
-        
+
         # Credit: Prepaid Asset Account
         JournalEntryLine.objects.create(
             transaction=journal_entry,
@@ -1678,8 +1679,9 @@ class ResourceConsumption(MakerCheckerMixin, TimeStampedModel, BranchScopedModel
             branch=self.branch,
             owner=self.owner,
             created_by=self.posted_by,
+            tenant=self.tenant,
         )
-        
+
         # Debit: Expense Account
         JournalEntryLine.objects.create(
             transaction=journal_entry,
@@ -1687,7 +1689,7 @@ class ResourceConsumption(MakerCheckerMixin, TimeStampedModel, BranchScopedModel
             side=JournalEntryLine.DEBIT,
             amount=self.total_cost
         )
-        
+
         # Credit: Accounts Payable
         JournalEntryLine.objects.create(
             transaction=journal_entry,

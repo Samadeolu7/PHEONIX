@@ -127,7 +127,8 @@ class NotificationService:
                 created_by=created_by,
                 related_object=related_object,
                 priority=priority or template.default_priority,
-                scheduled_for=scheduled_for
+                scheduled_for=scheduled_for,
+                tenant=getattr(owner, 'tenant', None)
             )
             
             notifications.append(notification)
@@ -193,7 +194,8 @@ class NotificationService:
         created_by,
         related_object,
         priority,
-        scheduled_for
+        scheduled_for,
+        tenant=None
     ) -> Notification:
         """Create a notification instance"""
         # Set related object
@@ -222,7 +224,8 @@ class NotificationService:
             cost=channel.cost_per_unit,
             owner=owner,
             branch=branch,
-            created_by=created_by
+            created_by=created_by,
+            tenant=tenant
         )
         
         return notification
@@ -251,7 +254,8 @@ class NotificationService:
         created_by=None,
         batch_name: str = None,
         batch_size: int = 100,
-        delay_between_batches: int = 60
+        delay_between_batches: int = 60,
+        tenant=None
     ) -> NotificationBatch:
         """
         Send notifications to multiple recipients
@@ -286,7 +290,8 @@ class NotificationService:
             delay_between_batches=delay_between_batches,
             owner=owner,
             branch=branch,
-            created_by=created_by
+            created_by=created_by,
+            tenant=tenant
         )
         
         # Queue batch processing

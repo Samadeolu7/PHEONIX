@@ -292,6 +292,7 @@ class OfficeUseRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=self.owner,
             branch=self.branch,
             created_by=user,
+            tenant=self.tenant,
         )
 
         # Debit: expense account (single line for the total)

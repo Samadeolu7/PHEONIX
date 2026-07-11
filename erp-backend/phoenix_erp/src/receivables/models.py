@@ -270,7 +270,8 @@ class CustomerReceivable(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 amount=interest,
                 description=f"Interest applied: ₦{interest}",
                 owner=self.owner,
-                branch=self.branch
+                branch=self.branch,
+                tenant=self.tenant,
             )
 
 

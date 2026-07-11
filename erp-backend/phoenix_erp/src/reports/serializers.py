@@ -104,6 +104,7 @@ class ReportTemplateCreateUpdateSerializer(serializers.ModelSerializer):
                 owner=report.owner,
                 branch=report.branch,
                 created_by=report.created_by,
+                tenant=report.tenant,
                 **param_data
             )
         
@@ -113,6 +114,7 @@ class ReportTemplateCreateUpdateSerializer(serializers.ModelSerializer):
                 owner=report.owner,
                 branch=report.branch,
                 created_by=report.created_by,
+                tenant=report.tenant,
                 **column_data
             )
         
@@ -122,6 +124,7 @@ class ReportTemplateCreateUpdateSerializer(serializers.ModelSerializer):
                 owner=report.owner,
                 branch=report.branch,
                 created_by=report.created_by,
+                tenant=report.tenant,
                 **chart_data
             )
         
@@ -146,6 +149,7 @@ class ReportTemplateCreateUpdateSerializer(serializers.ModelSerializer):
                     owner=instance.owner,
                     branch=instance.branch,
                     created_by=instance.created_by,
+                    tenant=instance.tenant,
                     **param_data
                 )
         
@@ -157,6 +161,7 @@ class ReportTemplateCreateUpdateSerializer(serializers.ModelSerializer):
                     owner=instance.owner,
                     branch=instance.branch,
                     created_by=instance.created_by,
+                    tenant=instance.tenant,
                     **column_data
                 )
         
@@ -168,6 +173,7 @@ class ReportTemplateCreateUpdateSerializer(serializers.ModelSerializer):
                     owner=instance.owner,
                     branch=instance.branch,
                     created_by=instance.created_by,
+                    tenant=instance.tenant,
                     **chart_data
                 )
         

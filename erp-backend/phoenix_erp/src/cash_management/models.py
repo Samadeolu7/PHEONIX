@@ -443,7 +443,8 @@ class CashCollection(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             workflow_reference=self.receipt_number,
             owner=self.owner,
             branch=self.branch,
-            created_by=user
+            created_by=user,
+            tenant=self.tenant,
         )
         
         # Debit: Cashier's Child Account (ASSET increase)
@@ -767,7 +768,8 @@ class CashTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             workflow_reference=self.transfer_number,
             owner=self.owner,
             branch=self.branch,
-            created_by=user
+            created_by=user,
+            tenant=self.tenant,
         )
         
         # Debit: Main Bank Account (asset increase)
@@ -1468,6 +1470,7 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 owner=self.owner,
                 is_active=True,
                 requires_dual_approval=False,
+                tenant=self.tenant,
             )
 
         self.petty_cash_account.refresh_from_db(fields=['balance'])
@@ -1534,6 +1537,7 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 owner=self.owner,
                 branch=self.branch,
                 created_by=user,
+                tenant=self.tenant,
             )
             TransactionEntry.objects.create(
                 transaction=journal, account=new_account,
@@ -1637,7 +1641,8 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             workflow_reference=self.fund_code,
             owner=self.owner,
             branch=self.branch,
-            created_by=user
+            created_by=user,
+            tenant=self.tenant,
         )
         
         # Dr. Petty Cash Account (ASSET increase - fund established)
@@ -2040,6 +2045,7 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=self.owner,
             branch=self.branch,
             created_by=user,
+            tenant=self.tenant,
         )
 
         # Debit: Expense account (recognises the expense at point of disbursement)
@@ -2452,6 +2458,7 @@ class PettyCashReplenishment(TimeStampedModel, BranchScopedModel, SoftDeleteMode
             owner=self.owner,
             branch=self.branch,
             created_by=user,
+            tenant=self.tenant,
         )
 
         # Amount to post: use approved_amount if set, else requested_amount, else replenishment_amount
@@ -2811,6 +2818,7 @@ class DailyCollectionSheet(TimeStampedModel, BranchScopedModel, SoftDeleteModel)
                     workflow_reference=f"SWEEP-{self.collection_date}-{self.credit_officer_id}",
                     branch=self.branch,
                     created_by=reconciled_by_user,
+                    tenant=self.tenant,
                 )
                 # DR: Branch bank GL account (ASSET goes up — cash received in bank)
                 JournalEntryLine.objects.create(
@@ -3284,6 +3292,7 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=self.owner,
             branch=self.branch,
             created_by=user,
+            tenant=self.tenant,
         )
         JournalEntryLine.objects.create(
             transaction=je,

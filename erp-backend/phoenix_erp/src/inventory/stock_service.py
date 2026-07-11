@@ -402,9 +402,10 @@ class InventoryService:
             workflow_reference=reference_number,
             owner=item.owner,
             branch=item.branch,
-            created_by=user
+            created_by=user,
+            tenant=item.tenant,
         )
-        
+
         # Dr: Inventory
         JournalEntryLine.objects.create(
             transaction=journal_entry,
@@ -412,7 +413,7 @@ class InventoryService:
             side=JournalEntryLine.DEBIT,
             amount=total_cost
         )
-        
+
         # Note: Cr: Accounts Payable is created when GRN is posted
         # DO NOT POST HERE - entry is incomplete until credit side is added
         
@@ -448,7 +449,8 @@ class InventoryService:
             workflow_reference=reference_number,
             owner=item.owner,
             branch=item.branch,
-            created_by=user
+            created_by=user,
+            tenant=item.tenant,
         )
         
         # Dr: COGS
@@ -501,7 +503,8 @@ class InventoryService:
             workflow_reference=reference_number,
             owner=item.owner,
             branch=item.branch,
-            created_by=user
+            created_by=user,
+            tenant=item.tenant,
         )
         
         # Get adjustment accounts (should be configured in settings)

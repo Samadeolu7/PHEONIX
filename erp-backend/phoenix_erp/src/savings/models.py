@@ -150,6 +150,7 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=self.owner,
             branch=self.branch,
             created_by=transacted_by,
+            tenant=self.tenant,
         )
 
         # Debit: Cashier / Cash account (ASSET) — cash received
@@ -246,6 +247,7 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             owner=self.owner,
             branch=self.branch,
             created_by=transacted_by,
+            tenant=self.tenant,
         )
 
         # Debit: Member Savings (SAVINGS/LIABILITY) — balance decreases

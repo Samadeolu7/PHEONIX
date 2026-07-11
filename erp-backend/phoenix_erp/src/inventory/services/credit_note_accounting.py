@@ -74,7 +74,8 @@ class CreditNoteAccountingService:
             description=f"Credit Note Applied: {self.credit_note.credit_note_number} - {self.credit_note.reason}",
             workflow_reference=self.credit_note.credit_note_number,
             branch=self.credit_note.branch,
-            owner=self.credit_note.owner
+            owner=self.credit_note.owner,
+            tenant=self.credit_note.tenant,
         )
         
         # DR: Sales Returns
@@ -152,7 +153,8 @@ class CreditNoteAccountingService:
             workflow_reference=f"{self.credit_note.credit_note_number}-REV",
             branch=self.credit_note.branch,
             owner=self.credit_note.owner,
-            is_reversal=True
+            is_reversal=True,
+            tenant=self.credit_note.tenant,
         )
         
         # DR: Accounts Receivable (restore customer balance)

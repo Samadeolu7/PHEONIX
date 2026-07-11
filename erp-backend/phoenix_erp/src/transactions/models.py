@@ -391,7 +391,8 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 branch=self.branch,
                 created_by=user,
                 is_reversal=True,
-                reverses_transaction=self
+                reverses_transaction=self,
+                tenant=self.tenant
             )
             
             # Create opposite entries

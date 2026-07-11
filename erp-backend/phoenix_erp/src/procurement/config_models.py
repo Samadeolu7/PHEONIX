@@ -147,6 +147,7 @@ class ProcurementConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         config = cls.objects.create(
             branch=branch,
             owner=getattr(branch, 'owner', None) or branch.users.first(),  # Use branch owner or first user
+            tenant=branch.tenant,
             enable_three_way_matching=True,
             matching_tolerance_percentage=Decimal('5.00'),
             auto_approve_within_tolerance=False,  # Explicit default

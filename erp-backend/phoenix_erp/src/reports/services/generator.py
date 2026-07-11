@@ -53,6 +53,7 @@ class ReportGenerator:
             owner=account.owner,
             branch=account.branch,
             created_by=created_by,
+            tenant=account.tenant,
             name=f"{account.name} - Savings Report",
             code=f"savings_report_{account.code.replace('-', '_').lower()}",
             description=f"Comprehensive report for {account.name} showing transactions, balance trends, and analysis",
@@ -212,6 +213,7 @@ class ReportGenerator:
                 owner=report.owner,
                 branch=report.branch,
                 created_by=created_by,
+                tenant=report.tenant,
                 **col_config
             )
         
@@ -281,6 +283,7 @@ class ReportGenerator:
                 owner=report.owner,
                 branch=report.branch,
                 created_by=created_by,
+                tenant=report.tenant,
                 **chart_config
             )
         
@@ -294,6 +297,7 @@ class ReportGenerator:
             owner=account.owner,
             branch=account.branch,
             created_by=created_by,
+            tenant=account.tenant,
             name=f"{account.name} - Loan Report",
             code=f"loan_report_{account.code.replace('-', '_').lower()}",
             description=f"Loan performance report for {account.name} showing payments, balance, and repayment schedule",
@@ -384,6 +388,7 @@ class ReportGenerator:
                 owner=report.owner,
                 branch=report.branch,
                 created_by=created_by,
+                tenant=report.tenant,
                 **col
             )
         
@@ -397,6 +402,7 @@ class ReportGenerator:
             owner=account.owner,
             branch=account.branch,
             created_by=created_by,
+            tenant=account.tenant,
             name=f"{account.name} - Asset Report",
             code=f"asset_report_{account.code.replace('-', '_').lower()}",
             description=f"Asset tracking and valuation report for {account.name}",
@@ -444,6 +450,7 @@ class ReportGenerator:
             owner=account.owner,
             branch=account.branch,
             created_by=created_by,
+            tenant=account.tenant,
             name=f"{account.name} - Expense Report",
             code=f"expense_report_{account.code.replace('-', '_').lower()}",
             description=f"Expense tracking and analysis for {account.name}",
@@ -496,6 +503,7 @@ class ReportGenerator:
             owner=account.owner,
             branch=account.branch,
             created_by=created_by,
+            tenant=account.tenant,
             name=f"{account.name} - Income Report",
             code=f"income_report_{account.code.replace('-', '_').lower()}",
             description=f"Income analysis for {account.name} showing income trends and breakdowns",
@@ -548,6 +556,7 @@ class ReportGenerator:
             owner=account.owner,
             branch=account.branch,
             created_by=created_by,
+            tenant=account.tenant,
             name=f"{account.name} - Account Report",
             code=f"account_report_{account.code.replace('-', '_').lower()}",
             description=f"Transaction history and analysis for {account.name}",
@@ -595,6 +604,7 @@ class ReportGenerator:
             owner=report.owner,
             branch=report.branch,
             created_by=report.created_by,
+            tenant=report.tenant,
             name='start_date',
             code='start_date',
             parameter_type='date',
@@ -609,6 +619,7 @@ class ReportGenerator:
             owner=report.owner,
             branch=report.branch,
             created_by=report.created_by,
+            tenant=report.tenant,
             name='end_date',
             code='end_date',
             parameter_type='date',
@@ -635,6 +646,7 @@ class ReportGenerator:
             owner=product.owner,
             branch=product.branch,
             created_by=created_by,
+            tenant=product.tenant,
             name=f"{product.name} - Product Performance Report",
             code=f"product_report_{product.code.replace('-', '_').lower()}",
             description=f"Comprehensive report for {product.name} showing account performance, transaction trends, and product metrics",
@@ -787,6 +799,7 @@ class ReportGenerator:
                 owner=report.owner,
                 branch=report.branch,
                 created_by=created_by,
+                tenant=report.tenant,
                 **col_config
             )
         
@@ -837,6 +850,7 @@ class ReportGenerator:
                 owner=report.owner,
                 branch=report.branch,
                 created_by=created_by,
+                tenant=report.tenant,
                 **chart_config
             )
         
@@ -850,6 +864,7 @@ class ReportGenerator:
             owner=report.owner,
             branch=report.branch,
             created_by=report.created_by,
+            tenant=report.tenant,
             name='include_inactive',
             code='include_inactive',
             parameter_type='boolean',
@@ -865,6 +880,7 @@ class ReportGenerator:
             owner=report.owner,
             branch=report.branch,
             created_by=report.created_by,
+            tenant=report.tenant,
             name='min_balance',
             code='min_balance',
             parameter_type='number',

@@ -149,7 +149,8 @@ class CustomerReceivableViewSet(ScopedModelViewSet):
                         series=series, date=payment_date,
                         description=f"Payment for invoice {invoice.invoice_number}",
                         workflow_reference=payment_ref,
-                        owner=invoice.owner, branch=invoice.branch, created_by=request.user
+                        owner=invoice.owner, branch=invoice.branch, created_by=request.user,
+                        tenant=invoice.tenant,
                     )
                     JournalEntryLine.objects.create(
                         transaction=journal_entry, account=resolved_account,

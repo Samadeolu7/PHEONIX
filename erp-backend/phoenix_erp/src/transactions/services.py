@@ -71,6 +71,7 @@ class TransactionService:
         reference: Optional[str] = None,
         owner=None,
         branch=None,
+        tenant=None,
         series_code: Optional[str] = None,
         counter_account_id: Optional[int] = None,
         approve: bool = False,
@@ -90,7 +91,7 @@ class TransactionService:
             Transaction narrative shown on the journal
         reference: Optional[str]
             Optional external reference string (e.g. invoice id). Will be stored on workflow_reference.
-        owner, branch
+        owner, branch, tenant
             Required for multi‑tenant/branch scoping. If omitted, caller must ensure defaults.
         series_code: Optional[str]
             If provided selects a TransactionSeries. Otherwise uses settings.DEFAULT_TRANSACTION_SERIES.
@@ -135,6 +136,7 @@ class TransactionService:
                 description=description,
                 owner=owner,
                 branch=branch,
+                tenant=tenant,
                 created_by=created_by,
             )
 

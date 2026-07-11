@@ -95,7 +95,8 @@ class ReportExecutor:
                 parameters=self.parameters,
                 owner=self.template.owner,
                 branch=self.template.branch,
-                created_by=self.user
+                created_by=self.user,
+                tenant=self.template.tenant
             )
             
             # Execute query

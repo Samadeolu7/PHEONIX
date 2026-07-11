@@ -87,7 +87,8 @@ class CashCollectionService:
             collection_mode=collection_mode,
             owner=user,
             branch=cashier_account.branch,
-            created_by=user
+            created_by=user,
+            tenant=cashier_account.tenant,
         )
         
         # Determine variance action
@@ -156,7 +157,8 @@ class CashCollectionService:
             workflow_reference=collection.receipt_number,
             owner=collection.owner,
             branch=collection.branch,
-            created_by=user
+            created_by=user,
+            tenant=collection.tenant,
         )
         
         # Debit: Cashier Account (asset increase)
@@ -252,7 +254,8 @@ class CashTransferService:
             status='draft',
             owner=user,
             branch=cashier_account.branch,
-            created_by=user
+            created_by=user,
+            tenant=cashier_account.tenant,
         )
         
         logger.info(
@@ -359,7 +362,8 @@ class CashReconciliationService:
             notes=notes,
             owner=user,
             branch=cashier_account.branch,
-            created_by=user
+            created_by=user,
+            tenant=cashier_account.tenant,
         )
         
         # Update cashier account

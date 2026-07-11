@@ -99,7 +99,8 @@ class SubWorkflowStepHandler(BaseStepHandler):
             depth=workflow_run.depth + 1,
             owner=workflow_run.owner,
             branch=workflow_run.branch,
-            created_by=workflow_run.created_by
+            created_by=workflow_run.created_by,
+            tenant=workflow_run.tenant
         )
         
         if wait:

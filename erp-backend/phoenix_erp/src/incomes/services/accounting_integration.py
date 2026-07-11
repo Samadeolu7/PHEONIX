@@ -298,9 +298,10 @@ class IncomeAccountingService:
                 workflow_reference=income.reference_number,
                 owner=income.owner,
                 branch=income.branch,
-                created_by=user
+                created_by=user,
+                tenant=income.tenant,
             )
-            
+
             # Dr. Accounts Receivable
             JournalEntryLine.objects.create(
                 transaction=journal_entry,
@@ -336,7 +337,8 @@ class IncomeAccountingService:
                     workflow_reference=f"{income.reference_number}-PMT",
                     owner=income.owner,
                     branch=income.branch,
-                    created_by=user
+                    created_by=user,
+                    tenant=income.tenant,
                 )
                 
                 # Dr. Cash/Bank
@@ -371,9 +373,10 @@ class IncomeAccountingService:
                 workflow_reference=income.reference_number,
                 owner=income.owner,
                 branch=income.branch,
-                created_by=user
+                created_by=user,
+                tenant=income.tenant,
             )
-            
+
             # Dr. Cash/Bank
             JournalEntryLine.objects.create(
                 transaction=journal_entry,
@@ -411,9 +414,10 @@ class IncomeAccountingService:
                 workflow_reference=f"{income.reference_number}-PMT",
                 owner=income.owner,
                 branch=income.branch,
-                created_by=user
+                created_by=user,
+                tenant=income.tenant,
             )
-            
+
             # Dr. Cash/Bank
             JournalEntryLine.objects.create(
                 transaction=journal_entry,
@@ -469,7 +473,8 @@ class IncomeAccountingService:
             workflow_reference=f"ENT-{entitlement.id}-COGS",
             owner=entitlement.owner,
             branch=entitlement.branch,
-            created_by=user
+            created_by=user,
+            tenant=entitlement.tenant,
         )
         
         for item_data in items_redeemed:
@@ -562,7 +567,8 @@ class IncomeAccountingService:
                 workflow_reference=f"ENT-{entitlement.id}",
                 owner=entitlement.owner,
                 branch=entitlement.branch,
-                created_by=user
+                created_by=user,
+                tenant=entitlement.tenant,
             )
             
             # Dr. AR
@@ -620,7 +626,8 @@ class IncomeAccountingService:
             workflow_reference=f"ENT-{entitlement.id}-PMT",
             owner=entitlement.owner,
             branch=entitlement.branch,
-            created_by=user
+            created_by=user,
+            tenant=entitlement.tenant,
         )
         
         JournalEntryLine.objects.create(

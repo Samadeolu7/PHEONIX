@@ -131,6 +131,7 @@ class PaymentRoutingService:
             name=f"{user.get_full_name() or user.username} - Cashier",
             cashier=user,
             account=child_account,
+            tenant=tenant,
             branch=branch,
             is_active=True,
             requires_dual_approval=False
@@ -359,7 +360,8 @@ class PaymentRoutingService:
             workflow_reference=reference_number,
             owner=user,
             branch=branch or user.branch,
-            created_by=user
+            created_by=user,
+            tenant=getattr(user, 'tenant', None),
         )
 
         # Dr. Bank GL Account
