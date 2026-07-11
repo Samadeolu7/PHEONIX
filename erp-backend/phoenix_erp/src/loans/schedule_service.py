@@ -256,6 +256,7 @@ class RepaymentScheduleService:
                 principal_due=row['principal_due'],
                 interest_due=row['interest_due'],
                 total_due=row['total_due'],
+                tenant=loan.tenant,
                 owner=loan.owner,
                 branch=loan.branch,
                 created_by=loan.created_by,
