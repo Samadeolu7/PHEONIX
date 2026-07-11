@@ -70,9 +70,18 @@ interface ApprovalSection {
   items: ApprovalItem[];
   isLoading: boolean;
   isError: boolean;
+  /** True when the failure is a 403 — the user simply lacks access to this module. */
+  isForbidden: boolean;
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
+
+// A 403 means "you're not authorized for this module", not "something broke" —
+// those sections should just not appear rather than show an error state.
+const isForbidden = (q: { error: unknown }) => {
+  const err = q.error as any;
+  return err?.status === 403 || err?.response?.status === 403;
+};
 
 const fmt = (amount?: string | number | null) => {
   if (amount == null || amount === '') return null;
@@ -274,6 +283,7 @@ const SectionCard: React.FC<SectionCardProps> = ({ section, onRefresh }) => {
   const [open, setOpen] = useState(true);
 
   const count = section.items.length;
+  if (section.isForbidden) return null;
   if (!section.isLoading && !section.isError && count === 0) return null;
 
   return (
@@ -908,7 +918,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-rose-500',
       items: expenseItems,
       isLoading: expensesQ.isLoading,
-      isError: expensesQ.isError,
+      isError: expensesQ.isError && !isForbidden(expensesQ),
+      isForbidden: isForbidden(expensesQ),
     },
     {
       id: 'resource-consumptions',
@@ -917,7 +928,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-orange-500',
       items: consumptionItems,
       isLoading: consumptionsQ.isLoading,
-      isError: consumptionsQ.isError,
+      isError: consumptionsQ.isError && !isForbidden(consumptionsQ),
+      isForbidden: isForbidden(consumptionsQ),
     },
     {
       id: 'bank-transfers',
@@ -926,7 +938,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-cyan-600',
       items: bankTransferItems,
       isLoading: bankTransfersQ.isLoading,
-      isError: bankTransfersQ.isError,
+      isError: bankTransfersQ.isError && !isForbidden(bankTransfersQ),
+      isForbidden: isForbidden(bankTransfersQ),
     },
     {
       id: 'petty-cash-vouchers',
@@ -935,7 +948,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-yellow-500',
       items: pettyCashVoucherItems,
       isLoading: pettyCashVouchersQ.isLoading,
-      isError: pettyCashVouchersQ.isError,
+      isError: pettyCashVouchersQ.isError && !isForbidden(pettyCashVouchersQ),
+      isForbidden: isForbidden(pettyCashVouchersQ),
     },
     {
       id: 'petty-cash-replenishments',
@@ -944,7 +958,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-amber-600',
       items: pettyCashReplenishmentItems,
       isLoading: pettyCashReplenishmentsQ.isLoading,
-      isError: pettyCashReplenishmentsQ.isError,
+      isError: pettyCashReplenishmentsQ.isError && !isForbidden(pettyCashReplenishmentsQ),
+      isForbidden: isForbidden(pettyCashReplenishmentsQ),
     },
     {
       id: 'requisitions',
@@ -953,7 +968,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-violet-600',
       items: requisitionItems,
       isLoading: requisitionsQ.isLoading,
-      isError: requisitionsQ.isError,
+      isError: requisitionsQ.isError && !isForbidden(requisitionsQ),
+      isForbidden: isForbidden(requisitionsQ),
     },
     {
       id: 'purchase-orders',
@@ -962,7 +978,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-indigo-600',
       items: purchaseOrderItems,
       isLoading: purchaseOrdersQ.isLoading,
-      isError: purchaseOrdersQ.isError,
+      isError: purchaseOrdersQ.isError && !isForbidden(purchaseOrdersQ),
+      isForbidden: isForbidden(purchaseOrdersQ),
     },
     {
       id: 'leave-requests',
@@ -971,7 +988,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-teal-600',
       items: leaveRequestItems,
       isLoading: leaveRequestsQ.isLoading,
-      isError: leaveRequestsQ.isError,
+      isError: leaveRequestsQ.isError && !isForbidden(leaveRequestsQ),
+      isForbidden: isForbidden(leaveRequestsQ),
     },
     {
       id: 'bonus-deductions',
@@ -980,7 +998,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-pink-600',
       items: bonusDeductionItems,
       isLoading: bonusDeductionsQ.isLoading,
-      isError: bonusDeductionsQ.isError,
+      isError: bonusDeductionsQ.isError && !isForbidden(bonusDeductionsQ),
+      isForbidden: isForbidden(bonusDeductionsQ),
     },
     {
       id: 'payroll',
@@ -989,7 +1008,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-green-600',
       items: payrollItems,
       isLoading: payrollQ.isLoading,
-      isError: payrollQ.isError,
+      isError: payrollQ.isError && !isForbidden(payrollQ),
+      isForbidden: isForbidden(payrollQ),
     },
     {
       id: 'bank-payments',
@@ -998,7 +1018,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-sky-600',
       items: bankPaymentItems,
       isLoading: bankPaymentsQ.isLoading,
-      isError: bankPaymentsQ.isError,
+      isError: bankPaymentsQ.isError && !isForbidden(bankPaymentsQ),
+      isForbidden: isForbidden(bankPaymentsQ),
     },
     {
       id: 'material-requests',
@@ -1007,7 +1028,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-lime-600',
       items: materialRequestItems,
       isLoading: materialRequestsQ.isLoading,
-      isError: materialRequestsQ.isError,
+      isError: materialRequestsQ.isError && !isForbidden(materialRequestsQ),
+      isForbidden: isForbidden(materialRequestsQ),
     },
     {
       id: 'office-use-requests',
@@ -1016,7 +1038,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-fuchsia-600',
       items: officeUseRequestItems,
       isLoading: officeUseRequestsQ.isLoading,
-      isError: officeUseRequestsQ.isError,
+      isError: officeUseRequestsQ.isError && !isForbidden(officeUseRequestsQ),
+      isForbidden: isForbidden(officeUseRequestsQ),
     },
     {
       id: 'fee-structures',
@@ -1025,7 +1048,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-emerald-600',
       items: feeStructureItems,
       isLoading: feeStructuresQ.isLoading,
-      isError: feeStructuresQ.isError,
+      isError: feeStructuresQ.isError && !isForbidden(feeStructuresQ),
+      isForbidden: isForbidden(feeStructuresQ),
     },
     {
       id: 'stock-adjustments',
@@ -1034,7 +1058,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-stone-600',
       items: stockAdjustmentItems,
       isLoading: stockAdjustmentsQ.isLoading,
-      isError: stockAdjustmentsQ.isError,
+      isError: stockAdjustmentsQ.isError && !isForbidden(stockAdjustmentsQ),
+      isForbidden: isForbidden(stockAdjustmentsQ),
     },
     {
       id: 'discount-applications',
@@ -1043,7 +1068,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-purple-600',
       items: discountApplicationItems,
       isLoading: discountApplicationsQ.isLoading,
-      isError: discountApplicationsQ.isError,
+      isError: discountApplicationsQ.isError && !isForbidden(discountApplicationsQ),
+      isForbidden: isForbidden(discountApplicationsQ),
     },
     {
       id: 'asset-acquisitions',
@@ -1052,7 +1078,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-orange-700',
       items: assetAcquisitionItems,
       isLoading: assetAcquisitionsQ.isLoading,
-      isError: assetAcquisitionsQ.isError,
+      isError: assetAcquisitionsQ.isError && !isForbidden(assetAcquisitionsQ),
+      isForbidden: isForbidden(assetAcquisitionsQ),
     },
     {
       id: 'payment-reversals',
@@ -1061,7 +1088,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-red-600',
       items: paymentReversalItems,
       isLoading: paymentReversalRequestsQ.isLoading,
-      isError: paymentReversalRequestsQ.isError,
+      isError: paymentReversalRequestsQ.isError && !isForbidden(paymentReversalRequestsQ),
+      isForbidden: isForbidden(paymentReversalRequestsQ),
     },
     {
       id: 'staff-ious',
@@ -1070,7 +1098,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-indigo-500',
       items: staffIOUItems,
       isLoading: staffIOUsQ.isLoading,
-      isError: staffIOUsQ.isError,
+      isError: staffIOUsQ.isError && !isForbidden(staffIOUsQ),
+      isForbidden: isForbidden(staffIOUsQ),
     },
     {
       id: 'loan-disbursements',
@@ -1079,7 +1108,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-blue-700',
       items: loanDisbursementItems,
       isLoading: loanDisbursementsQ.isLoading,
-      isError: loanDisbursementsQ.isError,
+      isError: loanDisbursementsQ.isError && !isForbidden(loanDisbursementsQ),
+      isForbidden: isForbidden(loanDisbursementsQ),
     },
     {
       id: 'savings-withdrawals',
@@ -1088,7 +1118,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-emerald-700',
       items: savingsWithdrawalItems,
       isLoading: savingsWithdrawalsQ.isLoading,
-      isError: savingsWithdrawalsQ.isError,
+      isError: savingsWithdrawalsQ.isError && !isForbidden(savingsWithdrawalsQ),
+      isForbidden: isForbidden(savingsWithdrawalsQ),
     },
     {
       id: 'loan-repayment-requests',
@@ -1097,7 +1128,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       color: 'bg-violet-700',
       items: loanRepaymentRequestItems,
       isLoading: loanRepaymentRequestsQ.isLoading,
-      isError: loanRepaymentRequestsQ.isError,
+      isError: loanRepaymentRequestsQ.isError && !isForbidden(loanRepaymentRequestsQ),
+      isForbidden: isForbidden(loanRepaymentRequestsQ),
     },
   ];
 
@@ -1157,6 +1189,7 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
         </button>
         {sections.map(s => {
           const count = s.items.length;
+          if (s.isForbidden) return null;
           if (!s.isLoading && !s.isError && count === 0) return null;
           return (
             <button
