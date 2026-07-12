@@ -162,6 +162,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
     'django_celery_beat',
+    'django_celery_results',
     'drf_spectacular',
     'corsheaders',
     'django_extensions',
@@ -525,7 +526,11 @@ AUTOMATIONS = {
 # ==================================================
 
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+# Task results are persisted to the DB (via django_celery_results) rather than
+# Redis, so scheduled-task run history can be queried for the "Scheduled Jobs"
+# admin page instead of disappearing with the broker.
+CELERY_RESULT_BACKEND = 'django-db'
+CELERY_RESULT_EXTENDED = True
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'

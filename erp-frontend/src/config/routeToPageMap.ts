@@ -55,6 +55,7 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/admin/permission-setup': { module: 'permissions', page: 'role-permission-policies', action: 'edit' },
   '/admin/permissions-matrix': { module: 'permissions', page: 'role-permission-policies', action: 'view' },
   '/admin/review-week': { module: 'common', page: 'business-day', action: 'edit' },
+  '/admin/scheduled-jobs': { module: 'common', page: 'business-day', action: 'edit' },
   '/admin/submissions': { module: 'automations', page: 'forms', action: 'view' },
   '/admin/tenants': { module: 'tenants', page: 'tenants', action: 'view' },
   '/admin/tenants/:id/edit': { module: 'tenants', page: 'tenants', action: 'edit' },

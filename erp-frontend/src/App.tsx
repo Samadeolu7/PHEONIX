@@ -604,6 +604,7 @@ const ReportSummaryPage = lazy(() => import('./pages/reports/ReportSummaryPage')
 const TransactionReversalPage = lazy(() => import('./pages/admin/TransactionReversalPage'));
 const ReviewWeekPage = lazy(() => import('./pages/admin/ReviewWeekPage'));
 const CloseYearPage = lazy(() => import('./pages/admin/CloseYearPage'));
+const ScheduledJobsPage = lazy(() => import('./pages/admin/ScheduledJobsPage'));
 
 // Liabilities / Accounts Payable pages
 const PayablesListPage = lazy(() => import('./pages/liabilities/PayablesListPage'));
@@ -4300,6 +4301,14 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="admin" module="common" page="business-day" action="edit">
                                       <CloseYearPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/admin/scheduled-jobs"
+                                  element={
+                                    <ProtectedRoute requiredPermission="admin" module="common" page="business-day" action="edit">
+                                      <ScheduledJobsPage />
                                     </ProtectedRoute>
                                   }
                                 />

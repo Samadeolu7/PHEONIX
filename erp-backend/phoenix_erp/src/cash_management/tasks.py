@@ -6,6 +6,7 @@ import logging
 from datetime import timedelta
 
 from celery import shared_task
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -81,10 +82,13 @@ def notify_unreconciled_sheets(self):
 
 def _send_unreconciled_notification(sheet, officer, supervisor, cashier_acct):
     """
-    Deliver an in-app / e-mail notification about an unreconciled sheet.
+    Deliver an in-app notification about an unreconciled sheet to the
+    officer's supervisor.
 
-    Currently logs a warning.  Wire up to your Notification model or email
-    backend as the notifications app evolves.
+    Uses the same direct Notification.objects.create() pattern already
+    proven in threads/signals.py (_fire_participant_notification) rather
+    than NotificationService.send_from_template, which requires a
+    per-branch seeded NotificationTemplate that isn't guaranteed to exist.
     """
     balance = cashier_acct.current_balance
     msg = (
@@ -100,13 +104,25 @@ def _send_unreconciled_notification(sheet, officer, supervisor, cashier_acct):
             supervisor.user.get_full_name() or supervisor.user.username,
             msg,
         )
-        # TODO: create Notification record once notifications app is ready
-        # Notification.objects.create(
-        #     recipient=supervisor.user,
-        #     title='Unreconciled Collection Sheet',
-        #     body=msg,
-        #     related_object_type='collection_sheet',
-        #     related_object_id=sheet.pk,
-        # )
+        from notifications.models import Notification, NotificationChannel
+
+        channel = NotificationChannel.objects.filter(code='in_app', is_active=True).first()
+        if channel:
+            Notification.objects.create(
+                channel=channel,
+                recipient_user=supervisor.user,
+                recipient_name=supervisor.user.get_full_name() or supervisor.user.username,
+                subject='Unreconciled Collection Sheet',
+                message=msg,
+                priority='high',
+                status='pending',
+                owner=getattr(sheet, 'owner', None),
+                branch=sheet.branch,
+                tenant=getattr(sheet, 'tenant', None),
+                content_type=ContentType.objects.get_for_model(sheet),
+                object_id=str(sheet.pk),
+            )
+        else:
+            logger.warning('No in_app NotificationChannel configured — could not notify supervisor.')
     else:
         logger.warning('Unreconciled sheet — no supervisor found for %s: %s', officer, msg)

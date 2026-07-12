@@ -10,6 +10,7 @@ Schedule (configured via django-celery-beat):
 
 import logging
 from celery import shared_task
+from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,11 @@ def send_expiry_warning_notifications(self):
         if expires is None:
             continue
         if now < expires <= warning_dt:
+            # Dedup: skip if a warning was already sent today (was previously
+            # claimed in the docstring but never actually implemented).
+            last_sent = override.last_expiry_warning_sent_at
+            if last_sent and timezone.localtime(last_sent).date() == timezone.localtime(now).date():
+                continue
             hours_left = override.hours_until_expiry
             _send_expiry_warning(override, hours_left)
             warned += 1
@@ -110,14 +116,53 @@ def _apply_expiry_behavior(override: 'UserPermissionOverride', now):
         _notify_expiry(override, 'alert_only')
 
 
+def _create_notification(user, subject, message, priority='normal', related_object=None):
+    """
+    Direct Notification.objects.create() using the real model's field
+    names — mirrors the already-working pattern in
+    threads/signals.py:_fire_participant_notification. Silently no-ops if
+    no 'in_app' NotificationChannel is configured (defensive, matches the
+    guard used there); returns True on success.
+
+    The previous version of this helper called Notification.objects.create()
+    with kwargs (user=, notification_type=, tenant=) that don't exist on the
+    real model — every call raised TypeError, silently swallowed by the
+    caller's try/except, so permission-expiry notifications were never
+    actually created.
+    """
+    from notifications.models import Notification, NotificationChannel
+
+    channel = NotificationChannel.objects.filter(code='in_app', is_active=True).first()
+    if not channel:
+        logger.warning('No in_app NotificationChannel configured — could not notify %s.', user)
+        return False
+
+    kwargs = dict(
+        channel=channel,
+        recipient_user=user,
+        recipient_name=user.get_full_name() or user.username,
+        subject=subject,
+        message=message,
+        priority=priority,
+        status='pending',
+        owner=user,
+        branch=getattr(user, 'branch', None),
+        tenant=getattr(user, 'tenant', None),
+    )
+    if related_object is not None:
+        kwargs['content_type'] = ContentType.objects.get_for_model(related_object)
+        kwargs['object_id'] = str(related_object.pk)
+
+    Notification.objects.create(**kwargs)
+    return True
+
+
 def _notify_expiry(override, action: str):
     """
     Send an in-app notification to the affected user, the granter, and any
     user with the Auditor role in the same tenant.
     """
     try:
-        from notifications.models import Notification
-
         user    = override.user
         tenant  = getattr(user, 'tenant', None)
         target  = override.action or override.page or override.module
@@ -132,20 +177,15 @@ def _notify_expiry(override, action: str):
         msg = messages.get(action, f'Permission override on "{target_label}" has expired.')
 
         # Notify the user
-        Notification.objects.create(
-            user=user,
-            message=msg,
-            notification_type='permission_expiry',
-            tenant=tenant,
-        )
+        _create_notification(user, 'Permission Override Expired', msg, priority='high', related_object=override)
 
         # Notify the granter
         if override.granted_by and override.granted_by != user:
-            Notification.objects.create(
-                user=override.granted_by,
-                message=f'Permission override you granted to {user} on "{target_label}" has expired ({action}).',
-                notification_type='permission_expiry',
-                tenant=tenant,
+            _create_notification(
+                override.granted_by,
+                'Permission Override Expired',
+                f'Permission override you granted to {user} on "{target_label}" has expired ({action}).',
+                related_object=override,
             )
 
         # Notify auditors (users with roles named 'Auditor' in the same tenant)
@@ -158,35 +198,32 @@ def _notify_expiry(override, action: str):
                 is_active=True,
             ).exclude(id=user.id).distinct()
             for auditor in auditors:
-                Notification.objects.create(
-                    user=auditor,
-                    message=f'Elevated permission override for {user} on "{target_label}" expired ({action}).',
-                    notification_type='permission_expiry',
-                    tenant=tenant,
+                _create_notification(
+                    auditor,
+                    'Permission Override Expired',
+                    f'Elevated permission override for {user} on "{target_label}" expired ({action}).',
+                    related_object=override,
                 )
     except Exception as exc:
         logger.warning('Could not send expiry notification for override %s: %s', override.pk, exc)
 
 
 def _send_expiry_warning(override, hours_left):
-    """Send a 'will expire soon' warning notification."""
+    """Send a 'will expire soon' warning notification, once per day."""
     try:
-        from notifications.models import Notification
-
         user         = override.user
-        tenant       = getattr(user, 'tenant', None)
         target       = override.action or override.page or override.module
         target_label = str(target) if target else 'all permissions'
         hours_str    = f'{hours_left:.0f}' if hours_left is not None else 'less than 24'
 
-        Notification.objects.create(
-            user=user,
-            message=(
-                f'Your elevated permission override on "{target_label}" will expire '
-                f'in approximately {hours_str} hour(s).'
-            ),
-            notification_type='permission_expiry_warning',
-            tenant=tenant,
+        _create_notification(
+            user,
+            'Permission Override Expiring Soon',
+            f'Your elevated permission override on "{target_label}" will expire '
+            f'in approximately {hours_str} hour(s).',
+            related_object=override,
         )
+        override.last_expiry_warning_sent_at = timezone.now()
+        override.save(update_fields=['last_expiry_warning_sent_at'])
     except Exception as exc:
         logger.warning('Could not send expiry warning for override %s: %s', override.pk, exc)

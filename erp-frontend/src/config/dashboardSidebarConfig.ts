@@ -350,6 +350,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Review Week', '/admin/review-week'),
         leaf('Close Month', '/accounting/periods'),
         leaf('Close Year', '/admin/close-year'),
+        leaf('Scheduled Jobs', '/admin/scheduled-jobs'),
         leaf('Change Password', '/profile'),
       ]),
     ]),

@@ -146,7 +146,12 @@ services:
       redis:
         condition: service_healthy
       backend:
-        condition: service_started
+        # service_healthy (not service_started): the backend container's
+        # healthcheck only passes once gunicorn is serving, which is only
+        # after entrypoint.sh's `migrate` step completes. celery_worker and
+        # celery_beat bypass entrypoint.sh and never migrate themselves, so
+        # this is what stops them from starting against a stale schema.
+        condition: service_healthy
     networks:
       - phoenix_kti_backend
 
@@ -175,7 +180,12 @@ services:
       redis:
         condition: service_healthy
       backend:
-        condition: service_started
+        # service_healthy (not service_started): the backend container's
+        # healthcheck only passes once gunicorn is serving, which is only
+        # after entrypoint.sh's `migrate` step completes. celery_worker and
+        # celery_beat bypass entrypoint.sh and never migrate themselves, so
+        # this is what stops them from starting against a stale schema.
+        condition: service_healthy
     networks:
       - phoenix_kti_backend
 

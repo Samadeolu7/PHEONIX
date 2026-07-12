@@ -72,6 +72,7 @@ urlpatterns = [
     path('api/analytics/', include('analytics.urls', namespace='analytics')),  # School dashboard analytics
     path('api/permissions/', include('permissions.urls')),  # Fine-grained scope-aware permissions
     path('api/threads/', include('threads.urls')),  # Contextual page-anchored discussion threads
+    path('api/jobs/', include('jobs.urls', namespace='jobs')),  # Scheduled job (Celery Beat) admin visibility
 
 ]
 

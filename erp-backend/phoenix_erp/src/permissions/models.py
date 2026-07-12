@@ -317,6 +317,9 @@ class UserPermissionOverride(models.Model):
         related_name='revoked_overrides',
     )
     revoke_reason = models.TextField(blank=True)
+    # Dedup marker for send_expiry_warning_notifications — set when a
+    # "will expire soon" warning is sent, so it's only sent once per day.
+    last_expiry_warning_sent_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'perm_user_override'
