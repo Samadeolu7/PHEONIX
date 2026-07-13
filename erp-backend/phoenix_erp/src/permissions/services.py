@@ -237,8 +237,12 @@ class PermissionResolver:
                 legacy_codes.update(role.permission_codes)
 
         from pages.models import ModulePage
+        # .all_tenants() bypasses OwnerBranchManager's automatic
+        # tenant=<current tenant> filter, which would otherwise AND against
+        # tenant=None below and always return empty for authenticated
+        # requests (Module/ModulePage are a global, non-tenant-scoped catalog).
         all_pages = list(
-            ModulePage.objects.filter(tenant=None, is_active=True).select_related('module')
+            ModulePage.objects.all_tenants().filter(tenant=None, is_active=True).select_related('module')
         )
 
         def _bucket(items, key_fn):

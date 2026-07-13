@@ -43,7 +43,15 @@ class Module(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     
     def __str__(self):
         return f"{self.name} ({self.code})"
-    
+
+    def save(self, *args, **kwargs):
+        # Modules are a global catalog, never tenant-scoped — override
+        # TimeStampedModel's auto-tenant-stamp (which would otherwise tag
+        # this row with whichever tenant's request happened to create it,
+        # making it invisible to tenant=None catalog lookups).
+        self.tenant = None
+        super().save(*args, **kwargs)
+
     def user_can_access(self, user):
         """Check if user has permission to access this module"""
         if not self.required_permission:
@@ -130,6 +138,8 @@ class ModulePage(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         ]
     
     def save(self, *args, **kwargs):
+        # Pages are a global catalog, never tenant-scoped — see Module.save().
+        self.tenant = None
         if not self.url_path:
             self.url_path = f"/{self.module.code}/{self.code}/"
         # Validate page_config before saving

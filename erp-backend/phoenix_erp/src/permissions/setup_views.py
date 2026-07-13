@@ -101,8 +101,11 @@ class PermissionSetupSyncView(APIView):
                 if not code:
                     continue
 
-                # Get-or-create a global Module record
-                module_obj = Module.objects.filter(code=code, branch=None, tenant=None).first()
+                # Get-or-create a global Module record.
+                # .all_tenants() bypasses OwnerBranchManager's automatic
+                # tenant=<current tenant> filter — without it, this lookup
+                # would AND that in on top of tenant=None and never match.
+                module_obj = Module.objects.all_tenants().filter(code=code, branch=None, tenant=None).first()
                 if not module_obj:
                     try:
                         with db_tx.atomic():
@@ -120,7 +123,7 @@ class PermissionSetupSyncView(APIView):
                         created_modules += 1
                     except IntegrityError:
                         # Savepoint above rolled back; the outer transaction is still usable.
-                        module_obj = Module.objects.filter(code=code, branch=None, tenant=None).first()
+                        module_obj = Module.objects.all_tenants().filter(code=code, branch=None, tenant=None).first()
                         if not module_obj:
                             logger.warning('Could not create or find Module code=%s', code)
                             continue
@@ -143,7 +146,7 @@ class PermissionSetupSyncView(APIView):
                     if not pcode:
                         continue
 
-                    page_obj = ModulePage.objects.filter(module=module_obj, code=pcode).first()
+                    page_obj = ModulePage.objects.all_tenants().filter(module=module_obj, code=pcode).first()
                     if not page_obj:
                         try:
                             with db_tx.atomic():
@@ -162,7 +165,7 @@ class PermissionSetupSyncView(APIView):
                         except IntegrityError:
                             # url_path already exists (another tenant's sync ran first).
                             # Savepoint above rolled back; the outer transaction is still usable.
-                            page_obj = ModulePage.objects.filter(module=module_obj, code=pcode).first()
+                            page_obj = ModulePage.objects.all_tenants().filter(module=module_obj, code=pcode).first()
                             if not page_obj:
                                 logger.warning(
                                     'Could not create or find ModulePage module=%s code=%s', code, pcode
@@ -312,15 +315,17 @@ class PermissionSetupRolePoliciesView(APIView):
 
             module_code, page_code = key.split(':', 1)
 
-            # Look up global Module/ModulePage records (tenant=None)
-            module_obj = Module.objects.filter(code=module_code, tenant=None).first()
+            # Look up global Module/ModulePage records (tenant=None).
+            # .all_tenants() bypasses the manager's automatic current-tenant
+            # filter — see the comment in the sync view above.
+            module_obj = Module.objects.all_tenants().filter(code=module_code, tenant=None).first()
             if not module_obj:
                 warnings.append(
                     f'Module {module_code!r} not found. Run sync first.'
                 )
                 continue
 
-            page_obj = ModulePage.objects.filter(module=module_obj, code=page_code).first()
+            page_obj = ModulePage.objects.all_tenants().filter(module=module_obj, code=page_code).first()
             if not page_obj:
                 warnings.append(
                     f'Page {page_code!r} in module {module_code!r} not found. Run sync first.'

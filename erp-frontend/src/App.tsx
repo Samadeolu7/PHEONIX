@@ -4177,7 +4177,7 @@ function App() {
                                 <Route
                                   path="/reports/officer-portfolio"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <OfficerPortfolioPage />
                                     </ProtectedRoute>
                                   }
@@ -4185,7 +4185,7 @@ function App() {
                                 <Route
                                   path="/reports/director-portfolio"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <DirectorPortfolioPage />
                                     </ProtectedRoute>
                                   }
@@ -4193,7 +4193,7 @@ function App() {
                                 <Route
                                   path="/reports/portfolio-performance"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <PortfolioPerformanceReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4201,7 +4201,7 @@ function App() {
                                 <Route
                                   path="/reports/loans/debtors"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <DebtorsReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4209,7 +4209,7 @@ function App() {
                                 <Route
                                   path="/reports/loans/defaulters"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <DefaultersReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4217,7 +4217,7 @@ function App() {
                                 <Route
                                   path="/reports/loans/par"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <PARReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4225,7 +4225,7 @@ function App() {
                                 <Route
                                   path="/reports/daily-transactions"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <RemittanceReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4233,7 +4233,7 @@ function App() {
                                 <Route
                                   path="/reports/daily-summary"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <DailySummaryReportPage />
                                     </ProtectedRoute>
                                   }
@@ -4273,7 +4273,7 @@ function App() {
                                 <Route
                                   path="/reports/summary"
                                   element={
-                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="export">
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <ReportSummaryPage />
                                     </ProtectedRoute>
                                   }
