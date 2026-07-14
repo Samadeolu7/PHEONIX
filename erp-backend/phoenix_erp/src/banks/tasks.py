@@ -146,11 +146,11 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
             direction=exc_item.get('direction') or 'CREDIT',
             bank_transaction_id=exc_item.get('bankTransactionId') or None,
             bank_amount=exc_item.get('bankAmount') or None,
-            bank_narration=exc_item.get('bankNarration', ''),
+            bank_narration=exc_item.get('bankNarration') or '',
             bank_date=exc_item.get('bankDate') or None,
             loan_payment_id=exc_item.get('loanPaymentId') or None,
             erp_amount=exc_item.get('erpAmount') or None,
-            erp_narration=exc_item.get('erpNarration', ''),
+            erp_narration=exc_item.get('erpNarration') or '',
             erp_date=exc_item.get('erpDate') or None,
         )
 

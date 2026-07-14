@@ -120,6 +120,46 @@ class RunReconciliationMatchTests(TestCase):
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
+    def test_exceptions_with_explicit_null_opposite_side_are_persisted(self, mock_post, mock_fetch):
+        # Java (Jackson) serializes unset fields as an explicit JSON null,
+        # not an omitted key — e.g. an erp_only exception still includes
+        # "bankNarration": null. dict.get(key, default) only falls back to
+        # the default when the key is ABSENT, so this shape previously blew
+        # up with a NOT NULL constraint violation on bank_narration/
+        # erp_narration in production despite the "missing key" version of
+        # this test (above) passing.
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0,
+            'unmatchedBankCount': 0,
+            'unmatchedErpCount': 1,
+            'matches': [],
+            'exceptions': [
+                {
+                    'exceptionType': 'erp_only',
+                    'direction': 'CREDIT',
+                    'bankTransactionId': None,
+                    'bankAmount': None,
+                    'bankNarration': None,
+                    'bankDate': None,
+                    'loanPaymentId': 42,
+                    'erpAmount': '7850.00',
+                    'erpNarration': 'Transfer: Suliat',
+                    'erpDate': '2026-07-02',
+                },
+            ],
+        })
+
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.recon.refresh_from_db()
+        self.assertEqual(self.recon.status, 'completed')
+        exc = ReconciliationException.objects.get(reconciliation=self.recon)
+        self.assertEqual(exc.exception_type, 'erp_only')
+        self.assertEqual(exc.bank_narration, '')
+        self.assertEqual(exc.erp_narration, 'Transfer: Suliat')
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
     def test_timeout_marks_failed_without_retry(self, mock_post, mock_fetch):
         mock_post.side_effect = real_requests.exceptions.Timeout()
 
