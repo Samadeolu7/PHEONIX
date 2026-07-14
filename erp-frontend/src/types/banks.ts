@@ -427,9 +427,13 @@ export interface DailyReconciliation {
 
 export interface UploadReconciliationRequest {
   bank_account_id: number;
-  reconciliation_date: string;
   statement_file: File;
   include_debits?: boolean;
+}
+
+export interface UploadReconciliationResponse {
+  reconciliations: DailyReconciliation[];
+  skipped_dates: string[];
 }
 
 export interface ReconciliationFilters {

@@ -10,16 +10,13 @@ const ACCEPTED_EXTENSIONS = ['.csv', '.txt', '.xlsx', '.qif'];
 
 const ReconciliationUploadPage: React.FC = () => {
   const navigate = useNavigate();
-  const { error: showError } = useToast();
+  const { error: showError, success: showSuccess, info: showInfo } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [accounts, setAccounts] = useState<BankAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
 
   const [bankAccountId, setBankAccountId] = useState<number | ''>('');
-  const [reconciliationDate, setReconciliationDate] = useState(
-    () => new Date().toISOString().slice(0, 10)
-  );
   const [file, setFile] = useState<File | null>(null);
   const [includeDebits, setIncludeDebits] = useState(false);
 
@@ -59,10 +56,6 @@ const ReconciliationUploadPage: React.FC = () => {
       setFormError('Please select a bank account.');
       return;
     }
-    if (!reconciliationDate) {
-      setFormError('Please select the statement date.');
-      return;
-    }
     if (!file) {
       setFormError('Please choose a statement file to upload.');
       return;
@@ -70,17 +63,28 @@ const ReconciliationUploadPage: React.FC = () => {
 
     setSubmitting(true);
     try {
-      // The upload request only parses and stores the file — actual
-      // matching runs in the background (see banks/tasks.py), so this
-      // returns almost immediately with status='processing'. The detail
-      // page picks up from there, polling until it completes.
-      const recon = await reconciliationService.uploadStatement({
+      // The dates reconciled are whatever value dates are actually in the
+      // file — one DailyReconciliation gets created per distinct date, each
+      // matched in the background (see banks/tasks.py). This request
+      // returns almost immediately with each one at status='processing'.
+      const result = await reconciliationService.uploadStatement({
         bank_account_id: bankAccountId,
-        reconciliation_date: reconciliationDate,
         statement_file: file,
         include_debits: includeDebits,
       });
-      navigate(`/banks/reconciliations/${recon.id}`);
+
+      if (result.skipped_dates.length > 0) {
+        showInfo(
+          `Skipped ${result.skipped_dates.length} date(s) already reconciled for this account: ${result.skipped_dates.join(', ')}`
+        );
+      }
+
+      if (result.reconciliations.length === 1) {
+        navigate(`/banks/reconciliations/${result.reconciliations[0].id}`);
+      } else {
+        showSuccess(`Created ${result.reconciliations.length} reconciliations from this statement.`);
+        navigate('/banks/reconciliations');
+      }
     } catch (err: any) {
       setSubmitting(false);
       setFormError(err.message || 'Failed to reconcile statement. Please try again.');
@@ -132,21 +136,6 @@ const ReconciliationUploadPage: React.FC = () => {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Statement Date</label>
-          <input
-            type="date"
-            value={reconciliationDate}
-            onChange={(e) => setReconciliationDate(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-          <p className="text-xs text-gray-500 mt-1">
-            The day being reconciled. A multi-day statement file is fine — only transactions
-            dated this day are matched now; the rest are stored for when you reconcile those
-            days.
-          </p>
-        </div>
-
-        <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Statement File</label>
           {!file ? (
             <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
@@ -189,6 +178,10 @@ const ReconciliationUploadPage: React.FC = () => {
               </button>
             </div>
           )}
+          <p className="text-xs text-gray-500 mt-1">
+            The date(s) reconciled are whatever value dates are in the file — a multi-day
+            statement creates one reconciliation per day automatically.
+          </p>
         </div>
 
         <label className="flex items-start gap-2 text-sm text-gray-700">

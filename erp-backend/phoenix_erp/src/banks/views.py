@@ -1115,7 +1115,6 @@ class StatementUploadView(APIView):
 
     Accepts a multipart/form-data upload with fields:
       - bank_account_id   (int)
-      - reconciliation_date  (YYYY-MM-DD)
       - statement_file    (CSV, .xlsx, or .qif file)
       - include_debits    (optional bool, default false — also reconcile
                             withdrawals/disbursements/charges, not just
@@ -1125,22 +1124,22 @@ class StatementUploadView(APIView):
       1. Parse the file (format chosen by extension: CSV, Excel, or QIF)
       2. Store parsed lines into ReconciliationBankTransaction, deduped by bank_ref
          (Django owns this storage — Bank-Recon/Java has no database)
-      3. Create DailyReconciliation (status='processing') and enqueue
-         banks.tasks.run_reconciliation_match, which gathers the day's
-         unmatched bank transactions + ERP payments, calls Java's stateless
-         ingest-and-match endpoint, and persists the matches/exceptions —
-         all in the background, not on this request.
+      3. Group parsed transactions by their own value_date — a statement
+         commonly spans more than one day (e.g. a weekly export) — and
+         create one DailyReconciliation (status='processing') per distinct
+         date found, enqueuing banks.tasks.run_reconciliation_match for
+         each. Dates that already have a reconciliation for this account
+         are skipped rather than failing the whole upload.
 
-    Returns 202 immediately (status='processing') — the matching call can
-    take up to ~90 seconds, so it must not block this request. The frontend
-    polls GET /api/banks/reconciliations/<pk>/ for the result.
+    Returns 202 immediately — each reconciliation's matching call can take
+    up to ~90 seconds, so it must not block this request. The frontend
+    polls GET /api/banks/reconciliations/<pk>/ for each result.
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        bank_account_id   = request.data.get('bank_account_id')
-        reconciliation_date = request.data.get('reconciliation_date')
-        statement_file    = request.FILES.get('statement_file')
+        bank_account_id = request.data.get('bank_account_id')
+        statement_file  = request.FILES.get('statement_file')
         # Debit-side reconciliation (withdrawals, disbursements, bank charges)
         # is opt-in — most reconciliations only care about incoming payments.
         include_debits = str(request.data.get('include_debits', '')).strip().lower() in ('1', 'true', 'yes', 'on')
@@ -1148,8 +1147,6 @@ class StatementUploadView(APIView):
         # --- basic validation ---
         if not bank_account_id:
             return Response({'detail': 'bank_account_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not reconciliation_date:
-            return Response({'detail': 'reconciliation_date is required.'}, status=status.HTTP_400_BAD_REQUEST)
         if not statement_file:
             return Response({'detail': 'statement_file is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1157,16 +1154,6 @@ class StatementUploadView(APIView):
             bank_account = BankAccount.objects.get(pk=bank_account_id)
         except BankAccount.DoesNotExist:
             return Response({'detail': 'Bank account not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Prevent duplicate reconciliation for same account+date
-        if DailyReconciliation.objects.filter(
-            bank_account=bank_account,
-            reconciliation_date=reconciliation_date,
-        ).exists():
-            return Response(
-                {'detail': f'A reconciliation for {reconciliation_date} already exists for this account.'},
-                status=status.HTTP_409_CONFLICT,
-            )
 
         # --- parse statement file (CSV / Excel / QIF, by extension) ---
         try:
@@ -1178,11 +1165,10 @@ class StatementUploadView(APIView):
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not parsed_transactions:
+            return Response({'detail': 'No transactions found in the uploaded file.'}, status=status.HTTP_400_BAD_REQUEST)
+
         # --- store parsed lines, deduped by (bank_account, bank_ref) ---
-        # A statement commonly spans more than one day (e.g. a weekly export);
-        # every row gets stored now so whichever day it's later reconciled for
-        # can find it, but only rows for THIS reconciliation_date are sent to
-        # the matcher below.
         for t in parsed_transactions:
             ReconciliationBankTransaction.objects.get_or_create(
                 bank_account=bank_account,
@@ -1196,35 +1182,53 @@ class StatementUploadView(APIView):
                 },
             )
 
-        # --- the matching candidate pool: every unmatched transaction dated
-        # this reconciliation day, not just what was parsed from this upload.
-        # A previous (possibly multi-day) upload may already have stored some
-        # of today's transactions without matching them yet.
-        candidates = list(ReconciliationBankTransaction.objects.filter(
-            bank_account=bank_account,
-            value_date=reconciliation_date,
-            matched=False,
-        ))
+        # --- one DailyReconciliation per distinct date actually present in
+        # the file — the whole point is the caller shouldn't have to know
+        # or care whether this statement covers one day or thirty. ---
+        dates = sorted({t.value_date for t in parsed_transactions})
 
-        # --- create DailyReconciliation record ---
-        recon = DailyReconciliation.objects.create(
-            bank_account=bank_account,
-            reconciliation_date=reconciliation_date,
-            uploaded_by=request.user,
-            statement_file=statement_file,
-            status='processing',
-            total_bank_transactions=len(candidates),
-            owner=getattr(request.user, 'owner', None),
-            branch=getattr(request.user, 'branch', None),
+        created = []
+        skipped_dates = []
+        for d in dates:
+            if DailyReconciliation.objects.filter(bank_account=bank_account, reconciliation_date=d).exists():
+                skipped_dates.append(str(d))
+                continue
+
+            candidates = list(ReconciliationBankTransaction.objects.filter(
+                bank_account=bank_account,
+                value_date=d,
+                matched=False,
+            ))
+
+            # The same uploaded file is attached to every reconciliation
+            # created from it; its stream must be rewound before each save
+            # or every FileField after the first ends up empty.
+            statement_file.seek(0)
+            recon = DailyReconciliation.objects.create(
+                bank_account=bank_account,
+                reconciliation_date=d,
+                uploaded_by=request.user,
+                statement_file=statement_file,
+                status='processing',
+                total_bank_transactions=len(candidates),
+                owner=request.user,
+                branch=getattr(request.user, 'branch', None),
+            )
+            run_reconciliation_match.delay(recon.id, include_debits)
+            created.append(recon)
+
+        if not created:
+            return Response(
+                {'detail': 'All dates in this statement already have a reconciliation for this account.',
+                 'skipped_dates': skipped_dates},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = DailyReconciliationSerializer(created, many=True)
+        return Response(
+            {'reconciliations': serializer.data, 'skipped_dates': skipped_dates},
+            status=status.HTTP_202_ACCEPTED,
         )
-
-        # --- enqueue the actual matching work — see banks/tasks.py. The
-        # candidate pool and ERP payments are re-gathered fresh inside the
-        # task at execution time, not passed in from here. ---
-        run_reconciliation_match.delay(recon.id, include_debits)
-
-        serializer = DailyReconciliationSerializer(recon)
-        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
 class DailyReconciliationListView(APIView):

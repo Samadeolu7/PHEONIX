@@ -10,6 +10,7 @@ import type {
   ReconciliationFilters,
   ResolveExceptionRequest,
   UploadReconciliationRequest,
+  UploadReconciliationResponse,
 } from '../types/banks';
 
 const BASE_URL = '/banks';
@@ -31,15 +32,16 @@ export const reconciliationService = {
   },
 
   /**
-   * Upload a bank statement (CSV, .xlsx, or .qif) and run the synchronous
-   * match. This call can take up to ~90 seconds while the Bank-Recon
-   * service computes matches — the caller is responsible for showing a
-   * wait state (see ReconciliationWaitState).
+   * Upload a bank statement (CSV, .xlsx, or .qif). The date(s) reconciled
+   * are whatever value dates are actually present in the file — a
+   * multi-day statement produces one DailyReconciliation per distinct
+   * date, each matched in the background (see banks/tasks.py). The caller
+   * is responsible for showing a wait state per reconciliation (see
+   * ReconciliationWaitState).
    */
-  async uploadStatement(data: UploadReconciliationRequest): Promise<DailyReconciliation> {
+  async uploadStatement(data: UploadReconciliationRequest): Promise<UploadReconciliationResponse> {
     const formData = new FormData();
     formData.append('bank_account_id', String(data.bank_account_id));
-    formData.append('reconciliation_date', data.reconciliation_date);
     formData.append('statement_file', data.statement_file);
     if (data.include_debits) {
       formData.append('include_debits', 'true');
