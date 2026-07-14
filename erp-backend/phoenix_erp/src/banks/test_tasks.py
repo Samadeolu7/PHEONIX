@@ -12,8 +12,10 @@ import requests as real_requests
 from celery.exceptions import Retry
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from accounts.models import Account
+from branches.models import Branch
 from banks.models import (
     Bank,
     BankAccount,
@@ -22,6 +24,7 @@ from banks.models import (
     ReconciliationException,
 )
 from banks.tasks import run_reconciliation_match
+from transactions.models import Transaction, TransactionSeries
 
 User = get_user_model()
 
@@ -144,7 +147,7 @@ class RunReconciliationMatchTests(TestCase):
                     'loanPaymentId': 42,
                     'erpAmount': '7850.00',
                     'erpNarration': 'Transfer: Suliat',
-                    'erpDate': '2026-07-02',
+                    'erpDate': '2026-07-01',
                 },
             ],
         })
@@ -198,3 +201,251 @@ class RunReconciliationMatchTests(TestCase):
         with patch('banks.tasks.http_requests.post') as mock_post:
             run_reconciliation_match(self.recon.id, include_debits=False)
             mock_post.assert_not_called()
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_candidate_pool_widened_to_configured_window(self, mock_post, mock_fetch):
+        # A bank transaction 5 days after reconciliation_date must still be
+        # offered to the matcher — postings lag, a reconciled day is never
+        # really "closed."
+        late_tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account,
+            bank_ref='REF-LATE',
+            value_date='2026-07-06',
+            direction='CREDIT',
+            amount=Decimal('1200.00'),
+            narration='Late-posted credit',
+        )
+        # Outside the (default 7-day) window entirely — must NOT be offered.
+        far_tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account,
+            bank_ref='REF-FAR',
+            value_date='2026-08-01',
+            direction='CREDIT',
+            amount=Decimal('999.00'),
+            narration='Unrelated later credit',
+        )
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [],
+        })
+
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        sent_payload = mock_post.call_args.kwargs['json']
+        sent_ids = {tx['id'] for tx in sent_payload['bankTransactions']}
+        self.assertIn(str(late_tx.id), sent_ids)
+        self.assertNotIn(str(far_tx.id), sent_ids)
+
+        # fetch_erp_payments must be called with a range, not a single date.
+        fetch_call = mock_fetch.call_args
+        self.assertEqual(fetch_call.kwargs.get('direction') or fetch_call.args[3], 'CREDIT')
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_rerun_does_not_duplicate_unresolved_exception(self, mock_post, mock_fetch):
+        response = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'bank_only', 'direction': 'CREDIT',
+                    'bankTransactionId': str(self.tx.id), 'bankAmount': '5000.00',
+                    'bankNarration': 'Test credit', 'bankDate': '2026-07-01',
+                },
+            ],
+        })
+        mock_post.return_value = response
+
+        run_reconciliation_match(self.recon.id, include_debits=False)
+        self.assertEqual(
+            ReconciliationException.objects.filter(reconciliation=self.recon).count(), 1
+        )
+
+        # Re-run — same Java response again (e.g. a manual re-run before
+        # anything changed). Must not create a second row for the same
+        # bank_transaction_id.
+        self.recon.status = 'processing'
+        self.recon.save(update_fields=['status'])
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.assertEqual(
+            ReconciliationException.objects.filter(reconciliation=self.recon).count(), 1
+        )
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_stale_exception_auto_resolved_when_later_run_finds_match(self, mock_post, mock_fetch):
+        # First run: no match yet, bank_only exception recorded.
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'bank_only', 'direction': 'CREDIT',
+                    'bankTransactionId': str(self.tx.id), 'bankAmount': '5000.00',
+                    'bankNarration': 'Test credit', 'bankDate': '2026-07-01',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+        exc = ReconciliationException.objects.get(reconciliation=self.recon)
+        self.assertFalse(exc.resolved)
+
+        # Second run (e.g. a re-upload found the matching ERP payment):
+        # the same bank transaction now matches.
+        self.recon.status = 'processing'
+        self.recon.save(update_fields=['status'])
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 1, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(self.tx.id), 'erpPaymentId': 999,
+                 'confidence': 'HIGH', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+        self.assertIsNone(exc.resolved_by)
+        self.assertIn('Auto-resolved', exc.resolution_notes)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_exception_for_neighboring_date_without_reconciliation_is_skipped(self, mock_post, mock_fetch):
+        # Java's windowed response can include an exception whose own date
+        # differs from reconciliation_date — it must only be persisted if a
+        # DailyReconciliation already exists for THAT date.
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 1,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'erp_only', 'direction': 'CREDIT',
+                    'loanPaymentId': 77, 'erpAmount': '4300.00',
+                    'erpNarration': 'Loan repayment LN-777', 'erpDate': '2026-07-06',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.assertEqual(ReconciliationException.objects.count(), 0)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_exception_for_neighboring_date_with_reconciliation_is_attached_there(self, mock_post, mock_fetch):
+        neighbor = DailyReconciliation.objects.create(
+            bank_account=self.bank_account,
+            reconciliation_date='2026-07-06',
+            uploaded_by=self.user,
+            statement_file='bank_statements/test2.csv',
+            status='completed',
+        )
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 1,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'erp_only', 'direction': 'CREDIT',
+                    'loanPaymentId': 78, 'erpAmount': '4300.00',
+                    'erpNarration': 'Loan repayment LN-778', 'erpDate': '2026-07-06',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        exc = ReconciliationException.objects.get()
+        self.assertEqual(exc.reconciliation_id, neighbor.id)
+        neighbor.refresh_from_db()
+        self.assertEqual(neighbor.unmatched_erp_count, 1)
+        # The task's OWN reconciliation still completes normally.
+        self.recon.refresh_from_db()
+        self.assertEqual(self.recon.status, 'completed')
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_bank_only_exception_marked_high_priority_erp_only_is_not(self, mock_post, mock_fetch):
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 1,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'bank_only', 'direction': 'CREDIT',
+                    'bankTransactionId': str(self.tx.id), 'bankAmount': '5000.00',
+                    'bankNarration': 'Test credit', 'bankDate': '2026-07-01',
+                },
+                {
+                    'exceptionType': 'erp_only', 'direction': 'CREDIT',
+                    'loanPaymentId': 55, 'erpAmount': '999.00',
+                    'erpNarration': 'Loan repayment LN-555', 'erpDate': '2026-07-01',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        bank_only = ReconciliationException.objects.get(exception_type='bank_only')
+        erp_only = ReconciliationException.objects.get(exception_type='erp_only')
+        self.assertTrue(bank_only.is_high_priority)
+        self.assertFalse(erp_only.is_high_priority)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_officer_and_branch_derived_from_erp_transaction(self, mock_post, mock_fetch):
+        branch = Branch.objects.create(name='Ikeja Branch', code='IKJ', owner=self.user)
+        officer = User.objects.create_user(username='officer1', password='test123', branch=branch)
+        series = TransactionSeries.objects.create(code='LN', description='Loan series')
+        txn = Transaction.objects.create(
+            series=series, date=timezone.now().date(),
+            description='Loan repayment – LN-2026-001', owner=self.user,
+            branch=branch, created_by=officer,
+        )
+
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 1,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'erp_only', 'direction': 'CREDIT',
+                    'loanPaymentId': txn.id, 'erpAmount': '5000.00',
+                    'erpNarration': 'Loan repayment LN-2026-001', 'erpDate': '2026-07-01',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        exc = ReconciliationException.objects.get()
+        self.assertEqual(exc.officer_id, officer.id)
+        self.assertEqual(exc.erp_branch_id, branch.id)
+
+    @patch('notifications.services.NotificationService')
+    @patch('common.approval_permissions.APPROVER_ROLES', ('Director',))
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_bank_only_exception_notifies_directors(self, mock_post, mock_fetch, mock_notify_cls):
+        from users.models import Role, Tenant
+
+        tenant = Tenant.objects.create(name='Test Tenant', slug='test-tenant')
+        self.user.tenant = tenant
+        self.user.save(update_fields=['tenant'])
+
+        branch = Branch.objects.create(name='Ikeja Branch', code='IKJ2', owner=self.user)
+        role = Role.objects.create(tenant=tenant, name='Director', is_active=True)
+        director = User.objects.create_user(
+            username='director1', password='test123', tenant=tenant, branch=branch,
+        )
+        director.roles.add(role)
+        self.recon.owner = self.user
+        self.recon.branch = branch
+        self.recon.save(update_fields=['owner', 'branch'])
+
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'bank_only', 'direction': 'CREDIT',
+                    'bankTransactionId': str(self.tx.id), 'bankAmount': '5000.00',
+                    'bankNarration': 'Test credit', 'bankDate': '2026-07-01',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        mock_notify_cls.return_value.send_from_template.assert_called_once()
+        call_kwargs = mock_notify_cls.return_value.send_from_template.call_args.kwargs
+        self.assertEqual(call_kwargs['template_code'], 'bank_recon_bank_only_exception')
+        self.assertEqual(call_kwargs['recipient'], director)

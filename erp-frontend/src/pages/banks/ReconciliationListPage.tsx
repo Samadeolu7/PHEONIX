@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, FileSearch, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
+import { branchService, Branch } from '../../services/branchService';
 import type { DailyReconciliation } from '../../types/banks';
 
 const STATUS_STYLES: Record<DailyReconciliation['status'], string> = {
@@ -19,20 +20,30 @@ const STATUS_LABELS: Record<DailyReconciliation['status'], string> = {
 const ReconciliationListPage: React.FC = () => {
   const navigate = useNavigate();
   const [reconciliations, setReconciliations] = useState<DailyReconciliation[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | DailyReconciliation['status']>('all');
+  const [branchFilter, setBranchFilter] = useState<number | 'all'>('all');
+
+  useEffect(() => {
+    // Only a director sees more than their own single branch here — the
+    // backend already scopes DailyReconciliation.objects.for_user()
+    // accordingly, this just decides whether the filter dropdown is useful.
+    branchService.listBranches().then(setBranches).catch(() => setBranches([]));
+  }, []);
 
   useEffect(() => {
     loadReconciliations();
-  }, [statusFilter]);
+  }, [statusFilter, branchFilter]);
 
   const loadReconciliations = async () => {
     try {
       setLoading(true);
-      const data = await reconciliationService.listReconciliations(
-        statusFilter === 'all' ? undefined : { status: statusFilter }
-      );
+      const data = await reconciliationService.listReconciliations({
+        ...(statusFilter !== 'all' && { status: statusFilter }),
+        ...(branchFilter !== 'all' && { branch: branchFilter }),
+      });
       setReconciliations(data);
     } catch (err: any) {
       setError(err.message || 'Failed to load reconciliations');
@@ -59,7 +70,7 @@ const ReconciliationListPage: React.FC = () => {
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow p-4 mb-6">
+      <div className="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap items-center gap-3">
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
           {(['all', 'processing', 'completed', 'failed'] as const).map((key) => (
             <button
@@ -73,6 +84,20 @@ const ReconciliationListPage: React.FC = () => {
             </button>
           ))}
         </div>
+        {branches.length > 1 && (
+          <select
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+            className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="all">All branches</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {loading && (
@@ -98,6 +123,11 @@ const ReconciliationListPage: React.FC = () => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Bank Account
                 </th>
+                {branches.length > 1 && (
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Branch
+                  </th>
+                )}
                 <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Matched
                 </th>
@@ -133,6 +163,11 @@ const ReconciliationListPage: React.FC = () => {
                       {recon.bank_account_info?.account_number}
                     </div>
                   </td>
+                  {branches.length > 1 && (
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {recon.branch_name || '—'}
+                    </td>
+                  )}
                   <td className="px-6 py-4 whitespace-nowrap text-center">
                     <span className="inline-flex items-center gap-1 text-sm text-green-700">
                       <CheckCircle2 className="w-4 h-4" />

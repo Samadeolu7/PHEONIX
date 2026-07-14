@@ -1990,6 +1990,11 @@ class DailyReconciliation(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     # Error detail if status='failed'
     error_detail = models.TextField(blank=True)
 
+    # Incremented each time matching is re-triggered for a reconciliation
+    # that already existed — a day is never really "closed": postings lag,
+    # and late-arriving transactions must still be matchable against it.
+    rerun_count = models.PositiveIntegerField(default=0)
+
     objects = OwnerBranchManager()
 
     class Meta:
@@ -2062,6 +2067,30 @@ class ReconciliationException(TimeStampedModel):
     erp_amount    = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
     erp_narration = models.TextField(blank=True)
     erp_date      = models.DateField(null=True, blank=True)
+
+    # Accountability — who actually recorded the ERP-side transaction (not
+    # who uploaded the statement) and which branch it belongs to. Derived
+    # from Transaction.created_by via loan_payment_id; null for bank_only
+    # exceptions, since there's no ERP record to attribute.
+    officer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='recon_exceptions_as_officer',
+        help_text='User who recorded the ERP-side transaction, if any',
+    )
+    erp_branch = models.ForeignKey(
+        'branches.Branch',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='recon_exceptions_as_erp_branch',
+        help_text="The officer's branch, if any",
+    )
+
+    # A bank credit with no matching ERP record at all (exception_type=
+    # 'bank_only') is the single most likely "cash collected but not
+    # recorded" signature, so it's auto-flagged for director attention.
+    is_high_priority = models.BooleanField(default=False, db_index=True)
 
     # Resolution
     resolved       = models.BooleanField(default=False, db_index=True)

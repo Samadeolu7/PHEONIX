@@ -515,6 +515,54 @@ MICROFINANCE_TEMPLATES = [
             },
         ],
     },
+
+    # ============================================
+    # BANK RECONCILIATION ALERTS
+    # ============================================
+    {
+        'code': 'bank_recon_bank_only_exception',
+        'name': 'Unexplained Bank Credit (Reconciliation)',
+        'category': 'alerts',
+        'description': (
+            'A bank credit with no matching ERP record at all — the single most '
+            'likely "cash collected but not recorded" signature. Sent to directors '
+            'only; branch managers/credit officers are exactly who this control '
+            'exists to check, so they are never recipients.'
+        ),
+        'default_priority': 'urgent',
+        'template_variables': [
+            {'name': 'bank_account', 'source': 'bank_account', 'required': True},
+            {'name': 'amount', 'source': 'exception.bank_amount', 'format': 'currency', 'required': True},
+            {'name': 'narration', 'source': 'exception.bank_narration', 'required': False},
+            {'name': 'date', 'source': 'exception.bank_date', 'format': 'date', 'required': True},
+            {'name': 'branch', 'source': 'branch.name', 'required': False},
+        ],
+        'channels': [
+            {
+                'channel_code': 'in_app',
+                'subject_template': 'Unexplained bank credit — {{bank_account}}',
+                'body_template': (
+                    'A credit of {{amount}} on {{date}} in {{bank_account}} '
+                    '({{branch}}) has no matching ERP record. Narration: {{narration}}. '
+                    'Review in Bank Reconciliation.'
+                ),
+            },
+            {
+                'channel_code': 'email',
+                'subject_template': 'Unexplained bank credit — {{bank_account}}',
+                'body_template': (
+                    'A bank credit has no matching ERP record and needs director review.\n\n'
+                    'Account: {{bank_account}}\n'
+                    'Branch: {{branch}}\n'
+                    'Amount: {{amount}}\n'
+                    'Date: {{date}}\n'
+                    'Bank narration: {{narration}}\n\n'
+                    'This is the exception type most likely to represent cash collected '
+                    'but not recorded in the ERP — please review it in Bank Reconciliation.'
+                ),
+            },
+        ],
+    },
 ]
 
 

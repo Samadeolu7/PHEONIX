@@ -475,6 +475,12 @@ BANK_RECON_SERVICE_URL = os.environ.get(
 # (see application.yml: django.internal.service-token).
 INTERNAL_SERVICE_TOKEN = os.environ.get('INTERNAL_SERVICE_TOKEN', '')
 
+# How many days on either side of a reconciliation's own date the matching
+# candidate pool (both bank transactions and ERP payments) is widened to —
+# postings lag in both directions, so a repayment collected on day X may
+# not clear the bank (or get logged in the ERP) until several days later.
+RECONCILIATION_MATCH_WINDOW_DAYS = int(os.environ.get('RECONCILIATION_MATCH_WINDOW_DAYS', 7))
+
 # ==================================================
 # DRF SPECTACULAR (API DOCUMENTATION)
 # ==================================================

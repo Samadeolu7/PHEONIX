@@ -772,6 +772,10 @@ from .models import DailyReconciliation, ReconciliationException
 
 
 class ReconciliationExceptionSerializer(serializers.ModelSerializer):
+    officer_name = serializers.SerializerMethodField()
+    erp_branch_name = serializers.SerializerMethodField()
+    has_bank_reference = serializers.SerializerMethodField()
+
     class Meta:
         model = ReconciliationException
         fields = [
@@ -782,10 +786,26 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
             'bank_amount', 'bank_narration', 'bank_date',
             'loan_payment_id',
             'erp_amount', 'erp_narration', 'erp_date',
+            'officer', 'officer_name', 'erp_branch', 'erp_branch_name',
+            'is_high_priority', 'has_bank_reference',
             'resolved', 'resolved_by', 'resolved_at', 'resolution_notes',
             'created_at',
         ]
         read_only_fields = ['id', 'created_at']
+
+    def get_officer_name(self, obj):
+        return obj.officer.get_full_name() if obj.officer else None
+
+    def get_erp_branch_name(self, obj):
+        return obj.erp_branch.name if obj.erp_branch else None
+
+    def get_has_bank_reference(self, obj):
+        # A director scanning this list needs to tell "no reference was even
+        # entered" apart from "reference entered but genuinely no bank match
+        # found" — same regex format used when the reference was extracted
+        # from Transaction.description in the first place (reconciliation_utils.py).
+        from .reconciliation_utils import _BANK_REFERENCE_RE
+        return bool(obj.erp_narration and _BANK_REFERENCE_RE.search(obj.erp_narration))
 
 
 class DailyReconciliationSerializer(serializers.ModelSerializer):
@@ -807,6 +827,7 @@ class DailyReconciliationSerializer(serializers.ModelSerializer):
             'unmatched_bank_count',
             'unmatched_erp_count',
             'error_detail',
+            'rerun_count',
             'exceptions',
             'created_at', 'updated_at',
         ]
@@ -814,7 +835,7 @@ class DailyReconciliationSerializer(serializers.ModelSerializer):
             'id', 'uploaded_by', 'uploaded_at', 'status',
             'total_bank_transactions', 'matched_count',
             'unmatched_bank_count', 'unmatched_erp_count',
-            'error_detail', 'created_at', 'updated_at',
+            'error_detail', 'rerun_count', 'created_at', 'updated_at',
         ]
 
     def get_uploaded_by_name(self, obj):
@@ -835,12 +856,14 @@ class DailyReconciliationListSerializer(serializers.ModelSerializer):
     """Lightweight list serializer — no nested exceptions."""
     bank_account_info = serializers.SerializerMethodField()
     uploaded_by_name  = serializers.SerializerMethodField()
+    branch_name       = serializers.SerializerMethodField()
 
     class Meta:
         model = DailyReconciliation
         fields = [
             'id',
             'bank_account', 'bank_account_info',
+            'branch', 'branch_name',
             'reconciliation_date',
             'uploaded_by', 'uploaded_by_name', 'uploaded_at',
             'status',
@@ -848,6 +871,7 @@ class DailyReconciliationListSerializer(serializers.ModelSerializer):
             'matched_count',
             'unmatched_bank_count',
             'unmatched_erp_count',
+            'rerun_count',
             'created_at',
         ]
 
@@ -862,4 +886,7 @@ class DailyReconciliationListSerializer(serializers.ModelSerializer):
 
     def get_uploaded_by_name(self, obj):
         return obj.uploaded_by.get_full_name() if obj.uploaded_by else None
+
+    def get_branch_name(self, obj):
+        return obj.branch.name if obj.branch else None
 

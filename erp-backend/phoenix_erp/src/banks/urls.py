@@ -12,6 +12,7 @@ from .views import (
     StatementUploadView,
     DailyReconciliationListView,
     DailyReconciliationDetailView,
+    RerunReconciliationView,
     ResolveExceptionView,
 )
 
@@ -39,6 +40,11 @@ urlpatterns = [
         'reconciliations/<int:pk>/',
         DailyReconciliationDetailView.as_view(),
         name='reconciliation-detail',
+    ),
+    path(
+        'reconciliations/<int:pk>/rerun/',
+        RerunReconciliationView.as_view(),
+        name='reconciliation-rerun',
     ),
     path(
         'reconciliations/<int:recon_pk>/exceptions/<int:exc_pk>/resolve/',

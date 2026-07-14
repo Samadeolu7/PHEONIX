@@ -392,7 +392,19 @@ export interface ReconciliationException {
   erp_amount: string | null;
   erp_narration: string;
   erp_date: string | null;
-  // Resolution
+  // Accountability — who actually recorded the ERP-side transaction (null
+  // for bank_only, since there's no ERP record to attribute)
+  officer: number | null;
+  officer_name: string | null;
+  erp_branch: number | null;
+  erp_branch_name: string | null;
+  // A bank_only exception (bank has cash the ERP doesn't know about) is the
+  // single most likely "cash collected but not recorded" signature
+  is_high_priority: boolean;
+  // Whether the officer-entered bank reference is even present — "no
+  // reference was entered" vs "reference entered but genuinely no match"
+  has_bank_reference: boolean;
+  // Resolution — only directors may set these (see ResolveExceptionView)
   resolved: boolean;
   resolved_by: number | null;
   resolved_at: string | null;
@@ -409,6 +421,8 @@ export interface DailyReconciliation {
     account_name: string;
     bank_name: string;
   };
+  branch?: number | null;
+  branch_name?: string | null;
   reconciliation_date: string;
   uploaded_by: number;
   uploaded_by_name?: string;
@@ -420,6 +434,9 @@ export interface DailyReconciliation {
   unmatched_bank_count: number;
   unmatched_erp_count: number;
   error_detail?: string;
+  // Incremented each time matching is re-triggered for a reconciliation
+  // that already existed — a day is never really "closed."
+  rerun_count: number;
   exceptions?: ReconciliationException[];
   created_at: string;
   updated_at?: string;
@@ -433,12 +450,18 @@ export interface UploadReconciliationRequest {
 
 export interface UploadReconciliationResponse {
   reconciliations: DailyReconciliation[];
+  reconciliations_rerun: DailyReconciliation[];
   skipped_dates: string[];
+}
+
+export interface RerunReconciliationRequest {
+  include_debits?: boolean;
 }
 
 export interface ReconciliationFilters {
   bank_account?: number;
   status?: 'processing' | 'completed' | 'failed';
+  branch?: number;
 }
 
 export interface ResolveExceptionRequest {

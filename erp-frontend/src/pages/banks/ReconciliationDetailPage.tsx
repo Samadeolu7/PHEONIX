@@ -6,13 +6,16 @@ import {
   XCircle,
   Clock,
   AlertCircle,
+  AlertTriangle,
   ArrowDownCircle,
   ArrowUpCircle,
   RefreshCw,
+  Lock,
 } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import { ReconciliationWaitState } from '../../components/banks/ReconciliationWaitState';
 import { useToast } from '../../hooks/useToast';
+import { usePermission } from '../../hooks/usePermissions';
 import type { DailyReconciliation, ReconciliationException } from '../../types/banks';
 
 const STATUS_STYLES: Record<DailyReconciliation['status'], string> = {
@@ -33,12 +36,15 @@ const ReconciliationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { success, error: showError } = useToast();
+  const { hasPermission } = usePermission();
+  const canResolve = hasPermission('bank-recon-resolve');
 
   const [recon, setRecon] = useState<DailyReconciliation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [stalled, setStalled] = useState(false);
   const [resolvingId, setResolvingId] = useState<number | null>(null);
+  const [rerunning, setRerunning] = useState(false);
   const [notesDraft, setNotesDraft] = useState<Record<number, string>>({});
   const [filter, setFilter] = useState<'all' | 'unresolved' | 'resolved'>('unresolved');
   const pollCountRef = useRef(0);
@@ -113,6 +119,22 @@ const ReconciliationDetailPage: React.FC = () => {
     }
   };
 
+  const handleRerun = async () => {
+    if (!recon) return;
+    setRerunning(true);
+    try {
+      const updated = await reconciliationService.rerunReconciliation(recon.id);
+      setRecon(updated);
+      pollCountRef.current = 0;
+      setStalled(false);
+      success('Re-matching started');
+    } catch (err: any) {
+      showError(err.message || 'Failed to re-run reconciliation');
+    } finally {
+      setRerunning(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen">
@@ -132,11 +154,16 @@ const ReconciliationDetailPage: React.FC = () => {
   }
 
   const exceptions = recon.exceptions || [];
-  const visibleExceptions = exceptions.filter((e) => {
-    if (filter === 'unresolved') return !e.resolved;
-    if (filter === 'resolved') return e.resolved;
-    return true;
-  });
+  const visibleExceptions = exceptions
+    .filter((e) => {
+      if (filter === 'unresolved') return !e.resolved;
+      if (filter === 'resolved') return e.resolved;
+      return true;
+    })
+    // High-priority "cash the ERP doesn't know about" exceptions surface
+    // first — that's the one a director needs to see at a glance, not
+    // buried among routine timing noise.
+    .sort((a, b) => Number(b.is_high_priority) - Number(a.is_high_priority));
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -156,8 +183,20 @@ const ReconciliationDetailPage: React.FC = () => {
             {recon.bank_account_info
               ? `${recon.bank_account_info.bank_name} · ${recon.bank_account_info.account_number}`
               : ''}
+            {recon.branch_name ? ` · ${recon.branch_name}` : ''}
+            {recon.rerun_count > 0 ? ` · Re-run ×${recon.rerun_count}` : ''}
           </p>
         </div>
+        {recon.status !== 'processing' && (
+          <button
+            onClick={handleRerun}
+            disabled={rerunning}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${rerunning ? 'animate-spin' : ''}`} />
+            {rerunning ? 'Re-running…' : 'Re-run matching'}
+          </button>
+        )}
         <span
           className={`px-3 py-1 text-sm font-semibold rounded-full ${STATUS_STYLES[recon.status]}`}
         >
@@ -284,9 +323,33 @@ const ReconciliationDetailPage: React.FC = () => {
                                   : 'Amount difference'}
                             </span>
                             <span className="text-xs text-gray-400">{exception.direction}</span>
+                            {exception.is_high_priority && !exception.resolved && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold rounded-full bg-red-600 text-white">
+                                <AlertTriangle className="w-3 h-3" />
+                                Unexplained Cash
+                              </span>
+                            )}
                             {exception.resolved && (
                               <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800">
                                 Resolved
+                              </span>
+                            )}
+                            {exception.officer_name && (
+                              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
+                                {exception.officer_name}
+                                {exception.erp_branch_name ? ` · ${exception.erp_branch_name}` : ''}
+                              </span>
+                            )}
+                            {exception.exception_type !== 'bank_only' && (
+                              <span
+                                className={`text-xs ${exception.has_bank_reference ? 'text-gray-400' : 'text-red-500 font-medium'}`}
+                                title={
+                                  exception.has_bank_reference
+                                    ? 'A bank reference was entered but no matching bank transaction was found'
+                                    : 'No bank reference was entered for this payment'
+                                }
+                              >
+                                {exception.has_bank_reference ? 'Ref entered' : 'No ref entered'}
                               </span>
                             )}
                           </div>
@@ -310,7 +373,16 @@ const ReconciliationDetailPage: React.FC = () => {
                         </div>
                       </div>
 
-                      {!exception.resolved && (
+                      {!exception.resolved && !canResolve && (
+                        <span
+                          className="flex items-center gap-1 text-xs text-gray-400 shrink-0"
+                          title="Only directors can resolve reconciliation exceptions"
+                        >
+                          <Lock className="w-3.5 h-3.5" />
+                          View only
+                        </span>
+                      )}
+                      {!exception.resolved && canResolve && (
                         <div className="flex items-center gap-2 shrink-0">
                           <input
                             type="text"

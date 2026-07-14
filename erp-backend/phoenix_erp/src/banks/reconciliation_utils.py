@@ -15,10 +15,18 @@ _LOAN_NUMBER_RE = re.compile(r'Loan repayment\s*[–-]\s*([^|]+)')
 _BANK_REFERENCE_RE = re.compile(r'\|\s*Ref:\s*(.+)$')
 
 
-def fetch_erp_payments(bank_account, date, direction='CREDIT'):
+def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exclude_payment_ids=()):
     """
-    Returns ERP-recorded payments for a bank account on a given date, in the
-    camelCase shape Java's ErpPayment/RawErpPayment DTOs expect.
+    Returns ERP-recorded payments for a bank account within [date_from,
+    date_to] inclusive, in the camelCase shape Java's ErpPayment/
+    RawErpPayment DTOs expect.
+
+    The range (rather than a single exact date) exists because postings lag
+    in both directions: an officer may log a repayment a day or two before
+    it settles, and the bank may not post a transaction for several days
+    after it was collected. exclude_payment_ids lets a caller omit payments
+    another date's reconciliation run in the same window already claimed,
+    so the same ERP payment isn't offered to two different runs at once.
 
     direction:
       CREDIT = money the ERP recorded as received into this bank account
@@ -48,11 +56,12 @@ def fetch_erp_payments(bank_account, date, direction='CREDIT'):
         .filter(
             account_id=bank_account.gl_account_id,
             side=side,
-            transaction__date=date,
+            transaction__date__range=(date_from, date_to),
             transaction__approved=True,
             transaction__is_deleted=False,
         )
-        .select_related('transaction', 'transaction__created_by')
+        .exclude(transaction_id__in=exclude_payment_ids)
+        .select_related('transaction', 'transaction__created_by', 'transaction__created_by__branch')
     )
 
     payments = []

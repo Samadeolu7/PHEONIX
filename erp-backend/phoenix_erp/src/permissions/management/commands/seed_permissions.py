@@ -164,6 +164,7 @@ PAGES = [
     ('banks', 'bank-transfers',        'Bank Transfers',     'list',   4),
     ('banks', 'bank-feed-consent',     'Bank Feed Consent',  'custom', 5),
     ('banks', 'bank-statement-uploads','Statement Uploads',  'list',   6),
+    ('banks', 'bank-reconciliation-exceptions', 'Reconciliation Exceptions', 'list', 7),
     # loans
     ('loans', 'loan-accounts',         'Loan Accounts',      'list',   1),
     ('loans', 'loan-disbursements',    'Loan Disbursements', 'list',   2),
@@ -341,6 +342,7 @@ ACTIONS = [
     ('banks','bank-accounts','bank-create',              'Create Bank',     'create'),
     ('banks','bank-accounts','bank-edit',                'Edit Bank',       'edit'),
     ('banks','bank-transfers','bank-approve',            'Approve Bank Transfer','approve'),
+    ('banks','bank-reconciliation-exceptions','bank-recon-resolve','Resolve Reconciliation Exception','approve'),
     # ── loans ─────────────────────────────────────────────────────────────────
     ('loans','loan-accounts','loan-list',                'List Loans',      'view'),
     ('loans','loan-accounts','loan-create',              'Create Loan',     'create'),

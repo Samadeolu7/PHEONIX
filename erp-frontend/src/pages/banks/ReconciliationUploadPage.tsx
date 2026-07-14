@@ -65,8 +65,10 @@ const ReconciliationUploadPage: React.FC = () => {
     try {
       // The dates reconciled are whatever value dates are actually in the
       // file — one DailyReconciliation gets created per distinct date, each
-      // matched in the background (see banks/tasks.py). This request
-      // returns almost immediately with each one at status='processing'.
+      // matched in the background (see banks/tasks.py). A date that already
+      // has a reconciliation is re-matched (not skipped) — a day is never
+      // really "closed," postings lag. This request returns almost
+      // immediately with each one at status='processing'.
       const result = await reconciliationService.uploadStatement({
         bank_account_id: bankAccountId,
         statement_file: file,
@@ -75,14 +77,18 @@ const ReconciliationUploadPage: React.FC = () => {
 
       if (result.skipped_dates.length > 0) {
         showInfo(
-          `Skipped ${result.skipped_dates.length} date(s) already reconciled for this account: ${result.skipped_dates.join(', ')}`
+          `${result.skipped_dates.length} date(s) are currently being reconciled and were left alone — try again shortly: ${result.skipped_dates.join(', ')}`
         );
       }
 
-      if (result.reconciliations.length === 1) {
-        navigate(`/banks/reconciliations/${result.reconciliations[0].id}`);
+      const all = [...result.reconciliations, ...result.reconciliations_rerun];
+      if (all.length === 1) {
+        navigate(`/banks/reconciliations/${all[0].id}`);
       } else {
-        showSuccess(`Created ${result.reconciliations.length} reconciliations from this statement.`);
+        const parts = [];
+        if (result.reconciliations.length > 0) parts.push(`${result.reconciliations.length} new`);
+        if (result.reconciliations_rerun.length > 0) parts.push(`${result.reconciliations_rerun.length} re-matched`);
+        showSuccess(`${parts.join(', ')} reconciliation(s) from this statement.`);
         navigate('/banks/reconciliations');
       }
     } catch (err: any) {

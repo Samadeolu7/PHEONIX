@@ -8,6 +8,7 @@ import type {
   DailyReconciliation,
   ReconciliationException,
   ReconciliationFilters,
+  RerunReconciliationRequest,
   ResolveExceptionRequest,
   UploadReconciliationRequest,
   UploadReconciliationResponse,
@@ -50,7 +51,17 @@ export const reconciliationService = {
   },
 
   /**
-   * Mark a reconciliation exception as resolved, with notes explaining why
+   * Re-trigger matching for an existing reconciliation with no new file —
+   * e.g. right after a director resolves exceptions, or when new ERP
+   * entries land with no accompanying new statement.
+   */
+  async rerunReconciliation(id: number, data?: RerunReconciliationRequest): Promise<DailyReconciliation> {
+    return api.post(`${BASE_URL}/reconciliations/${id}/rerun/`, data ?? {});
+  },
+
+  /**
+   * Mark a reconciliation exception as resolved, with notes explaining why.
+   * Only directors have this authority — the backend 403s otherwise.
    */
   async resolveException(
     reconciliationId: number,

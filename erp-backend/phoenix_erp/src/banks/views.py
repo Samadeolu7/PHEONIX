@@ -7,7 +7,7 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db.models import Q, Sum, Count
+from django.db.models import Q, Sum, Count, F
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from decimal import Decimal
@@ -1184,15 +1184,19 @@ class StatementUploadView(APIView):
 
         # --- one DailyReconciliation per distinct date actually present in
         # the file — the whole point is the caller shouldn't have to know
-        # or care whether this statement covers one day or thirty. ---
+        # or care whether this statement covers one day or thirty. A date
+        # that already has a reconciliation is re-run (not skipped) — a
+        # reconciled day is never really "closed": postings lag, and late-
+        # arriving transactions must still be matchable against it. Only a
+        # date whose reconciliation is *currently in flight* is skipped, to
+        # avoid a racing duplicate task. ---
         dates = sorted({t.value_date for t in parsed_transactions})
 
         created = []
+        rerun = []
         skipped_dates = []
         for d in dates:
-            if DailyReconciliation.objects.filter(bank_account=bank_account, reconciliation_date=d).exists():
-                skipped_dates.append(str(d))
-                continue
+            existing = DailyReconciliation.objects.filter(bank_account=bank_account, reconciliation_date=d).first()
 
             candidates = list(ReconciliationBankTransaction.objects.filter(
                 bank_account=bank_account,
@@ -1204,29 +1208,49 @@ class StatementUploadView(APIView):
             # created from it; its stream must be rewound before each save
             # or every FileField after the first ends up empty.
             statement_file.seek(0)
-            recon = DailyReconciliation.objects.create(
-                bank_account=bank_account,
-                reconciliation_date=d,
-                uploaded_by=request.user,
-                statement_file=statement_file,
-                status='processing',
-                total_bank_transactions=len(candidates),
-                owner=request.user,
-                branch=getattr(request.user, 'branch', None),
-            )
-            run_reconciliation_match.delay(recon.id, include_debits)
-            created.append(recon)
 
-        if not created:
+            if existing is None:
+                recon = DailyReconciliation.objects.create(
+                    bank_account=bank_account,
+                    reconciliation_date=d,
+                    uploaded_by=request.user,
+                    statement_file=statement_file,
+                    status='processing',
+                    total_bank_transactions=len(candidates),
+                    owner=request.user,
+                    branch=getattr(request.user, 'branch', None),
+                )
+                run_reconciliation_match.delay(recon.id, include_debits)
+                created.append(recon)
+            elif existing.status == 'processing':
+                skipped_dates.append(str(d))
+            else:
+                existing.uploaded_by = request.user
+                existing.statement_file = statement_file
+                existing.status = 'processing'
+                existing.total_bank_transactions = len(candidates)
+                existing.rerun_count = F('rerun_count') + 1
+                existing.save(update_fields=[
+                    'uploaded_by', 'statement_file', 'status',
+                    'total_bank_transactions', 'rerun_count', 'updated_at',
+                ])
+                run_reconciliation_match.delay(existing.id, include_debits)
+                existing.refresh_from_db()
+                rerun.append(existing)
+
+        if not created and not rerun:
             return Response(
-                {'detail': 'All dates in this statement already have a reconciliation for this account.',
+                {'detail': 'Every date in this statement is currently being reconciled — try again shortly.',
                  'skipped_dates': skipped_dates},
                 status=status.HTTP_409_CONFLICT,
             )
 
-        serializer = DailyReconciliationSerializer(created, many=True)
         return Response(
-            {'reconciliations': serializer.data, 'skipped_dates': skipped_dates},
+            {
+                'reconciliations': DailyReconciliationSerializer(created, many=True).data,
+                'reconciliations_rerun': DailyReconciliationSerializer(rerun, many=True).data,
+                'skipped_dates': skipped_dates,
+            },
             status=status.HTTP_202_ACCEPTED,
         )
 
@@ -1234,14 +1258,19 @@ class StatementUploadView(APIView):
 class DailyReconciliationListView(APIView):
     """
     GET /api/banks/reconciliations/
-    List all daily reconciliations for the authenticated user's branch.
+    List daily reconciliations visible to the authenticated user — their own
+    branch, or every branch for a director/global-scope role (DailyReconciliation
+    .objects.for_user() already handles that bypass; a hard branch= filter
+    here would incorrectly block a director from seeing other branches).
     """
     permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
 
     def get(self, request):
-        qs = DailyReconciliation.objects.filter(
-            branch=getattr(request.user, 'branch', None),
-        ).select_related('bank_account', 'uploaded_by').order_by('-reconciliation_date')
+        qs = DailyReconciliation.objects.for_user(request.user).select_related(
+            'bank_account', 'uploaded_by', 'branch'
+        ).order_by('-reconciliation_date')
 
         bank_account_id = request.query_params.get('bank_account')
         if bank_account_id:
@@ -1250,6 +1279,10 @@ class DailyReconciliationListView(APIView):
         reconciliation_status = request.query_params.get('status')
         if reconciliation_status:
             qs = qs.filter(status=reconciliation_status)
+
+        branch_id = request.query_params.get('branch')
+        if branch_id:
+            qs = qs.filter(branch_id=branch_id)
 
         serializer = DailyReconciliationListSerializer(qs, many=True)
         return Response(serializer.data)
@@ -1261,33 +1294,74 @@ class DailyReconciliationDetailView(APIView):
     Retrieve a single reconciliation with all its exceptions.
     """
     permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
 
     def get(self, request, pk):
-        recon = get_object_or_404(
-            DailyReconciliation,
-            pk=pk,
-            branch=getattr(request.user, 'branch', None),
-        )
+        recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=pk)
         serializer = DailyReconciliationSerializer(recon)
         return Response(serializer.data)
+
+
+class RerunReconciliationView(APIView):
+    """
+    POST /api/banks/reconciliations/<pk>/rerun/
+
+    Re-trigger matching for an existing reconciliation with no new file —
+    useful right after a director resolves exceptions, or when new ERP
+    entries land with no accompanying new statement. Reuses the currently
+    stored (and possibly since-grown) ReconciliationBankTransaction pool.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request, pk):
+        recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=pk)
+
+        if recon.status == 'processing':
+            return Response(
+                {'detail': 'This reconciliation is currently being matched — try again shortly.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        include_debits = str(request.data.get('include_debits', '')).strip().lower() in ('1', 'true', 'yes', 'on')
+
+        recon.status = 'processing'
+        recon.rerun_count = F('rerun_count') + 1
+        recon.save(update_fields=['status', 'rerun_count', 'updated_at'])
+        run_reconciliation_match.delay(recon.id, include_debits)
+        recon.refresh_from_db()
+
+        serializer = DailyReconciliationSerializer(recon)
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
 class ResolveExceptionView(APIView):
     """
     PATCH /api/banks/reconciliations/<recon_pk>/exceptions/<exc_pk>/resolve/
 
-    Branch manager marks a reconciliation exception as resolved.
+    Only directors may resolve a reconciliation exception — branch managers
+    and credit officers handle the cash/loan repayments being reconciled
+    here, so they're exactly who this control exists to check; only a
+    director is trusted to close one out. Everyone with visibility into the
+    reconciliation can still see the exception, just not resolve it.
     Request body:
       resolution_notes  (optional str)
     """
     permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
 
     def patch(self, request, recon_pk, exc_pk):
-        recon = get_object_or_404(
-            DailyReconciliation,
-            pk=recon_pk,
-            branch=getattr(request.user, 'branch', None),
-        )
+        recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=recon_pk)
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may resolve reconciliation exceptions.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         exc_obj = get_object_or_404(ReconciliationException, pk=exc_pk, reconciliation=recon)
 
         if exc_obj.resolved:
