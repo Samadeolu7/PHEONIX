@@ -5,7 +5,17 @@ Identifies tenant from:
 1. Subdomain (tenant1.yourdomain.com)
 2. Custom domain (schoolname.com)
 3. HTTP Header (X-Tenant-Slug for API testing)
-4. User's tenant (fallback)
+4. JWT bearer token's `tenant_id` claim (primary path for API clients -
+   this middleware runs before DRF resolves `request.user`, so a JWT
+   client's authenticated tenant would otherwise be invisible here)
+5. Session-authenticated user's tenant (fallback for session auth)
+
+If none of the above resolve a tenant, the request is rejected (except on
+public/auth paths) rather than silently attributed to a guessed or stale
+tenant - a previous version of this middleware fell back to a hardcoded
+default tenant and to whatever tenant was left in thread-local storage by
+a prior request on the same worker thread, both of which could leak one
+tenant's data into another tenant's request.
 """
 
 from django.http import JsonResponse
@@ -94,9 +104,11 @@ class TenantMiddleware:
         
         # Method 3: HTTP Header (for API testing/development)
         # Supports both X-Tenant-Slug (slug string) and X-Tenant-ID (UUID/pk)
+        tenant_header_provided = False
         if not tenant:
             tenant_slug = request.headers.get('X-Tenant-Slug')
             tenant_id = request.headers.get('X-Tenant-ID')
+            tenant_header_provided = bool(tenant_slug or tenant_id)
             if tenant_slug:
                 try:
                     tenant = Tenant.objects.get(slug=tenant_slug, is_active=True)
@@ -109,8 +121,19 @@ class TenantMiddleware:
                     tenant_source = f'header-id:{tenant_id}'
                 except (Tenant.DoesNotExist, Exception):
                     pass
-        
-        # Method 4: User's tenant (fallback for authenticated users)
+
+        # Method 4: JWT bearer token's `tenant_id` custom claim.
+        # This middleware runs before DRF authenticates the request, so for
+        # JWT (bearer-token) API clients `request.user` below is still
+        # AnonymousUser - this is the only reliable way to identify the
+        # tenant for the predominant auth mechanism this API uses.
+        if not tenant:
+            jwt_tenant = self._resolve_tenant_from_jwt(request)
+            if jwt_tenant:
+                tenant = jwt_tenant
+                tenant_source = 'jwt_claim'
+
+        # Method 5: Session-authenticated user's tenant (fallback).
         # Prefer tenant owned by the user (tenant_owner) then the user's tenant field
         if not tenant and request.user.is_authenticated:
             if hasattr(request.user, 'tenant_owned') and request.user.tenant_owned:
@@ -120,24 +143,7 @@ class TenantMiddleware:
                 # Use the tenant associated on the User model (common case in tests)
                 tenant = request.user.tenant
                 tenant_source = 'user_tenant'
-        
-        # Store tenant in request and thread-local storage
-        # If middleware couldn't identify a tenant from the request, allow
-        # a thread-local tenant (set during tests or other startup hooks)
-        try:
-            from .managers import get_current_tenant
-            if not tenant:
-                tl = get_current_tenant()
-                if tl:
-                    tenant = tl
-                    tenant_source = 'thread_local'
-        except Exception:
-            pass
 
-        request.tenant = tenant
-        request.tenant_source = tenant_source
-        set_current_tenant(tenant)
-        
         # Allow admin and public paths without tenant
         public_paths = [
             '/admin/',
@@ -148,42 +154,91 @@ class TenantMiddleware:
             '/media/',
             '/health/',
         ]
-        
-        # Auth paths need tenant but we'll use default as fallback
+
+        # Auth paths (login/token refresh) legitimately have no tenant yet -
+        # the login flow identifies the user by username (globally unique)
+        # and derives their tenant from the authenticated user, not from
+        # request.tenant.
         auth_paths = ['/api/auth/', '/api/token/']
-        
+
         is_public_path = any(request.path.startswith(path) for path in public_paths)
         is_auth_path = any(request.path.startswith(path) for path in auth_paths)
-        
-        # For auth paths or if no tenant found and not a public path, try to use default tenant
-        if not tenant and (is_auth_path or not is_public_path):
-            # Import settings here to avoid circular imports
-            from django.conf import settings
-            
-            # Check if tenant is required (production) or optional (dev mode)
-            require_tenant = getattr(settings, 'REQUIRE_TENANT', False)  # Default to False
-            default_tenant_slug = getattr(settings, 'DEFAULT_TENANT_SLUG', 'mt')
-            
-            # Try to get default tenant as fallback
-            try:
-                tenant = Tenant.objects.get(slug=default_tenant_slug, is_active=True)
-                tenant_source = f'fallback:{default_tenant_slug}'
-                request.tenant = tenant
-                request.tenant_source = tenant_source
-                set_current_tenant(tenant)
-            except Tenant.DoesNotExist:
-                # Don't error out - just proceed without tenant
-                pass
-        
+
+        # Fail closed only when the request actually carries some form of
+        # identity/tenant evidence (a bearer token, an authenticated
+        # session, or an explicit tenant header) that we couldn't resolve -
+        # that combination means we know *who* is asking but not which
+        # tenant's data they should see, which previously got silently
+        # routed to a guessed default tenant or a stale thread-local value
+        # left by an unrelated prior request on the same worker thread.
+        # A fully anonymous request (no credentials at all) is left with
+        # tenant=None and deferred to the view's own permission_classes -
+        # AllowAny endpoints that don't touch tenant-scoped data (static
+        # config lookups, health checks, etc.) keep working unchanged, and
+        # IsAuthenticated-protected ones are still correctly rejected by
+        # DRF's own auth/permission checks further down the stack.
+        has_credentials = (
+            bool(request.headers.get('Authorization'))
+            or request.user.is_authenticated
+            or tenant_header_provided
+        )
+        if not tenant and has_credentials and not is_public_path and not is_auth_path:
+            set_current_tenant(None)
+            return JsonResponse(
+                {'detail': 'Unable to determine your organization for this request. Please log in again.'},
+                status=400,
+            )
+
+        request.tenant = tenant
+        request.tenant_source = tenant_source
+        set_current_tenant(tenant)
+
         # Add tenant info to response headers (useful for debugging)
         response = self.get_response(request)
-        
+
         if tenant:
             response['X-Tenant-Name'] = tenant.name
             response['X-Tenant-Slug'] = tenant.slug
             response['X-Tenant-Source'] = tenant_source or 'unknown'
-        
+
         return response
+
+    def _resolve_tenant_from_jwt(self, request):
+        """Best-effort tenant resolution from a validated JWT access token.
+
+        This middleware runs before DRF authenticates the request, so
+        `request.user` is still AnonymousUser for bearer-token clients at
+        this point. `CustomTokenObtainPairSerializer` (users/auth.py)
+        embeds a `tenant_id` claim in every issued token specifically so
+        this can be resolved without a second DB round-trip through a user
+        lookup. Returns None (rather than raising) for any missing,
+        malformed, expired, or unresolvable token - this is a lookup, not
+        an authentication check; DRF still authenticates the request
+        properly inside the view.
+        """
+        from users.models import Tenant
+
+        try:
+            from rest_framework_simplejwt.authentication import JWTAuthentication
+        except ImportError:
+            return None
+
+        authenticator = JWTAuthentication()
+        try:
+            header = authenticator.get_header(request)
+            if header is None:
+                return None
+            raw_token = authenticator.get_raw_token(header)
+            if raw_token is None:
+                return None
+            validated_token = authenticator.get_validated_token(raw_token)
+        except Exception:
+            return None
+
+        tenant_id = validated_token.get('tenant_id')
+        if not tenant_id:
+            return None
+        return Tenant.objects.filter(id=tenant_id, is_active=True).first()
 
 
 class TenantFeatureMiddleware:

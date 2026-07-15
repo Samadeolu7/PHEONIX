@@ -55,26 +55,37 @@ class IsTenantUser(permissions.BasePermission):
 
     def has_object_permission(self, request, view, obj):
         # Allow access if user belongs to the same tenant and branch
-        # NOTE: We do NOT check owner here - that's for audit purposes only
-        # All users in the same branch/tenant should access the same records
-        
+
         # System admin bypass
         if getattr(request.user, 'is_system_admin', False):
             return True
-        
+
+        # Tenant owner bypass - owners see all data within their tenant without
+        # branch restriction, matching the queryset-level scoping in
+        # common.managers.OwnerBranchManager.for_user / common.views.ScopedModelViewSet.
+        if callable(getattr(request.user, 'is_owner', None)) and request.user.is_owner():
+            return True
+
         # Check tenant if both user and object have tenant
         if hasattr(request.user, 'tenant') and hasattr(obj, 'tenant'):
             if request.user.tenant and obj.tenant and request.user.tenant != obj.tenant:
                 return False
-        
+
         # Check branch - allow cross-branch permission or same branch
         if request.user.has_perm(f"{obj._meta.app_label}.view_all_branches"):
             return True
-        
-        # Enforce branch match
+
+        # Enforce branch match. Records with no branch (branch IS NULL) are
+        # tenant-wide and must remain visible to every user in the tenant
+        # regardless of their own branch assignment - this mirrors the
+        # Q(branch=user.branch) | Q(branch__isnull=True) scoping used when
+        # listing records, so retrieving a single record doesn't 403 when
+        # listing it would have succeeded.
         if hasattr(request.user, 'branch') and hasattr(obj, 'branch'):
+            if obj.branch is None:
+                return True
             return obj.branch == request.user.branch
-        
+
         # If no branch on either, allow (shouldn't happen for BranchScopedModel)
         return True
 
@@ -137,21 +148,6 @@ class MenuGroupSerializer(serializers.ModelSerializer):
         # Automatically set tenant from request
         validated_data['tenant'] = self.context['request'].user.tenant
         return super().create(validated_data)
-    """
-    Allow access only to users who belong to the tenant and branch (or have cross-branch permission).
-    """
-    def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated
-
-    def has_object_permission(self, request, view, obj):
-        # obj must have .owner and .branch attributes
-        if obj.owner != request.user:
-            return False
-        # cross-branch permission check
-        if request.user.has_perm(f"{obj._meta.app_label}.view_all_branches"):
-            return True
-        # else enforce branch match
-        return hasattr(request.user, 'branch') and obj.branch == request.user.branch
 
 
 # ---------------------------------------------------------------------------
