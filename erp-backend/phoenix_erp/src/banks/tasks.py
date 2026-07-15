@@ -262,13 +262,34 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
         touched_recon.matched_count = ReconciliationBankTransaction.objects.filter(
             bank_account=bank_account, value_date=touched_recon.reconciliation_date, matched=True,
         ).count()
-        touched_recon.unmatched_bank_count = ReconciliationBankTransaction.objects.filter(
-            bank_account=bank_account, value_date=touched_recon.reconciliation_date, matched=False,
+        # Counted from unresolved exceptions, not raw matched=False rows —
+        # Java's matcher always resolves every candidate it's given into
+        # either a match or a bank_only/erp_only exception in that same
+        # run, so "outstanding issues" and "unresolved exceptions" are the
+        # same thing. Counting from the transaction rows directly let this
+        # drift out of sync with what the exceptions list actually shows:
+        # resolving (or auto-resolving) an exception doesn't retroactively
+        # flip ReconciliationBankTransaction.matched, so a transaction with
+        # a resolved bank_only exception would still count as "unmatched"
+        # even though nothing outstanding remains to review.
+        touched_recon.unmatched_bank_count = touched_recon.exceptions.filter(
+            exception_type='bank_only', resolved=False,
         ).count()
         touched_recon.unmatched_erp_count = touched_recon.exceptions.filter(
             exception_type='erp_only', resolved=False,
         ).count()
-        update_fields = ['matched_count', 'unmatched_bank_count', 'unmatched_erp_count', 'updated_at']
+        # Also kept live, not left at its creation-time snapshot — a later
+        # re-upload/rerun can add more same-date rows to the shared
+        # transaction pool (dedup is by bank_ref across the whole account,
+        # not scoped per upload), and this field would otherwise silently
+        # stop reflecting reality once that happens.
+        touched_recon.total_bank_transactions = ReconciliationBankTransaction.objects.filter(
+            bank_account=bank_account, value_date=touched_recon.reconciliation_date,
+        ).count()
+        update_fields = [
+            'matched_count', 'unmatched_bank_count', 'unmatched_erp_count',
+            'total_bank_transactions', 'updated_at',
+        ]
         if touched_recon.id == recon.id:
             touched_recon.status = 'completed'
             update_fields.append('status')

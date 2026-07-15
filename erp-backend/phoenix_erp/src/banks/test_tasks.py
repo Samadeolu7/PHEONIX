@@ -311,6 +311,38 @@ class RunReconciliationMatchTests(TestCase):
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
+    def test_unmatched_bank_count_reflects_resolved_exceptions_not_raw_transaction_flag(self, mock_post, mock_fetch):
+        # Regression test: resolving a bank_only exception (by a director,
+        # or via auto-resolve) never flips ReconciliationBankTransaction
+        # .matched — the underlying transaction genuinely has no ERP
+        # counterpart, "resolved" just means a director reviewed and
+        # accepted that. Counting unmatched_bank_count from the raw
+        # matched=False flag (the old behavior) left the summary count
+        # permanently out of sync with what the exceptions list actually
+        # shows once anything was resolved — exactly what happened in
+        # production: the exceptions list showed 0 outstanding, but the
+        # summary still reported 3.
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_transaction_id=self.tx.id, bank_amount=self.tx.amount,
+            bank_narration=self.tx.narration, bank_date=self.tx.value_date,
+            resolved=True, resolved_at=timezone.now(),
+            resolution_notes='Reviewed and confirmed legitimate.',
+        )
+
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.recon.refresh_from_db()
+        self.tx.refresh_from_db()
+        self.assertFalse(self.tx.matched)
+        self.assertEqual(self.recon.unmatched_bank_count, 0)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
     def test_exception_for_neighboring_date_without_reconciliation_is_skipped(self, mock_post, mock_fetch):
         # Java's windowed response can include an exception whose own date
         # differs from reconciliation_date — it must only be persisted if a
