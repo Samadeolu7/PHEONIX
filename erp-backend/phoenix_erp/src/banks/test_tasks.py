@@ -532,6 +532,18 @@ class RunReconciliationMatchTests(TestCase):
         from notifications.models import NotificationChannel, Notification
         from users.models import Role, Tenant
 
+        # NotificationTemplate.objects also goes through OwnerBranchManager,
+        # whose get_queryset() filters by common.managers.get_current_tenant()
+        # — a thread-local set by request middleware. In the real Celery-task
+        # environment this code actually runs in, no middleware ever ran, so
+        # it's reliably None and the filter is correctly skipped. But
+        # threading.local() state isn't reset between test methods the way
+        # the DB transaction is, so a stale value leaked from an earlier
+        # test can otherwise make this template lookup miss. Force the same
+        # clean baseline the real environment always has.
+        from common.managers import set_current_tenant
+        set_current_tenant(None)
+
         tenant = Tenant.objects.create(name='Notify Test Tenant', slug='notify-test-tenant')
         self.user.tenant = tenant
         self.user.save(update_fields=['tenant'])

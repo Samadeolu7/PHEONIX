@@ -381,14 +381,27 @@ def _notify_directors_of_bank_only_exception(recon, exc_obj):
     # NotificationTemplate.validate_variables()/_prepare_context() resolve
     # every declared template_variables entry via its 'source' dotted path
     # against this dict (see notifications/models.py) — 'exception.bank_amount'
-    # needs context['exception'] to be the actual model instance (not a
-    # pre-stringified value), both so the path resolves at all and so the
-    # currency/date auto-formatting in _prepare_context has a real
-    # Decimal/date to work with.
+    # needs context['exception'] to be an object/dict with a bank_amount
+    # attribute, not a flat top-level key. But this same dict is ALSO
+    # stored verbatim as Notification.context_data, a plain JSONField with
+    # no custom encoder — so it must stay JSON-serializable throughout,
+    # which rules out nesting the actual ReconciliationException/Branch
+    # model instances (only their needed fields, as plain dicts/strings).
+    # exc_obj is the in-memory instance .create() just returned, not a
+    # fresh row re-fetched from the DB — Django doesn't coerce a DateField
+    # assignment to an actual date object until that round-trip happens, so
+    # bank_date is still whatever raw type was passed in (a plain ISO
+    # string here, since that's what Java's JSON sends). str() normalizes
+    # either a real date or an already-ISO string to the same result,
+    # unlike .isoformat() which only the former has.
     context = {
         'bank_account': str(recon.bank_account),
-        'exception': exc_obj,
-        'branch': recon.branch,
+        'exception': {
+            'bank_amount': str(exc_obj.bank_amount) if exc_obj.bank_amount is not None else None,
+            'bank_narration': exc_obj.bank_narration,
+            'bank_date': str(exc_obj.bank_date) if exc_obj.bank_date else None,
+        },
+        'branch': {'name': recon.branch.name} if recon.branch else None,
     }
 
     for director in directors:
