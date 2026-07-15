@@ -148,6 +148,7 @@ const ProductManagementPage = lazy(() => import('./pages/ProductManagementPage')
 
 // Admin pages
 const UserManagementPage = lazy(() => import('./pages/admin/UserManagementPage'));
+const PageDiscussionsPage = lazy(() => import('./pages/admin/PageDiscussionsPage'));
 const AccessControlPage = lazy(() => import('./pages/admin/AccessControlPage'));
 const RolesPermissionsMatrixPage = lazy(() => import('./pages/admin/RolesPermissionsMatrixPage'));
 const DashboardAssignmentPage = lazy(() => import('./pages/admin/DashboardAssignmentPage'));
@@ -2367,6 +2368,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="user-list" module="users" page="staff-users">
                                       <UserManagementPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Page Discussions Config - Directors/Principals only */}
+                                <Route
+                                  path="/admin/page-discussions"
+                                  element={
+                                    <ProtectedRoute requiredPermission="user-list" module="permissions" page="role-permission-policies" action="edit">
+                                      <PageDiscussionsPage />
                                     </ProtectedRoute>
                                   }
                                 />

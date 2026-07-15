@@ -1995,6 +1995,12 @@ class DailyReconciliation(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     # and late-arriving transactions must still be matchable against it.
     rerun_count = models.PositiveIntegerField(default=0)
 
+    # Whether this run should also attempt to match debit transactions (bank
+    # charges, reverse credits, etc.) in addition to the default credit-only
+    # matching. Persisted so that watchdog re-queues honour the original
+    # intent rather than silently downgrading to credit-only.
+    include_debits = models.BooleanField(default=False)
+
     objects = OwnerBranchManager()
 
     class Meta:

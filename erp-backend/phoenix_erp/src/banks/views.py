@@ -1225,6 +1225,7 @@ class StatementUploadView(APIView):
                     statement_file=statement_file,
                     status='processing',
                     total_bank_transactions=len(candidates),
+                    include_debits=include_debits,
                     owner=request.user,
                     branch=getattr(request.user, 'branch', None),
                     # Explicit, not left to TimeStampedModel.save()'s
@@ -1245,10 +1246,11 @@ class StatementUploadView(APIView):
                 existing.statement_file = statement_file
                 existing.status = 'processing'
                 existing.total_bank_transactions = len(candidates)
+                existing.include_debits = include_debits
                 existing.rerun_count = F('rerun_count') + 1
                 existing.save(update_fields=[
                     'uploaded_by', 'statement_file', 'status',
-                    'total_bank_transactions', 'rerun_count', 'updated_at',
+                    'total_bank_transactions', 'include_debits', 'rerun_count', 'updated_at',
                 ])
                 run_reconciliation_match.delay(existing.id, include_debits)
                 existing.refresh_from_db()
@@ -1344,8 +1346,9 @@ class RerunReconciliationView(APIView):
         include_debits = str(request.data.get('include_debits', '')).strip().lower() in ('1', 'true', 'yes', 'on')
 
         recon.status = 'processing'
+        recon.include_debits = include_debits
         recon.rerun_count = F('rerun_count') + 1
-        recon.save(update_fields=['status', 'rerun_count', 'updated_at'])
+        recon.save(update_fields=['status', 'include_debits', 'rerun_count', 'updated_at'])
         run_reconciliation_match.delay(recon.id, include_debits)
         recon.refresh_from_db()
 

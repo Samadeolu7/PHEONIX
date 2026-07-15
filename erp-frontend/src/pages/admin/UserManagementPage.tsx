@@ -13,6 +13,7 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  MessageSquare,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import {
@@ -42,7 +43,7 @@ const UserManagementPage: React.FC = () => {
   const maxRank = Math.max(0, ...currentUserRoles.map(getRoleRank));
   const isPrivilegedUser = maxRank >= PRIVILEGED_MIN_RANK;
   const isDirectorOrPrincipal = maxRank >= USER_CREATION_MIN_RANK;
-  const [activeTab, setActiveTab] = useState<'users' | 'roles' | 'statistics' | 'permissions'>(
+  const [activeTab, setActiveTab] = useState<'users' | 'roles' | 'statistics' | 'permissions' | 'discussions'>(
     'users'
   );
   const [users, setUsers] = useState<User[]>([]);
@@ -110,6 +111,7 @@ const UserManagementPage: React.FC = () => {
   if (canViewUsers) availableTabs.push('users');
   if (canViewRoles) availableTabs.push('roles');
   if (canViewPermissions || canManagePermissions) availableTabs.push('permissions');
+  if (canViewPermissions || canManagePermissions) availableTabs.push('discussions');
   if (canViewStatistics) availableTabs.push('statistics');
 
   // Set default tab based on available permissions
@@ -473,6 +475,27 @@ const UserManagementPage: React.FC = () => {
             >
               <Key style={{ width: '1.25rem', height: '1.25rem' }} />
               Permissions
+            </button>
+          )}
+
+          {(canViewPermissions || canManagePermissions) && (
+            <button
+              onClick={() => setActiveTab('discussions')}
+              style={{
+                padding: '0.75rem 1rem',
+                background: 'none',
+                border: 'none',
+                borderBottom: activeTab === 'discussions' ? '2px solid #3b82f6' : 'none',
+                color: activeTab === 'discussions' ? '#3b82f6' : '#6b7280',
+                fontWeight: activeTab === 'discussions' ? 600 : 400,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+              }}
+            >
+              <MessageSquare style={{ width: '1.25rem', height: '1.25rem' }} />
+              Discussions
             </button>
           )}
 
@@ -904,6 +927,41 @@ const UserManagementPage: React.FC = () => {
           >
             <ExternalLink style={{ width: '1rem', height: '1rem' }} />
             Go to Permission Setup
+          </Link>
+        </div>
+      )}
+
+      {/* Discussions Tab — lives at /admin/page-discussions */}
+      {activeTab === 'discussions' && (canViewPermissions || canManagePermissions) && (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', padding: '4rem 2rem', textAlign: 'center',
+        }}>
+          <div style={{
+            width: '3.5rem', height: '3.5rem', borderRadius: '1rem',
+            background: 'rgba(99,102,241,0.1)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', marginBottom: '1.25rem',
+          }}>
+            <MessageSquare style={{ width: '1.75rem', height: '1.75rem', color: '#6366f1' }} />
+          </div>
+          <h2 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.5rem', color: '#111827' }}>
+            Page Discussions Configuration
+          </h2>
+          <p style={{ color: '#6b7280', fontSize: '0.875rem', maxWidth: '28rem', marginBottom: '1.75rem', lineHeight: 1.6 }}>
+            Control which pages support contextual discussion threads, who can initiate them,
+            and which roles are auto-included when a thread starts.
+          </p>
+          <Link
+            to="/admin/page-discussions"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+              padding: '0.625rem 1.5rem', background: '#6366f1', color: 'white',
+              borderRadius: '0.5rem', fontWeight: 600, fontSize: '0.875rem',
+              textDecoration: 'none',
+            }}
+          >
+            <ExternalLink style={{ width: '1rem', height: '1rem' }} />
+            Manage Page Discussions
           </Link>
         </div>
       )}

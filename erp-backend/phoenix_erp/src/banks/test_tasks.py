@@ -164,10 +164,30 @@ class RunReconciliationMatchTests(TestCase):
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
-    def test_timeout_marks_failed_without_retry(self, mock_post, mock_fetch):
+    def test_timeout_retries_once_before_marking_failed(self, mock_post, mock_fetch):
+        # A cold Java pod restart can cause one genuine timeout before the
+        # JVM warms up, so the first timeout must retry rather than fail
+        # outright — same called-directly reasoning as the connection-error
+        # test above: no live worker/broker here, so retry() raises Retry
+        # locally instead of actually scheduling anything.
         mock_post.side_effect = real_requests.exceptions.Timeout()
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        with self.assertRaises(Retry):
+            run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.recon.refresh_from_db()
+        self.assertEqual(self.recon.status, 'processing')
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_timeout_marks_failed_after_retry_exhausted(self, mock_post, mock_fetch):
+        mock_post.side_effect = real_requests.exceptions.Timeout()
+
+        run_reconciliation_match.push_request(retries=1)
+        try:
+            run_reconciliation_match(self.recon.id, include_debits=False)
+        finally:
+            run_reconciliation_match.pop_request()
 
         self.recon.refresh_from_db()
         self.assertEqual(self.recon.status, 'failed')
@@ -422,7 +442,7 @@ class RunReconciliationMatchTests(TestCase):
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
-    def test_bank_only_exception_marked_high_priority_erp_only_is_not(self, mock_post, mock_fetch):
+    def test_bank_only_and_erp_only_exceptions_both_marked_high_priority(self, mock_post, mock_fetch):
         mock_post.return_value = self._mock_java_response({
             'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 1,
             'matches': [], 'exceptions': [
@@ -443,7 +463,7 @@ class RunReconciliationMatchTests(TestCase):
         bank_only = ReconciliationException.objects.get(exception_type='bank_only')
         erp_only = ReconciliationException.objects.get(exception_type='erp_only')
         self.assertTrue(bank_only.is_high_priority)
-        self.assertFalse(erp_only.is_high_priority)
+        self.assertTrue(erp_only.is_high_priority)
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
@@ -585,6 +605,68 @@ class RunReconciliationMatchTests(TestCase):
         body = notifications.first().message
         self.assertIn('5,000.00', body)  # currency-formatted amount actually rendered
         self.assertNotIn('{{', body)  # no unresolved placeholders left in the output
+        # Regression check for the raw-context/declared-variable name
+        # collision this same rewrite fixed: {{branch}} previously
+        # rendered as a literal Python dict repr because context['branch']
+        # (a raw dict) silently overwrote the resolved 'branch' variable
+        # in _prepare_context()'s prepared.update(context).
+        self.assertIn('Ikeja Branch', body)
+        self.assertNotIn("{'name'", body)
+
+    @patch('common.approval_permissions.APPROVER_ROLES', ('Director',))
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_erp_only_exception_is_also_high_priority_and_notifies(self, mock_post, mock_fetch):
+        # erp_only ("recorded as paid but never actually banked") is at
+        # least as serious as bank_only for cash accountability — both must
+        # get the same is_high_priority flag and director notification.
+        from django.core.management import call_command
+        from notifications.models import NotificationChannel, Notification
+        from users.models import Role, Tenant
+
+        from common.managers import set_current_tenant
+        set_current_tenant(None)
+
+        tenant = Tenant.objects.create(name='Notify Test Tenant 2', slug='notify-test-tenant-2')
+        self.user.tenant = tenant
+        self.user.save(update_fields=['tenant'])
+
+        branch = Branch.objects.create(name='Yaba Branch', code='YBA', owner=self.user)
+        role = Role.objects.create(tenant=tenant, name='Director', is_active=True)
+        director = User.objects.create_user(
+            username='director3', password='test123', tenant=tenant, branch=branch,
+        )
+        director.roles.add(role)
+        self.recon.owner = self.user
+        self.recon.branch = branch
+        self.recon.save(update_fields=['owner', 'branch'])
+
+        for code in ('sms', 'email', 'whatsapp', 'push', 'in_app'):
+            NotificationChannel.objects.get_or_create(
+                code=code, defaults={'name': code, 'provider': 'internal'},
+            )
+        call_command('create_notification_templates', branch_id=branch.id, owner_id=self.user.id)
+
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 1,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'erp_only', 'direction': 'CREDIT',
+                    'loanPaymentId': 900, 'erpAmount': '7500.00',
+                    'erpNarration': 'Loan repayment LN-900', 'erpDate': '2026-07-01',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        exc = ReconciliationException.objects.get(exception_type='erp_only')
+        self.assertTrue(exc.is_high_priority)
+
+        notifications = Notification.objects.filter(recipient_user=director)
+        self.assertEqual(notifications.count(), 2)
+        body = notifications.first().message
+        self.assertIn('7,500.00', body)
+        self.assertNotIn('{{', body)
 
 
 class RequeueStuckReconciliationsTests(TestCase):
@@ -620,8 +702,8 @@ class RequeueStuckReconciliationsTests(TestCase):
         recon.refresh_from_db()
         return recon
 
-    @patch('banks.tasks.run_reconciliation_match.delay')
-    def test_requeues_only_processing_rows_past_the_threshold(self, mock_delay):
+    @patch('banks.tasks.run_reconciliation_match.apply_async')
+    def test_requeues_only_processing_rows_past_the_threshold(self, mock_apply_async):
         from banks.tasks import requeue_stuck_reconciliations
 
         genuinely_stuck = self._make_recon('2026-07-01', 'processing', minutes_ago=30)
@@ -631,13 +713,15 @@ class RequeueStuckReconciliationsTests(TestCase):
         count = requeue_stuck_reconciliations()
 
         self.assertEqual(count, 1)
-        mock_delay.assert_called_once_with(genuinely_stuck.id, False)
-        called_ids = {call.args[0] for call in mock_delay.call_args_list}
+        mock_apply_async.assert_called_once_with(
+            args=[genuinely_stuck.id, genuinely_stuck.include_debits], countdown=0,
+        )
+        called_ids = {call.kwargs['args'][0] for call in mock_apply_async.call_args_list}
         self.assertNotIn(recently_queued.id, called_ids)
         self.assertNotIn(already_done.id, called_ids)
 
-    @patch('banks.tasks.run_reconciliation_match.delay')
-    def test_noop_when_nothing_is_stuck(self, mock_delay):
+    @patch('banks.tasks.run_reconciliation_match.apply_async')
+    def test_noop_when_nothing_is_stuck(self, mock_apply_async):
         from banks.tasks import requeue_stuck_reconciliations
 
         self._make_recon('2026-07-01', 'completed', minutes_ago=60)
@@ -646,4 +730,4 @@ class RequeueStuckReconciliationsTests(TestCase):
         count = requeue_stuck_reconciliations()
 
         self.assertEqual(count, 0)
-        mock_delay.assert_not_called()
+        mock_apply_async.assert_not_called()

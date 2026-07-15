@@ -521,44 +521,54 @@ MICROFINANCE_TEMPLATES = [
     # ============================================
     {
         'code': 'bank_recon_bank_only_exception',
-        'name': 'Unexplained Bank Credit (Reconciliation)',
+        'name': 'High-Priority Reconciliation Exception',
         'category': 'alerts',
         'description': (
-            'A bank credit with no matching ERP record at all — the single most '
-            'likely "cash collected but not recorded" signature. Sent to directors '
-            'only; branch managers/credit officers are exactly who this control '
-            'exists to check, so they are never recipients.'
+            'Covers both bank_only ("bank has cash the ERP doesn\'t know about") '
+            'and erp_only ("recorded as paid but never actually banked") — the two '
+            'most serious cash-accountability signatures a reconciliation can '
+            'surface. Sent to directors only; branch managers/credit officers are '
+            'exactly who this control exists to check, so they are never recipients.'
         ),
         'default_priority': 'urgent',
         'template_variables': [
             {'name': 'bank_account', 'source': 'bank_account', 'required': True},
-            {'name': 'amount', 'source': 'exception.bank_amount', 'format': 'currency', 'required': True},
-            {'name': 'narration', 'source': 'exception.bank_narration', 'required': False},
-            {'name': 'date', 'source': 'exception.bank_date', 'format': 'date', 'required': True},
-            {'name': 'branch', 'source': 'branch.name', 'required': False},
+            {'name': 'exception_type_label', 'source': 'exception.type_label', 'required': True},
+            {'name': 'amount', 'source': 'exception.amount', 'format': 'currency', 'required': True},
+            {'name': 'narration', 'source': 'exception.narration', 'required': False},
+            {'name': 'date', 'source': 'exception.date', 'format': 'date', 'required': True},
+            {'name': 'officer', 'source': 'exception.officer', 'required': False},
+            # Deliberately NOT sourced from a raw context key also named
+            # 'branch' — see banks/tasks.py's _notify_directors_of_
+            # high_priority_exception for why that collision breaks
+            # rendering (a raw dict silently overwrites the resolved value).
+            {'name': 'branch', 'source': 'recon_branch.name', 'required': False},
         ],
         'channels': [
             {
                 'channel_code': 'in_app',
-                'subject_template': 'Unexplained bank credit — {{bank_account}}',
+                'subject_template': '{{exception_type_label}} — {{bank_account}}',
                 'body_template': (
-                    'A credit of {{amount}} on {{date}} in {{bank_account}} '
-                    '({{branch}}) has no matching ERP record. Narration: {{narration}}. '
-                    'Review in Bank Reconciliation.'
+                    '{{exception_type_label}} — {{amount}} on {{date}} in {{bank_account}}'
+                    '{% if branch %} ({{branch}}){% endif %}'
+                    '{% if officer %}, recorded by {{officer}}{% endif %}. '
+                    'Narration: {{narration}}. Review in Bank Reconciliation.'
                 ),
             },
             {
                 'channel_code': 'email',
-                'subject_template': 'Unexplained bank credit — {{bank_account}}',
+                'subject_template': '{{exception_type_label}} — {{bank_account}}',
                 'body_template': (
-                    'A bank credit has no matching ERP record and needs director review.\n\n'
+                    '{{exception_type_label}} and needs director review.\n\n'
                     'Account: {{bank_account}}\n'
-                    'Branch: {{branch}}\n'
+                    '{% if branch %}Branch: {{branch}}\n{% endif %}'
+                    '{% if officer %}Recorded by: {{officer}}\n{% endif %}'
                     'Amount: {{amount}}\n'
                     'Date: {{date}}\n'
-                    'Bank narration: {{narration}}\n\n'
-                    'This is the exception type most likely to represent cash collected '
-                    'but not recorded in the ERP — please review it in Bank Reconciliation.'
+                    'Narration: {{narration}}\n\n'
+                    'This is one of the two exception types most likely to represent '
+                    'cash that was collected but never actually reached the bank — '
+                    'please review it in Bank Reconciliation.'
                 ),
             },
         ],

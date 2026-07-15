@@ -19,6 +19,7 @@ class ModulePageSerializer(serializers.ModelSerializer):
             'show_in_menu',
             'order',
             'is_active',
+            'is_threadable',
         ]
 
 
