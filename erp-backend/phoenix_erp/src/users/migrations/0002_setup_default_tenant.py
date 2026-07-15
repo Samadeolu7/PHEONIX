@@ -27,9 +27,9 @@ def setup_default_tenant(apps, schema_editor):
     )
     
     if created:
-        print(f"✓ Created default tenant: {default_tenant.name} (ID: {default_tenant.id})")
+        print(f"[OK] Created default tenant: {default_tenant.name} (ID: {default_tenant.id})")
     else:
-        print(f"✓ Using existing tenant: {default_tenant.name} (ID: {default_tenant.id})")
+        print(f"[OK] Using existing tenant: {default_tenant.name} (ID: {default_tenant.id})")
     
     # Use raw SQL to update all tables with tenant_id column
     # This is more reliable than iterating through models
@@ -62,12 +62,12 @@ def setup_default_tenant(apps, schema_editor):
             count = cursor.rowcount
             if count > 0:
                 total_updated += count
-                print(f"  ✓ Updated {count} records in {table}")
-        
+                print(f"  [OK] Updated {count} records in {table}")
+
         if total_updated > 0:
-            print(f"\n✅ Total: Updated {total_updated} records across {len(tables)} tables")
+            print(f"\n[DONE] Total: Updated {total_updated} records across {len(tables)} tables")
         else:
-            print(f"\n✅ All records already have tenant assigned")
+            print(f"\n[DONE] All records already have tenant assigned")
 
 
 def reverse_setup_default_tenant(apps, schema_editor):
@@ -80,7 +80,7 @@ def reverse_setup_default_tenant(apps, schema_editor):
     
     try:
         default_tenant = Tenant.objects.get(slug='default')
-        print(f"⚠️ Reverting tenant assignment for: {default_tenant.name}")
+        print(f"[WARN] Reverting tenant assignment for: {default_tenant.name}")
         
         db_alias = schema_editor.connection.alias
         from django.db import connections
@@ -106,14 +106,14 @@ def reverse_setup_default_tenant(apps, schema_editor):
                 
                 count = cursor.rowcount
                 if count > 0:
-                    print(f"  ✓ Reverted {count} records in {table}")
+                    print(f"  [OK] Reverted {count} records in {table}")
         
         # Optionally delete the default tenant
         # default_tenant.delete()
-        # print(f"✓ Deleted default tenant")
+        # print(f"[OK] Deleted default tenant")
         
     except Tenant.DoesNotExist:
-        print("⚠️ Default tenant not found, nothing to revert")
+        print("[WARN] Default tenant not found, nothing to revert")
 
 
 class Migration(migrations.Migration):

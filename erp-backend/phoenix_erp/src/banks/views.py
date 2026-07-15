@@ -1196,7 +1196,15 @@ class StatementUploadView(APIView):
         rerun = []
         skipped_dates = []
         for d in dates:
-            existing = DailyReconciliation.objects.filter(bank_account=bank_account, reconciliation_date=d).first()
+            # .for_user(), not a plain .filter() — OwnerBranchManager's
+            # default queryset relies on a thread-local tenant set by
+            # middleware, which isn't reliably populated in time for a
+            # DRF-authenticated request (see for_user()'s own docstring).
+            # A plain .filter() here would risk not finding an existing
+            # reconciliation and creating a duplicate instead of re-running it.
+            existing = DailyReconciliation.objects.for_user(request.user).filter(
+                bank_account=bank_account, reconciliation_date=d,
+            ).first()
 
             candidates = list(ReconciliationBankTransaction.objects.filter(
                 bank_account=bank_account,
@@ -1219,6 +1227,14 @@ class StatementUploadView(APIView):
                     total_bank_transactions=len(candidates),
                     owner=request.user,
                     branch=getattr(request.user, 'branch', None),
+                    # Explicit, not left to TimeStampedModel.save()'s
+                    # thread-local fallback — that fallback only fills in
+                    # when the middleware-set thread-local happens to be
+                    # populated in time, which isn't reliable for a
+                    # DRF-authenticated request. An unset tenant here would
+                    # make this row invisible to every tenant-scoped query
+                    # (including the list/detail views) forever.
+                    tenant=getattr(request.user, 'tenant', None),
                 )
                 run_reconciliation_match.delay(recon.id, include_debits)
                 created.append(recon)

@@ -21,6 +21,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -154,3 +155,41 @@ class ReconciliationViewTests(TestCase):
 
         self.assertEqual(resp.status_code, 409)
         mock_task.delay.assert_not_called()
+
+    # ── Tenant on create (regression) ───────────────────────────────────────
+    # DailyReconciliation.tenant only auto-fills from a thread-local set by
+    # middleware, which isn't reliably populated in time for a DRF-
+    # authenticated request. A row created without tenant= explicitly set
+    # stays tenant=NULL forever and becomes invisible to the list/detail
+    # views (both go through the tenant-scoped manager) even though it was
+    # reconciled successfully — this is exactly what StatementUploadView.post()
+    # must never do again.
+    @patch('banks.views.run_reconciliation_match')
+    def test_uploaded_reconciliation_has_tenant_set_and_is_listable(self, mock_task):
+        # A date distinct from self.recon_a/self.recon_b's dates (2026-07-01,
+        # 2026-07-02) so this exercises the "brand new reconciliation"
+        # branch, not the re-run branch (already covered separately).
+        csv_content = (
+            b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
+            b"05/07/2026,Loan repayment LN-900,REF900,,5000.00,15000.00\r\n"
+        )
+        upload = SimpleUploadedFile('statement.csv', csv_content, content_type='text/csv')
+
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': self.bank_account.id, 'statement_file': upload},
+            format='multipart',
+        )
+
+        self.assertEqual(resp.status_code, 202, resp.data)
+        new_id = resp.data['reconciliations'][0]['id']
+
+        recon = DailyReconciliation.objects.get(pk=new_id)
+        self.assertEqual(recon.tenant_id, self.tenant.id)
+
+        # And it must actually show up in the list endpoint for the user
+        # who just created it — the entire point of this regression test.
+        list_resp = self.client.get('/api/banks/reconciliations/')
+        self.assertEqual(list_resp.status_code, 200)
+        self.assertIn(new_id, {row['id'] for row in list_resp.data})
