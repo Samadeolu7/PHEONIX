@@ -650,6 +650,20 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'cash_management.tasks.notify_unreconciled_sheets',
         'schedule': crontab(hour=9, minute=0),  # 09:00 UTC = 10:00 WAT (Africa/Lagos UTC+1)
     },
+
+    # ── Bank reconciliation: recover tasks lost to a worker restart ────────
+    # A deploy recreating celery_worker mid-flight (most commonly, while a
+    # just-uploaded statement's tasks are still being dispatched) leaves a
+    # DailyReconciliation stuck at status='processing' forever with nothing
+    # to ever retry it. See banks/tasks.py's requeue_stuck_reconciliations
+    # docstring for why this can't be caught from inside the task itself.
+    'requeue-stuck-reconciliations': {
+        'task': 'banks.tasks.requeue_stuck_reconciliations',
+        'schedule': crontab(minute='*/15'),
+        'options': {
+            'expires': 600,
+        }
+    },
 }
 
 # ==================================================

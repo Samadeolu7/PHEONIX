@@ -147,6 +147,44 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
             )
             return
 
+    try:
+        _persist_outcome(recon, bank_account, reconciliation_date, candidates, outcome)
+    except Exception as exc:
+        # Anything unexpected here (most plausibly database contention from
+        # several same-account tasks with heavily overlapping ±7-day
+        # windows touching the same rows concurrently) must never leave the
+        # row silently stuck at 'processing' forever with no trace — that's
+        # strictly worse than a visible failure, since nothing would ever
+        # retry it and a director has no way to know it needs attention.
+        # The task re-queries current state fresh and dedups exceptions by
+        # natural key, so it's safe to retry rather than fail outright.
+        logger.exception(
+            "run_reconciliation_match: unexpected error persisting outcome for recon %s", recon.id,
+        )
+        try:
+            raise self.retry(exc=exc, countdown=30)
+        except self.MaxRetriesExceededError:
+            recon.status = 'failed'
+            recon.error_detail = f'{type(exc).__name__}: {exc}'[:2000]
+            recon.save(update_fields=['status', 'error_detail', 'updated_at'])
+            return
+
+    logger.info(
+        "run_reconciliation_match: recon %s completed — %d matched, %d bank-only, %d erp-only",
+        recon.id, recon.matched_count, recon.unmatched_bank_count, recon.unmatched_erp_count,
+    )
+
+
+def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outcome):
+    """
+    Everything after a successful Java response: persist matches, auto-
+    resolve superseded exceptions, save new exceptions, and recompute
+    summary counts for every reconciliation touched. Split out from the
+    task body so the whole phase can be wrapped in one retry/failure
+    boundary — see the try/except around this call.
+    """
+    from .models import DailyReconciliation, ReconciliationBankTransaction, ReconciliationException
+
     # --- persist confirmed matches onto ReconciliationBankTransaction ---
     matches_data = outcome.get('matches', [])
     matched_txs = []
@@ -295,11 +333,6 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
             update_fields.append('status')
         touched_recon.save(update_fields=update_fields)
 
-    logger.info(
-        "run_reconciliation_match: recon %s completed — %d matched, %d bank-only, %d erp-only",
-        recon.id, recon.matched_count, recon.unmatched_bank_count, recon.unmatched_erp_count,
-    )
-
 
 def _resolve_officer_and_branch(loan_payment_id):
     """
@@ -345,18 +378,25 @@ def _notify_directors_of_bank_only_exception(recon, exc_obj):
         roles__name__in=APPROVER_ROLES, roles__is_active=True,
     ).distinct()
 
+    # NotificationTemplate.validate_variables()/_prepare_context() resolve
+    # every declared template_variables entry via its 'source' dotted path
+    # against this dict (see notifications/models.py) — 'exception.bank_amount'
+    # needs context['exception'] to be the actual model instance (not a
+    # pre-stringified value), both so the path resolves at all and so the
+    # currency/date auto-formatting in _prepare_context has a real
+    # Decimal/date to work with.
+    context = {
+        'bank_account': str(recon.bank_account),
+        'exception': exc_obj,
+        'branch': recon.branch,
+    }
+
     for director in directors:
         try:
             NotificationService().send_from_template(
                 template_code='bank_recon_bank_only_exception',
                 recipient=director,
-                context={
-                    'bank_account': str(recon.bank_account),
-                    'amount': str(exc_obj.bank_amount),
-                    'narration': exc_obj.bank_narration,
-                    'date': str(exc_obj.bank_date),
-                    'branch': recon.branch.name if recon.branch else '',
-                },
+                context=context,
                 owner=recon.owner,
                 branch=recon.branch,
                 related_object=exc_obj,
@@ -369,3 +409,51 @@ def _notify_directors_of_bank_only_exception(recon, exc_obj):
                 "run_reconciliation_match: failed to notify director %s of exception %s",
                 director.id, exc_obj.id,
             )
+
+
+STUCK_RECONCILIATION_THRESHOLD_MINUTES = 20
+
+
+@shared_task(name='banks.tasks.requeue_stuck_reconciliations')
+def requeue_stuck_reconciliations():
+    """
+    Periodic backstop (see CELERY_BEAT_SCHEDULE) — finds DailyReconciliation
+    rows left at status='processing' well past any realistic run time and
+    re-queues them.
+
+    run_reconciliation_match now marks a row 'failed' with a real
+    error_detail on any exception it catches, but a task can still vanish
+    with zero trace if the worker process itself gets replaced mid-flight —
+    most commonly, a deploy recreating the celery_worker container while a
+    just-uploaded statement's tasks are still being dispatched or run. That
+    isn't something any exception handler inside the task can catch, since
+    the process disappears out from under it. This is the only mechanism
+    that recovers from that specific failure mode, which is why the
+    threshold is deliberately generous — every real run so far has
+    completed in well under a minute, even for statements with 60+ rows and
+    heavily overlapping ±7-day windows (see banks/test_tasks.py for the
+    window-widening design this pool size follows from).
+
+    The original include_debits flag isn't persisted on the model (see
+    StatementUploadView/RerunReconciliationView), so a watchdog-triggered
+    re-run always uses the credit-only default rather than remembering
+    per-reconciliation intent — same behavior as the manual re-queue this
+    replaces.
+    """
+    from .models import DailyReconciliation
+
+    cutoff = tz.now() - timedelta(minutes=STUCK_RECONCILIATION_THRESHOLD_MINUTES)
+    stuck = DailyReconciliation.objects.filter(status='processing', updated_at__lt=cutoff)
+
+    count = 0
+    for recon in stuck:
+        logger.warning(
+            "requeue_stuck_reconciliations: recon %s stuck at 'processing' since %s — re-queuing",
+            recon.id, recon.updated_at,
+        )
+        run_reconciliation_match.delay(recon.id, False)
+        count += 1
+
+    if count:
+        logger.info("requeue_stuck_reconciliations: re-queued %d stuck reconciliation(s)", count)
+    return count

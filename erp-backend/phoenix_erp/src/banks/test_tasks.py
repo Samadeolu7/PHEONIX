@@ -5,6 +5,7 @@ Since it's decorated with @shared_task, it's directly callable as a plain
 function (bypassing .delay()/the broker entirely) — no live Celery worker
 or broker connection needed to test the task body.
 """
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -201,6 +202,34 @@ class RunReconciliationMatchTests(TestCase):
         with patch('banks.tasks.http_requests.post') as mock_post:
             run_reconciliation_match(self.recon.id, include_debits=False)
             mock_post.assert_not_called()
+
+    @patch('banks.tasks._persist_outcome')
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_unexpected_error_after_java_response_retries_then_marks_failed(
+        self, mock_post, mock_fetch, mock_persist,
+    ):
+        # Regression test: a genuinely unexpected error while persisting
+        # the outcome (e.g. database contention from several same-account
+        # tasks with heavily overlapping ±7-day windows touching the same
+        # rows concurrently) must never leave the row silently stuck at
+        # 'processing' forever — that happened in production with no error
+        # anywhere to explain it. Calling the task directly (bypassing
+        # .delay()) means self.retry() re-raises the original exception
+        # rather than a clean Retry — see
+        # test_connection_error_triggers_retry_not_immediate_failure for
+        # the same documented behavior on the existing RequestException path.
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [],
+        })
+        mock_persist.side_effect = RuntimeError('simulated database contention')
+
+        with self.assertRaises((Retry, RuntimeError)):
+            run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.recon.refresh_from_db()
+        self.assertEqual(self.recon.status, 'processing')
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
@@ -481,3 +510,128 @@ class RunReconciliationMatchTests(TestCase):
         call_kwargs = mock_notify_cls.return_value.send_from_template.call_args.kwargs
         self.assertEqual(call_kwargs['template_code'], 'bank_recon_bank_only_exception')
         self.assertEqual(call_kwargs['recipient'], director)
+
+    @patch('common.approval_permissions.APPROVER_ROLES', ('Director',))
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_bank_only_exception_notification_actually_renders(self, mock_post, mock_fetch):
+        # Regression test for a real production bug: the previous test
+        # mocks NotificationService entirely, so it never exercised
+        # NotificationTemplate.validate_variables()/_prepare_context() —
+        # which resolve every template_variables entry via its 'source'
+        # dotted path (e.g. 'exception.bank_amount'), not the flat context
+        # key names. A flat, pre-stringified context (the original,
+        # incorrect version of this code) silently failed validation on
+        # every single bank_only exception with "Missing required
+        # variables: ['amount', 'date']" — caught by the try/except so it
+        # never crashed the reconciliation, but meant zero notifications
+        # ever actually got created. This uses the real seeding command and
+        # real NotificationService call to prove a Notification row is
+        # actually created, not just that send_from_template was called.
+        from django.core.management import call_command
+        from notifications.models import NotificationChannel, Notification
+        from users.models import Role, Tenant
+
+        tenant = Tenant.objects.create(name='Notify Test Tenant', slug='notify-test-tenant')
+        self.user.tenant = tenant
+        self.user.save(update_fields=['tenant'])
+
+        branch = Branch.objects.create(name='Ikeja Branch', code='IKJ3', owner=self.user)
+        role = Role.objects.create(tenant=tenant, name='Director', is_active=True)
+        director = User.objects.create_user(
+            username='director2', password='test123', tenant=tenant, branch=branch,
+        )
+        director.roles.add(role)
+        self.recon.owner = self.user
+        self.recon.branch = branch
+        self.recon.save(update_fields=['owner', 'branch'])
+
+        # create_notification_templates seeds every template in the fixture,
+        # not just this one — all 5 channels the fixture references need to
+        # exist first, or it crashes on the first template that needs one
+        # we didn't create.
+        for code in ('sms', 'email', 'whatsapp', 'push', 'in_app'):
+            NotificationChannel.objects.get_or_create(
+                code=code, defaults={'name': code, 'provider': 'internal'},
+            )
+        call_command('create_notification_templates', branch_id=branch.id, owner_id=self.user.id)
+
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'bank_only', 'direction': 'CREDIT',
+                    'bankTransactionId': str(self.tx.id), 'bankAmount': '5000.00',
+                    'bankNarration': 'Test credit', 'bankDate': '2026-07-01',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        notifications = Notification.objects.filter(recipient_user=director)
+        self.assertEqual(notifications.count(), 2)  # in_app + email
+        body = notifications.first().message
+        self.assertIn('5,000.00', body)  # currency-formatted amount actually rendered
+        self.assertNotIn('{{', body)  # no unresolved placeholders left in the output
+
+
+class RequeueStuckReconciliationsTests(TestCase):
+    """
+    requeue_stuck_reconciliations is the backstop for a task getting lost
+    when celery_worker's process disappears mid-flight (most commonly a
+    deploy recreating the container while a just-uploaded statement's
+    tasks are still being dispatched) — nothing inside run_reconciliation_
+    match itself can catch that, since the process vanishes out from under
+    it. This only re-queues rows stale enough that they can't just be
+    legitimately still running.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='manager2', password='test123')
+        gl_account = Account.objects.create(
+            code='1299', name='Watchdog Test GL', account_level=Account.LEVEL_PARENT
+        )
+        bank = Bank.objects.create(bank_name='Watchdog Test Bank', bank_code='997')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000003', account_name='Watchdog Test Account',
+            gl_account=gl_account, account_manager=self.user,
+        )
+
+    def _make_recon(self, date_str, status, minutes_ago):
+        recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date=date_str,
+            uploaded_by=self.user, statement_file='bank_statements/watchdog.csv',
+            status=status,
+        )
+        stale_time = timezone.now() - timedelta(minutes=minutes_ago)
+        DailyReconciliation.objects.filter(pk=recon.pk).update(updated_at=stale_time)
+        recon.refresh_from_db()
+        return recon
+
+    @patch('banks.tasks.run_reconciliation_match.delay')
+    def test_requeues_only_processing_rows_past_the_threshold(self, mock_delay):
+        from banks.tasks import requeue_stuck_reconciliations
+
+        genuinely_stuck = self._make_recon('2026-07-01', 'processing', minutes_ago=30)
+        recently_queued = self._make_recon('2026-07-02', 'processing', minutes_ago=2)
+        already_done = self._make_recon('2026-07-03', 'completed', minutes_ago=30)
+
+        count = requeue_stuck_reconciliations()
+
+        self.assertEqual(count, 1)
+        mock_delay.assert_called_once_with(genuinely_stuck.id, False)
+        called_ids = {call.args[0] for call in mock_delay.call_args_list}
+        self.assertNotIn(recently_queued.id, called_ids)
+        self.assertNotIn(already_done.id, called_ids)
+
+    @patch('banks.tasks.run_reconciliation_match.delay')
+    def test_noop_when_nothing_is_stuck(self, mock_delay):
+        from banks.tasks import requeue_stuck_reconciliations
+
+        self._make_recon('2026-07-01', 'completed', minutes_ago=60)
+        self._make_recon('2026-07-02', 'processing', minutes_ago=1)
+
+        count = requeue_stuck_reconciliations()
+
+        self.assertEqual(count, 0)
+        mock_delay.assert_not_called()
