@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
 import { BRAND } from '../../constants/brand';
 import { ThreadWidget } from '../threads/ThreadWidget';
+import { DiscussionNotificationBadge } from '../threads/DiscussionNotificationBadge';
 import CashInflowForecastCard from './CashInflowForecastCard';
 import {
   Clock,
@@ -1162,13 +1163,18 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
                 </div>
 
                 {/* Large greeting */}
-                <p className="text-4xl font-black text-white leading-none">{getGreeting()},</p>
-                <p
-                  className="text-4xl font-black leading-none mt-0.5"
-                  style={{ color: BRAND.colors.gold }}
-                >
-                  {userName.split(' ')[0]}.
-                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div>
+                    <p className="text-4xl font-black text-white leading-none">{getGreeting()},</p>
+                    <p
+                      className="text-4xl font-black leading-none mt-0.5"
+                      style={{ color: BRAND.colors.gold }}
+                    >
+                      {userName.split(' ')[0]}.
+                    </p>
+                  </div>
+                  <DiscussionNotificationBadge targetId="discussions-widget" />
+                </div>
                 <p className="text-sm mt-3" style={{ color: 'rgba(255,255,255,0.45)' }}>
                   {new Date().toLocaleDateString('en-NG', {
                     weekday: 'long',
@@ -1661,7 +1667,7 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
         </div>
 
         {/* ── DISCUSSIONS WIDGET ───────────────────────────────────────── */}
-        <div className="max-w-sm">
+        <div id="discussions-widget" className="max-w-sm scroll-mt-20">
           <ThreadWidget />
         </div>
       </div>
