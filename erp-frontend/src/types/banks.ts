@@ -298,6 +298,7 @@ export interface BankPayment {
   approved_at?: string | null;
   rejection_reason?: string;
   journal_entry?: number | null;
+  journal_entry_reference?: string | null;
   created_at: string;
   updated_at: string;
 }

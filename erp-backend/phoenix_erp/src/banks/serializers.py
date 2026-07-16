@@ -444,16 +444,21 @@ class BankTransferSerializer(TenantModelSerializer):
         )
         return is_account_manager or _bank_transfer_approve_grant(user)
 
+    def get_journal_entry_reference(self, obj):
+        if obj.journal_entry_id:
+            return obj.journal_entry.reference_number
+        return None
+
     def get_initiated_by_name(self, obj):
         if obj.initiated_by:
             return obj.initiated_by.get_full_name() or obj.initiated_by.username
         return None
-    
+
     def get_approved_by_name(self, obj):
         if obj.approved_by:
             return obj.approved_by.get_full_name() or obj.approved_by.username
         return None
-    
+
     def get_second_approved_by_name(self, obj):
         if obj.second_approved_by:
             return obj.second_approved_by.get_full_name() or obj.second_approved_by.username
@@ -587,6 +592,7 @@ class BankPaymentSerializer(TenantModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     approved_by_name = serializers.SerializerMethodField()
     advance_remaining = serializers.SerializerMethodField()
+    journal_entry_reference = serializers.SerializerMethodField()
 
     posting_notes = serializers.CharField(write_only=True, required=False, allow_blank=True)
     bypass_validation = serializers.BooleanField(write_only=True, required=False, default=False)
@@ -605,7 +611,7 @@ class BankPaymentSerializer(TenantModelSerializer):
             'posted_by', 'posted_at',
             'approved_by', 'approved_by_name', 'approved_at',
             'rejection_reason',
-            'journal_entry',
+            'journal_entry', 'journal_entry_reference',
             'posting_notes', 'bypass_validation',
             'created_at', 'updated_at'
         ]
@@ -643,6 +649,11 @@ class BankPaymentSerializer(TenantModelSerializer):
     def get_supplier_name(self, obj):
         if obj.supplier_id:
             return obj.supplier.name
+        return None
+
+    def get_journal_entry_reference(self, obj):
+        if obj.journal_entry_id:
+            return obj.journal_entry.reference_number
         return None
 
     def get_approved_by_name(self, obj):

@@ -12,6 +12,7 @@ import type { BankPayment } from '../../types/banks';
 import type { AccountsPayableListItem } from '../../types/liabilities';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 import { listPayables } from '../../services/liabilitiesService';
+import TransactionEntriesModal from '../../components/ledger/TransactionEntriesModal';
 
 const STATUS_BADGE: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-700',
@@ -222,6 +223,8 @@ const BankPaymentListPage: React.FC = () => {
     payment: null,
   });
 
+  const [entriesModalTxnId, setEntriesModalTxnId] = useState<number | null>(null);
+
   const pendingCount = payments.filter(p => p.status === 'pending').length;
 
   const handleApprove = async (payment: BankPayment) => {
@@ -303,6 +306,7 @@ const BankPaymentListPage: React.FC = () => {
                   <th className="px-4 py-3 text-left font-medium">Amount</th>
                   <th className="px-4 py-3 text-left font-medium">Advance Balance</th>
                   <th className="px-4 py-3 text-left font-medium">Status</th>
+                  <th className="px-4 py-3 text-left font-medium">GL Entry</th>
                   <th className="px-4 py-3 text-left font-medium">Actions</th>
                 </tr>
               </thead>
@@ -362,6 +366,19 @@ const BankPaymentListPage: React.FC = () => {
                           >
                             {payment.rejection_reason}
                           </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {payment.journal_entry && payment.journal_entry_reference ? (
+                          <button
+                            onClick={() => setEntriesModalTxnId(payment.journal_entry!)}
+                            className="text-xs text-blue-600 hover:underline font-mono"
+                            title="View debit/credit entries"
+                          >
+                            {payment.journal_entry_reference}
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">—</span>
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -456,6 +473,14 @@ const BankPaymentListPage: React.FC = () => {
             setApplyModal({ open: false, payment: null });
             refetch();
           }}
+        />
+      )}
+
+      {/* GL Entries Modal */}
+      {entriesModalTxnId != null && (
+        <TransactionEntriesModal
+          transactionId={entriesModalTxnId}
+          onClose={() => setEntriesModalTxnId(null)}
         />
       )}
     </div>
