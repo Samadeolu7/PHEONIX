@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import requests as real_requests
 from celery.exceptions import Retry
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from accounts.models import Account
@@ -843,3 +843,89 @@ class RequeueStuckReconciliationsTests(TestCase):
 
         self.assertEqual(count, 0)
         mock_apply_async.assert_not_called()
+
+
+class EscalateAgingReconciliationExceptionsTests(TestCase):
+    """
+    escalate_aging_reconciliation_exceptions is the backstop that surfaces
+    exceptions neglected past RECONCILIATION_EXCEPTION_AGING_DAYS — amount_diff
+    exceptions never start high-priority, and anything simply left untouched
+    otherwise has no mechanism to escalate on its own.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='aging_manager', password='test123')
+        gl_account = Account.objects.create(
+            code='1599', name='Aging Test GL', account_level=Account.LEVEL_PARENT
+        )
+        bank = Bank.objects.create(bank_name='Aging Test Bank', bank_code='994')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000006', account_name='Aging Test Account',
+            gl_account=gl_account, account_manager=self.user,
+        )
+        self.recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.user, statement_file='bank_statements/aging.csv',
+            status='completed',
+        )
+
+    def _make_exception(self, days_old, resolved=False, is_high_priority=False, exception_type='amount_diff'):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type=exception_type, direction='CREDIT',
+            bank_amount=Decimal('1000.00'), bank_narration='test', bank_date='2026-07-01',
+            erp_amount=Decimal('900.00') if exception_type == 'amount_diff' else None,
+            resolved=resolved, is_high_priority=is_high_priority,
+        )
+        stale_time = timezone.now() - timedelta(days=days_old)
+        ReconciliationException.objects.filter(pk=exc.pk).update(created_at=stale_time)
+        exc.refresh_from_db()
+        return exc
+
+    def test_flags_unresolved_exception_older_than_threshold(self):
+        from banks.tasks import escalate_aging_reconciliation_exceptions
+
+        old_exc = self._make_exception(days_old=5)
+        count = escalate_aging_reconciliation_exceptions()
+
+        self.assertEqual(count, 1)
+        old_exc.refresh_from_db()
+        self.assertTrue(old_exc.is_high_priority)
+
+    def test_does_not_flag_exception_within_threshold(self):
+        from banks.tasks import escalate_aging_reconciliation_exceptions
+
+        recent_exc = self._make_exception(days_old=1)
+        count = escalate_aging_reconciliation_exceptions()
+
+        self.assertEqual(count, 0)
+        recent_exc.refresh_from_db()
+        self.assertFalse(recent_exc.is_high_priority)
+
+    def test_does_not_touch_resolved_exceptions(self):
+        from banks.tasks import escalate_aging_reconciliation_exceptions
+
+        resolved_exc = self._make_exception(days_old=10, resolved=True)
+        count = escalate_aging_reconciliation_exceptions()
+
+        self.assertEqual(count, 0)
+        resolved_exc.refresh_from_db()
+        self.assertFalse(resolved_exc.is_high_priority)
+
+    def test_idempotent_does_not_recount_already_flagged(self):
+        from banks.tasks import escalate_aging_reconciliation_exceptions
+
+        self._make_exception(days_old=10, is_high_priority=True)
+        count = escalate_aging_reconciliation_exceptions()
+
+        self.assertEqual(count, 0)
+
+    @override_settings(RECONCILIATION_EXCEPTION_AGING_DAYS=1)
+    def test_respects_configured_threshold(self):
+        from banks.tasks import escalate_aging_reconciliation_exceptions
+
+        exc = self._make_exception(days_old=2)
+        count = escalate_aging_reconciliation_exceptions()
+
+        self.assertEqual(count, 1)
+        exc.refresh_from_db()
+        self.assertTrue(exc.is_high_priority)

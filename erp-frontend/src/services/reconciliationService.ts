@@ -7,6 +7,8 @@ import { api } from './api';
 import type {
   DailyReconciliation,
   LinkResolveExceptionsRequest,
+  ManualOverridesReportFilters,
+  ManualOverridesReportResponse,
   OfficerReconciliationRiskFilters,
   OfficerReconciliationRiskRow,
   ReconciliationException,
@@ -172,5 +174,17 @@ export const reconciliationService = {
   ): Promise<OfficerReconciliationRiskRow[]> {
     const res = await api.get(`${BASE_URL}/reports/officer-reconciliation-risk/`, { params });
     return res?.results ?? [];
+  },
+
+  /**
+   * Audit trail for the three most abuse-prone manual pathways: unmatch,
+   * link-resolve (netting), and resolve-to-expense. Branch-scoped the same
+   * way as every other reconciliation endpoint (director sees every
+   * branch, everyone else pinned to their own).
+   */
+  async getManualOverridesReport(
+    params?: ManualOverridesReportFilters
+  ): Promise<ManualOverridesReportResponse> {
+    return api.get(`${BASE_URL}/reports/manual-overrides/`, { params });
   },
 };

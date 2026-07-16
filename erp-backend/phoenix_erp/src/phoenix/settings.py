@@ -481,6 +481,13 @@ INTERNAL_SERVICE_TOKEN = os.environ.get('INTERNAL_SERVICE_TOKEN', '')
 # not clear the bank (or get logged in the ERP) until several days later.
 RECONCILIATION_MATCH_WINDOW_DAYS = int(os.environ.get('RECONCILIATION_MATCH_WINDOW_DAYS', 7))
 
+# How many days a ReconciliationException may sit unresolved before
+# escalate_aging_reconciliation_exceptions (banks/tasks.py) auto-flags it
+# high-priority, regardless of exception_type — only bank_only/erp_only
+# start high-priority; amount_diff and anything simply neglected past this
+# threshold otherwise never surfaces on its own.
+RECONCILIATION_EXCEPTION_AGING_DAYS = int(os.environ.get('RECONCILIATION_EXCEPTION_AGING_DAYS', 3))
+
 # ==================================================
 # DRF SPECTACULAR (API DOCUMENTATION)
 # ==================================================
@@ -662,6 +669,18 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(minute='*/15'),
         'options': {
             'expires': 600,
+        }
+    },
+
+    # ── Bank reconciliation: escalate exceptions neglected past the aging
+    # threshold (RECONCILIATION_EXCEPTION_AGING_DAYS) to high-priority ──────
+    # Daily @ 10:00 WAT (09:00 UTC) — after the collection-sheet reconciliation
+    # notification at the same hour, so both daily reconciliation nudges land together.
+    'escalate-aging-reconciliation-exceptions': {
+        'task': 'banks.tasks.escalate_aging_reconciliation_exceptions',
+        'schedule': crontab(hour=9, minute=5),
+        'options': {
+            'expires': 3600,
         }
     },
 }

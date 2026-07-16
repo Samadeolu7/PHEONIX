@@ -1985,10 +1985,12 @@ class ReconciliationBankTransaction(models.Model):
         get_or_create_bank_only_exception (banks/reconciliation_utils.py),
         rather than waiting for the next scheduled rerun.
         """
+        from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
+
         if not self.matched:
             raise ValidationError('This transaction is not currently matched.')
-        if not reason or not reason.strip():
-            raise ValidationError('A reason is required to unmatch a transaction.')
+        if reason_too_short(reason):
+            raise ValidationError(f'A reason of at least {MIN_REASON_LENGTH} characters is required to unmatch a transaction.')
 
         self.matched = False
         self.unmatched_by = user

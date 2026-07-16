@@ -3,6 +3,11 @@
  * Handles banks, bank accounts, and transfers (cashier→bank, bank→bank)
  */
 
+// Matches banks/reconciliation_utils.py's MIN_REASON_LENGTH — the server is
+// the source of truth (this is a UX pre-check, not the real validation), so
+// keep both in sync if the threshold ever changes.
+export const MIN_REASON_LENGTH = 10;
+
 /**
  * Bank - Physical banking institution
  */
@@ -580,6 +585,41 @@ export interface OfficerReconciliationRiskRow {
 }
 
 export interface OfficerReconciliationRiskFilters {
+  date_from?: string;
+  date_to?: string;
+}
+
+/**
+ * One event in the Manual Overrides report — audit trail for the three
+ * most abuse-prone manual pathways (unmatch, netting, resolve-to-expense).
+ * See ManualOverridesReportView (banks/views.py).
+ */
+export interface ManualOverrideEvent {
+  type: 'unmatch' | 'netted' | 'resolve_to_expense';
+  action_at: string;
+  actor_id: number | null;
+  actor_name: string | null;
+  reason: string | null;
+  amount: string | null;
+  direction: 'CREDIT' | 'DEBIT';
+  narration: string;
+  bank_account_id: number;
+  bank_account_name: string | null;
+  reference_id: string | number;
+  // 'netted' only
+  netted_with_id?: number;
+  // 'resolve_to_expense' only
+  payment_number?: string;
+  payment_status?: string;
+  exception_resolved?: boolean;
+}
+
+export interface ManualOverridesReportResponse {
+  results: ManualOverrideEvent[];
+  count: number;
+}
+
+export interface ManualOverridesReportFilters {
   date_from?: string;
   date_to?: string;
 }

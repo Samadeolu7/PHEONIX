@@ -596,3 +596,35 @@ def requeue_stuck_reconciliations():
     if stuck:
         logger.info("requeue_stuck_reconciliations: re-queued %d stuck reconciliation(s)", len(stuck))
     return len(stuck)
+
+
+@shared_task(name='banks.tasks.escalate_aging_reconciliation_exceptions')
+def escalate_aging_reconciliation_exceptions():
+    """
+    Periodic backstop (see CELERY_BEAT_SCHEDULE) — flags any
+    ReconciliationException still unresolved past
+    RECONCILIATION_EXCEPTION_AGING_DAYS as high-priority, regardless of
+    exception_type. Only bank_only/erp_only start high-priority at creation
+    time (see _persist_outcome's is_high_priority assignment above) —
+    amount_diff never does, and anything simply neglected past the
+    threshold otherwise has no mechanism to surface on its own.
+
+    A plain bulk .update() — idempotent, safe to re-run; only touches rows
+    still is_high_priority=False, so it never re-flags or overwrites a
+    director's prior review.
+    """
+    from .models import ReconciliationException
+
+    days = getattr(django_settings, 'RECONCILIATION_EXCEPTION_AGING_DAYS', 3)
+    cutoff = tz.now() - timedelta(days=days)
+
+    updated = ReconciliationException.objects.filter(
+        resolved=False, is_high_priority=False, created_at__lte=cutoff,
+    ).update(is_high_priority=True)
+
+    if updated:
+        logger.info(
+            "escalate_aging_reconciliation_exceptions: flagged %d exception(s) unresolved past %d day(s)",
+            updated, days,
+        )
+    return updated

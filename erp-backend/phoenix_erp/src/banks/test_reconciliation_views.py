@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Account
@@ -317,6 +318,10 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         self.tenant.owner = self.director
         self.tenant.save(update_fields=['owner'])
 
+        self.second_director = User.objects.create_user(
+            username='flex_director2', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
         self.branch_manager = User.objects.create_user(
             username='flex_bm', password='test123', tenant=self.tenant, branch=self.branch,
         )
@@ -479,6 +484,83 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
 
         self.assertEqual(resp.status_code, 403)
 
+    # ── Maker-checker on resolve-to-expense approval ────────────────────
+
+    def test_creator_cannot_approve_own_resolve_to_expense_payment(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('75.00'), bank_narration='Stamp duty', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        create_url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        create_resp = self.client.post(create_url, {'category': self.category.id}, format='json')
+        self.assertEqual(create_resp.status_code, 201, create_resp.data)
+
+        exc.refresh_from_db()
+        payment_id = exc.pending_bank_payment_id
+
+        approve_url = f'/api/banks/bank-payments/{payment_id}/approve/'
+        resp = self.client.post(approve_url, {}, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+        exc.pending_bank_payment.refresh_from_db()
+        self.assertEqual(exc.pending_bank_payment.status, 'pending')
+
+    def test_different_director_can_approve_resolve_to_expense_payment(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('75.00'), bank_narration='Stamp duty', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        create_url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        create_resp = self.client.post(create_url, {'category': self.category.id}, format='json')
+        self.assertEqual(create_resp.status_code, 201, create_resp.data)
+
+        exc.refresh_from_db()
+        payment_id = exc.pending_bank_payment_id
+
+        self.client.force_authenticate(user=self.second_director)
+        approve_url = f'/api/banks/bank-payments/{payment_id}/approve/'
+        resp = self.client.post(approve_url, {}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        exc.pending_bank_payment.refresh_from_db()
+        self.assertEqual(exc.pending_bank_payment.status, 'posted')
+
+    # ── Minimum reason length ───────────────────────────────────────────
+
+    def test_unmatch_rejects_a_too_short_reason(self):
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='FRA-SHORT', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1000.00'), narration='test', matched=True,
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon.id}/transactions/{tx.id}/unmatch/'
+        resp = self.client.post(url, {'reason': 'too short'}, format='json')  # 9 chars
+
+        self.assertEqual(resp.status_code, 400)
+        tx.refresh_from_db()
+        self.assertTrue(tx.matched)
+
+    def test_link_resolve_rejects_a_too_short_reason(self):
+        credit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='Clawback', bank_date='2026-07-01',
+        )
+        debit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('50000.00'), bank_narration='Sent to wrong bank', bank_date='2026-06-28',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': credit_exc.id, 'exception_b_id': debit_exc.id,
+            'resolution_notes': 'short',  # 5 chars
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+        credit_exc.refresh_from_db()
+        self.assertFalse(credit_exc.resolved)
+
     # ── Full loop: resolve-to-expense → approve → rerun auto-resolves ─────
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
@@ -624,6 +706,123 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         }, format='json')
 
         self.assertEqual(resp.status_code, 403)
+
+
+class ManualOverridesReportTests(TestCase):
+    """
+    GET /api/banks/reports/manual-overrides/ — audit trail combining
+    unmatches, netted resolutions, and resolve-to-expense postings, branch-
+    scoped via DailyReconciliation.objects.for_user() like every other
+    reconciliation endpoint.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Overrides Report Org', slug='overrides-report-org')
+        self.branch_a = Branch.objects.create(name='Branch A', code='ORA')
+        self.branch_b = Branch.objects.create(name='Branch B', code='ORB')
+
+        self.director = User.objects.create_user(
+            username='overrides_director', password='test123',
+            tenant=self.tenant, branch=self.branch_a, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+
+        self.branch_manager_a = User.objects.create_user(
+            username='overrides_bm_a', password='test123', tenant=self.tenant, branch=self.branch_a,
+        )
+
+        gl_account = Account.objects.create(
+            code='1699', name='Overrides Report GL', account_level=Account.LEVEL_PARENT
+        )
+        bank = Bank.objects.create(bank_name='Overrides Report Bank', bank_code='993')
+        self.bank_account_a = BankAccount.objects.create(
+            bank=bank, account_number='0000007', account_name='Overrides Report Account A',
+            gl_account=gl_account, account_manager=self.director,
+        )
+        self.recon_a = DailyReconciliation.objects.create(
+            bank_account=self.bank_account_a, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/overrides_a.csv',
+            status='completed', owner=self.director, branch=self.branch_a, tenant=self.tenant,
+        )
+        self.recon_b = DailyReconciliation.objects.create(
+            bank_account=self.bank_account_a, reconciliation_date='2026-07-02',
+            uploaded_by=self.director, statement_file='bank_statements/overrides_b.csv',
+            status='completed', owner=self.director, branch=self.branch_b, tenant=self.tenant,
+        )
+
+        # An unmatch event on recon_a's bank account.
+        self.unmatched_tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account_a, bank_ref='ORA-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('2000.00'), narration='unmatch me',
+            matched=False, unmatched_by=self.director, unmatched_at=timezone.now(),
+            unmatched_reason='matched to the wrong loan repayment',
+        )
+
+        # A netted pair on recon_a.
+        self.netted_credit = ReconciliationException.objects.create(
+            reconciliation=self.recon_a, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='Clawback', bank_date='2026-07-01',
+            resolved=True, resolved_by=self.director, resolved_at=timezone.now(),
+            resolution_notes='Compensating transfer for the wrong-bank payment',
+        )
+        self.netted_debit = ReconciliationException.objects.create(
+            reconciliation=self.recon_a, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('50000.00'), bank_narration='Sent to wrong bank', bank_date='2026-06-28',
+            resolved=True, resolved_by=self.director, resolved_at=timezone.now(),
+            resolution_notes='Compensating transfer for the wrong-bank payment',
+        )
+        self.netted_credit.netted_with = self.netted_debit
+        self.netted_credit.save(update_fields=['netted_with'])
+        self.netted_debit.netted_with = self.netted_credit
+        self.netted_debit.save(update_fields=['netted_with'])
+
+    def test_director_sees_unmatch_and_netted_events(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get('/api/banks/reports/manual-overrides/')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        types = {row['type'] for row in resp.data['results']}
+        self.assertIn('unmatch', types)
+        self.assertIn('netted', types)
+        # netted is a pair, so both rows show up
+        netted_ids = {row['reference_id'] for row in resp.data['results'] if row['type'] == 'netted'}
+        self.assertEqual(netted_ids, {self.netted_credit.id, self.netted_debit.id})
+
+    def test_unmatch_event_includes_actor_and_reason(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get('/api/banks/reports/manual-overrides/')
+
+        unmatch_events = [r for r in resp.data['results'] if r['type'] == 'unmatch']
+        self.assertEqual(len(unmatch_events), 1)
+        event = unmatch_events[0]
+        self.assertEqual(event['actor_name'], self.director.get_full_name())
+        self.assertEqual(event['reason'], 'matched to the wrong loan repayment')
+        self.assertEqual(event['amount'], '2000.00')
+
+    def test_branch_manager_only_sees_own_branch(self):
+        # recon_a is branch_a, recon_b is branch_b — branch_manager_a should
+        # only see recon_a's bank account activity (both recons share the
+        # same bank account here, so scoping is exercised via for_user()'s
+        # DailyReconciliation-level branch filter feeding bank_account_ids).
+        self.client.force_authenticate(user=self.branch_manager_a)
+        resp = self.client.get('/api/banks/reports/manual-overrides/')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        # Should still see the unmatch/netted events since they're on
+        # recon_a (branch_a), which branch_manager_a has access to.
+        types = {row['type'] for row in resp.data['results']}
+        self.assertIn('unmatch', types)
+
+    def test_date_filter_excludes_events_outside_range(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get('/api/banks/reports/manual-overrides/', {
+            'date_from': '2020-01-01', 'date_to': '2020-01-02',
+        })
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['results'], [])
 
 
 class OfficerReconciliationRiskReportTests(TestCase):

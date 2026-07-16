@@ -223,6 +223,18 @@ class BankPaymentViewSet(ScopedModelViewSet):
         """Approve and post payment."""
         payment = self.get_object()
 
+        # Maker-checker: a payment created via ResolveExceptionToExpenseView
+        # (banks/views.py) — identifiable by pending_exception_resolutions —
+        # can't be approved by the same person who drafted it. Scoped to this
+        # origin only, not every BankPayment, since self-approval isn't
+        # guarded anywhere else in this viewset today (e.g. ordinary
+        # supplier/AP payments) and changing that wasn't asked for.
+        if payment.pending_exception_resolutions.exists() and payment.created_by_id == request.user.id:
+            return Response(
+                {'error': 'You created this payment — a different director must approve it.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         notes = request.data.get('notes', '')
         try:
             payment.approve_payment(approved_by=request.user, notes=notes)
@@ -1521,11 +1533,14 @@ class ResolveExceptionView(APIView):
             )
 
         resolution_notes = request.data.get('resolution_notes', '')
-        if not exc_obj.is_perfect_match and not resolution_notes.strip():
-            return Response(
-                {'detail': 'resolution_notes is required to resolve an exception with an amount mismatch.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if not exc_obj.is_perfect_match:
+            from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
+            if reason_too_short(resolution_notes):
+                return Response(
+                    {'detail': f'resolution_notes is required (at least {MIN_REASON_LENGTH} characters) '
+                               f'to resolve an exception with an amount mismatch.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         exc_obj.resolved         = True
         exc_obj.resolved_by      = request.user
@@ -1618,7 +1633,14 @@ class ResolveExceptionToExpenseView(APIView):
             expense_serializer.is_valid(raise_exception=True)
         except Exception as exc:
             return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        expense = expense_serializer.save()
+        # tenant=recon.tenant explicitly — TimeStampedModel.save()'s thread-
+        # local fallback isn't reliably populated in time for a DRF-
+        # authenticated request (the exact bug already hit once for
+        # DailyReconciliation.tenant — see test_uploaded_reconciliation_
+        # has_tenant_set_and_is_listable). Leaving it unset here would
+        # silently produce a BankPayment/Expense invisible to their own
+        # tenant-scoped viewsets, including the approver's own request.
+        expense = expense_serializer.save(tenant=recon.tenant)
 
         # branch=recon.branch (not request.user.branch) — this payment
         # belongs to the bank account being reconciled, which may differ
@@ -1633,6 +1655,7 @@ class ResolveExceptionToExpenseView(APIView):
             status='pending',
             owner=request.user,
             branch=recon.branch,
+            tenant=recon.tenant,
             created_by=request.user,
         )
 
@@ -1705,10 +1728,13 @@ class LinkResolveExceptionsView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
+
         resolution_notes = request.data.get('resolution_notes', '')
-        if not resolution_notes.strip():
+        if reason_too_short(resolution_notes):
             return Response(
-                {'detail': 'resolution_notes is required to net two exceptions together.'},
+                {'detail': f'resolution_notes is required (at least {MIN_REASON_LENGTH} characters) '
+                           f'to net two exceptions together.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1788,6 +1814,120 @@ def _is_global_user(user):
         return user.roles.filter(is_active=True, default_scope='global').exists()
     except Exception:
         return False
+
+
+class ManualOverridesReportView(APIView):
+    """
+    GET /api/banks/reports/manual-overrides/
+
+    Audit trail for the three most abuse-prone manual pathways added
+    alongside the resolve-flexibility features: unmatch (UnmatchTransactionView),
+    link-resolve/netting (LinkResolveExceptionsView), and resolve-to-expense
+    (ResolveExceptionToExpenseView). Each is otherwise only visible by digging
+    through individual reconciliations one at a time — this surfaces all of
+    them in one place so a director/auditor can review who did what and why.
+
+    Branch scoping via DailyReconciliation.objects.for_user() — directors/
+    global-scope users see every branch's activity, everyone else is pinned
+    to their own branch, same as every other reconciliation endpoint.
+
+    Query params (optional): date_from, date_to — ISO dates, applied to each
+    event's own action timestamp (unmatched_at / resolved_at / payment
+    created_at, respectively).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get(self, request):
+        scoped_recons = DailyReconciliation.objects.for_user(request.user)
+        bank_account_ids = list(scoped_recons.values_list('bank_account_id', flat=True).distinct())
+        bank_account_names = dict(
+            BankAccount.objects.filter(id__in=bank_account_ids).values_list('id', 'account_name')
+        )
+
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+
+        events = []
+
+        # ── Unmatches ────────────────────────────────────────────────────
+        unmatch_qs = ReconciliationBankTransaction.objects.filter(
+            bank_account_id__in=bank_account_ids, unmatched_by__isnull=False,
+        ).select_related('unmatched_by')
+        if date_from:
+            unmatch_qs = unmatch_qs.filter(unmatched_at__date__gte=date_from)
+        if date_to:
+            unmatch_qs = unmatch_qs.filter(unmatched_at__date__lte=date_to)
+        for tx in unmatch_qs:
+            events.append({
+                'type': 'unmatch',
+                'action_at': tx.unmatched_at,
+                'actor_id': tx.unmatched_by_id,
+                'actor_name': tx.unmatched_by.get_full_name() if tx.unmatched_by else None,
+                'reason': tx.unmatched_reason,
+                'amount': str(tx.amount),
+                'direction': tx.direction,
+                'narration': tx.narration,
+                'bank_account_id': tx.bank_account_id,
+                'bank_account_name': bank_account_names.get(tx.bank_account_id),
+                'reference_id': str(tx.id),
+            })
+
+        # ── Netted resolutions ──────────────────────────────────────────
+        netted_qs = ReconciliationException.objects.filter(
+            reconciliation__in=scoped_recons, netted_with__isnull=False, resolved=True,
+        ).select_related('resolved_by', 'reconciliation')
+        if date_from:
+            netted_qs = netted_qs.filter(resolved_at__date__gte=date_from)
+        if date_to:
+            netted_qs = netted_qs.filter(resolved_at__date__lte=date_to)
+        for exc in netted_qs:
+            events.append({
+                'type': 'netted',
+                'action_at': exc.resolved_at,
+                'actor_id': exc.resolved_by_id,
+                'actor_name': exc.resolved_by.get_full_name() if exc.resolved_by else None,
+                'reason': exc.resolution_notes,
+                'amount': str(exc.bank_amount) if exc.bank_amount is not None else None,
+                'direction': exc.direction,
+                'narration': exc.bank_narration,
+                'bank_account_id': exc.reconciliation.bank_account_id,
+                'bank_account_name': bank_account_names.get(exc.reconciliation.bank_account_id),
+                'reference_id': exc.id,
+                'netted_with_id': exc.netted_with_id,
+            })
+
+        # ── Resolve-to-expense (both pending and already auto-resolved) ──
+        expense_qs = ReconciliationException.objects.filter(
+            reconciliation__in=scoped_recons, pending_bank_payment__isnull=False,
+        ).select_related('pending_bank_payment', 'pending_bank_payment__created_by', 'reconciliation')
+        if date_from:
+            expense_qs = expense_qs.filter(pending_bank_payment__created_at__date__gte=date_from)
+        if date_to:
+            expense_qs = expense_qs.filter(pending_bank_payment__created_at__date__lte=date_to)
+        for exc in expense_qs:
+            payment = exc.pending_bank_payment
+            events.append({
+                'type': 'resolve_to_expense',
+                'action_at': payment.created_at,
+                'actor_id': payment.created_by_id,
+                'actor_name': payment.created_by.get_full_name() if payment.created_by else None,
+                'reason': None,
+                'amount': str(exc.bank_amount) if exc.bank_amount is not None else None,
+                'direction': exc.direction,
+                'narration': exc.bank_narration,
+                'bank_account_id': exc.reconciliation.bank_account_id,
+                'bank_account_name': bank_account_names.get(exc.reconciliation.bank_account_id),
+                'reference_id': exc.id,
+                'payment_number': payment.payment_number,
+                'payment_status': payment.status,
+                'exception_resolved': exc.resolved,
+            })
+
+        events.sort(key=lambda e: e['action_at'] or tz.now(), reverse=True)
+
+        return Response({'results': events, 'count': len(events)})
 
 
 class OfficerReconciliationRiskReportView(APIView):

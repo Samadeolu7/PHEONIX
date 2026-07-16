@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
-import type { ReconciliationException } from '../../types/banks';
+import { MIN_REASON_LENGTH, type ReconciliationException } from '../../types/banks';
 
 interface LinkResolveModalProps {
   bankAccountId: number;
@@ -63,7 +63,7 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedId || !notes.trim()) return;
+    if (!selectedId || notes.trim().length < MIN_REASON_LENGTH) return;
     setSubmitting(true);
     try {
       const result = await reconciliationService.linkResolveExceptions({
@@ -149,7 +149,7 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
               type="text"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Explain why these two are the same event"
+              placeholder={`Explain why these two are the same event (min ${MIN_REASON_LENGTH} chars)`}
               required
               className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
@@ -165,7 +165,7 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={submitting || !selectedId || !notes.trim()}
+              disabled={submitting || !selectedId || notes.trim().length < MIN_REASON_LENGTH}
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
             >
               {submitting ? 'Linking…' : 'Net & Resolve Both'}

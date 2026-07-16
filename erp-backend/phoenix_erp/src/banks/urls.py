@@ -20,6 +20,7 @@ from .views import (
     LinkResolveExceptionsView,
     UnresolvedBankOnlyExceptionsListView,
     OfficerReconciliationRiskReportView,
+    ManualOverridesReportView,
 )
 
 router = DefaultRouter()
@@ -86,5 +87,10 @@ urlpatterns = [
         'reports/officer-reconciliation-risk/',
         OfficerReconciliationRiskReportView.as_view(),
         name='officer-reconciliation-risk-report',
+    ),
+    path(
+        'reports/manual-overrides/',
+        ManualOverridesReportView.as_view(),
+        name='manual-overrides-report',
     ),
 ]

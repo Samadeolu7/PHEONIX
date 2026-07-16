@@ -18,10 +18,11 @@ import { PostToExpenseModal } from '../../components/banks/PostToExpenseModal';
 import { LinkResolveModal } from '../../components/banks/LinkResolveModal';
 import { useToast } from '../../hooks/useToast';
 import { usePermission } from '../../hooks/usePermissions';
-import type {
-  DailyReconciliation,
-  ReconciliationBankTransaction,
-  ReconciliationException,
+import {
+  MIN_REASON_LENGTH,
+  type DailyReconciliation,
+  type ReconciliationBankTransaction,
+  type ReconciliationException,
 } from '../../types/banks';
 
 const STATUS_STYLES: Record<DailyReconciliation['status'], string> = {
@@ -204,7 +205,7 @@ const ReconciliationDetailPage: React.FC = () => {
   const handleUnmatch = async (tx: ReconciliationBankTransaction) => {
     if (!recon) return;
     const reason = unmatchReasonDraft[tx.id] || '';
-    if (!reason.trim()) return;
+    if (reason.trim().length < MIN_REASON_LENGTH) return;
     setUnmatchingId(tx.id);
     try {
       await reconciliationService.unmatchTransaction(recon.id, tx.id, { reason });
@@ -553,7 +554,9 @@ const ReconciliationDetailPage: React.FC = () => {
                                 <input
                                   type="text"
                                   placeholder={
-                                    notesRequired ? 'Resolution notes (required)' : 'Resolution notes (optional)'
+                                    notesRequired
+                                      ? `Resolution notes (min ${MIN_REASON_LENGTH} chars)`
+                                      : 'Resolution notes (optional)'
                                   }
                                   value={notes}
                                   onChange={(e) =>
@@ -564,11 +567,12 @@ const ReconciliationDetailPage: React.FC = () => {
                                 <button
                                   onClick={() => handleResolve(exception)}
                                   disabled={
-                                    resolvingId === exception.id || (notesRequired && !notes.trim())
+                                    resolvingId === exception.id ||
+                                    (notesRequired && notes.trim().length < MIN_REASON_LENGTH)
                                   }
                                   title={
-                                    notesRequired && !notes.trim()
-                                      ? 'Resolution notes are required for an amount mismatch'
+                                    notesRequired && notes.trim().length < MIN_REASON_LENGTH
+                                      ? `Resolution notes (at least ${MIN_REASON_LENGTH} characters) are required for an amount mismatch`
                                       : undefined
                                   }
                                   className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
@@ -680,7 +684,7 @@ const ReconciliationDetailPage: React.FC = () => {
                             <div className="flex items-center gap-2 shrink-0">
                               <input
                                 type="text"
-                                placeholder="Reason (required)"
+                                placeholder={`Reason (min ${MIN_REASON_LENGTH} chars)`}
                                 value={unmatchReasonDraft[tx.id] || ''}
                                 onChange={(e) =>
                                   setUnmatchReasonDraft({ ...unmatchReasonDraft, [tx.id]: e.target.value })
@@ -689,10 +693,13 @@ const ReconciliationDetailPage: React.FC = () => {
                               />
                               <button
                                 onClick={() => handleUnmatch(tx)}
-                                disabled={unmatchingId === tx.id || !(unmatchReasonDraft[tx.id] || '').trim()}
+                                disabled={
+                                  unmatchingId === tx.id ||
+                                  (unmatchReasonDraft[tx.id] || '').trim().length < MIN_REASON_LENGTH
+                                }
                                 title={
-                                  !(unmatchReasonDraft[tx.id] || '').trim()
-                                    ? 'A reason is required to unmatch a transaction'
+                                  (unmatchReasonDraft[tx.id] || '').trim().length < MIN_REASON_LENGTH
+                                    ? `A reason of at least ${MIN_REASON_LENGTH} characters is required to unmatch a transaction`
                                     : undefined
                                 }
                                 className="px-3 py-1.5 text-sm font-medium text-red-700 border border-red-300 rounded-md hover:bg-red-50 disabled:opacity-50 whitespace-nowrap"

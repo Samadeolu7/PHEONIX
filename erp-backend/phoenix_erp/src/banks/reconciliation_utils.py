@@ -14,6 +14,22 @@ import re
 _LOAN_NUMBER_RE = re.compile(r'Loan repayment\s*[–-]\s*([^|]+)')
 _BANK_REFERENCE_RE = re.compile(r'\|\s*Ref:\s*(.+)$')
 
+# Applies to the three mandatory-reason fields introduced alongside the
+# resolve-flexibility features: ResolveExceptionView's resolution_notes
+# (amount-mismatch case), ReconciliationBankTransaction.unmatch()'s reason,
+# and LinkResolveExceptionsView's resolution_notes. Deliberately NOT applied
+# to older reason fields elsewhere (BankTransfer.reject, BankPayment.
+# reject_payment) — this threshold was requested specifically for these
+# three, not as a codebase-wide change.
+MIN_REASON_LENGTH = 10
+
+
+def reason_too_short(reason: str) -> bool:
+    """True if `reason` is empty/whitespace or shorter than MIN_REASON_LENGTH
+    once stripped — the single check shared by all three mandatory-reason
+    fields above, so the threshold only needs to change in one place."""
+    return not reason or len(reason.strip()) < MIN_REASON_LENGTH
+
 
 def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exclude_payment_ids=()):
     """

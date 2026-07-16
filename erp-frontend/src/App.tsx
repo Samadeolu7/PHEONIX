@@ -518,6 +518,7 @@ const ReconciliationListPage = lazy(() => import('./pages/banks/ReconciliationLi
 const ReconciliationUploadPage = lazy(() => import('./pages/banks/ReconciliationUploadPage'));
 const ReconciliationDetailPage = lazy(() => import('./pages/banks/ReconciliationDetailPage'));
 const OfficerReconciliationRiskPage = lazy(() => import('./pages/banks/OfficerReconciliationRiskPage'));
+const ManualOverridesReportPage = lazy(() => import('./pages/banks/ManualOverridesReportPage'));
 
 // Budget pages
 const BudgetPeriodList = lazy(() => import('./pages/budgets/BudgetPeriodList'));
@@ -3886,6 +3887,14 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
                                       <OfficerReconciliationRiskPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/reconciliations/manual-overrides"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
+                                      <ManualOverridesReportPage />
                                     </ProtectedRoute>
                                   }
                                 />
