@@ -210,6 +210,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Transfer Approvals', '/banks/transfers/approvals'),
         leaf('Bank Reconciliation (Manual)', '/treasury/bank-reconciliation'),
         leaf('Statement Reconciliation (Auto-Match)', '/banks/reconciliations'),
+        leaf('Officer Reconciliation Risk', '/banks/reconciliations/officer-risk-report'),
         leaf('Cash Reconciliation', '/treasury/cash-reconciliation'),
         leaf('Cashier Accounts', '/treasury/cashier-accounts'),
         leaf('Cash Transfers', '/treasury/cash-transfers'),

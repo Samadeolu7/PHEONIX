@@ -467,3 +467,29 @@ export interface ReconciliationFilters {
 export interface ResolveExceptionRequest {
   resolution_notes: string;
 }
+
+/**
+ * One row of the Officer Reconciliation Risk report — accountability
+ * signals aggregated across ALL of an officer's reconciliation activity
+ * (matched transactions + erp_only exceptions, regardless of whether the
+ * latter have since been resolved), not just outstanding cases.
+ */
+export interface OfficerReconciliationRiskRow {
+  officer_id: number;
+  officer_name: string;
+  branch_name: string | null;
+  matched_count: number;
+  erp_only_count: number;
+  unresolved_erp_only_count: number;
+  high_priority_count: number;
+  total_considered: number;
+  match_rate: number | null;
+  reference_compliance_rate: number | null;
+  avg_posting_lag_days: number | null;
+  late_posting_count: number;
+}
+
+export interface OfficerReconciliationRiskFilters {
+  date_from?: string;
+  date_to?: string;
+}

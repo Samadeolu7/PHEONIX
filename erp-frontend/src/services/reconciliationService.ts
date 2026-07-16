@@ -6,6 +6,8 @@
 import { api } from './api';
 import type {
   DailyReconciliation,
+  OfficerReconciliationRiskFilters,
+  OfficerReconciliationRiskRow,
   ReconciliationException,
   ReconciliationFilters,
   RerunReconciliationRequest,
@@ -72,5 +74,20 @@ export const reconciliationService = {
       `${BASE_URL}/reconciliations/${reconciliationId}/exceptions/${exceptionId}/resolve/`,
       data
     );
+  },
+
+  /**
+   * Per-officer accountability signals — match rate, reference compliance,
+   * average posting lag, outstanding high-priority exceptions — across ALL
+   * of an officer's reconciliation activity, not just outstanding cases.
+   * Branch-scoped server-side the same way as the dashboard analytics
+   * endpoints (director sees every branch, optionally narrowed via the
+   * X-Branch-ID header already attached by the shared api client).
+   */
+  async getOfficerRiskReport(
+    params?: OfficerReconciliationRiskFilters
+  ): Promise<OfficerReconciliationRiskRow[]> {
+    const res = await api.get(`${BASE_URL}/reports/officer-reconciliation-risk/`, { params });
+    return res?.results ?? [];
   },
 };

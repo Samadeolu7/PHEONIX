@@ -31,6 +31,7 @@ from banks.models import (
     Bank,
     BankAccount,
     DailyReconciliation,
+    ReconciliationBankTransaction,
     ReconciliationException,
 )
 from users.models import Tenant
@@ -193,3 +194,157 @@ class ReconciliationViewTests(TestCase):
         list_resp = self.client.get('/api/banks/reconciliations/')
         self.assertEqual(list_resp.status_code, 200)
         self.assertIn(new_id, {row['id'] for row in list_resp.data})
+
+
+class OfficerReconciliationRiskReportTests(TestCase):
+    """
+    GET /api/banks/reports/officer-reconciliation-risk/ — aggregates
+    accountability signals per officer across BOTH matched transactions
+    (posting lag / reference compliance captured at match time — see
+    banks/tasks.py) and erp_only exceptions (regardless of whether they've
+    since been resolved), so a pattern stays visible even for cases that
+    already matched or were cleared by a director.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Risk Report Org', slug='risk-report-org')
+        self.branch_a = Branch.objects.create(name='Branch A', code='RRA', tenant=self.tenant)
+        self.branch_b = Branch.objects.create(name='Branch B', code='RRB', tenant=self.tenant)
+
+        self.director = User.objects.create_user(
+            username='risk_director', password='test123',
+            tenant=self.tenant, branch=self.branch_a, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+
+        self.branch_manager_a = User.objects.create_user(
+            username='risk_bm_a', password='test123', tenant=self.tenant, branch=self.branch_a,
+        )
+        self.officer_x = User.objects.create_user(
+            username='officer_x', password='test123', tenant=self.tenant, branch=self.branch_a,
+        )
+        self.officer_y = User.objects.create_user(
+            username='officer_y', password='test123', tenant=self.tenant, branch=self.branch_b,
+        )
+
+        gl_account = Account.objects.create(
+            code='1399', name='Risk Report GL', account_level=Account.LEVEL_PARENT
+        )
+        bank = Bank.objects.create(bank_name='Risk Report Bank', bank_code='996')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000004', account_name='Risk Report Account',
+            gl_account=gl_account, account_manager=self.director,
+        )
+        self.recon_a = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/risk_a.csv',
+            status='completed', owner=self.director, branch=self.branch_a, tenant=self.tenant,
+        )
+        self.recon_b = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-07-02',
+            uploaded_by=self.director, statement_file='bank_statements/risk_b.csv',
+            status='completed', owner=self.director, branch=self.branch_b, tenant=self.tenant,
+        )
+
+        # officer_x (Branch A): 2 matched (1 referenced/on-time-ish,
+        # 1 unreferenced/5-days-late) + 1 unresolved high-priority erp_only.
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='RRA-REF1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1000.00'), narration='x1',
+            matched=True, matched_erp_officer=self.officer_x,
+            matched_erp_had_reference=True, posting_lag_days=2,
+        )
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='RRA-REF2', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('2000.00'), narration='x2',
+            matched=True, matched_erp_officer=self.officer_x,
+            matched_erp_had_reference=False, posting_lag_days=5,
+        )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon_a, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=901, erp_amount=Decimal('500.00'),
+            erp_narration='Loan repayment – LN-901 | Ref: RRA901', erp_date='2026-07-01',
+            officer=self.officer_x, erp_branch=self.branch_a,
+            is_high_priority=True, resolved=False,
+        )
+
+        # officer_y (Branch B): 1 matched (referenced, posted 1 day early)
+        # + 1 erp_only that's ALREADY resolved — must still count toward
+        # erp_only_count/reference compliance ("regardless of resolution"),
+        # but not toward unresolved_erp_only_count/high_priority_count.
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='RRB-REF1', value_date='2026-07-02',
+            direction='CREDIT', amount=Decimal('3000.00'), narration='y1',
+            matched=True, matched_erp_officer=self.officer_y,
+            matched_erp_had_reference=True, posting_lag_days=-1,
+        )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon_b, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=902, erp_amount=Decimal('700.00'),
+            erp_narration='Loan repayment – LN-902', erp_date='2026-07-02',
+            officer=self.officer_y, erp_branch=self.branch_b,
+            is_high_priority=True, resolved=True, resolved_by=self.director,
+        )
+
+        self.url = '/api/banks/reports/officer-reconciliation-risk/'
+
+    def _row_for(self, resp, officer_id):
+        return next(r for r in resp.data['results'] if r['officer_id'] == officer_id)
+
+    def test_branch_manager_sees_only_own_branch_officer(self):
+        self.client.force_authenticate(user=self.branch_manager_a)
+        resp = self.client.get(self.url)
+
+        self.assertEqual(resp.status_code, 200)
+        officer_ids = {r['officer_id'] for r in resp.data['results']}
+        self.assertIn(self.officer_x.id, officer_ids)
+        self.assertNotIn(self.officer_y.id, officer_ids)
+
+    def test_director_sees_all_branches_by_default(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(self.url)
+
+        self.assertEqual(resp.status_code, 200)
+        officer_ids = {r['officer_id'] for r in resp.data['results']}
+        self.assertIn(self.officer_x.id, officer_ids)
+        self.assertIn(self.officer_y.id, officer_ids)
+
+    def test_director_can_narrow_to_one_branch_via_header(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(self.url, HTTP_X_BRANCH_ID=str(self.branch_b.id))
+
+        self.assertEqual(resp.status_code, 200)
+        officer_ids = {r['officer_id'] for r in resp.data['results']}
+        self.assertNotIn(self.officer_x.id, officer_ids)
+        self.assertIn(self.officer_y.id, officer_ids)
+
+    def test_aggregation_values_for_officer_x(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(self.url)
+        row = self._row_for(resp, self.officer_x.id)
+
+        self.assertEqual(row['matched_count'], 2)
+        self.assertEqual(row['erp_only_count'], 1)
+        self.assertEqual(row['unresolved_erp_only_count'], 1)
+        self.assertEqual(row['high_priority_count'], 1)
+        self.assertEqual(row['total_considered'], 3)
+        self.assertAlmostEqual(row['match_rate'], 2 / 3, places=3)
+        # referenced: 1 of 2 matched + the erp_only (has "| Ref:") = 2 of 3
+        self.assertAlmostEqual(row['reference_compliance_rate'], 2 / 3, places=3)
+        self.assertAlmostEqual(row['avg_posting_lag_days'], 3.5, places=1)
+        self.assertEqual(row['late_posting_count'], 2)
+
+    def test_erp_only_counted_regardless_of_resolution_but_not_as_still_outstanding(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(self.url)
+        row = self._row_for(resp, self.officer_y.id)
+
+        # The resolved erp_only exception still counts toward the totals...
+        self.assertEqual(row['erp_only_count'], 1)
+        self.assertEqual(row['total_considered'], 2)
+        # ...but not as something still needing director attention.
+        self.assertEqual(row['unresolved_erp_only_count'], 0)
+        self.assertEqual(row['high_priority_count'], 0)
+        self.assertEqual(row['avg_posting_lag_days'], -1)
