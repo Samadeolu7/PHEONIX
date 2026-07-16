@@ -1920,6 +1920,26 @@ class ReconciliationBankTransaction(models.Model):
     matched_erp_payment_id = models.IntegerField(null=True, blank=True)
     matched_at = models.DateTimeField(null=True, blank=True)
 
+    # Accountability signals captured at match time (see banks/tasks.py's
+    # _persist_outcome) — who recorded the ERP side, whether their narration
+    # had a traceable bank reference, and how many days late the bank posted
+    # relative to the date they claimed it. Null until matched; used by the
+    # Officer Reconciliation Risk report to judge patterns across ALL of an
+    # officer's activity, not just the cases that ended up as exceptions.
+    matched_erp_officer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='matched_bank_transactions',
+        help_text='User who recorded the ERP-side payment this line matched to',
+    )
+    matched_erp_had_reference = models.BooleanField(null=True, blank=True)
+    # value_date minus the ERP payment's own claimed date. Positive means
+    # the bank posted AFTER the officer claimed the payment (late posting —
+    # the pattern the user specifically asked to catch); negative means the
+    # officer logged it in the ERP after it had already hit the bank.
+    posting_lag_days = models.IntegerField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

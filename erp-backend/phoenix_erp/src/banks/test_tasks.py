@@ -5,7 +5,7 @@ Since it's decorated with @shared_task, it's directly callable as a plain
 function (bypassing .delay()/the broker entirely) — no live Celery worker
 or broker connection needed to test the task body.
 """
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
@@ -92,6 +92,73 @@ class RunReconciliationMatchTests(TestCase):
         self.assertEqual(self.tx.match_confidence, 'HIGH')
         self.assertEqual(self.tx.matched_erp_payment_id, 101)
         self.assertIsNotNone(self.tx.matched_at)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments')
+    @patch('banks.tasks.http_requests.post')
+    def test_match_captures_officer_reference_compliance_and_posting_lag(self, mock_post, mock_fetch):
+        # self.tx.value_date is 2026-07-01 (see setUp); the ERP payment
+        # below claims 2026-06-28 — the bank posted 3 days after the
+        # officer recorded it, i.e. a 3-day late posting.
+        branch = Branch.objects.create(name='Ikeja Branch', code='IKJ', owner=self.user)
+        officer = User.objects.create_user(username='lag_officer', password='test123', branch=branch)
+        series = TransactionSeries.objects.create(code='LN', description='Loan series')
+        txn = Transaction.objects.create(
+            series=series, date=date(2026, 6, 28),
+            description='Loan repayment – LN-2026-777 | Ref: FBN123456',
+            owner=self.user, branch=branch, created_by=officer,
+        )
+
+        mock_fetch.return_value = [{
+            'paymentId': txn.id, 'amount': '5000.00',
+            'narration': txn.description, 'paymentDate': '2026-06-28',
+            'officerName': 'Lag Officer', 'loanNumber': 'LN-2026-777',
+            'bankReference': 'FBN123456',
+        }]
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 1, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(self.tx.id), 'erpPaymentId': txn.id,
+                 'confidence': 'HIGH', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.tx.refresh_from_db()
+        self.assertEqual(self.tx.matched_erp_officer_id, officer.id)
+        self.assertTrue(self.tx.matched_erp_had_reference)
+        self.assertEqual(self.tx.posting_lag_days, 3)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments')
+    @patch('banks.tasks.http_requests.post')
+    def test_match_with_no_bank_reference_recorded_as_noncompliant(self, mock_post, mock_fetch):
+        series = TransactionSeries.objects.create(code='LN', description='Loan series')
+        txn = Transaction.objects.create(
+            series=series, date=date(2026, 7, 1),
+            description='Loan repayment – LN-2026-778',  # no "| Ref: ..." segment
+            owner=self.user, created_by=self.user,
+        )
+
+        mock_fetch.return_value = [{
+            'paymentId': txn.id, 'amount': '5000.00',
+            'narration': txn.description, 'paymentDate': '2026-07-01',
+            'officerName': '', 'loanNumber': 'LN-2026-778', 'bankReference': None,
+        }]
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 1, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(self.tx.id), 'erpPaymentId': txn.id,
+                 'confidence': 'HIGH', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.tx.refresh_from_db()
+        self.assertFalse(self.tx.matched_erp_had_reference)
+        self.assertEqual(self.tx.posting_lag_days, 0)
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')

@@ -80,7 +80,7 @@ export default function PageDiscussionsPage() {
     setLoading(true);
     try {
       const [modulesRes, rolesRes] = await Promise.all([
-        api.get('/pages/modules/'),
+        api.get('/pages/modules/admin-all/'),
         userManagementService.getRoles(),
       ]);
 

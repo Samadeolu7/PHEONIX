@@ -7,7 +7,7 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db.models import Q, Sum, Count, F
+from django.db.models import Q, Sum, Count, F, Avg
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from decimal import Decimal
@@ -1394,3 +1394,159 @@ class ResolveExceptionView(APIView):
 
         serializer = ReconciliationExceptionSerializer(exc_obj)
         return Response(serializer.data)
+
+
+def _is_global_user(user):
+    """
+    True when the user has cross-branch access — same convention as
+    analytics/views.py's helper of the same name (duplicated rather than
+    imported cross-app, matching this codebase's existing pattern).
+    """
+    if getattr(user, 'is_system_admin', False):
+        return True
+    if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+        return True
+    try:
+        return user.roles.filter(is_active=True, default_scope='global').exists()
+    except Exception:
+        return False
+
+
+class OfficerReconciliationRiskReportView(APIView):
+    """
+    GET /api/banks/reports/officer-reconciliation-risk/
+
+    Per-officer accountability signals aggregated across ALL of their
+    reconciliation activity — not just the cases that ended up as
+    exceptions — so a pattern (chronic late posting, missing references)
+    is visible even for items that already matched or were resolved. Two
+    sources feed each officer's row:
+      - matched ReconciliationBankTransaction rows (matched_erp_officer/
+        _had_reference/posting_lag_days, captured at match time)
+      - erp_only ReconciliationException rows, regardless of `resolved`
+    No opinionated "risk score" — raw metrics only, sorted with the most
+    outstanding-attention officers first; the original design decision for
+    this feature was that directors judge case-by-case rather than the
+    system pre-filtering what's worth showing.
+
+    Branch scoping follows the same convention as analytics/views.py:
+    directors/global-scope users see every branch, optionally narrowed via
+    the X-Branch-ID header (the frontend's existing branch switcher);
+    everyone else is pinned to their own branch.
+
+    Query params (optional): date_from, date_to — ISO dates, applied to
+    the bank value_date / reconciliation_date respectively.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get(self, request):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        user = request.user
+        tenant = getattr(user, 'tenant', None)
+
+        branch = None
+        if _is_global_user(user):
+            header_val = request.META.get('HTTP_X_BRANCH_ID', '').strip()
+            if header_val:
+                from branches.models import Branch
+                branch = Branch.objects.filter(pk=header_val, is_deleted=False, tenant=tenant).first()
+        else:
+            branch = getattr(user, 'branch', None)
+            if branch is None:
+                return Response({'results': []})
+
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+
+        # Tenant boundary is enforced below via officer.tenant (always
+        # explicitly set at user creation), not bank_account.tenant — the
+        # latter is populated through TimeStampedModel.save()'s thread-local
+        # fallback, the same unreliable mechanism that previously left
+        # DailyReconciliation.tenant NULL on some rows (see the backfill
+        # migration for that bug). Filtering on it here could silently
+        # return an empty report instead of real data.
+        matched_qs = ReconciliationBankTransaction.objects.filter(
+            matched=True, matched_erp_officer__isnull=False,
+        )
+        erp_only_qs = ReconciliationException.objects.filter(
+            exception_type='erp_only', officer__isnull=False,
+        )
+        if branch is not None:
+            matched_qs = matched_qs.filter(matched_erp_officer__branch=branch)
+            erp_only_qs = erp_only_qs.filter(officer__branch=branch)
+        if date_from:
+            matched_qs = matched_qs.filter(value_date__gte=date_from)
+            erp_only_qs = erp_only_qs.filter(reconciliation__reconciliation_date__gte=date_from)
+        if date_to:
+            matched_qs = matched_qs.filter(value_date__lte=date_to)
+            erp_only_qs = erp_only_qs.filter(reconciliation__reconciliation_date__lte=date_to)
+
+        matched_agg = matched_qs.values('matched_erp_officer').annotate(
+            matched_count=Count('id'),
+            avg_lag_days=Avg('posting_lag_days'),
+            late_count=Count('id', filter=Q(posting_lag_days__gt=0)),
+            referenced_count=Count('id', filter=Q(matched_erp_had_reference=True)),
+        )
+        erp_only_agg = erp_only_qs.values('officer').annotate(
+            erp_only_count=Count('id'),
+            unresolved_erp_only_count=Count('id', filter=Q(resolved=False)),
+            high_priority_count=Count('id', filter=Q(is_high_priority=True, resolved=False)),
+            erp_only_referenced_count=Count('id', filter=Q(erp_narration__iregex=r'\|\s*Ref:\s*.+')),
+        )
+
+        blank_row = {
+            'matched_count': 0, 'avg_lag_days': None, 'late_count': 0, 'referenced_count': 0,
+            'erp_only_count': 0, 'unresolved_erp_only_count': 0,
+            'high_priority_count': 0, 'erp_only_referenced_count': 0,
+        }
+
+        rows = {}
+        for a in matched_agg:
+            row = dict(blank_row)
+            row['matched_count'] = a['matched_count']
+            row['avg_lag_days'] = round(a['avg_lag_days'], 1) if a['avg_lag_days'] is not None else None
+            row['late_count'] = a['late_count']
+            row['referenced_count'] = a['referenced_count']
+            rows[a['matched_erp_officer']] = row
+        for a in erp_only_agg:
+            row = rows.setdefault(a['officer'], dict(blank_row))
+            row['erp_only_count'] = a['erp_only_count']
+            row['unresolved_erp_only_count'] = a['unresolved_erp_only_count']
+            row['high_priority_count'] = a['high_priority_count']
+            row['erp_only_referenced_count'] = a['erp_only_referenced_count']
+
+        officers_by_id = {
+            o.id: o for o in
+            User.objects.filter(id__in=rows.keys(), tenant=tenant).select_related('branch')
+        }
+
+        results = []
+        for officer_id, r in rows.items():
+            officer = officers_by_id.get(officer_id)
+            if officer is None:
+                continue
+            total_considered = r['matched_count'] + r['erp_only_count']
+            referenced_total = r['referenced_count'] + r['erp_only_referenced_count']
+            results.append({
+                'officer_id': officer_id,
+                'officer_name': (officer.get_full_name() or officer.username),
+                'branch_name': officer.branch.name if officer.branch else None,
+                'matched_count': r['matched_count'],
+                'erp_only_count': r['erp_only_count'],
+                'unresolved_erp_only_count': r['unresolved_erp_only_count'],
+                'high_priority_count': r['high_priority_count'],
+                'total_considered': total_considered,
+                'match_rate': round(r['matched_count'] / total_considered, 3) if total_considered else None,
+                'reference_compliance_rate': (
+                    round(referenced_total / total_considered, 3) if total_considered else None
+                ),
+                'avg_posting_lag_days': r['avg_lag_days'],
+                'late_posting_count': r['late_count'],
+            })
+
+        results.sort(key=lambda r: (-r['unresolved_erp_only_count'], -r['high_priority_count']))
+        return Response({'results': results})

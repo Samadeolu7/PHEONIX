@@ -122,6 +122,13 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
             if include_debits else None
         )
 
+        # Keyed lookup so a confirmed match can be traced back to the ERP
+        # payment's own claimed date and narration at persist time — Java's
+        # match response only carries an erpPaymentId, not these details.
+        erp_payments_by_id = {
+            p['paymentId']: p for p in erp_credit_payments + (erp_debit_payments or [])
+        }
+
         payload = {
             'reconciliationId': recon.id,
             'bankAccountId': bank_account.id,
@@ -192,7 +199,7 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
         now = tz.now()
 
         try:
-            _persist_outcome(recon, bank_account, reconciliation_date, candidates, outcome, now)
+            _persist_outcome(recon, bank_account, reconciliation_date, candidates, outcome, now, erp_payments_by_id)
         except Exception as exc:
             # Anything unexpected here (most plausibly database contention from
             # several same-account tasks with heavily overlapping ±7-day
@@ -219,7 +226,7 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
         )
 
 
-def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outcome, now):
+def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outcome, now, erp_payments_by_id):
     """
     Everything after a successful Java response: persist matches, auto-
     resolve superseded exceptions, save new exceptions, and recompute
@@ -229,8 +236,15 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
 
     `now` is the single timestamp captured by the task before this call so
     all audit fields (matched_at, resolved_at) are consistent across rows.
+
+    `erp_payments_by_id` is the same ERP payment lookup built just before
+    the Java call — a confirmed match only carries an erpPaymentId, not the
+    claimed date/narration needed to derive posting lag and reference
+    compliance, so those must be recovered from the request payload itself
+    rather than re-queried.
     """
     from .models import DailyReconciliation, ReconciliationBankTransaction, ReconciliationException
+    from .reconciliation_utils import _BANK_REFERENCE_RE
 
     # --- persist confirmed matches onto ReconciliationBankTransaction ---
     matches_data = outcome.get('matches', [])
@@ -238,14 +252,38 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
     if matches_data:
         match_by_id = {m['bankTransactionId']: m for m in matches_data}
         matched_txs = [tx for tx in candidates if str(tx.id) in match_by_id]
+
+        # Batched the same way exception officer/branch resolution is below
+        # — one query for every matched ERP payment id in this run, not one
+        # per transaction.
+        matched_erp_payment_ids = [
+            m.get('erpPaymentId') for m in matches_data if m.get('erpPaymentId') is not None
+        ]
+        matched_officer_map = _batch_resolve_officers(matched_erp_payment_ids)
+
         for tx in matched_txs:
             m = match_by_id[str(tx.id)]
             tx.matched = True
             tx.match_confidence = m.get('confidence', '')
             tx.matched_erp_payment_id = m.get('erpPaymentId')
             tx.matched_at = now
+
+            # Accountability signals — see the fields' own comments in
+            # models.py. Only derivable when Java's match actually names an
+            # ERP payment id we recognize from this run's own request.
+            erp_info = erp_payments_by_id.get(tx.matched_erp_payment_id)
+            if erp_info is not None:
+                erp_date = date.fromisoformat(erp_info['paymentDate'])
+                tx.posting_lag_days = (tx.value_date - erp_date).days
+                narration = erp_info.get('narration') or ''
+                tx.matched_erp_had_reference = bool(_BANK_REFERENCE_RE.search(narration))
+                officer, _erp_branch = matched_officer_map.get(tx.matched_erp_payment_id, (None, None))
+                tx.matched_erp_officer = officer
         ReconciliationBankTransaction.objects.bulk_update(
-            matched_txs, ['matched', 'match_confidence', 'matched_erp_payment_id', 'matched_at']
+            matched_txs, [
+                'matched', 'match_confidence', 'matched_erp_payment_id', 'matched_at',
+                'posting_lag_days', 'matched_erp_had_reference', 'matched_erp_officer',
+            ]
         )
 
     # --- auto-resolve exceptions superseded by a match found this run ---

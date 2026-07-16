@@ -103,6 +103,28 @@ class ModuleViewSet(viewsets.ReadOnlyModelViewSet):
             'data': accessible_modules
         })
 
+    @action(detail=False, methods=['get'], url_path='admin-all')
+    def admin_all(self, request):
+        """
+        GET /api/pages/modules/admin-all/
+        Returns all active modules with pages for admin thread configuration.
+        Bypasses the owner=user filter used by the standard list endpoint.
+        """
+        modules = Module.objects.filter(
+            is_active=True,
+            is_deleted=False,
+        ).prefetch_related(
+            Prefetch(
+                'pages',
+                queryset=ModulePage.objects.filter(
+                    is_active=True,
+                    is_deleted=False
+                ).order_by('order')
+            )
+        ).order_by('order')
+        serializer = ModuleSerializer(modules, many=True)
+        return Response(serializer.data)
+
 
 class ModulePageViewSet(viewsets.ReadOnlyModelViewSet):
     """

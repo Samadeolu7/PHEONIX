@@ -14,6 +14,7 @@ from .views import (
     DailyReconciliationDetailView,
     RerunReconciliationView,
     ResolveExceptionView,
+    OfficerReconciliationRiskReportView,
 )
 
 router = DefaultRouter()
@@ -50,5 +51,10 @@ urlpatterns = [
         'reconciliations/<int:recon_pk>/exceptions/<int:exc_pk>/resolve/',
         ResolveExceptionView.as_view(),
         name='reconciliation-exception-resolve',
+    ),
+    path(
+        'reports/officer-reconciliation-risk/',
+        OfficerReconciliationRiskReportView.as_view(),
+        name='officer-reconciliation-risk-report',
     ),
 ]
