@@ -165,10 +165,10 @@ function BranchSwitcher() {
 function ThreadsNavItem({ collapsed, navy, gold }: { collapsed: boolean; navy: string; gold: string }) {
   const { globalUnreadCount } = useThreadContext();
   const location = useLocation();
-  const active = location.pathname === '/threads';
+  const active = location.pathname === '/discussions' || location.pathname === '/threads';
   return (
     <Link
-      to="/threads"
+      to="/discussions"
       className="flex items-center rounded-lg px-3 py-2.5 transition-all duration-150 relative"
       style={{
         background: active ? `rgba(183,151,88,0.18)` : 'transparent',

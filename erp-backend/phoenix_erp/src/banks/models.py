@@ -2143,13 +2143,30 @@ class ReconciliationException(TimeStampedModel):
             models.Index(fields=['reconciliation', 'resolved']),
             models.Index(fields=['reconciliation', 'direction']),
         ]
-        # NOTE: a partial-unique-constraint set for this model (one row per
-        # reconciliation + bank_transaction_id/loan_payment_id, regardless of
-        # resolved) was drafted and held back — see
-        # reconciliation_exception_constraints_pending.py in the scratchpad —
-        # because production still has pre-existing duplicate rows the
-        # constraint would reject. Run `dedupe_reconciliation_exceptions`
-        # clean on production first, then reapply.
+        constraints = [
+            # One row per (reconciliation, bank line / ERP payment) — resolved
+            # or not. Without this, a rerun that finds the same still-unmatched
+            # bank line again could create a duplicate exception even though
+            # _persist_outcome's get_or_create dedup_filter (banks/tasks.py)
+            # already tries to prevent it; the DB constraint is the actual
+            # enforcement point against concurrent task runs with overlapping
+            # ±window matching (the TOCTOU race get_or_create alone can't close).
+            models.UniqueConstraint(
+                fields=['reconciliation', 'bank_transaction_id'],
+                condition=models.Q(exception_type='bank_only'),
+                name='uniq_bank_only_exception_per_recon',
+            ),
+            models.UniqueConstraint(
+                fields=['reconciliation', 'loan_payment_id'],
+                condition=models.Q(exception_type='erp_only'),
+                name='uniq_erp_only_exception_per_recon',
+            ),
+            models.UniqueConstraint(
+                fields=['reconciliation', 'bank_transaction_id', 'loan_payment_id'],
+                condition=models.Q(exception_type='amount_diff'),
+                name='uniq_amount_diff_exception_per_recon',
+            ),
+        ]
         verbose_name        = 'Reconciliation Exception'
         verbose_name_plural = 'Reconciliation Exceptions'
 

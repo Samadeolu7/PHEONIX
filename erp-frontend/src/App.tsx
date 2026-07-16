@@ -149,6 +149,7 @@ const ProductManagementPage = lazy(() => import('./pages/ProductManagementPage')
 // Admin pages
 const UserManagementPage = lazy(() => import('./pages/admin/UserManagementPage'));
 const PageDiscussionsPage = lazy(() => import('./pages/admin/PageDiscussionsPage'));
+const DiscussionsWorkspacePage = lazy(() => import('./pages/DiscussionsWorkspacePage'));
 const AccessControlPage = lazy(() => import('./pages/admin/AccessControlPage'));
 const RolesPermissionsMatrixPage = lazy(() => import('./pages/admin/RolesPermissionsMatrixPage'));
 const DashboardAssignmentPage = lazy(() => import('./pages/admin/DashboardAssignmentPage'));
@@ -679,12 +680,22 @@ function App() {
                                   element={<ProspectPublicRegistrationPage />}
                                 />
 
-                                {/* Discussions inbox */}
+                                {/* Discussions inbox (legacy) */}
                                 <Route
                                   path="/threads"
                                   element={
                                     <ProtectedRoute>
                                       <ThreadInboxPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Discussions workspace (full-screen) */}
+                                <Route
+                                  path="/discussions"
+                                  element={
+                                    <ProtectedRoute>
+                                      <DiscussionsWorkspacePage />
                                     </ProtectedRoute>
                                   }
                                 />
