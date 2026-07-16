@@ -413,12 +413,45 @@ export interface ReconciliationException {
   // sign-off (and mandatory resolution_notes) required. See
   // ResolveExceptionView.patch (banks/views.py) for the authoritative gate.
   requires_director: boolean;
+  // Set once a branch manager/director posts this bank_only DEBIT exception
+  // to expense — see ResolveExceptionToExpenseView. Null until then. The
+  // exception resolves automatically once the payment is approved+posted
+  // and a later rerun matches it — this field does not mean "resolved".
+  pending_bank_payment: number | null;
+  pending_bank_payment_info: {
+    id: number;
+    payment_number: string;
+    status: string;
+  } | null;
+  // Set once a director manually nets this bank_only exception against a
+  // bank_only exception of the opposite direction on the same bank account
+  // (compensating transfer scenario) — see LinkResolveExceptionsView.
+  netted_with: number | null;
+  netted_with_info: {
+    id: number;
+    exception_type: 'bank_only' | 'erp_only' | 'amount_diff';
+    direction: 'CREDIT' | 'DEBIT';
+    bank_amount: string | null;
+    bank_narration: string;
+  } | null;
   // Resolution — director required unless is_perfect_match (see ResolveExceptionView)
   resolved: boolean;
   resolved_by: number | null;
   resolved_at: string | null;
   resolution_notes: string;
   created_at: string;
+}
+
+export interface ResolveExceptionToExpenseRequest {
+  category: number;
+  payee_name?: string;
+  description?: string;
+}
+
+export interface LinkResolveExceptionsRequest {
+  exception_a_id: number;
+  exception_b_id: number;
+  resolution_notes: string;
 }
 
 export interface DailyReconciliation {
@@ -442,6 +475,11 @@ export interface DailyReconciliation {
   matched_count: number;
   unmatched_bank_count: number;
   unmatched_erp_count: number;
+  // Whether this run also matched debit transactions (withdrawals,
+  // disbursements, bank charges) — off by default. Preserve this when
+  // re-running matching, or a debit-enabled recon silently reverts to
+  // credit-only (see ReconciliationDetailPage's rerun handler).
+  include_debits: boolean;
   error_detail?: string;
   // Incremented each time matching is re-triggered for a reconciliation
   // that already existed — a day is never really "closed."
@@ -498,10 +536,20 @@ export interface ReconciliationBankTransaction {
   matched_erp_officer_name: string | null;
   matched_erp_had_reference: boolean | null;
   posting_lag_days: number | null;
+  // Set when a director manually undid an incorrect auto-match. The
+  // matched_* fields above are deliberately preserved (not cleared) as a
+  // historical record of what this line was wrongly matched to.
+  unmatched_by_name: string | null;
+  unmatched_at: string | null;
+  unmatched_reason: string;
   // ERP-side transaction description/date, resolved server-side from
   // matched_erp_payment_id — null for unmatched lines.
   erp_narration: string | null;
   erp_date: string | null;
+}
+
+export interface UnmatchTransactionRequest {
+  reason: string;
 }
 
 export interface ReconciliationTransactionsResponse {

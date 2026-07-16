@@ -3,7 +3,7 @@
 Views for Bank Management System
 Provides CRUD operations and workflow management for banks and transfers
 """
-from rest_framework import viewsets, status, permissions
+from rest_framework import viewsets, status, permissions, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -1362,7 +1362,9 @@ class MatchedTransactionsView(APIView):
         if matched_param is not None:
             qs = qs.filter(matched=matched_param.strip().lower() == 'true')
 
-        transactions = list(qs.select_related('matched_erp_officer').order_by('-matched', '-amount'))
+        transactions = list(
+            qs.select_related('matched_erp_officer', 'unmatched_by').order_by('-matched', '-amount')
+        )
 
         # matched_erp_payment_id is a plain int (Java's match response only
         # names an id, not the transaction), so the ERP-side narration/date
@@ -1385,6 +1387,49 @@ class MatchedTransactionsView(APIView):
             'matched_count': base_qs.filter(matched=True).count(),
             'unmatched_count': base_qs.filter(matched=False).count(),
         })
+
+
+class UnmatchTransactionView(APIView):
+    """
+    POST /api/banks/reconciliations/<recon_pk>/transactions/<tx_id>/unmatch/
+
+    Manually undo an incorrect auto-match so a genuinely outstanding
+    transaction (e.g. a default hiding behind a bad match) becomes visible
+    again, instead of looking reconciled. Director-only, no branch-manager
+    fallback — deliberately stricter than exception resolution, since this
+    reopens something the matcher already closed. Never touches the
+    underlying GL Transaction/TransactionEntry — see
+    ReconciliationBankTransaction.unmatch() for what actually changes.
+
+    Request body:
+      reason  (str, required)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request, recon_pk, tx_id):
+        recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=recon_pk)
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may unmatch a reconciliation transaction.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tx = get_object_or_404(
+            ReconciliationBankTransaction,
+            pk=tx_id, bank_account=recon.bank_account, value_date=recon.reconciliation_date,
+        )
+
+        reason = request.data.get('reason', '')
+        try:
+            tx.unmatch(request.user, reason)
+        except Exception as exc:
+            return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ReconciliationBankTransactionSerializer(tx)
+        return Response(serializer.data)
 
 
 class RerunReconciliationView(APIView):
@@ -1452,6 +1497,13 @@ class ResolveExceptionView(APIView):
 
         if exc_obj.resolved:
             return Response({'detail': 'Exception is already resolved.'}, status=status.HTTP_400_BAD_REQUEST)
+        if exc_obj.pending_bank_payment_id:
+            return Response(
+                {'detail': f'A payment is already pending for this exception '
+                           f'({exc_obj.pending_bank_payment.payment_number}) — it will resolve '
+                           f'automatically once that payment is approved and matched.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         is_director = can_user_approve(request.user, module=self.permission_module, page=self.permission_page)
         if exc_obj.is_perfect_match:
@@ -1483,6 +1535,243 @@ class ResolveExceptionView(APIView):
 
         serializer = ReconciliationExceptionSerializer(exc_obj)
         return Response(serializer.data)
+
+
+class ResolveExceptionToExpenseView(APIView):
+    """
+    POST /api/banks/reconciliations/<recon_pk>/exceptions/<exc_pk>/resolve-to-expense/
+
+    Creates a draft Expense + pending BankPayment for a bank-only DEBIT
+    exception (e.g. stamp duty, bank charges — money that left the account
+    with no ERP record) so it can go through the normal expense approval
+    workflow and post to the GL. Does NOT resolve the exception itself —
+    that happens automatically once the payment is approved and posted
+    (BankPaymentViewSet.approve, unchanged, director-only) and a later
+    reconciliation rerun matches the new GL entry against this bank line,
+    via the existing auto-resolve step in _persist_outcome (banks/tasks.py).
+
+    Branch manager or director may initiate (can_user_edit OR can_user_approve)
+    — the real control point is the separate approval step above, which is
+    what actually moves money/posts the GL entry. No system-enforced amount
+    cap; the approval step is the safeguard.
+
+    Amount/date/description are taken directly from the exception's bank-side
+    fields and are not user-editable, so the eventual auto-resolve match
+    lines up exactly with what the bank statement shows.
+
+    Request body:
+      category     (int, required) — ExpenseCategory id
+      payee_name   (str, optional)
+      description  (str, optional) — defaults to the exception's bank_narration
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request, recon_pk, exc_pk):
+        recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=recon_pk)
+        exc_obj = get_object_or_404(ReconciliationException, pk=exc_pk, reconciliation=recon)
+
+        allowed = (
+            can_user_edit(request.user, module=self.permission_module, page=self.permission_page)
+            or can_user_approve(request.user, module=self.permission_module, page=self.permission_page)
+        )
+        if not allowed:
+            return Response(
+                {'detail': 'Only branch managers or directors may post an exception to expense.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if exc_obj.exception_type != 'bank_only' or exc_obj.direction != 'DEBIT':
+            return Response(
+                {'detail': 'Only a bank-only debit exception can be posted to expense.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if exc_obj.resolved:
+            return Response({'detail': 'Exception is already resolved.'}, status=status.HTTP_400_BAD_REQUEST)
+        if exc_obj.pending_bank_payment_id:
+            return Response(
+                {'detail': f'A payment is already pending for this exception '
+                           f'({exc_obj.pending_bank_payment.payment_number}).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        category_id = request.data.get('category')
+        if not category_id:
+            return Response({'detail': 'category is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from expenses.serializers import ExpenseSerializer
+
+        expense_serializer = ExpenseSerializer(
+            data={
+                'category': category_id,
+                'expense_date': exc_obj.bank_date,
+                'description': request.data.get('description') or exc_obj.bank_narration or 'Bank charge',
+                'amount': exc_obj.bank_amount,
+                'payee_name': request.data.get('payee_name', ''),
+                'payment_method': 'bank_transfer',
+                'bank_account': recon.bank_account_id,
+            },
+            context={'request': request},
+        )
+        try:
+            expense_serializer.is_valid(raise_exception=True)
+        except Exception as exc:
+            return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        expense = expense_serializer.save()
+
+        # branch=recon.branch (not request.user.branch) — this payment
+        # belongs to the bank account being reconciled, which may differ
+        # from an elevated (cross-branch) director's own branch. owner is
+        # the acting user, matching BankPaymentViewSet.perform_create.
+        payment = BankPayment.objects.create(
+            bank_account=recon.bank_account,
+            amount=exc_obj.bank_amount,
+            description=expense.description,
+            payment_date=exc_obj.bank_date,
+            expense=expense,
+            status='pending',
+            owner=request.user,
+            branch=recon.branch,
+            created_by=request.user,
+        )
+
+        exc_obj.pending_bank_payment = payment
+        exc_obj.save(update_fields=['pending_bank_payment'])
+
+        serializer = ReconciliationExceptionSerializer(exc_obj)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class UnresolvedBankOnlyExceptionsListView(generics.ListAPIView):
+    """
+    GET /api/banks/exceptions/?bank_account=<id>&direction=<CREDIT|DEBIT>
+
+    Supports the "link to another exception" picker for LinkResolveExceptionsView
+    below: unresolved bank_only exceptions for a given bank account, optionally
+    narrowed to one direction (a director picking a netting partner for a
+    CREDIT exception wants to see DEBIT candidates, and vice versa). Exceptions
+    can span different reconciliation dates on the same account, so this isn't
+    nested under a single DailyReconciliation.
+    """
+    serializer_class = ReconciliationExceptionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get_queryset(self):
+        qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(self.request.user),
+            exception_type='bank_only',
+            resolved=False,
+        ).select_related('reconciliation')
+
+        bank_account_id = self.request.query_params.get('bank_account')
+        if bank_account_id:
+            qs = qs.filter(reconciliation__bank_account_id=bank_account_id)
+
+        direction = self.request.query_params.get('direction')
+        if direction:
+            qs = qs.filter(direction=direction.upper())
+
+        return qs.order_by('-is_high_priority', '-created_at')
+
+
+class LinkResolveExceptionsView(APIView):
+    """
+    POST /api/banks/exceptions/link-resolve/
+
+    Manually net a bank_only CREDIT exception against a bank_only DEBIT
+    exception on the same bank account (compensating-transfer scenario:
+    money went to the wrong bank, then a manual transfer brought it back —
+    possibly on a different reconciliation date). Not nested under a single
+    DailyReconciliation for that reason. Director-only, exact amount match
+    only (no tolerance) — netting two unrelated-looking anomalies together
+    is at least as sensitive a judgment call as resolving a genuine amount
+    mismatch, which already requires director sign-off.
+
+    Request body:
+      exception_a_id, exception_b_id  (int, required)
+      resolution_notes                 (str, required)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may net two reconciliation exceptions together.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        resolution_notes = request.data.get('resolution_notes', '')
+        if not resolution_notes.strip():
+            return Response(
+                {'detail': 'resolution_notes is required to net two exceptions together.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        a_id = request.data.get('exception_a_id')
+        b_id = request.data.get('exception_b_id')
+        if not a_id or not b_id or a_id == b_id:
+            return Response(
+                {'detail': 'exception_a_id and exception_b_id are required and must differ.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user)
+        ).select_related('reconciliation')
+        exc_a = get_object_or_404(qs, pk=a_id)
+        exc_b = get_object_or_404(qs, pk=b_id)
+
+        for exc in (exc_a, exc_b):
+            if exc.exception_type != 'bank_only':
+                return Response(
+                    {'detail': 'Only bank_only exceptions can be netted together.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if exc.resolved:
+                return Response(
+                    {'detail': 'Exception is already resolved.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if exc_a.reconciliation.bank_account_id != exc_b.reconciliation.bank_account_id:
+            return Response(
+                {'detail': 'Both exceptions must belong to the same bank account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if exc_a.direction == exc_b.direction:
+            return Response(
+                {'detail': 'The two exceptions must be opposite directions (one CREDIT, one DEBIT).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if exc_a.bank_amount != exc_b.bank_amount:
+            return Response(
+                {'detail': 'The two exceptions must have exactly the same amount to be netted.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = tz.now()
+        from .reconciliation_utils import recompute_reconciliation_counts
+
+        for exc, other in ((exc_a, exc_b), (exc_b, exc_a)):
+            exc.resolved = True
+            exc.resolved_by = request.user
+            exc.resolved_at = now
+            exc.resolution_notes = resolution_notes
+            exc.netted_with = other
+            exc.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with'])
+
+        for recon in {exc_a.reconciliation, exc_b.reconciliation}:
+            recompute_reconciliation_counts(recon)
+
+        return Response({
+            'exception_a': ReconciliationExceptionSerializer(exc_a).data,
+            'exception_b': ReconciliationExceptionSerializer(exc_b).data,
+        })
 
 
 def _is_global_user(user):

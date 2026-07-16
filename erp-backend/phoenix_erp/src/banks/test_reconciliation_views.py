@@ -19,7 +19,7 @@ in every test.
 """
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -292,6 +292,338 @@ class ReconciliationViewTests(TestCase):
         list_resp = self.client.get('/api/banks/reconciliations/')
         self.assertEqual(list_resp.status_code, 200)
         self.assertIn(new_id, {row['id'] for row in list_resp.data})
+
+
+class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
+    """
+    Tests for the three new resolve-flexibility endpoints (banks/views.py):
+    - UnmatchTransactionView — director-only, mandatory reason, never touches
+      the underlying GL entry, reopens an outstanding bank_only exception.
+    - ResolveExceptionToExpenseView — branch manager or director may
+      initiate; does NOT resolve the exception itself (that happens once the
+      payment is approved+posted and a later rerun matches it).
+    - LinkResolveExceptionsView — director-only, exact amount match only.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Flex Resolve Org', slug='flex-resolve-org')
+        self.branch = Branch.objects.create(name='Branch A', code='FRA')
+
+        self.director = User.objects.create_user(
+            username='flex_director', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+
+        self.branch_manager = User.objects.create_user(
+            username='flex_bm', password='test123', tenant=self.tenant, branch=self.branch,
+        )
+        self.credit_officer = User.objects.create_user(
+            username='flex_co', password='test123', tenant=self.tenant, branch=self.branch,
+        )
+
+        gl_account = Account.objects.create(
+            code='1499', name='Flex Resolve GL', account_level=Account.LEVEL_PARENT,
+            branch=self.branch,
+        )
+        bank = Bank.objects.create(bank_name='Flex Resolve Bank', bank_code='995')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000005', account_name='Flex Resolve Account',
+            gl_account=gl_account, account_manager=self.director,
+        )
+        self.recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/flex.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+        expense_parent_gl = Account.objects.create(
+            code='6000', name='Expenses', account_level=Account.LEVEL_PARENT,
+            account_type=Account.EXPENSE, branch=self.branch,
+        )
+        expense_gl = Account.objects.create(
+            code='6001', name='Bank Charges Expense', account_level=Account.LEVEL_CHILD,
+            account_type=Account.EXPENSE, parent=expense_parent_gl, branch=self.branch,
+        )
+        from expenses.models import ExpenseCategory
+        self.category = ExpenseCategory.objects.create(
+            name='Bank Charges', code='BANKCHG', expense_account=expense_gl,
+            branch=self.branch, tenant=self.tenant, owner=self.director,
+        )
+
+    # ── Unmatch ──────────────────────────────────────────────────────────
+
+    def test_director_can_unmatch_transaction(self):
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='FRA-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1000.00'), narration='test',
+            matched=True, matched_erp_payment_id=42, match_confidence='HIGH',
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon.id}/transactions/{tx.id}/unmatch/'
+        resp = self.client.post(url, {'reason': 'matched to the wrong loan repayment'}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        tx.refresh_from_db()
+        self.assertFalse(tx.matched)
+        self.assertEqual(tx.unmatched_by_id, self.director.id)
+        self.assertEqual(tx.unmatched_reason, 'matched to the wrong loan repayment')
+        # Historical match info is preserved, not cleared.
+        self.assertEqual(tx.matched_erp_payment_id, 42)
+        self.assertEqual(tx.match_confidence, 'HIGH')
+
+        exc = ReconciliationException.objects.get(reconciliation=self.recon, bank_transaction_id=tx.id)
+        self.assertEqual(exc.exception_type, 'bank_only')
+        self.assertFalse(exc.resolved)
+
+        self.recon.refresh_from_db()
+        self.assertEqual(self.recon.matched_count, 0)
+        self.assertEqual(self.recon.unmatched_bank_count, 1)
+
+    def test_branch_manager_cannot_unmatch_transaction(self):
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='FRA-2', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1000.00'), narration='test', matched=True,
+        )
+        self.client.force_authenticate(user=self.branch_manager)
+        url = f'/api/banks/reconciliations/{self.recon.id}/transactions/{tx.id}/unmatch/'
+        resp = self.client.post(url, {'reason': 'looks wrong'}, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+        tx.refresh_from_db()
+        self.assertTrue(tx.matched)
+
+    def test_cannot_unmatch_already_unmatched_transaction(self):
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='FRA-3', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1000.00'), narration='test', matched=False,
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon.id}/transactions/{tx.id}/unmatch/'
+        resp = self.client.post(url, {'reason': 'test'}, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unmatch_requires_a_reason(self):
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='FRA-4', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1000.00'), narration='test', matched=True,
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon.id}/transactions/{tx.id}/unmatch/'
+        resp = self.client.post(url, {'reason': '   '}, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+        tx.refresh_from_db()
+        self.assertTrue(tx.matched)
+
+    # ── Resolve to expense ──────────────────────────────────────────────
+
+    def test_branch_manager_can_initiate_resolve_to_expense(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('75.00'), bank_narration='Stamp duty', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.branch_manager)
+        url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_edit=True, can_approve=False)
+            resp = self.client.post(
+                url, {'category': self.category.id, 'payee_name': 'First Bank'}, format='json'
+            )
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        exc.refresh_from_db()
+        self.assertFalse(exc.resolved)
+        self.assertIsNotNone(exc.pending_bank_payment_id)
+        payment = exc.pending_bank_payment
+        self.assertEqual(payment.status, 'pending')
+        self.assertEqual(payment.amount, Decimal('75.00'))
+        self.assertEqual(payment.expense.category_id, self.category.id)
+        self.assertEqual(payment.expense.payee_name, 'First Bank')
+
+    def test_resolve_to_expense_rejects_credit_exception(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('75.00'), bank_narration='Unexplained credit', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        resp = self.client.post(url, {'category': self.category.id}, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_resolve_to_expense_rejects_when_already_pending(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('75.00'), bank_narration='Stamp duty', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        first = self.client.post(url, {'category': self.category.id}, format='json')
+        self.assertEqual(first.status_code, 201, first.data)
+
+        second = self.client.post(url, {'category': self.category.id}, format='json')
+        self.assertEqual(second.status_code, 400)
+
+    def test_credit_officer_cannot_initiate_resolve_to_expense(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('75.00'), bank_narration='Stamp duty', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.credit_officer)
+        url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        resp = self.client.post(url, {'category': self.category.id}, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+
+    # ── Full loop: resolve-to-expense → approve → rerun auto-resolves ─────
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_resolve_to_expense_full_loop_auto_resolves_on_match(self, mock_post, mock_fetch):
+        from banks.tasks import run_reconciliation_match
+
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='FRA-LOOP', value_date='2026-07-01',
+            direction='DEBIT', amount=Decimal('75.00'), narration='Stamp duty',
+        )
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_transaction_id=tx.id,
+            bank_amount=Decimal('75.00'), bank_narration='Stamp duty', bank_date='2026-07-01',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        create_url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        create_resp = self.client.post(create_url, {'category': self.category.id}, format='json')
+        self.assertEqual(create_resp.status_code, 201, create_resp.data)
+
+        exc.refresh_from_db()
+        payment = exc.pending_bank_payment
+        payment.approve_payment(approved_by=self.director, notes='ok')
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, 'posted')
+        journal_entry_id = payment.journal_entry_id
+        self.assertIsNotNone(journal_entry_id)
+
+        self.recon.status = 'processing'
+        self.recon.save(update_fields=['status'])
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            'matchedCount': 1, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(tx.id), 'erpPaymentId': journal_entry_id,
+                 'confidence': 'HIGH', 'direction': 'DEBIT'},
+            ],
+            'exceptions': [],
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_post.return_value = mock_response
+
+        run_reconciliation_match(self.recon.id, include_debits=True)
+
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+        self.assertIn('Auto-resolved', exc.resolution_notes)
+
+    # ── Link-resolve (netting) ─────────────────────────────────────────
+
+    def test_director_can_net_matching_credit_and_debit_exceptions(self):
+        credit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='Wrong-bank clawback', bank_date='2026-07-01',
+        )
+        debit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('50000.00'), bank_narration='Sent to wrong bank', bank_date='2026-06-28',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': credit_exc.id, 'exception_b_id': debit_exc.id,
+            'resolution_notes': 'Compensating transfer for the wrong-bank payment on 2026-06-28',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        credit_exc.refresh_from_db()
+        debit_exc.refresh_from_db()
+        self.assertTrue(credit_exc.resolved)
+        self.assertTrue(debit_exc.resolved)
+        self.assertEqual(credit_exc.netted_with_id, debit_exc.id)
+        self.assertEqual(debit_exc.netted_with_id, credit_exc.id)
+
+    def test_link_resolve_rejects_amount_mismatch(self):
+        credit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='Clawback', bank_date='2026-07-01',
+        )
+        debit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('49000.00'), bank_narration='Sent to wrong bank', bank_date='2026-06-28',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': credit_exc.id, 'exception_b_id': debit_exc.id,
+            'resolution_notes': 'attempt',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+        credit_exc.refresh_from_db()
+        self.assertFalse(credit_exc.resolved)
+
+    def test_link_resolve_rejects_same_direction(self):
+        exc1 = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='A', bank_date='2026-07-01',
+        )
+        exc2 = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='B', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': exc1.id, 'exception_b_id': exc2.id,
+            'resolution_notes': 'attempt',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_link_resolve_rejects_non_bank_only(self):
+        credit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='A', bank_date='2026-07-01',
+        )
+        erp_only_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('50000.00'), erp_narration='B', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': credit_exc.id, 'exception_b_id': erp_only_exc.id,
+            'resolution_notes': 'attempt',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_branch_manager_cannot_link_resolve(self):
+        credit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='A', bank_date='2026-07-01',
+        )
+        debit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('50000.00'), bank_narration='B', bank_date='2026-06-28',
+        )
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': credit_exc.id, 'exception_b_id': debit_exc.id,
+            'resolution_notes': 'attempt',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 403)
 
 
 class OfficerReconciliationRiskReportTests(TestCase):

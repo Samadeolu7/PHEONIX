@@ -336,26 +336,6 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 <span>Approvals</span>
               </Link>
 
-              {/* Discussions workspace */}
-              <Link
-                to="/discussions"
-                className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors relative ${
-                  isActivePath('/discussions') || isActivePath('/threads')
-                    ? 'bg-white/20 text-white'
-                    : 'text-white/80 hover:text-white hover:bg-white/10'
-                }`}
-              >
-                <span className="relative">
-                  <MessageSquare className="h-4 w-4" />
-                  {globalUnreadCount > 0 && (
-                    <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
-                      {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
-                    </span>
-                  )}
-                </span>
-                <span>Discussions</span>
-              </Link>
-
               {/* Branch Switcher — director/admin/operations/owner only */}
               <BranchSwitcher />
 
@@ -387,6 +367,24 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                   <div className="text-white/80 hover:text-white">
                     <NotificationDropdown />
                   </div>
+
+                  {/* Discussions workspace */}
+                  <Link
+                    to="/discussions"
+                    className={`relative p-2 rounded-md transition-colors ${
+                      isActivePath('/discussions') || isActivePath('/threads')
+                        ? 'bg-white/20 text-white'
+                        : 'text-white/80 hover:text-white hover:bg-white/10'
+                    }`}
+                    title="Discussions"
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    {globalUnreadCount > 0 && (
+                      <span className="absolute top-0.5 right-0.5 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
+                        {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
+                      </span>
+                    )}
+                  </Link>
 
                   {/* Sidebar navigation panel trigger */}
                   <button

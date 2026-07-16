@@ -16,7 +16,6 @@ import requests as http_requests
 from celery import shared_task
 from django.conf import settings as django_settings
 from django.db import OperationalError, transaction
-from django.db.models import Count, Q
 from django.utils import timezone as tz
 
 logger = logging.getLogger(__name__)
@@ -413,43 +412,13 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
     # --- recompute per-date counts for every reconciliation touched this
     # run — Java's aggregate counts span the whole window, so they can't be
     # trusted verbatim for any single date's summary.
-    # Two aggregate queries per recon replace the former four .count() calls.
+    from .reconciliation_utils import recompute_reconciliation_counts
+
     for touched_recon in {r for r in recon_by_date.values() if r is not None}:
-        tx_agg = ReconciliationBankTransaction.objects.filter(
-            bank_account=bank_account,
-            value_date=touched_recon.reconciliation_date,
-        ).aggregate(
-            total=Count('id'),
-            matched=Count('id', filter=Q(matched=True)),
-        )
-        # Counted from unresolved exceptions, not raw matched=False rows —
-        # Java's matcher always resolves every candidate it's given into
-        # either a match or a bank_only/erp_only exception in that same
-        # run, so "outstanding issues" and "unresolved exceptions" are the
-        # same thing. Counting from the transaction rows directly let this
-        # drift out of sync with what the exceptions list actually shows:
-        # resolving (or auto-resolving) an exception doesn't retroactively
-        # flip ReconciliationBankTransaction.matched, so a transaction with
-        # a resolved bank_only exception would still count as "unmatched"
-        # even though nothing outstanding remains to review.
-        exc_agg = touched_recon.exceptions.aggregate(
-            bank_only=Count('id', filter=Q(exception_type='bank_only', resolved=False)),
-            erp_only=Count('id', filter=Q(exception_type='erp_only', resolved=False)),
-        )
-
-        touched_recon.matched_count = tx_agg['matched']
-        touched_recon.total_bank_transactions = tx_agg['total']
-        touched_recon.unmatched_bank_count = exc_agg['bank_only']
-        touched_recon.unmatched_erp_count = exc_agg['erp_only']
-
-        update_fields = [
-            'matched_count', 'unmatched_bank_count', 'unmatched_erp_count',
-            'total_bank_transactions', 'updated_at',
-        ]
+        recompute_reconciliation_counts(touched_recon)
         if touched_recon.id == recon.id:
             touched_recon.status = 'completed'
-            update_fields.append('status')
-        touched_recon.save(update_fields=update_fields)
+            touched_recon.save(update_fields=['status', 'updated_at'])
 
 
 def _batch_resolve_officers(loan_payment_ids):

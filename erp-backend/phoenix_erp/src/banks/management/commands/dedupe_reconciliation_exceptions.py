@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 from django.db import transaction as db_transaction
-from django.db.models import Count, Q
+from django.db.models import Count
 
 NATURAL_KEYS = {
     'bank_only':   ['reconciliation_id', 'exception_type', 'bank_transaction_id'],
@@ -59,7 +59,7 @@ class Command(BaseCommand):
         parser.add_argument('--dry-run', action='store_true', help='Preview without making changes.')
 
     def handle(self, *args, **options):
-        from banks.models import DailyReconciliation, ReconciliationBankTransaction, ReconciliationException
+        from banks.models import DailyReconciliation, ReconciliationException
 
         dry_run = options['dry_run']
         if dry_run:
@@ -115,27 +115,11 @@ class Command(BaseCommand):
             )
             return
 
+        from banks.reconciliation_utils import recompute_reconciliation_counts
+
         self.stdout.write('\nRecomputing counts for affected reconciliations...')
         for recon in DailyReconciliation.objects.filter(id__in=touched_recon_ids).select_related('bank_account'):
-            tx_agg = ReconciliationBankTransaction.objects.filter(
-                bank_account=recon.bank_account,
-                value_date=recon.reconciliation_date,
-            ).aggregate(
-                total=Count('id'),
-                matched=Count('id', filter=Q(matched=True)),
-            )
-            exc_agg = recon.exceptions.aggregate(
-                bank_only=Count('id', filter=Q(exception_type='bank_only', resolved=False)),
-                erp_only=Count('id', filter=Q(exception_type='erp_only', resolved=False)),
-            )
-            recon.matched_count = tx_agg['matched']
-            recon.total_bank_transactions = tx_agg['total']
-            recon.unmatched_bank_count = exc_agg['bank_only']
-            recon.unmatched_erp_count = exc_agg['erp_only']
-            recon.save(update_fields=[
-                'matched_count', 'total_bank_transactions',
-                'unmatched_bank_count', 'unmatched_erp_count', 'updated_at',
-            ])
+            recompute_reconciliation_counts(recon)
             self.stdout.write(
                 f'  recon {recon.id} ({recon.bank_account} — {recon.reconciliation_date}): '
                 f'total={recon.total_bank_transactions} matched={recon.matched_count} '

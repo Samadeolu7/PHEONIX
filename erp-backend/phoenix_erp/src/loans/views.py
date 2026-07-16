@@ -256,10 +256,17 @@ class LoanAccountViewSet(ScopedModelViewSet):
             # then. Uses < (not <=) so an installment due *on* as_of itself
             # — not yet late, days_in_arrears would be 0 — is excluded; this
             # is a defaulters/arrears report, not a due-today report.
+            # The status check excludes installments cancelled by a
+            # restructure (status='restructured'): those never got a
+            # payment_date since they weren't paid, just superseded by the
+            # new schedule, so without this filter they'd resurface as
+            # ancient "overdue" rows and inflate days_in_arrears past the
+            # restructure date. Mirrors LoanAccount._calculate_arrears().
             overdue = [
                 inst
                 for inst in loan.repayment_schedule.all()
                 if inst.due_date < as_of
+                and inst.status in ('pending', 'partial', 'overdue')
                 and (inst.payment_date is None or inst.payment_date > as_of)
             ]
             if not overdue:

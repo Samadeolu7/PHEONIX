@@ -86,3 +86,78 @@ def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exc
         })
 
     return payments
+
+
+def recompute_reconciliation_counts(recon):
+    """
+    Recompute matched_count/unmatched_bank_count/unmatched_erp_count/
+    total_bank_transactions for a single DailyReconciliation from current
+    ReconciliationBankTransaction/ReconciliationException state, and save.
+
+    unmatched_bank_count/unmatched_erp_count are counted from unresolved
+    exceptions, not raw ReconciliationBankTransaction.matched=False rows —
+    resolving (or auto-resolving) an exception doesn't retroactively flip
+    matched, so a bank line whose exception has been closed out should stop
+    counting as outstanding even though the underlying line is still
+    genuinely unmatched.
+
+    Shared by banks/tasks.py's _persist_outcome (after every Java match run),
+    dedupe_reconciliation_exceptions (after merging duplicate exceptions),
+    and the unmatch/link-resolve views (after a manual override changes
+    matched/resolved state directly). Does NOT touch `status` — callers that
+    need to mark a reconciliation 'completed' do that themselves.
+    """
+    from django.db.models import Count, Q
+    from .models import ReconciliationBankTransaction
+
+    tx_agg = ReconciliationBankTransaction.objects.filter(
+        bank_account=recon.bank_account,
+        value_date=recon.reconciliation_date,
+    ).aggregate(
+        total=Count('id'),
+        matched=Count('id', filter=Q(matched=True)),
+    )
+    exc_agg = recon.exceptions.aggregate(
+        bank_only=Count('id', filter=Q(exception_type='bank_only', resolved=False)),
+        erp_only=Count('id', filter=Q(exception_type='erp_only', resolved=False)),
+    )
+
+    recon.matched_count = tx_agg['matched']
+    recon.total_bank_transactions = tx_agg['total']
+    recon.unmatched_bank_count = exc_agg['bank_only']
+    recon.unmatched_erp_count = exc_agg['erp_only']
+    recon.save(update_fields=[
+        'matched_count', 'unmatched_bank_count', 'unmatched_erp_count',
+        'total_bank_transactions', 'updated_at',
+    ])
+
+
+def get_or_create_bank_only_exception(recon, tx):
+    """
+    Ensure a `bank_only` ReconciliationException exists for `tx` (a
+    ReconciliationBankTransaction) against `recon` — natural-key dedup on
+    (reconciliation, exception_type, bank_transaction_id), matching the same
+    pattern _persist_outcome uses for Java-reported exceptions (banks/tasks.py),
+    deliberately not filtered by resolved so an already-resolved row is found
+    and reused rather than duplicated.
+
+    Used by the unmatch action (ReconciliationBankTransaction.unmatch()) so a
+    line that's manually unmatched reappears as an outstanding exception
+    immediately, rather than waiting for the next scheduled rerun.
+    """
+    from .models import ReconciliationException
+
+    exc_obj, _created = ReconciliationException.objects.get_or_create(
+        reconciliation=recon,
+        exception_type='bank_only',
+        bank_transaction_id=tx.id,
+        defaults={
+            'direction': tx.direction,
+            'bank_transaction_id': tx.id,
+            'bank_amount': tx.amount,
+            'bank_narration': tx.narration,
+            'bank_date': tx.value_date,
+            'is_high_priority': True,
+        },
+    )
+    return exc_obj

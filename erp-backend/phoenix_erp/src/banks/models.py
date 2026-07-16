@@ -1940,6 +1940,24 @@ class ReconciliationBankTransaction(models.Model):
     # officer logged it in the ERP after it had already hit the bank.
     posting_lag_days = models.IntegerField(null=True, blank=True)
 
+    # Set when a director manually undoes an incorrect auto-match (see
+    # unmatch() below). Deliberately does NOT clear matched_erp_payment_id/
+    # match_confidence/matched_at/matched_erp_officer/matched_erp_had_reference/
+    # posting_lag_days — those stay as a historical record of what this line
+    # was wrongly matched to, mirroring Transaction.reverse()'s non-destructive
+    # philosophy (transactions/models.py). matched=False alone is what excludes
+    # it from the Officer Reconciliation Risk report's matched_qs and makes it
+    # eligible again as a candidate on the next reconciliation rerun.
+    unmatched_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='unmatched_bank_transactions',
+        help_text='Director who manually undid an incorrect auto-match',
+    )
+    unmatched_at = models.DateTimeField(null=True, blank=True)
+    unmatched_reason = models.TextField(blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1952,6 +1970,40 @@ class ReconciliationBankTransaction(models.Model):
 
     def __str__(self):
         return f"{self.bank_account} — {self.value_date} — {self.direction} {self.amount}"
+
+    @db_transaction.atomic
+    def unmatch(self, user, reason):
+        """
+        Manually undo an incorrect auto-match, styled after
+        Transaction.reverse() (transactions/models.py): validate first,
+        mutate second, explicit update_fields. Never touches the underlying
+        GL Transaction/TransactionEntry this line was matched to — only the
+        reconciliation-side linkage changes. The freed-up ERP payment becomes
+        available for matching again (see fetch_erp_payments' exclude_payment_ids
+        in banks/tasks.py, built from matched=True rows only), and this bank
+        line reappears as an outstanding bank_only exception immediately via
+        get_or_create_bank_only_exception (banks/reconciliation_utils.py),
+        rather than waiting for the next scheduled rerun.
+        """
+        if not self.matched:
+            raise ValidationError('This transaction is not currently matched.')
+        if not reason or not reason.strip():
+            raise ValidationError('A reason is required to unmatch a transaction.')
+
+        self.matched = False
+        self.unmatched_by = user
+        self.unmatched_at = timezone.now()
+        self.unmatched_reason = reason
+        self.save(update_fields=['matched', 'unmatched_by', 'unmatched_at', 'unmatched_reason'])
+
+        from .reconciliation_utils import get_or_create_bank_only_exception, recompute_reconciliation_counts
+
+        recon = DailyReconciliation.objects.filter(
+            bank_account=self.bank_account, reconciliation_date=self.value_date,
+        ).first()
+        if recon is not None:
+            get_or_create_bank_only_exception(recon, self)
+            recompute_reconciliation_counts(recon)
 
 
 # ── Daily Reconciliation (Bank-Recon Java integration) ─────────────────────────
@@ -2128,6 +2180,32 @@ class ReconciliationException(TimeStampedModel):
     )
     resolved_at      = models.DateTimeField(null=True, blank=True)
     resolution_notes = models.TextField(blank=True)
+
+    # Set when a branch manager or director posts a bank-only DEBIT exception
+    # (e.g. stamp duty, bank charges) straight to an expense — see
+    # ResolveExceptionToExpenseView (banks/views.py). The exception is NOT
+    # marked resolved here; that happens automatically once the payment is
+    # approved+posted and a later rerun matches it against this bank line
+    # (the existing auto-resolve step in _persist_outcome, banks/tasks.py).
+    pending_bank_payment = models.ForeignKey(
+        'banks.BankPayment',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='pending_exception_resolutions',
+        help_text='Draft/pending payment created to close this exception via expense posting',
+    )
+
+    # Set when a director manually nets this bank_only exception against
+    # another bank_only exception of the opposite direction on the same bank
+    # account (compensating transfer scenario) — see LinkResolveExceptionsView
+    # (banks/views.py). Set symmetrically on both rows.
+    netted_with = models.ForeignKey(
+        'self',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+        help_text='The other bank_only exception this was manually netted against',
+    )
 
     # Director-resolvable tolerance for amount mismatches: whichever is
     # smaller of a flat cap or a percentage of the ERP amount, so small

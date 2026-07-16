@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import { ReconciliationWaitState } from '../../components/banks/ReconciliationWaitState';
+import { PostToExpenseModal } from '../../components/banks/PostToExpenseModal';
+import { LinkResolveModal } from '../../components/banks/LinkResolveModal';
 import { useToast } from '../../hooks/useToast';
 import { usePermission } from '../../hooks/usePermissions';
 import type {
@@ -67,6 +69,20 @@ const ReconciliationDetailPage: React.FC = () => {
   const [transactions, setTransactions] = useState<ReconciliationBankTransaction[] | null>(null);
   const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [transactionsFilter, setTransactionsFilter] = useState<'all' | 'matched' | 'unmatched'>('all');
+  const [unmatchingId, setUnmatchingId] = useState<string | null>(null);
+  const [unmatchReasonDraft, setUnmatchReasonDraft] = useState<Record<string, string>>({});
+  const [postToExpenseException, setPostToExpenseException] = useState<ReconciliationException | null>(null);
+  const [linkResolveException, setLinkResolveException] = useState<ReconciliationException | null>(null);
+
+  // Defaults to the reconciliation's own persisted include_debits so a
+  // debit-enabled recon doesn't silently revert to credit-only on rerun —
+  // re-synced once per reconciliation loaded (not on every poll refresh, so
+  // it doesn't clobber the user mid-toggle).
+  const [rerunIncludeDebits, setRerunIncludeDebits] = useState(false);
+  useEffect(() => {
+    if (recon) setRerunIncludeDebits(recon.include_debits);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recon?.id]);
 
   // Returns true once the reconciliation is no longer 'processing' (i.e.
   // polling should stop), or on a fetch error (nothing more to wait for).
@@ -138,6 +154,34 @@ const ReconciliationDetailPage: React.FC = () => {
     }
   };
 
+  const handlePostToExpenseSuccess = (updated: ReconciliationException) => {
+    if (!recon) return;
+    setRecon({
+      ...recon,
+      exceptions: recon.exceptions?.map((e) => (e.id === updated.id ? updated : e)),
+    });
+    success('Draft payment created — awaiting approval');
+  };
+
+  const handleLinkResolveSuccess = (result: {
+    exception_a: ReconciliationException;
+    exception_b: ReconciliationException;
+  }) => {
+    if (!recon) return;
+    const byId = { [result.exception_a.id]: result.exception_a, [result.exception_b.id]: result.exception_b };
+    const currentIds = new Set((recon.exceptions || []).map((e) => e.id));
+    const otherOnDifferentRecon = !currentIds.has(result.exception_a.id) || !currentIds.has(result.exception_b.id);
+    setRecon({
+      ...recon,
+      exceptions: recon.exceptions?.map((e) => byId[e.id] || e),
+    });
+    success(
+      otherOnDifferentRecon
+        ? 'Exceptions netted and resolved — the linked exception was on a different reconciliation date'
+        : 'Exceptions netted and resolved'
+    );
+  };
+
   const loadTransactions = useCallback(async (reconId: number, tFilter: 'all' | 'matched' | 'unmatched') => {
     setTransactionsLoading(true);
     try {
@@ -157,11 +201,30 @@ const ReconciliationDetailPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showTransactions, transactionsFilter, recon?.id]);
 
+  const handleUnmatch = async (tx: ReconciliationBankTransaction) => {
+    if (!recon) return;
+    const reason = unmatchReasonDraft[tx.id] || '';
+    if (!reason.trim()) return;
+    setUnmatchingId(tx.id);
+    try {
+      await reconciliationService.unmatchTransaction(recon.id, tx.id, { reason });
+      success('Transaction unmatched');
+      await loadTransactions(recon.id, transactionsFilter);
+      await checkStatus(recon.id);
+    } catch (err: any) {
+      showError(err.message || 'Failed to unmatch transaction');
+    } finally {
+      setUnmatchingId(null);
+    }
+  };
+
   const handleRerun = async () => {
     if (!recon) return;
     setRerunning(true);
     try {
-      const updated = await reconciliationService.rerunReconciliation(recon.id);
+      const updated = await reconciliationService.rerunReconciliation(recon.id, {
+        include_debits: rerunIncludeDebits,
+      });
       setRecon(updated);
       pollCountRef.current = 0;
       setStalled(false);
@@ -226,14 +289,25 @@ const ReconciliationDetailPage: React.FC = () => {
           </p>
         </div>
         {recon.status !== 'processing' && (
-          <button
-            onClick={handleRerun}
-            disabled={rerunning}
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${rerunning ? 'animate-spin' : ''}`} />
-            {rerunning ? 'Re-running…' : 'Re-run matching'}
-          </button>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-gray-600" title="Also reconcile debits (withdrawals, disbursements, bank charges)">
+              <input
+                type="checkbox"
+                checked={rerunIncludeDebits}
+                onChange={(e) => setRerunIncludeDebits(e.target.checked)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>Include debits</span>
+            </label>
+            <button
+              onClick={handleRerun}
+              disabled={rerunning}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${rerunning ? 'animate-spin' : ''}`} />
+              {rerunning ? 'Re-running…' : 'Re-run matching'}
+            </button>
+          </div>
         )}
         <span
           className={`px-3 py-1 text-sm font-semibold rounded-full ${STATUS_STYLES[recon.status]}`}
@@ -408,6 +482,19 @@ const ReconciliationDetailPage: React.FC = () => {
                               "{exception.resolution_notes}"
                             </p>
                           )}
+                          {exception.netted_with_info && (
+                            <p className="text-xs text-purple-700 mt-1">
+                              Netted against {exception.netted_with_info.direction}{' '}
+                              {formatAmount(exception.netted_with_info.bank_amount)} —{' '}
+                              {exception.netted_with_info.bank_narration || '—'}
+                            </p>
+                          )}
+                          {exception.pending_bank_payment_info && !exception.resolved && (
+                            <p className="text-xs text-amber-700 mt-1">
+                              Pending approval — {exception.pending_bank_payment_info.payment_number} (
+                              {exception.pending_bank_payment_info.status})
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -419,53 +506,77 @@ const ReconciliationDetailPage: React.FC = () => {
                         const userCanResolveThis = exception.is_perfect_match ? canResolve : canApprove;
                         const notesRequired = !exception.is_perfect_match;
                         const notes = notesDraft[exception.id] || '';
+                        const canPostToExpense =
+                          canResolve &&
+                          exception.exception_type === 'bank_only' &&
+                          exception.direction === 'DEBIT' &&
+                          !exception.pending_bank_payment_info;
+                        const canLinkResolve =
+                          canApprove && exception.exception_type === 'bank_only';
 
                         if (exception.resolved) return null;
 
-                        if (!userCanResolveThis) {
-                          const lockedForTier = notesRequired && canEditPerfectMatch && !canApprove;
-                          return (
-                            <span
-                              className="flex items-center gap-1 text-xs text-gray-400 shrink-0"
-                              title={
-                                lockedForTier
-                                  ? 'This exception has an amount mismatch — only a director can resolve it'
-                                  : 'Only directors or branch managers can resolve reconciliation exceptions'
-                              }
-                            >
-                              <Lock className="w-3.5 h-3.5" />
-                              {lockedForTier ? 'Director required' : 'View only'}
-                            </span>
-                          );
-                        }
-
                         return (
                           <div className="flex items-center gap-2 shrink-0">
-                            <input
-                              type="text"
-                              placeholder={
-                                notesRequired ? 'Resolution notes (required)' : 'Resolution notes (optional)'
-                              }
-                              value={notes}
-                              onChange={(e) =>
-                                setNotesDraft({ ...notesDraft, [exception.id]: e.target.value })
-                              }
-                              className="w-48 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            />
-                            <button
-                              onClick={() => handleResolve(exception)}
-                              disabled={
-                                resolvingId === exception.id || (notesRequired && !notes.trim())
-                              }
-                              title={
-                                notesRequired && !notes.trim()
-                                  ? 'Resolution notes are required for an amount mismatch'
-                                  : undefined
-                              }
-                              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-                            >
-                              {resolvingId === exception.id ? 'Resolving…' : 'Resolve'}
-                            </button>
+                            {canPostToExpense && (
+                              <button
+                                onClick={() => setPostToExpenseException(exception)}
+                                className="px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 whitespace-nowrap"
+                              >
+                                Post to Expense
+                              </button>
+                            )}
+                            {canLinkResolve && (
+                              <button
+                                onClick={() => setLinkResolveException(exception)}
+                                className="px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 whitespace-nowrap"
+                              >
+                                Link…
+                              </button>
+                            )}
+                            {!userCanResolveThis ? (
+                              <span
+                                className="flex items-center gap-1 text-xs text-gray-400 shrink-0"
+                                title={
+                                  notesRequired && canEditPerfectMatch && !canApprove
+                                    ? 'This exception has an amount mismatch — only a director can resolve it'
+                                    : 'Only directors or branch managers can resolve reconciliation exceptions'
+                                }
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                                {notesRequired && canEditPerfectMatch && !canApprove
+                                  ? 'Director required'
+                                  : 'View only'}
+                              </span>
+                            ) : (
+                              <>
+                                <input
+                                  type="text"
+                                  placeholder={
+                                    notesRequired ? 'Resolution notes (required)' : 'Resolution notes (optional)'
+                                  }
+                                  value={notes}
+                                  onChange={(e) =>
+                                    setNotesDraft({ ...notesDraft, [exception.id]: e.target.value })
+                                  }
+                                  className="w-40 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                                <button
+                                  onClick={() => handleResolve(exception)}
+                                  disabled={
+                                    resolvingId === exception.id || (notesRequired && !notes.trim())
+                                  }
+                                  title={
+                                    notesRequired && !notes.trim()
+                                      ? 'Resolution notes are required for an amount mismatch'
+                                      : undefined
+                                  }
+                                  className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+                                >
+                                  {resolvingId === exception.id ? 'Resolving…' : 'Resolve'}
+                                </button>
+                              </>
+                            )}
                           </div>
                         );
                       })()}
@@ -521,42 +632,75 @@ const ReconciliationDetailPage: React.FC = () => {
                   <ul className="divide-y divide-gray-200">
                     {transactions.map((tx) => (
                       <li key={tx.id} className="px-6 py-4">
-                        <div className="flex items-start gap-3 min-w-0">
-                          {tx.matched ? (
-                            <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5 shrink-0" />
-                          ) : (
-                            <XCircle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
-                          )}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span
-                                className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                                  tx.matched ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                                }`}
-                              >
-                                {tx.matched
-                                  ? `Matched${tx.match_confidence ? ` (${tx.match_confidence})` : ''}`
-                                  : 'Unmatched'}
-                              </span>
-                              <span className="text-xs text-gray-400">{tx.direction}</span>
-                              {tx.matched_erp_officer_name && (
-                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
-                                  {tx.matched_erp_officer_name}
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-3 min-w-0">
+                            {tx.matched ? (
+                              <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5 shrink-0" />
+                            ) : (
+                              <XCircle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+                            )}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span
+                                  className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                                    tx.matched ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                  }`}
+                                >
+                                  {tx.matched
+                                    ? `Matched${tx.match_confidence ? ` (${tx.match_confidence})` : ''}`
+                                    : 'Unmatched'}
                                 </span>
+                                <span className="text-xs text-gray-400">{tx.direction}</span>
+                                {tx.matched_erp_officer_name && (
+                                  <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
+                                    {tx.matched_erp_officer_name}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-sm text-gray-900 mt-1 truncate">{tx.narration || '—'}</p>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                Bank: {formatAmount(tx.amount)} on {tx.value_date}
+                                {tx.matched && tx.erp_narration && (
+                                  <>
+                                    {' '}
+                                    · ERP: {tx.erp_narration}
+                                    {tx.erp_date ? ` on ${tx.erp_date}` : ''}
+                                  </>
+                                )}
+                              </p>
+                              {!tx.matched && tx.unmatched_reason && (
+                                <p className="text-xs text-gray-500 mt-1 italic">
+                                  Unmatched by {tx.unmatched_by_name || 'unknown'}: "{tx.unmatched_reason}"
+                                </p>
                               )}
                             </div>
-                            <p className="text-sm text-gray-900 mt-1 truncate">{tx.narration || '—'}</p>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              Bank: {formatAmount(tx.amount)} on {tx.value_date}
-                              {tx.matched && tx.erp_narration && (
-                                <>
-                                  {' '}
-                                  · ERP: {tx.erp_narration}
-                                  {tx.erp_date ? ` on ${tx.erp_date}` : ''}
-                                </>
-                              )}
-                            </p>
                           </div>
+
+                          {tx.matched && canApprove && (
+                            <div className="flex items-center gap-2 shrink-0">
+                              <input
+                                type="text"
+                                placeholder="Reason (required)"
+                                value={unmatchReasonDraft[tx.id] || ''}
+                                onChange={(e) =>
+                                  setUnmatchReasonDraft({ ...unmatchReasonDraft, [tx.id]: e.target.value })
+                                }
+                                className="w-40 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                              />
+                              <button
+                                onClick={() => handleUnmatch(tx)}
+                                disabled={unmatchingId === tx.id || !(unmatchReasonDraft[tx.id] || '').trim()}
+                                title={
+                                  !(unmatchReasonDraft[tx.id] || '').trim()
+                                    ? 'A reason is required to unmatch a transaction'
+                                    : undefined
+                                }
+                                className="px-3 py-1.5 text-sm font-medium text-red-700 border border-red-300 rounded-md hover:bg-red-50 disabled:opacity-50 whitespace-nowrap"
+                              >
+                                {unmatchingId === tx.id ? 'Unmatching…' : 'Unmatch'}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </li>
                     ))}
@@ -566,6 +710,26 @@ const ReconciliationDetailPage: React.FC = () => {
             )}
           </div>
         </>
+      )}
+
+      {postToExpenseException && recon && (
+        <PostToExpenseModal
+          reconciliationId={recon.id}
+          exception={postToExpenseException}
+          onClose={() => setPostToExpenseException(null)}
+          onSuccess={handlePostToExpenseSuccess}
+          onError={showError}
+        />
+      )}
+
+      {linkResolveException && recon && (
+        <LinkResolveModal
+          bankAccountId={recon.bank_account}
+          exception={linkResolveException}
+          onClose={() => setLinkResolveException(null)}
+          onSuccess={handleLinkResolveSuccess}
+          onError={showError}
+        />
       )}
     </div>
   );

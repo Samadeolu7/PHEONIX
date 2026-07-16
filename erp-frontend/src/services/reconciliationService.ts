@@ -6,13 +6,17 @@
 import { api } from './api';
 import type {
   DailyReconciliation,
+  LinkResolveExceptionsRequest,
   OfficerReconciliationRiskFilters,
   OfficerReconciliationRiskRow,
   ReconciliationException,
   ReconciliationFilters,
+  ReconciliationBankTransaction,
   ReconciliationTransactionsResponse,
+  ResolveExceptionToExpenseRequest,
   RerunReconciliationRequest,
   ResolveExceptionRequest,
+  UnmatchTransactionRequest,
   UploadReconciliationRequest,
   UploadReconciliationResponse,
 } from '../types/banks';
@@ -91,6 +95,68 @@ export const reconciliationService = {
     return api.get(`${BASE_URL}/reconciliations/${reconciliationId}/transactions/`, {
       params: matched === undefined ? undefined : { matched: String(matched) },
     });
+  },
+
+  /**
+   * Manually undo an incorrect auto-match so a genuinely outstanding
+   * transaction isn't hidden behind a bad match. Director-only, mandatory
+   * reason — the backend 403s/400s otherwise. Never touches the underlying
+   * GL entry, only the reconciliation-side linkage.
+   */
+  async unmatchTransaction(
+    reconciliationId: number,
+    transactionId: string,
+    data: UnmatchTransactionRequest
+  ): Promise<ReconciliationBankTransaction> {
+    return api.post(
+      `${BASE_URL}/reconciliations/${reconciliationId}/transactions/${transactionId}/unmatch/`,
+      data
+    );
+  },
+
+  /**
+   * Post a bank-only DEBIT exception (e.g. stamp duty, bank charges)
+   * straight to a draft expense + pending payment. Branch manager or
+   * director may initiate — the real control point is the separate bank
+   * payment approval step. Does NOT resolve the exception; it resolves
+   * automatically once the payment is approved+posted and a later rerun
+   * matches it (see pending_bank_payment_info on the returned exception).
+   */
+  async resolveExceptionToExpense(
+    reconciliationId: number,
+    exceptionId: number,
+    data: ResolveExceptionToExpenseRequest
+  ): Promise<ReconciliationException> {
+    return api.post(
+      `${BASE_URL}/reconciliations/${reconciliationId}/exceptions/${exceptionId}/resolve-to-expense/`,
+      data
+    );
+  },
+
+  /**
+   * Unresolved bank_only exceptions for a bank account, optionally narrowed
+   * to one direction — used to populate the "link to another exception"
+   * netting picker. Exceptions can span different reconciliation dates.
+   */
+  async listUnresolvedBankOnlyExceptions(
+    bankAccountId: number,
+    direction?: 'CREDIT' | 'DEBIT'
+  ): Promise<ReconciliationException[]> {
+    const res = await api.get(`${BASE_URL}/exceptions/`, {
+      params: { bank_account: bankAccountId, ...(direction ? { direction } : {}) },
+    });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  /**
+   * Manually net a bank_only CREDIT exception against a bank_only DEBIT
+   * exception on the same bank account (compensating-transfer scenario).
+   * Director-only, exact amount match only — the backend 403s/400s otherwise.
+   */
+  async linkResolveExceptions(
+    data: LinkResolveExceptionsRequest
+  ): Promise<{ exception_a: ReconciliationException; exception_b: ReconciliationException }> {
+    return api.post(`${BASE_URL}/exceptions/link-resolve/`, data);
   },
 
   /**

@@ -13,8 +13,12 @@ from .views import (
     DailyReconciliationListView,
     DailyReconciliationDetailView,
     MatchedTransactionsView,
+    UnmatchTransactionView,
     RerunReconciliationView,
     ResolveExceptionView,
+    ResolveExceptionToExpenseView,
+    LinkResolveExceptionsView,
+    UnresolvedBankOnlyExceptionsListView,
     OfficerReconciliationRiskReportView,
 )
 
@@ -54,9 +58,29 @@ urlpatterns = [
         name='reconciliation-transactions',
     ),
     path(
+        'reconciliations/<int:recon_pk>/transactions/<uuid:tx_id>/unmatch/',
+        UnmatchTransactionView.as_view(),
+        name='reconciliation-transaction-unmatch',
+    ),
+    path(
         'reconciliations/<int:recon_pk>/exceptions/<int:exc_pk>/resolve/',
         ResolveExceptionView.as_view(),
         name='reconciliation-exception-resolve',
+    ),
+    path(
+        'reconciliations/<int:recon_pk>/exceptions/<int:exc_pk>/resolve-to-expense/',
+        ResolveExceptionToExpenseView.as_view(),
+        name='reconciliation-exception-resolve-to-expense',
+    ),
+    path(
+        'exceptions/link-resolve/',
+        LinkResolveExceptionsView.as_view(),
+        name='reconciliation-exceptions-link-resolve',
+    ),
+    path(
+        'exceptions/',
+        UnresolvedBankOnlyExceptionsListView.as_view(),
+        name='reconciliation-exceptions-list',
     ),
     path(
         'reports/officer-reconciliation-risk/',

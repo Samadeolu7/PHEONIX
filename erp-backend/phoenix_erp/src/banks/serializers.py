@@ -789,6 +789,8 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
     has_bank_reference = serializers.SerializerMethodField()
     is_perfect_match = serializers.BooleanField(read_only=True)
     requires_director = serializers.SerializerMethodField()
+    pending_bank_payment_info = serializers.SerializerMethodField()
+    netted_with_info = serializers.SerializerMethodField()
 
     class Meta:
         model = ReconciliationException
@@ -803,6 +805,8 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
             'officer', 'officer_name', 'erp_branch', 'erp_branch_name',
             'is_high_priority', 'has_bank_reference',
             'is_perfect_match', 'requires_director',
+            'pending_bank_payment', 'pending_bank_payment_info',
+            'netted_with', 'netted_with_info',
             'resolved', 'resolved_by', 'resolved_at', 'resolution_notes',
             'created_at',
         ]
@@ -819,6 +823,28 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
 
     def get_erp_branch_name(self, obj):
         return obj.erp_branch.name if obj.erp_branch else None
+
+    def get_pending_bank_payment_info(self, obj):
+        payment = obj.pending_bank_payment
+        if not payment:
+            return None
+        return {
+            'id': payment.id,
+            'payment_number': payment.payment_number,
+            'status': payment.status,
+        }
+
+    def get_netted_with_info(self, obj):
+        other = obj.netted_with
+        if not other:
+            return None
+        return {
+            'id': other.id,
+            'exception_type': other.exception_type,
+            'direction': other.direction,
+            'bank_amount': str(other.bank_amount) if other.bank_amount is not None else None,
+            'bank_narration': other.bank_narration,
+        }
 
     def get_has_bank_reference(self, obj):
         # A director scanning this list needs to tell "no reference was even
@@ -845,6 +871,7 @@ class ReconciliationBankTransactionSerializer(serializers.ModelSerializer):
     instance before serializing.
     """
     matched_erp_officer_name = serializers.SerializerMethodField()
+    unmatched_by_name = serializers.SerializerMethodField()
     erp_narration = serializers.SerializerMethodField()
     erp_date = serializers.SerializerMethodField()
 
@@ -855,6 +882,7 @@ class ReconciliationBankTransactionSerializer(serializers.ModelSerializer):
             'balance_after',
             'matched', 'match_confidence', 'matched_erp_payment_id', 'matched_at',
             'matched_erp_officer_name', 'matched_erp_had_reference', 'posting_lag_days',
+            'unmatched_by_name', 'unmatched_at', 'unmatched_reason',
             'erp_narration', 'erp_date',
         ]
         read_only_fields = fields
@@ -862,6 +890,9 @@ class ReconciliationBankTransactionSerializer(serializers.ModelSerializer):
     def get_matched_erp_officer_name(self, obj):
         officer = obj.matched_erp_officer
         return officer.get_full_name() if officer else None
+
+    def get_unmatched_by_name(self, obj):
+        return obj.unmatched_by.get_full_name() if obj.unmatched_by else None
 
     def get_erp_narration(self, obj):
         return getattr(obj, '_erp_transaction_description', None)
@@ -889,6 +920,7 @@ class DailyReconciliationSerializer(serializers.ModelSerializer):
             'matched_count',
             'unmatched_bank_count',
             'unmatched_erp_count',
+            'include_debits',
             'error_detail',
             'rerun_count',
             'exceptions',
@@ -897,7 +929,7 @@ class DailyReconciliationSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'uploaded_by', 'uploaded_at', 'status',
             'total_bank_transactions', 'matched_count',
-            'unmatched_bank_count', 'unmatched_erp_count',
+            'unmatched_bank_count', 'unmatched_erp_count', 'include_debits',
             'error_detail', 'rerun_count', 'created_at', 'updated_at',
         ]
 
@@ -934,6 +966,7 @@ class DailyReconciliationListSerializer(serializers.ModelSerializer):
             'matched_count',
             'unmatched_bank_count',
             'unmatched_erp_count',
+            'include_debits',
             'rerun_count',
             'created_at',
         ]
