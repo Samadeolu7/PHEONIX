@@ -47,14 +47,18 @@ class Command(BaseCommand):
 
         dry_run = options['dry_run']
 
-        module = Module.objects.filter(code=MODULE_CODE, tenant=None).first()
-        if not module:
-            self.stderr.write(f'Module "{MODULE_CODE}" not found — run the Permission Setup sync first.')
-            return
-        page = ModulePage.objects.filter(module=module, code=PAGE_CODE).first()
+        # Use all_tenants() + module__code lookup — migration 0005 stamped all
+        # Module/ModulePage rows with the real tenant so tenant=None finds nothing.
+        page = (
+            ModulePage.objects.all_tenants()
+            .filter(module__code=MODULE_CODE, code=PAGE_CODE)
+            .select_related('module')
+            .first()
+        )
         if not page:
             self.stderr.write(f'Page "{PAGE_CODE}" not found under module "{MODULE_CODE}" — run the Permission Setup sync first.')
             return
+        module = page.module
 
         changed = 0
         for role in Role.objects.filter(name__icontains='credit officer'):

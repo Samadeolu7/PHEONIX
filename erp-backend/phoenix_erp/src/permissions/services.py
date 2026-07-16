@@ -28,6 +28,7 @@ from decimal import Decimal
 from typing import Optional, Dict, Any
 
 from django.db import transaction as db_tx
+from django.db.models import Q as _Q
 from permissions.models import (
     RolePermissionPolicy, UserPermissionOverride,
     SCOPE_GLOBAL, SCOPE_OWN_BRANCH, SCOPE_RANK,
@@ -237,12 +238,18 @@ class PermissionResolver:
                 legacy_codes.update(role.permission_codes)
 
         from pages.models import ModulePage
-        # .all_tenants() bypasses OwnerBranchManager's automatic
-        # tenant=<current tenant> filter, which would otherwise AND against
-        # tenant=None below and always return empty for authenticated
-        # requests (Module/ModulePage are a global, non-tenant-scoped catalog).
+        # Migration 0005_backfill_module_page_tenant stamped all Module /
+        # ModulePage rows with the real tenant. Use all_tenants() to bypass
+        # OwnerBranchManager's automatic filter, then scope to the user's
+        # tenant plus any NULL-tenant rows that predated the backfill.
+        user_tenant = getattr(user, 'tenant', None)
         all_pages = list(
-            ModulePage.objects.all_tenants().filter(tenant=None, is_active=True).select_related('module')
+            ModulePage.objects.all_tenants()
+            .filter(
+                _Q(tenant=user_tenant) | _Q(tenant__isnull=True),
+                is_active=True,
+            )
+            .select_related('module')
         )
 
         def _bucket(items, key_fn):

@@ -63,14 +63,21 @@ class Command(BaseCommand):
         from pages.models import Module, ModulePage
         from permissions.models import RolePermissionPolicy, SCOPE_OWN_BRANCH
 
-        module = Module.objects.filter(code='banks', tenant=None).first()
-        page = ModulePage.objects.filter(module=module, code='bank-transfers').first() if module else None
+        # Use all_tenants() + module__code — migration 0005 stamped rows with
+        # the real tenant so tenant=None finds nothing.
+        page = (
+            ModulePage.objects.all_tenants()
+            .filter(module__code='banks', code='bank-transfers')
+            .select_related('module')
+            .first()
+        )
         if not page:
             self.stderr.write(
                 'banks:bank-transfers Module/ModulePage not found — run the Permission '
                 'Setup sync first (POST /api/permissions/setup/sync/).'
             )
             return
+        module = page.module
 
         changed = 0
         for role in roles_qs:

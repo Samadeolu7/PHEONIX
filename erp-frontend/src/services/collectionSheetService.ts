@@ -5,7 +5,7 @@
  *           /api/cash-management/collection-sheet-items/
  */
 
-import api from './api';
+import api, { unwrapList } from './api';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -105,38 +105,32 @@ export const collectionSheetService = {
   async list(params?: Record<string, string>): Promise<DailyCollectionSheet[]> {
     const query = params ? '?' + new URLSearchParams(params).toString() : '';
     const res = await api.get(`${BASE}/${query}`);
-    const data = res.data;
-    return Array.isArray(data) ? data : (data.results ?? []);
+    return unwrapList<DailyCollectionSheet>(res);
   },
 
   /** Retrieve a sheet with full nested items (detail serializer). */
   async retrieve(id: number): Promise<DailyCollectionSheetDetail> {
-    const res = await api.get(`${BASE}/${id}/`);
-    return res.data;
+    return api.get(`${BASE}/${id}/`);
   },
 
   /** Create a new draft sheet. */
   async create(payload: CreateSheetPayload): Promise<DailyCollectionSheet> {
-    const res = await api.post(`${BASE}/`, payload);
-    return res.data;
+    return api.post(`${BASE}/`, payload);
   },
 
   /** Activate a draft sheet (Feature #14: blocked if prior unreconciled sheet). */
   async activate(id: number): Promise<DailyCollectionSheet> {
-    const res = await api.post(`${BASE}/${id}/activate/`);
-    return res.data;
+    return api.post(`${BASE}/${id}/activate/`);
   },
 
   /** Auto-generate items from today's loan repayment schedule. */
   async generateFromSchedule(id: number): Promise<{ created: number; skipped: number; message: string }> {
-    const res = await api.post(`${BASE}/${id}/generate-from-schedule/`);
-    return res.data;
+    return api.post(`${BASE}/${id}/generate-from-schedule/`);
   },
 
   /** Officer submits EOD sheet to superior. */
   async submit(id: number, payload: SubmitSheetPayload): Promise<DailyCollectionSheet> {
-    const res = await api.post(`${BASE}/${id}/submit/`, payload);
-    return res.data;
+    return api.post(`${BASE}/${id}/submit/`, payload);
   },
 
   /**
@@ -145,14 +139,13 @@ export const collectionSheetService = {
    * Frontend shows confirmation modal BEFORE calling this.
    */
   async reconcile(id: number): Promise<DailyCollectionSheet> {
-    const res = await api.post(`${BASE}/${id}/reconcile/`);
-    return res.data;
+    return api.post(`${BASE}/${id}/reconcile/`);
   },
 
   /** Get items with pending bank transfer confirmation. */
   async pendingTransfers(id: number): Promise<CollectionSheetItem[]> {
     const res = await api.get(`${BASE}/${id}/pending-transfers/`);
-    return Array.isArray(res.data) ? res.data : (res.data.results ?? []);
+    return unwrapList<CollectionSheetItem>(res);
   },
 
   // ── Items ────────────────────────────────────────────────────────────────
@@ -160,8 +153,7 @@ export const collectionSheetService = {
   /** List items for a specific sheet. */
   async listItems(sheetId: number): Promise<CollectionSheetItem[]> {
     const res = await api.get(`${ITEMS_BASE}/?sheet=${sheetId}`);
-    const data = res.data;
-    return Array.isArray(data) ? data : (data.results ?? []);
+    return unwrapList<CollectionSheetItem>(res);
   },
 
   /**
@@ -169,27 +161,23 @@ export const collectionSheetService = {
    * Feature #8: The UI restricts payment_mode for CO to cash + bank_transfer only.
    */
   async collectItem(itemId: number, payload: CollectItemPayload): Promise<CollectionSheetItem> {
-    const res = await api.post(`${ITEMS_BASE}/${itemId}/collect/`, payload);
-    return res.data;
+    return api.post(`${ITEMS_BASE}/${itemId}/collect/`, payload);
   },
 
   /** Post a cash collection to the GL. */
   async postPayment(itemId: number): Promise<CollectionSheetItem> {
-    const res = await api.post(`${ITEMS_BASE}/${itemId}/post-payment/`);
-    return res.data;
+    return api.post(`${ITEMS_BASE}/${itemId}/post-payment/`);
   },
 
   /** Supervisor confirms a bank transfer and posts to GL. */
   async confirmTransfer(itemId: number, bankAccountCredited?: number): Promise<CollectionSheetItem> {
     const payload = bankAccountCredited ? { bank_account_credited: bankAccountCredited } : {};
-    const res = await api.post(`${ITEMS_BASE}/${itemId}/confirm-transfer/`, payload);
-    return res.data;
+    return api.post(`${ITEMS_BASE}/${itemId}/confirm-transfer/`, payload);
   },
 
   /** Supervisor rejects a pending bank transfer. */
   async rejectTransfer(itemId: number, reason?: string): Promise<CollectionSheetItem> {
-    const res = await api.post(`${ITEMS_BASE}/${itemId}/reject-transfer/`, { reason: reason ?? '' });
-    return res.data;
+    return api.post(`${ITEMS_BASE}/${itemId}/reject-transfer/`, { reason: reason ?? '' });
   },
 
   /**
@@ -198,8 +186,7 @@ export const collectionSheetService = {
    */
   async getUnreconciledPriorSheets(todayDateStr: string): Promise<DailyCollectionSheet[]> {
     const res = await api.get(`${BASE}/?status=submitted`);
-    const data = res.data;
-    const all: DailyCollectionSheet[] = Array.isArray(data) ? data : (data.results ?? []);
+    const all = unwrapList<DailyCollectionSheet>(res);
     // Filter to only sheets from before today (collection_date < todayDateStr)
     return all.filter((s) => s.collection_date < todayDateStr);
   },

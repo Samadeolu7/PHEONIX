@@ -180,7 +180,7 @@ export const api = {
     return handleResponse(response);
   },
 
-  post: async (url: string, data: any) => {
+  post: async (url: string, data?: any) => {
     const response = await fetchWithAuth(url, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -188,7 +188,7 @@ export const api = {
     return handleResponse(response);
   },
 
-  put: async (url: string, data: any) => {
+  put: async (url: string, data?: any) => {
     const response = await fetchWithAuth(url, {
       method: 'PUT',
       body: JSON.stringify(data),
@@ -196,7 +196,7 @@ export const api = {
     return handleResponse(response);
   },
 
-  patch: async (url: string, data: any) => {
+  patch: async (url: string, data?: any) => {
     const response = await fetchWithAuth(url, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -260,6 +260,32 @@ export const api = {
     return response.blob();
   },
 };
+
+/**
+ * Extract the array out of a list/paginated endpoint's response, whatever
+ * shape it happens to be in. api.get() returns the parsed JSON body
+ * directly — there is no axios-style {data: ...} wrapper — but list
+ * endpoints across this backend still return one of three different
+ * envelopes depending on which viewset served them:
+ *   - a bare array (an unpaginated ViewSet's default .list())
+ *   - {results, total, page, pages}   (this codebase's custom paginator,
+ *     e.g. threads/views.py's ThreadViewSet.list())
+ *   - {count, next, previous, results}  (DRF's default pagination)
+ *
+ * Every one of those has a `results` key except the bare-array case, so
+ * checking Array.isArray(res) and Array.isArray(res?.results) covers all
+ * three. Use this instead of hand-rolling the check per service — a
+ * version of that check without a fallback to the bare-array case is
+ * exactly what silently broke threadService.ts's list()/listMessages()/
+ * listParticipants() and collectionSheetService.ts wholesale: both checked
+ * res.data (assuming axios-style wrapping, which this client never does)
+ * and gave up instead of ever trying `res` itself.
+ */
+export function unwrapList<T = any>(res: any): T[] {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.results)) return res.results;
+  return [];
+}
 
 /**
  * Programmatically trigger a browser file-save dialog for a Blob.

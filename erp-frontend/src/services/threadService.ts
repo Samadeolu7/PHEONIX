@@ -1,4 +1,4 @@
-import { api } from './api';
+import { api, unwrapList } from './api';
 import type {
   Thread,
   ThreadMessageItem,
@@ -24,14 +24,8 @@ export const threadService = {
     page?: number;
     page_size?: number;
   }): Promise<Thread[]> {
-    // ThreadViewSet.list() returns {results, total, page, pages} directly —
-    // api.get() already returns the parsed body, so `res` IS that object,
-    // not res.data. Checking res.data here always missed, silently
-    // returning [] regardless of what the API actually sent back — the
-    // thread panel showed "No discussions yet" even when threads existed.
-    if (Array.isArray(res?.results)) return res.results;
-    if (Array.isArray(res)) return res;
-    return [];
+    const res = await api.get(`${BASE}/`, { params });
+    return unwrapList<Thread>(res);
   },
 
   get(id: number): Promise<Thread> {
@@ -69,9 +63,7 @@ export const threadService = {
     if (afterId) params.after = afterId;
     if (page) params.page = page;
     const res = await api.get(`${MSG_BASE}/`, { params });
-    if (Array.isArray(res?.results)) return res.results;
-    if (Array.isArray(res)) return res;
-    return [];
+    return unwrapList<ThreadMessageItem>(res);
   },
 
   postMessage(threadId: number, body: string, attachment?: File): Promise<ThreadMessageItem> {
@@ -90,9 +82,7 @@ export const threadService = {
 
   async listParticipants(threadId: number): Promise<ThreadParticipantItem[]> {
     const res = await api.get(`${PART_BASE}/`, { params: { thread: threadId } });
-    if (Array.isArray(res?.results)) return res.results;
-    if (Array.isArray(res)) return res;
-    return [];
+    return unwrapList<ThreadParticipantItem>(res);
   },
 
   addParticipant(threadId: number, userId: number): Promise<ThreadParticipantItem> {
@@ -127,8 +117,6 @@ export const threadService = {
     // rather than a search, so the picker has something to show before the
     // user types anything.
     const res = await api.get('/users/staff-users/search/', { params: q ? { q } : {} });
-    // The endpoint returns a bare array, not {data: [...]} — api.get()
-    // already returns the parsed body directly, so `res` IS that array.
-    return Array.isArray(res) ? res : [];
+    return unwrapList<{ id: number; username: string; full_name: string }>(res);
   },
 };

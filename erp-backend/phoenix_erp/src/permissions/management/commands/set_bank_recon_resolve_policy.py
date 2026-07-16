@@ -44,10 +44,14 @@ class Command(BaseCommand):
         dry_run = options['dry_run']
         tenant_id = options['tenant_id']
 
-        module = Module.objects.filter(code='banks', tenant=None).first()
+        # Use all_tenants() to bypass OwnerBranchManager's auto-filter;
+        # don't restrict by tenant=None — migration 0005 stamped all rows.
+        module = Module.objects.all_tenants().filter(code='banks').first()
         page = (
-            ModulePage.objects.filter(module=module, code='bank-reconciliation-exceptions').first()
-            if module else None
+            ModulePage.objects.all_tenants()
+            .filter(module__code='banks', code='bank-reconciliation-exceptions')
+            .select_related('module')
+            .first()
         )
         if not page:
             self.stderr.write(
@@ -55,6 +59,8 @@ class Command(BaseCommand):
                 '`python manage.py seed_permissions` (catalog only, no --create-policies) first.'
             )
             return
+        # Ensure module_obj is consistent with what the page references
+        module = page.module
 
         roles_qs = Role.objects.filter(is_active=True)
         if tenant_id:
