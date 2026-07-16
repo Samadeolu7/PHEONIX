@@ -113,7 +113,7 @@ class ThreadViewSet(ScopedModelViewSet):
         tenant = getattr(user, 'tenant', None)
 
         qs = Thread.objects.filter(tenant=tenant, is_deleted=False).select_related(
-            'page', 'initiated_by', 'closed_by', 'content_type'
+            'page', 'page__module', 'initiated_by', 'closed_by', 'content_type'
         ).prefetch_related(
             'participants__user', 'participants__user__roles',
         )
@@ -376,7 +376,7 @@ class ThreadViewSet(ScopedModelViewSet):
 
         threads = (
             Thread.objects.filter(pk__in=thread_ids)
-            .select_related('page')
+            .select_related('page', 'page__module')
             .prefetch_related('participants__user')
             .annotate(
                 last_msg_at=Max(
@@ -426,11 +426,17 @@ class ThreadViewSet(ScopedModelViewSet):
                 preview = last_msg_row['body'][:80]
             recent.append({
                 'id': t.id,
+                'page': t.page_id,
                 'title': t.title,
                 'last_message_preview': preview,
                 'last_activity': t.updated_at,
                 'unread_messages': unread_counts.get(t.pk, 0),
                 'page_url': t.page.url_path if t.page_id else None,
+                # See ThreadSerializer.get_page_module_code — page_url alone
+                # can't represent a specific record's real frontend route.
+                'page_module_code': t.page.module.code if t.page_id else None,
+                'page_code': t.page.code if t.page_id else None,
+                'object_id': t.object_id,
                 'status': t.status,
             })
 

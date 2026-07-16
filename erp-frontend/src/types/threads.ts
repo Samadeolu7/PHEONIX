@@ -59,6 +59,11 @@ export interface Thread {
   id: number;
   page: number;
   page_url: string | null;
+  // See resolveThreadRecordUrl() in routeToPageMap.ts — page_url is the
+  // catalog's static url_path (a list page's URL), which can't represent a
+  // specific record's actual frontend route on its own.
+  page_module_code: string | null;
+  page_code: string | null;
   content_type: number | null;
   object_id: number | null;
   linked_record_repr: LinkedRecordRepr | null;
@@ -81,11 +86,15 @@ export interface ThreadWidgetSummary {
   unread_count: number;
   recent_threads: {
     id: number;
+    page: number | null;
     title: string;
     last_message_preview: string;
     last_activity: string;
     unread_messages: number;
     page_url: string | null;
+    page_module_code: string | null;
+    page_code: string | null;
+    object_id: number | null;
     status: ThreadStatus;
   }[];
 }

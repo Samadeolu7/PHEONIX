@@ -5,6 +5,7 @@ import { cn } from '../../lib/utils';
 import { threadService } from '../../services/threadService';
 import { useThreadContext } from '../../contexts/ThreadContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { resolveThreadRecordUrl } from '../../config/routeToPageMap';
 import type { Thread } from '../../types/threads';
 
 type TabKey = 'mine' | 'unread' | 'started' | 'closed' | 'all';
@@ -73,9 +74,17 @@ export const ThreadInboxPage: React.FC = () => {
   };
 
   const handleOpenThread = (thread: Thread) => {
-    if (thread.page_url) {
+    // page_url alone is the catalog's static list-page URL — resolve the
+    // actual per-record route (e.g. '/clients/947', not '/clients/clients/').
+    const url = resolveThreadRecordUrl({
+      moduleCode: thread.page_module_code,
+      pageCode: thread.page_code,
+      objectId: thread.object_id,
+      fallbackUrl: thread.page_url,
+    });
+    if (url) {
       // Navigate to the page and pass thread ID so the toggle button can auto-open the panel
-      navigate(thread.page_url, { state: { openThreadId: thread.id, pageId: thread.page } });
+      navigate(url, { state: { openThreadId: thread.id, pageId: thread.page } });
     }
   };
 
@@ -271,16 +280,28 @@ export const ThreadInboxPage: React.FC = () => {
                   )}
 
                   {/* Navigate to record link */}
-                  {thread.page_url && (
-                    <a
-                      href={thread.page_url}
-                      onClick={e => e.stopPropagation()}
-                      title="Go to record"
-                      className="ml-auto text-gray-300 hover:text-[#0a1857] transition-colors"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  )}
+                  {(() => {
+                    const recordUrl = resolveThreadRecordUrl({
+                      moduleCode: thread.page_module_code,
+                      pageCode: thread.page_code,
+                      objectId: thread.object_id,
+                      fallbackUrl: thread.page_url,
+                    });
+                    return recordUrl ? (
+                      <a
+                        href={recordUrl}
+                        onClick={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleOpenThread(thread);
+                        }}
+                        title="Go to record"
+                        className="ml-auto text-gray-300 hover:text-[#0a1857] transition-colors"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    ) : null;
+                  })()}
                 </div>
               </div>
             </div>

@@ -449,3 +449,43 @@ if (process.env.NODE_ENV !== 'production') {
     }
   }
 }
+
+/**
+ * Reverse of the normal module:page -> route lookup — given a thread's
+ * page_module_code/page_code (+ optional object_id), find the actual
+ * frontend route to navigate to.
+ *
+ * Why this exists: a Thread's page_url (from the backend) is the catalog
+ * ModulePage's static url_path — e.g. '/clients/clients/', a LIST page's
+ * canonical path. It has no way to represent a specific record's real
+ * route, because pages like a client/loan detail view are their own
+ * hardcoded React routes (e.g. '/clients/947') completely independent of
+ * the catalog's url_path (same reasoning as GlobalThreadToggle.tsx's
+ * forward lookup — this is its mirror image). Naively navigating to
+ * page_url after clicking a thread lands on the generic list page instead
+ * of the record the thread was actually created on.
+ */
+export function resolveThreadRecordUrl(params: {
+  moduleCode: string | null;
+  pageCode: string | null;
+  objectId?: number | null;
+  fallbackUrl?: string | null;
+}): string | null {
+  const { moduleCode, pageCode, objectId, fallbackUrl } = params;
+  if (!moduleCode || !pageCode) return fallbackUrl ?? null;
+
+  const candidates = Object.entries(ROUTE_TO_PAGE).filter(
+    ([, mapping]) =>
+      mapping.module === moduleCode && mapping.page === pageCode && mapping.action === 'view'
+  );
+
+  if (objectId != null) {
+    const detailPattern = candidates.find(([pattern]) => pattern.includes(':id'))?.[0];
+    if (detailPattern) return detailPattern.replace(':id', String(objectId));
+  }
+
+  const listPattern = candidates.find(([pattern]) => !pattern.includes(':'))?.[0];
+  if (listPattern) return listPattern;
+
+  return fallbackUrl ?? null;
+}

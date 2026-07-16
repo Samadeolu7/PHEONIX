@@ -84,6 +84,8 @@ class ThreadSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     page_url = serializers.SerializerMethodField()
+    page_module_code = serializers.SerializerMethodField()
+    page_code = serializers.SerializerMethodField()
     linked_record_repr = serializers.SerializerMethodField()
     initiated_by_name = serializers.SerializerMethodField()
     closed_by_name = serializers.SerializerMethodField()
@@ -91,7 +93,7 @@ class ThreadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Thread
         fields = [
-            'id', 'page', 'page_url',
+            'id', 'page', 'page_url', 'page_module_code', 'page_code',
             'content_type', 'object_id', 'linked_record_repr',
             'title', 'reason',
             'initiated_by', 'initiated_by_name',
@@ -135,6 +137,20 @@ class ThreadSerializer(serializers.ModelSerializer):
 
     def get_page_url(self, obj):
         return obj.page.url_path if obj.page_id else None
+
+    def get_page_module_code(self, obj):
+        # page_url is the catalog's static url_path (e.g. '/clients/clients/'
+        # — a list page), which has no way to represent a specific record's
+        # actual frontend route (e.g. '/clients/947' is its own hardcoded
+        # React route, not derived from the catalog at all — see
+        # GlobalThreadToggle.tsx/routeToPageMap.ts). module_code + page_code
+        # + object_id let the frontend reverse-resolve the real per-record
+        # URL instead of naively navigating to page_url and landing on the
+        # list page.
+        return obj.page.module.code if obj.page_id else None
+
+    def get_page_code(self, obj):
+        return obj.page.code if obj.page_id else None
 
     def get_linked_record_repr(self, obj):
         if obj.linked_record:

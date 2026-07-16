@@ -47,3 +47,47 @@ class ThreadCreateResponseTests(TestCase):
         resp = self.client.post('/api/threads/threads/', {'page': self.page.id}, format='json')
 
         self.assertEqual(resp.status_code, 400)
+
+
+class ThreadPageUrlResolutionFieldsTests(TestCase):
+    """
+    page_url alone is the catalog ModulePage's static url_path (e.g. a list
+    page's URL) — it can't represent a specific record's actual frontend
+    route (e.g. '/clients/947', a hardcoded React route independent of the
+    catalog). page_module_code/page_code let the frontend reverse-resolve
+    the real per-record URL instead of landing on the generic list page.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='URL Resolution Org', slug='url-resolution-org')
+        self.user = User.objects.create_user(username='url_user', password='test123', tenant=self.tenant)
+
+        self.module = Module.objects.create(code='clients', name='Clients', icon='users')
+        self.page = ModulePage.objects.create(
+            module=self.module, code='clients', title='Client List',
+            page_type='list', url_path='/clients/clients/', is_threadable=True,
+        )
+
+    def test_create_response_includes_module_and_page_codes(self):
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.post(
+            '/api/threads/threads/', {'page': self.page.id, 'object_id': 947}, format='json',
+        )
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['page_module_code'], 'clients')
+        self.assertEqual(resp.data['page_code'], 'clients')
+        self.assertEqual(resp.data['page_url'], '/clients/clients/')
+
+    def test_widget_summary_includes_module_and_page_codes(self):
+        self.client.force_authenticate(user=self.user)
+        self.client.post('/api/threads/threads/', {'page': self.page.id, 'object_id': 947}, format='json')
+
+        resp = self.client.get('/api/threads/threads/widget-summary/')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(len(resp.data['recent_threads']), 1)
+        row = resp.data['recent_threads'][0]
+        self.assertEqual(row['page_module_code'], 'clients')
+        self.assertEqual(row['page_code'], 'clients')
+        self.assertEqual(row['object_id'], 947)

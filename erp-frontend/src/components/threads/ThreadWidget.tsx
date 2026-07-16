@@ -4,6 +4,7 @@ import { MessageSquare, RefreshCw, ExternalLink } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { threadService } from '../../services/threadService';
 import { useThreadContext } from '../../contexts/ThreadContext';
+import { resolveThreadRecordUrl } from '../../config/routeToPageMap';
 import type { ThreadWidgetSummary } from '../../types/threads';
 
 const BADGE_POLL_MS = 30000;
@@ -45,9 +46,18 @@ export const ThreadWidget: React.FC = () => {
   }, [fetchSummary]);
 
   const handleThreadClick = (thread: ThreadWidgetSummary['recent_threads'][number]) => {
-    if (thread.page_url) {
+    // page_url alone is the catalog's static list-page URL — resolve the
+    // actual per-record route (e.g. '/clients/947', not '/clients/clients/')
+    // via the same module/page taxonomy the rest of the app already uses.
+    const url = resolveThreadRecordUrl({
+      moduleCode: thread.page_module_code,
+      pageCode: thread.page_code,
+      objectId: thread.object_id,
+      fallbackUrl: thread.page_url,
+    });
+    if (url) {
       // Use SPA navigation and pass the thread ID so the destination page can auto-open the panel
-      navigate(thread.page_url, { state: { openThreadId: thread.id } });
+      navigate(url, { state: { openThreadId: thread.id, pageId: thread.page } });
     } else {
       navigate('/threads');
     }
