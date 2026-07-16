@@ -390,6 +390,51 @@ class RunReconciliationMatchTests(TestCase):
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
+    def test_rerun_does_not_duplicate_resolved_exception(self, mock_post, mock_fetch):
+        # Regression test for the dedup bug: a director resolves a bank_only
+        # exception whose bank line genuinely has no ERP counterpart (e.g. a
+        # bank fee) — ReconciliationBankTransaction.matched never flips True
+        # for that, so the line stays in every future rerun's candidate pool
+        # and Java keeps reporting it as bank_only. Before the fix,
+        # _persist_outcome's get_or_create dedup_filter included
+        # resolved=False, so it could never find this already-resolved row
+        # and created a fresh duplicate every single rerun.
+        response = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'bank_only', 'direction': 'CREDIT',
+                    'bankTransactionId': str(self.tx.id), 'bankAmount': '5000.00',
+                    'bankNarration': 'Test credit', 'bankDate': '2026-07-01',
+                },
+            ],
+        })
+        mock_post.return_value = response
+
+        run_reconciliation_match(self.recon.id, include_debits=False)
+        exc = ReconciliationException.objects.get(reconciliation=self.recon)
+
+        exc.resolved = True
+        exc.resolved_at = timezone.now()
+        exc.resolution_notes = 'Reviewed — this is a bank fee, no ERP entry needed.'
+        exc.save(update_fields=['resolved', 'resolved_at', 'resolution_notes'])
+
+        # Re-run — Java still can't match this line (it's genuinely a fee,
+        # not a missed ERP entry) and reports it as bank_only again. Must
+        # reuse the resolved row, not reopen it with a duplicate.
+        self.recon.status = 'processing'
+        self.recon.save(update_fields=['status'])
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.assertEqual(
+            ReconciliationException.objects.filter(reconciliation=self.recon).count(), 1
+        )
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+        self.assertEqual(exc.resolution_notes, 'Reviewed — this is a bank fee, no ERP entry needed.')
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
     def test_stale_exception_auto_resolved_when_later_run_finds_match(self, mock_post, mock_fetch):
         # First run: no match yet, bank_only exception recorded.
         mock_post.return_value = self._mock_java_response({

@@ -355,13 +355,23 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
 
         # Natural-key dedup: bank_transaction_id / loan_payment_id are stable
         # forever, so a re-run must not create a duplicate row for something
-        # already reported and still unresolved.
+        # already reported — resolved or not. Deliberately NOT filtering on
+        # resolved=False here: a bank line whose exception a director already
+        # resolved (e.g. "this is a bank fee, no ERP entry needed") stays
+        # matched=False on ReconciliationBankTransaction forever, so it keeps
+        # coming back from Java as bank_only on every future rerun. Filtering
+        # by resolved=False meant get_or_create could never find that
+        # already-resolved row and created a fresh duplicate every time,
+        # silently reopening work a director had already closed out and
+        # inflating unmatched_bank_count/unmatched_erp_count (counted from
+        # unresolved exceptions — see the aggregation below) past the real
+        # number of outstanding bank lines.
         # get_or_create closes the TOCTOU race where two concurrent tasks
         # with overlapping windows both pass an .exists() check and each try
         # to insert the same row — the database unique constraint (or
         # IntegrityError on the second insert) is the correct enforcement
         # point, not a pre-check in Python.
-        dedup_filter = {'reconciliation': target_recon, 'exception_type': exc_type, 'resolved': False}
+        dedup_filter = {'reconciliation': target_recon, 'exception_type': exc_type}
         if exc_type == 'bank_only':
             dedup_filter['bank_transaction_id'] = bank_transaction_id
         elif exc_type == 'erp_only':
