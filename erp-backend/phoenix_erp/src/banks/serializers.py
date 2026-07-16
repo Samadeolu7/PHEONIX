@@ -775,6 +775,8 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
     officer_name = serializers.SerializerMethodField()
     erp_branch_name = serializers.SerializerMethodField()
     has_bank_reference = serializers.SerializerMethodField()
+    is_perfect_match = serializers.BooleanField(read_only=True)
+    requires_director = serializers.SerializerMethodField()
 
     class Meta:
         model = ReconciliationException
@@ -788,10 +790,17 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
             'erp_amount', 'erp_narration', 'erp_date',
             'officer', 'officer_name', 'erp_branch', 'erp_branch_name',
             'is_high_priority', 'has_bank_reference',
+            'is_perfect_match', 'requires_director',
             'resolved', 'resolved_by', 'resolved_at', 'resolution_notes',
             'created_at',
         ]
         read_only_fields = ['id', 'created_at']
+
+    def get_requires_director(self, obj):
+        # Drives the frontend's resolve gate: perfect matches may be resolved
+        # by a branch manager; anything else needs director sign-off — see
+        # ResolveExceptionView.patch (banks/views.py) for the authoritative check.
+        return not obj.is_perfect_match
 
     def get_officer_name(self, obj):
         return obj.officer.get_full_name() if obj.officer else None

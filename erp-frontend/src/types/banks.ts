@@ -404,7 +404,15 @@ export interface ReconciliationException {
   // Whether the officer-entered bank reference is even present — "no
   // reference was entered" vs "reference entered but genuinely no match"
   has_bank_reference: boolean;
-  // Resolution — only directors may set these (see ResolveExceptionView)
+  // True only when bank_amount and erp_amount are both present and identical
+  // — the one case a branch manager may resolve without a director.
+  is_perfect_match: boolean;
+  // True whenever is_perfect_match is false — i.e. an amount mismatch or a
+  // bank_only/erp_only exception with no counterpart amount at all. Director
+  // sign-off (and mandatory resolution_notes) required. See
+  // ResolveExceptionView.patch (banks/views.py) for the authoritative gate.
+  requires_director: boolean;
+  // Resolution — director required unless is_perfect_match (see ResolveExceptionView)
   resolved: boolean;
   resolved_by: number | null;
   resolved_at: string | null;

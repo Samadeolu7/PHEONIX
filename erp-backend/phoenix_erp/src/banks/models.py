@@ -2129,6 +2129,13 @@ class ReconciliationException(TimeStampedModel):
     resolved_at      = models.DateTimeField(null=True, blank=True)
     resolution_notes = models.TextField(blank=True)
 
+    # Director-resolvable tolerance for amount mismatches: whichever is
+    # smaller of a flat cap or a percentage of the ERP amount, so small
+    # transactions aren't swamped by the flat cap and large ones aren't
+    # swamped by the percentage.
+    AMOUNT_TOLERANCE_FIXED   = Decimal('100.00')
+    AMOUNT_TOLERANCE_PERCENT = Decimal('0.005')  # 0.5%
+
     class Meta:
         ordering = ['reconciliation', 'exception_type']
         indexes = [
@@ -2144,6 +2151,42 @@ class ReconciliationException(TimeStampedModel):
             f"{self.reconciliation} — {self.direction} {self.exception_type} "
             f"(bank={self.bank_amount}, erp={self.erp_amount})"
         )
+
+    @property
+    def amount_variance(self):
+        """abs(bank_amount - erp_amount), or None when either side is missing
+        (bank_only/erp_only exceptions have no counterpart amount to compare)."""
+        if self.bank_amount is None or self.erp_amount is None:
+            return None
+        return abs(self.bank_amount - self.erp_amount)
+
+    @property
+    def is_perfect_match(self):
+        """True only when both amounts are present and identical. The one case
+        a branch manager may resolve without director sign-off."""
+        variance = self.amount_variance
+        return variance is not None and variance == 0
+
+    @property
+    def is_within_director_tolerance(self):
+        """
+        True when there's a nonzero amount variance small enough — whichever is
+        smaller of AMOUNT_TOLERANCE_FIXED or AMOUNT_TOLERANCE_PERCENT of the ERP
+        amount — that a director can resolve it without the resolution being
+        treated as a large, unexplained mismatch. Always False for bank_only/
+        erp_only exceptions (no counterpart amount at all) and for perfect
+        matches (zero variance isn't a "tolerance" case). Directors can still
+        resolve exceptions outside this tolerance; resolution_notes is just
+        mandatory in that case to leave a paper trail.
+        """
+        variance = self.amount_variance
+        if variance is None or variance == 0:
+            return False
+        tolerance = min(
+            self.AMOUNT_TOLERANCE_FIXED,
+            self.AMOUNT_TOLERANCE_PERCENT * self.erp_amount,
+        )
+        return variance <= tolerance
 
 
 # ── Bank Feed Transactions (Java App 3 write-back) ─────────────────────────

@@ -18,6 +18,7 @@ the "director" path without needing to seed the full permissions catalog
 in every test.
 """
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -104,6 +105,103 @@ class ReconciliationViewTests(TestCase):
         self.exception.refresh_from_db()
         self.assertTrue(self.exception.resolved)
         self.assertEqual(self.exception.resolved_by_id, self.director.id)
+
+    # ── Tiered resolve: perfect match vs amount mismatch ────────────────────
+    # bank_amount==erp_amount may be resolved by a branch manager (can_edit);
+    # any mismatch — including bank_only/erp_only, which have no counterpart
+    # amount at all — still requires a director (can_approve), and
+    # resolution_notes becomes mandatory. See ReconciliationException.
+    # is_perfect_match and ResolveExceptionView.patch (banks/views.py).
+
+    def test_branch_manager_can_resolve_perfect_match_exception_with_edit_grant(self):
+        perfect_match = ReconciliationException.objects.create(
+            reconciliation=self.recon_a, exception_type='amount_diff', direction='CREDIT',
+            bank_amount=Decimal('500.00'), bank_narration='Loan repayment', bank_date='2026-07-01',
+            erp_amount=Decimal('500.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.branch_manager)
+        url = f'/api/banks/reconciliations/{self.recon_a.id}/exceptions/{perfect_match.id}/resolve/'
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_edit=True, can_approve=False)
+            resp = self.client.patch(url, {}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        perfect_match.refresh_from_db()
+        self.assertTrue(perfect_match.resolved)
+        self.assertEqual(perfect_match.resolved_by_id, self.branch_manager.id)
+
+    def test_branch_manager_with_edit_grant_still_cannot_resolve_amount_mismatch(self):
+        mismatch = ReconciliationException.objects.create(
+            reconciliation=self.recon_a, exception_type='amount_diff', direction='CREDIT',
+            bank_amount=Decimal('500.00'), bank_narration='Loan repayment', bank_date='2026-07-01',
+            erp_amount=Decimal('480.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.branch_manager)
+        url = f'/api/banks/reconciliations/{self.recon_a.id}/exceptions/{mismatch.id}/resolve/'
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_edit=True, can_approve=False)
+            resp = self.client.patch(url, {'resolution_notes': 'looks fine'}, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+        mismatch.refresh_from_db()
+        self.assertFalse(mismatch.resolved)
+
+    def test_branch_manager_with_edit_grant_still_cannot_resolve_bank_only_exception(self):
+        # bank_only has no erp_amount at all, so it can never be a "perfect
+        # match" — a can_edit grant must not accidentally cover this case.
+        self.client.force_authenticate(user=self.branch_manager)
+        url = f'/api/banks/reconciliations/{self.recon_a.id}/exceptions/{self.exception.id}/resolve/'
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_edit=True, can_approve=False)
+            resp = self.client.patch(url, {'resolution_notes': 'looks fine'}, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+        self.exception.refresh_from_db()
+        self.assertFalse(self.exception.resolved)
+
+    def test_director_resolving_amount_mismatch_requires_notes(self):
+        mismatch = ReconciliationException.objects.create(
+            reconciliation=self.recon_a, exception_type='amount_diff', direction='CREDIT',
+            bank_amount=Decimal('500.00'), bank_narration='Loan repayment', bank_date='2026-07-01',
+            erp_amount=Decimal('480.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon_a.id}/exceptions/{mismatch.id}/resolve/'
+        resp = self.client.patch(url, {}, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+        mismatch.refresh_from_db()
+        self.assertFalse(mismatch.resolved)
+
+    def test_director_can_resolve_amount_mismatch_with_notes(self):
+        mismatch = ReconciliationException.objects.create(
+            reconciliation=self.recon_a, exception_type='amount_diff', direction='CREDIT',
+            bank_amount=Decimal('500.00'), bank_narration='Loan repayment', bank_date='2026-07-01',
+            erp_amount=Decimal('480.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon_a.id}/exceptions/{mismatch.id}/resolve/'
+        resp = self.client.patch(
+            url, {'resolution_notes': 'bank fee accounts for the ₦20 difference'}, format='json'
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        mismatch.refresh_from_db()
+        self.assertTrue(mismatch.resolved)
+
+    def test_director_can_resolve_perfect_match_without_notes(self):
+        perfect_match = ReconciliationException.objects.create(
+            reconciliation=self.recon_a, exception_type='amount_diff', direction='CREDIT',
+            bank_amount=Decimal('500.00'), bank_narration='Loan repayment', bank_date='2026-07-01',
+            erp_amount=Decimal('500.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon_a.id}/exceptions/{perfect_match.id}/resolve/'
+        resp = self.client.patch(url, {}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        perfect_match.refresh_from_db()
+        self.assertTrue(perfect_match.resolved)
 
     # ── Branch-scoped visibility ─────────────────────────────────────────────
 

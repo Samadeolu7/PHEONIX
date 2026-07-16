@@ -36,8 +36,14 @@ const ReconciliationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { success, error: showError } = useToast();
-  const { hasPermission } = usePermission();
-  const canResolve = hasPermission('bank-recon-resolve');
+  const { hasPageAccess } = usePermission();
+  // Director tier: may resolve ANY exception, including amount mismatches.
+  const canApprove = hasPageAccess('banks', 'bank-reconciliation-exceptions', 'approve');
+  // Branch-manager tier: may resolve only "perfect match" exceptions — see
+  // ReconciliationException.is_perfect_match / ResolveExceptionView.patch
+  // (banks/views.py) for the authoritative backend gate this mirrors.
+  const canEditPerfectMatch = hasPageAccess('banks', 'bank-reconciliation-exceptions', 'edit');
+  const canResolve = canApprove || canEditPerfectMatch;
 
   const [recon, setRecon] = useState<DailyReconciliation | null>(null);
   const [loading, setLoading] = useState(true);
@@ -373,35 +379,64 @@ const ReconciliationDetailPage: React.FC = () => {
                         </div>
                       </div>
 
-                      {!exception.resolved && !canResolve && (
-                        <span
-                          className="flex items-center gap-1 text-xs text-gray-400 shrink-0"
-                          title="Only directors can resolve reconciliation exceptions"
-                        >
-                          <Lock className="w-3.5 h-3.5" />
-                          View only
-                        </span>
-                      )}
-                      {!exception.resolved && canResolve && (
-                        <div className="flex items-center gap-2 shrink-0">
-                          <input
-                            type="text"
-                            placeholder="Resolution notes (optional)"
-                            value={notesDraft[exception.id] || ''}
-                            onChange={(e) =>
-                              setNotesDraft({ ...notesDraft, [exception.id]: e.target.value })
-                            }
-                            className="w-48 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          />
-                          <button
-                            onClick={() => handleResolve(exception)}
-                            disabled={resolvingId === exception.id}
-                            className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-                          >
-                            {resolvingId === exception.id ? 'Resolving…' : 'Resolve'}
-                          </button>
-                        </div>
-                      )}
+                      {(() => {
+                        // Perfect match: branch manager (canResolve) or director may
+                        // resolve. Any amount mismatch — including bank_only/erp_only,
+                        // which have no counterpart amount at all — needs a director.
+                        // Mirrors ResolveExceptionView.patch (banks/views.py).
+                        const userCanResolveThis = exception.is_perfect_match ? canResolve : canApprove;
+                        const notesRequired = !exception.is_perfect_match;
+                        const notes = notesDraft[exception.id] || '';
+
+                        if (exception.resolved) return null;
+
+                        if (!userCanResolveThis) {
+                          const lockedForTier = notesRequired && canEditPerfectMatch && !canApprove;
+                          return (
+                            <span
+                              className="flex items-center gap-1 text-xs text-gray-400 shrink-0"
+                              title={
+                                lockedForTier
+                                  ? 'This exception has an amount mismatch — only a director can resolve it'
+                                  : 'Only directors or branch managers can resolve reconciliation exceptions'
+                              }
+                            >
+                              <Lock className="w-3.5 h-3.5" />
+                              {lockedForTier ? 'Director required' : 'View only'}
+                            </span>
+                          );
+                        }
+
+                        return (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <input
+                              type="text"
+                              placeholder={
+                                notesRequired ? 'Resolution notes (required)' : 'Resolution notes (optional)'
+                              }
+                              value={notes}
+                              onChange={(e) =>
+                                setNotesDraft({ ...notesDraft, [exception.id]: e.target.value })
+                              }
+                              className="w-48 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            />
+                            <button
+                              onClick={() => handleResolve(exception)}
+                              disabled={
+                                resolvingId === exception.id || (notesRequired && !notes.trim())
+                              }
+                              title={
+                                notesRequired && !notes.trim()
+                                  ? 'Resolution notes are required for an amount mismatch'
+                                  : undefined
+                              }
+                              className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+                            >
+                              {resolvingId === exception.id ? 'Resolving…' : 'Resolve'}
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </li>
                 ))}

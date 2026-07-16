@@ -14,7 +14,7 @@ from decimal import Decimal
 import logging
 
 from common.views import ScopedModelViewSet
-from common.approval_permissions import IsApprover, can_user_approve
+from common.approval_permissions import IsApprover, can_user_approve, can_user_edit
 from .models import Bank, BankAccount, BankTransfer, BankPayment
 from .serializers import (
     BankSerializer,
@@ -1360,13 +1360,21 @@ class ResolveExceptionView(APIView):
     """
     PATCH /api/banks/reconciliations/<recon_pk>/exceptions/<exc_pk>/resolve/
 
-    Only directors may resolve a reconciliation exception — branch managers
-    and credit officers handle the cash/loan repayments being reconciled
-    here, so they're exactly who this control exists to check; only a
-    director is trusted to close one out. Everyone with visibility into the
-    reconciliation can still see the exception, just not resolve it.
+    Resolution authority is tiered by amount match, not a flat director-only
+    gate:
+      - Perfect match (bank_amount == erp_amount exactly): a branch manager
+        (can_edit on this page) or a director (can_approve) may resolve it.
+      - Any amount mismatch — including bank_only/erp_only exceptions, which
+        have no counterpart amount at all — requires director approval
+        (can_approve), and resolution_notes is mandatory so there's a paper
+        trail explaining the discrepancy. There is no upper bound on the
+        mismatch a director may resolve; the tolerance only controls whether
+        notes are required, not whether resolution is blocked.
+    Everyone with visibility into the reconciliation can still see the
+    exception, just not necessarily resolve it.
+
     Request body:
-      resolution_notes  (optional str)
+      resolution_notes  (str; required unless the exception is a perfect match)
     """
     permission_classes = [permissions.IsAuthenticated]
     permission_module = 'banks'
@@ -1374,22 +1382,37 @@ class ResolveExceptionView(APIView):
 
     def patch(self, request, recon_pk, exc_pk):
         recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=recon_pk)
-
-        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
-            return Response(
-                {'detail': 'Only directors may resolve reconciliation exceptions.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
         exc_obj = get_object_or_404(ReconciliationException, pk=exc_pk, reconciliation=recon)
 
         if exc_obj.resolved:
             return Response({'detail': 'Exception is already resolved.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        is_director = can_user_approve(request.user, module=self.permission_module, page=self.permission_page)
+        if exc_obj.is_perfect_match:
+            allowed = is_director or can_user_edit(
+                request.user, module=self.permission_module, page=self.permission_page
+            )
+        else:
+            allowed = is_director
+
+        if not allowed:
+            return Response(
+                {'detail': 'Only directors may resolve reconciliation exceptions with an amount '
+                           'mismatch. Perfect matches may be resolved by a branch manager.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        resolution_notes = request.data.get('resolution_notes', '')
+        if not exc_obj.is_perfect_match and not resolution_notes.strip():
+            return Response(
+                {'detail': 'resolution_notes is required to resolve an exception with an amount mismatch.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         exc_obj.resolved         = True
         exc_obj.resolved_by      = request.user
         exc_obj.resolved_at      = tz.now()
-        exc_obj.resolution_notes = request.data.get('resolution_notes', '')
+        exc_obj.resolution_notes = resolution_notes
         exc_obj.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes'])
 
         serializer = ReconciliationExceptionSerializer(exc_obj)
