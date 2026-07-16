@@ -115,6 +115,7 @@ export interface PageThreadConfig {
 
 export interface CreateThreadPayload {
   page: number;
+  title?: string;
   content_type?: number;
   object_id?: number;
   reason?: ThreadReason | '';

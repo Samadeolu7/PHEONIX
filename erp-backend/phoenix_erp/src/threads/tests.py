@@ -124,3 +124,43 @@ class ThreadListObjectIdFilterTests(TestCase):
         results = resp.data['results']
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['object_id'], 947)
+
+
+class ThreadTitleTests(TestCase):
+    """
+    Every thread on a shared list page used to come back with the SAME
+    generic title (the page's own title, e.g. "Client List") since nothing
+    let the creator name it — making the thread switcher useless for
+    telling multiple discussions on the same page apart. title is now
+    creatable; leaving it blank preserves the old page-title fallback
+    (Thread.save() in models.py).
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Title Test Org', slug='title-test-org')
+        self.user = User.objects.create_user(username='title_user', password='test123', tenant=self.tenant)
+
+        self.module = Module.objects.create(code='clients', name='Clients', icon='users')
+        self.page = ModulePage.objects.create(
+            module=self.module, code='clients', title='Client List',
+            page_type='list', is_threadable=True, url_path='/clients/clients/',
+        )
+
+    def test_explicit_title_is_saved(self):
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.post(
+            '/api/threads/threads/',
+            {'page': self.page.id, 'object_id': 947, 'title': 'Inactive clients follow-up'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['title'], 'Inactive clients follow-up')
+
+    def test_blank_title_falls_back_to_page_title(self):
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.post(
+            '/api/threads/threads/', {'page': self.page.id, 'object_id': 947}, format='json',
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['title'], 'Client List')

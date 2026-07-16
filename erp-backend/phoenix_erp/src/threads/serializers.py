@@ -202,4 +202,12 @@ class ThreadCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Thread
-        fields = ['page', 'content_type', 'object_id', 'reason', 'participant_ids']
+        fields = ['title', 'page', 'content_type', 'object_id', 'reason', 'participant_ids']
+        extra_kwargs = {
+            # Left blank, Thread.save() falls back to the page's title (see
+            # models.py) — same behavior as before this field was exposed
+            # here. A real name is what lets someone tell threads on the
+            # same page apart in the switcher instead of every one showing
+            # the same generic page title.
+            'title': {'required': False, 'max_length': 300},
+        }

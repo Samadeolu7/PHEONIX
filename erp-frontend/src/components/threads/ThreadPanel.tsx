@@ -27,6 +27,7 @@ import type {
 } from '../../types/threads';
 
 const POLL_INTERVAL_MS = 8000;
+const THREAD_LIST_POLL_MS = 15000;
 
 const REASON_LABELS: Record<ThreadReason, string> = {
   query: 'Query',
@@ -35,6 +36,16 @@ const REASON_LABELS: Record<ThreadReason, string> = {
   note: 'Note',
   other: 'Other',
 };
+
+function timeAgo(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
 
 export const ThreadPanel: React.FC = () => {
   const {
@@ -71,6 +82,7 @@ export const ThreadPanel: React.FC = () => {
 
   // Create thread flow
   const [creating, setCreating] = useState(false);
+  const [createTitle, setCreateTitle] = useState('');
   const [createReason, setCreateReason] = useState<ThreadReason | ''>('');
   const [createParticipants, setCreateParticipants] = useState<{ id: number; full_name: string }[]>(
     []
@@ -115,14 +127,45 @@ export const ThreadPanel: React.FC = () => {
       })
       .then(list => {
         setThreads(list);
-        // Auto-select the first open thread, or the explicitly requested one
-        const target = activeTarget.threadId
-          ? list.find(t => t.id === activeTarget.threadId)
-          : list.find(t => t.status === 'open');
-        if (target) setSelectedThreadId(target.id);
+        // Only auto-jump into a specific thread when one was explicitly
+        // requested (e.g. clicked from a notification/widget). Otherwise
+        // land on the discussion list — every thread on a shared page used
+        // to look the same (generic page title, no name), so silently
+        // auto-selecting "the first open one" just meant landing in an
+        // unlabelled conversation with no way to tell if it was the right
+        // one. Naming threads (see the create form) only helps if picking
+        // one is a deliberate step.
+        if (activeTarget.threadId) {
+          const target = list.find(t => t.id === activeTarget.threadId);
+          if (target) setSelectedThreadId(target.id);
+        }
       })
       .catch(() => {});
   }, [activeTarget]);
+
+  // ── Keep the thread list itself fresh while the panel stays open ─────────
+  // Messages within an already-selected thread already poll (see below) —
+  // but a thread someone ELSE started while this page was already open had
+  // no way to surface at all until the whole panel target changed (closing
+  // and reopening, or navigating away and back). This merges in anything
+  // new without disturbing the currently selected thread.
+  useEffect(() => {
+    if (!activeTarget || panelState === 'hidden') return;
+
+    const timer = setInterval(async () => {
+      try {
+        const list = await threadService.list({
+          page_id: activeTarget.pageId,
+          ...(activeTarget.objectId ? { object_id: activeTarget.objectId } : {}),
+        });
+        setThreads(list);
+      } catch {
+        // silent — next tick retries
+      }
+    }, THREAD_LIST_POLL_MS);
+
+    return () => clearInterval(timer);
+  }, [activeTarget, panelState]);
 
   // ── Load messages when selected thread changes ─────────────────────────────
   useEffect(() => {
@@ -232,6 +275,7 @@ export const ThreadPanel: React.FC = () => {
     try {
       const thread = await threadService.create({
         page: activeTarget.pageId,
+        title: createTitle.trim() || undefined,
         content_type: activeTarget.contentTypeId,
         object_id: activeTarget.objectId,
         reason: createReason || undefined,
@@ -240,13 +284,14 @@ export const ThreadPanel: React.FC = () => {
       setThreads(prev => [thread, ...prev]);
       setSelectedThreadId(thread.id);
       setCreating(false);
+      setCreateTitle('');
       setCreateReason('');
       setCreateParticipants([]);
       setCreateSearch('');
     } catch (e: any) {
       setCreateError(e?.response?.data?.detail ?? e?.message ?? 'Failed to create thread.');
     }
-  }, [activeTarget, createReason, createParticipants]);
+  }, [activeTarget, createTitle, createReason, createParticipants]);
 
   // ── Close / Reopen thread ─────────────────────────────────────────────────
   const handleClose = useCallback(async () => {
@@ -383,14 +428,15 @@ export const ThreadPanel: React.FC = () => {
               <button
                 key={t.id}
                 onClick={() => setSelectedThreadId(t.id)}
+                title={t.title || undefined}
                 className={cn(
-                  'flex-shrink-0 text-xs px-3 py-1 rounded-full border transition-colors',
+                  'flex-shrink-0 max-w-[160px] truncate text-xs px-3 py-1 rounded-full border transition-colors',
                   selectedThreadId === t.id
                     ? 'bg-[#0a1857] text-white border-[#0a1857]'
                     : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
                 )}
               >
-                {t.reason ? REASON_LABELS[t.reason as ThreadReason] : `Thread ${t.id}`}
+                {t.title || (t.reason ? REASON_LABELS[t.reason as ThreadReason] : `Thread ${t.id}`)}
                 {t.unread_count > 0 && (
                   <span className="ml-1 bg-red-500 text-white text-[9px] px-1 rounded-full">
                     {t.unread_count}
@@ -557,10 +603,74 @@ export const ThreadPanel: React.FC = () => {
             </div>
           )}
 
+          {/* ── Choose a discussion — the deliberate landing step after
+              clicking Discuss, instead of silently guessing which open
+              thread to drop someone into. Named threads (see the create
+              form) are what make picking the right one possible. ── */}
+          {!creating && !selectedThread && threads.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-gray-500">
+                {threads.length} discussion{threads.length === 1 ? '' : 's'} on this record
+              </p>
+              {threads.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setSelectedThreadId(t.id)}
+                  className="w-full text-left px-3 py-2.5 border border-gray-200 rounded-lg hover:border-[#0a1857]/40 hover:bg-gray-50 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-gray-900 truncate">
+                      {t.title || (t.reason ? REASON_LABELS[t.reason as ThreadReason] : `Thread ${t.id}`)}
+                    </span>
+                    {t.unread_count > 0 && (
+                      <span className="flex-shrink-0 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                        {t.unread_count}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {t.status === 'closed' ? (
+                      <span className="flex items-center gap-0.5 text-[10px] text-gray-400">
+                        <Lock className="w-2.5 h-2.5" /> Closed
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-0.5 text-[10px] text-green-600">
+                        <Unlock className="w-2.5 h-2.5" /> Open
+                      </span>
+                    )}
+                    <span className="text-[11px] text-gray-400">
+                      {(t.participants ?? []).length} participant{(t.participants ?? []).length === 1 ? '' : 's'}
+                    </span>
+                    <span className="text-[11px] text-gray-400">· {timeAgo(t.updated_at)}</span>
+                  </div>
+                  {t.last_message && (
+                    <p className="text-xs text-gray-500 mt-1 truncate">
+                      {t.last_message.author_name}: {t.last_message.body}
+                    </p>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Create new thread form */}
           {creating && (
             <div className="space-y-3">
               <p className="text-sm font-medium text-gray-700">New discussion</p>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Name this discussion</p>
+                <input
+                  type="text"
+                  value={createTitle}
+                  onChange={e => setCreateTitle(e.target.value)}
+                  placeholder="e.g. Inactive clients follow-up"
+                  maxLength={300}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0a1857]"
+                />
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  Helps tell this discussion apart from others on the same record — shown in the switcher above.
+                </p>
+              </div>
               <select
                 value={createReason}
                 onChange={e => setCreateReason(e.target.value as ThreadReason | '')}
@@ -644,6 +754,7 @@ export const ThreadPanel: React.FC = () => {
                 <button
                   onClick={() => {
                     setCreating(false);
+                    setCreateTitle('');
                     setCreateSearch('');
                     setCreateSearchResults([]);
                     setCreateParticipants([]);
@@ -659,6 +770,14 @@ export const ThreadPanel: React.FC = () => {
           {/* Messages */}
           {!creating && selectedThread && (
             <>
+              {threads.length > 1 && (
+                <button
+                  onClick={() => setSelectedThreadId(null)}
+                  className="text-xs text-gray-400 hover:text-[#0a1857] mb-2 flex items-center gap-1"
+                >
+                  ← All discussions
+                </button>
+              )}
               {loadingMsgs && (
                 <div className="flex justify-center py-4">
                   <div className="w-4 h-4 border-2 border-[#0a1857] border-t-transparent rounded-full animate-spin" />

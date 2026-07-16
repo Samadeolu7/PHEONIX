@@ -788,10 +788,15 @@ class CashTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             amount=self.amount
         )
         
+        # Post journal entry (sets Transaction.approved=True, updates GL account
+        # balances, and makes the entries visible to bank reconciliation's
+        # fetch_erp_payments(), which only considers approved transactions)
+        journal_entry.post()
+
         # Update cashier balance
         self.cashier_account.current_balance -= self.amount
         self.cashier_account.save(update_fields=['current_balance'])
-        
+
         self.journal_entry = journal_entry
         self.status = 'posted'
         self.posted_at = timezone.now()
