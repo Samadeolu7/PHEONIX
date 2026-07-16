@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
+import { journalVoucherService, JournalVoucher } from '../services/journalVoucherService';
 
 interface TransactionDetail {
   id: number;
@@ -51,6 +52,7 @@ interface Account {
 
 const AccountLedgerPage: React.FC = () => {
   const { accountId } = useParams<{ accountId: string }>();
+  const navigate = useNavigate();
   const [account, setAccount] = useState<Account | null>(null);
   const [transactions, setTransactions] = useState<LedgerEntry[]>([]);
   const [summary, setSummary] = useState<LedgerSummary | null>(null);
@@ -59,6 +61,38 @@ const AccountLedgerPage: React.FC = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [selectedEntry, setSelectedEntry] = useState<LedgerEntry | null>(null);
+  const [txnDetail, setTxnDetail] = useState<JournalVoucher | null>(null);
+  const [txnDetailLoading, setTxnDetailLoading] = useState(false);
+
+  useEffect(() => {
+    const txnId = selectedEntry?.transaction?.id ?? selectedEntry?.id;
+    if (!txnId) {
+      setTxnDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setTxnDetailLoading(true);
+    setTxnDetail(null);
+    journalVoucherService
+      .getJournalVoucher(txnId)
+      .then(data => {
+        if (!cancelled) setTxnDetail(data);
+      })
+      .catch(() => {
+        if (!cancelled) setTxnDetail(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTxnDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEntry]);
+
+  const goToAccountLedger = (targetAccountId: number) => {
+    setSelectedEntry(null);
+    navigate(`/accounts/${targetAccountId}/ledger`);
+  };
 
   useEffect(() => {
     if (accountId) {
@@ -957,6 +991,99 @@ const AccountLedgerPage: React.FC = () => {
                     {formatCurrency(selectedEntry.balance)}
                   </div>
                 </div>
+              </div>
+
+              {/* Debit / Credit legs of this transaction, each linking to its own ledger */}
+              <div style={{ marginTop: '16px' }}>
+                <div
+                  style={{
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: '#6b7280',
+                    textTransform: 'uppercase',
+                    marginBottom: '8px',
+                  }}
+                >
+                  Transaction Entries
+                </div>
+                {txnDetailLoading ? (
+                  <div style={{ padding: '12px 0', fontSize: '13px', color: '#9ca3af' }}>
+                    Loading entries…
+                  </div>
+                ) : txnDetail && txnDetail.entries.length > 0 ? (
+                  <div
+                    style={{
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '8px',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {txnDetail.entries.map(entry => {
+                      const isCurrentAccount = String(entry.account.id) === accountId;
+                      return (
+                        <button
+                          key={entry.id}
+                          onClick={() => !isCurrentAccount && goToAccountLedger(entry.account.id)}
+                          disabled={isCurrentAccount}
+                          style={{
+                            width: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '10px 12px',
+                            border: 'none',
+                            borderBottom: '1px solid #f3f4f6',
+                            background: isCurrentAccount ? '#f9fafb' : 'white',
+                            cursor: isCurrentAccount ? 'default' : 'pointer',
+                            textAlign: 'left',
+                          }}
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span
+                              style={{
+                                padding: '2px 8px',
+                                borderRadius: '9999px',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                background: entry.side === 'DR' ? '#dbeafe' : '#fce7f3',
+                                color: entry.side === 'DR' ? '#1e40af' : '#9d174d',
+                              }}
+                            >
+                              {entry.side}
+                            </span>
+                            <span style={{ fontSize: '13px', color: '#6b7280', fontFamily: 'monospace' }}>
+                              {entry.account.code}
+                            </span>
+                            <span
+                              style={{
+                                fontSize: '13px',
+                                color: isCurrentAccount ? '#9ca3af' : '#2563eb',
+                                fontWeight: 500,
+                              }}
+                            >
+                              {entry.account.name}
+                              {isCurrentAccount && ' (this ledger)'}
+                            </span>
+                          </span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#111827' }}>
+                              {formatCurrency(Number(entry.amount))}
+                            </span>
+                            {!isCurrentAccount && (
+                              <span style={{ fontSize: '12px', color: '#2563eb', fontWeight: 500 }}>
+                                View Ledger →
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ padding: '12px 0', fontSize: '13px', color: '#9ca3af' }}>
+                    Unable to load the other entries for this transaction.
+                  </div>
+                )}
               </div>
 
               {selectedEntry.transaction?.total_amount != null && (
