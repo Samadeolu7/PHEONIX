@@ -204,23 +204,26 @@ export const ThreadPanel: React.FC = () => {
   };
 
   // ── User search for participant picker ───────────────────────────────────
+  // A blank q lists branch staff (see threadService.searchUsers) — typing
+  // narrows it, but the list shows immediately on open with no typing
+  // required (loaded via the effects below when each picker opens).
   const searchParticipantUsers = useCallback(async (q: string) => {
-    if (q.length < 2) {
-      setParticipantSuggestions([]);
-      return;
-    }
     const results = await threadService.searchUsers(q).catch(() => []);
     setParticipantSuggestions(results);
   }, []);
 
   const searchCreateUsers = useCallback(async (q: string) => {
-    if (q.length < 2) {
-      setCreateSearchResults([]);
-      return;
-    }
     const results = await threadService.searchUsers(q).catch(() => []);
     setCreateSearchResults(results);
   }, []);
+
+  useEffect(() => {
+    if (showParticipantManager) searchParticipantUsers('');
+  }, [showParticipantManager, searchParticipantUsers]);
+
+  useEffect(() => {
+    if (creating) searchCreateUsers('');
+  }, [creating, searchCreateUsers]);
 
   // ── Create new thread ─────────────────────────────────────────────────────
   const handleCreateThread = useCallback(async () => {
@@ -274,15 +277,14 @@ export const ThreadPanel: React.FC = () => {
   // ── Minimised tab ─────────────────────────────────────────────────────────
   if (panelState === 'minimised') {
     // Count unread from live message list (updated by background poll)
+    const myLastRead = (selectedThread?.participants ?? []).find(p => p.user === user?.id)
+      ?.last_read_at;
     const unreadCount =
       messages.filter(
         msg =>
           !msg.is_system_message &&
           selectedThread &&
-          (selectedThread.participants.find(p => p.user === user?.id)?.last_read_at
-            ? new Date(msg.created_at) >
-              new Date(selectedThread.participants.find(p => p.user === user?.id)!.last_read_at!)
-            : true)
+          (myLastRead ? new Date(msg.created_at) > new Date(myLastRead) : true)
       ).length ||
       selectedThread?.unread_count ||
       0;
@@ -412,7 +414,7 @@ export const ThreadPanel: React.FC = () => {
           <div className="flex items-center gap-1 px-4 py-2 border-b border-gray-100 bg-gray-50">
             <Users className="w-3 h-3 text-gray-400 flex-shrink-0" />
             <div className="flex -space-x-1.5 overflow-hidden">
-              {selectedThread.participants.slice(0, 6).map(p => (
+              {(selectedThread.participants ?? []).slice(0, 6).map(p => (
                 <div
                   key={p.id}
                   title={p.user_info.full_name}
@@ -421,9 +423,9 @@ export const ThreadPanel: React.FC = () => {
                   {p.user_info.full_name.charAt(0).toUpperCase()}
                 </div>
               ))}
-              {selectedThread.participants.length > 6 && (
+              {(selectedThread.participants ?? []).length > 6 && (
                 <div className="w-6 h-6 rounded-full bg-gray-300 text-gray-600 text-[9px] font-bold flex items-center justify-center border border-white">
-                  +{selectedThread.participants.length - 6}
+                  +{(selectedThread.participants ?? []).length - 6}
                 </div>
               )}
             </div>
@@ -452,7 +454,7 @@ export const ThreadPanel: React.FC = () => {
           <div className="border-b border-gray-100 px-4 py-3 bg-gray-50 space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-gray-700">
-                Participants ({selectedThread.participants.length})
+                Participants ({(selectedThread.participants ?? []).length})
               </p>
               <button
                 onClick={() => setShowParticipantManager(false)}
@@ -462,7 +464,7 @@ export const ThreadPanel: React.FC = () => {
               </button>
             </div>
             <ul className="space-y-1 max-h-32 overflow-y-auto">
-              {selectedThread.participants.map(p => (
+              {(selectedThread.participants ?? []).map(p => (
                 <li key={p.id} className="flex items-center justify-between text-xs text-gray-600">
                   <span>{p.user_info.full_name}</span>
                   <button
@@ -472,7 +474,7 @@ export const ThreadPanel: React.FC = () => {
                         setThreads(prev =>
                           prev.map(t =>
                             t.id === selectedThread.id
-                              ? { ...t, participants: t.participants.filter(x => x.id !== p.id) }
+                              ? { ...t, participants: (t.participants ?? []).filter(x => x.id !== p.id) }
                               : t
                           )
                         );
@@ -515,7 +517,7 @@ export const ThreadPanel: React.FC = () => {
                             setThreads(prev =>
                               prev.map(t =>
                                 t.id === selectedThread.id
-                                  ? { ...t, participants: [...t.participants, p] }
+                                  ? { ...t, participants: [...(t.participants ?? []), p] }
                                   : t
                               )
                             );

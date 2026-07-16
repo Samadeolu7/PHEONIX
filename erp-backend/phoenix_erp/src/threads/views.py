@@ -60,6 +60,21 @@ class ThreadViewSet(ScopedModelViewSet):
             return ThreadUpdateSerializer
         return ThreadSerializer
 
+    def create(self, request, *args, **kwargs):
+        # ThreadCreateSerializer (used to validate the request) has no
+        # `participants` field at all — write_only participant_ids only.
+        # Returning its own .data left the frontend with participants
+        # undefined on a just-created thread, crashing the panel's
+        # avatar strip (selectedThread.participants.slice(...)). Re-serialize
+        # the saved instance with the full ThreadSerializer instead, matching
+        # what list()/retrieve() already return.
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        output = ThreadSerializer(serializer.instance, context=self.get_serializer_context())
+        headers = self.get_success_headers(output.data)
+        return Response(output.data, status=status.HTTP_201_CREATED, headers=headers)
+
     def perform_update(self, serializer):
         """Only the initiator or a Director can edit thread metadata."""
         thread = self.get_object()

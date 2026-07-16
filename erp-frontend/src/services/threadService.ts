@@ -117,10 +117,14 @@ export const threadService = {
 
   // ── User search (for participant picker) ───────────────────────────────────
 
-  async searchUsers(q: string): Promise<{ id: number; username: string; full_name: string }[]> {
-    if (!q || q.length < 2) return [];
-    const res = await api.get('/users/staff-users/search/', { params: { q } });
-    if (Array.isArray(res.data)) return res.data;
-    return [];
+  async searchUsers(q?: string): Promise<{ id: number; username: string; full_name: string }[]> {
+    // A blank/short q is intentional here (not an early-return case like it
+    // used to be) — the backend treats it as "list staff in my branch"
+    // rather than a search, so the picker has something to show before the
+    // user types anything.
+    const res = await api.get('/users/staff-users/search/', { params: q ? { q } : {} });
+    // The endpoint returns a bare array, not {data: [...]} — api.get()
+    // already returns the parsed body directly, so `res` IS that array.
+    return Array.isArray(res) ? res : [];
   },
 };

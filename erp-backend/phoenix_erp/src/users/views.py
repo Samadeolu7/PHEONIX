@@ -127,6 +127,18 @@ class StaffUserViewSet(ScopedModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_permissions(self):
+        # `search` is a lightweight lookup for the discussion-thread
+        # participant picker — any authenticated staff member needs to be
+        # able to find a colleague to tag, not just users with the
+        # staff-users module/page permission (an HR-ish permission that
+        # gates full staff record access, not who's allowed to start a
+        # thread). Every other action keeps the normal HasActionPermission
+        # gate from ScopedModelViewSet.get_permissions().
+        if self.action == 'search':
+            return [permissions.IsAuthenticated()]
+        return super().get_permissions()
+
     def get_queryset(self):
         """Filter users by tenant and apply permissions"""
         qs = super().get_queryset()
@@ -257,18 +269,37 @@ class StaffUserViewSet(ScopedModelViewSet):
     def search(self, request):
         """
         GET /api/users/staff-users/search/?q=<name_or_username>
-        Lightweight user search for participant pickers. Returns id, username, full_name.
-        Scoped to the current tenant; maximum 20 results.
+        Lightweight user list/search for participant pickers. Returns id,
+        username, full_name.
+
+        With no q (or under 2 chars): lists staff so a picker has something
+        useful to show immediately, with no typing required. Branch-scoped —
+        a director/global-scope user sees their currently selected branch
+        (X-Branch-ID header, same convention as analytics/views.py), or
+        every branch tenant-wide when viewing "all branches" (no header);
+        everyone else is pinned to their own branch. Capped at 50.
+
+        With q: unrestricted full-tenant text search (a discussion can be
+        inter-branch — e.g. a director pulling in someone from another
+        branch by name — so typing a name intentionally searches wider than
+        the default branch-scoped list). Capped at 20.
         """
         q = request.query_params.get('q', '').strip()
-        if not q or len(q) < 2:
-            return Response([])
         tenant = getattr(request.user, 'tenant', None)
-        qs = User.objects.filter(tenant=tenant, is_active=True).filter(
-            Q(username__icontains=q) |
-            Q(first_name__icontains=q) |
-            Q(last_name__icontains=q)
-        ).values('id', 'username', 'first_name', 'last_name')[:20]
+        qs = User.objects.filter(tenant=tenant, is_active=True)
+
+        if not q or len(q) < 2:
+            branch = self._resolve_search_branch(request)
+            if branch is not None:
+                qs = qs.filter(branch=branch)
+            qs = qs.values('id', 'username', 'first_name', 'last_name')[:50]
+        else:
+            qs = qs.filter(
+                Q(username__icontains=q) |
+                Q(first_name__icontains=q) |
+                Q(last_name__icontains=q)
+            ).values('id', 'username', 'first_name', 'last_name')[:20]
+
         results = [
             {
                 'id': u['id'],
@@ -278,6 +309,35 @@ class StaffUserViewSet(ScopedModelViewSet):
             for u in qs
         ]
         return Response(results)
+
+    @staticmethod
+    def _resolve_search_branch(request):
+        """
+        Returns the Branch to filter the staff list to, or None for "no
+        filter" (tenant-wide) — which happens either because the user is
+        elevated and has "All Branches" selected (no X-Branch-ID header), or
+        because a non-elevated user has no branch assigned at all.
+        """
+        user = request.user
+        is_global = getattr(user, 'is_system_admin', False)
+        if not is_global and callable(getattr(user, 'is_owner', None)):
+            is_global = user.is_owner()
+        if not is_global:
+            try:
+                is_global = user.roles.filter(is_active=True, default_scope='global').exists()
+            except Exception:
+                is_global = False
+
+        if not is_global:
+            return getattr(user, 'branch', None)
+
+        header_val = request.META.get('HTTP_X_BRANCH_ID', '').strip()
+        if not header_val:
+            return None  # "All Branches" view — tenant-wide, no filter
+
+        from branches.models import Branch
+        tenant = getattr(user, 'tenant', None)
+        return Branch.objects.filter(pk=header_val, is_deleted=False, tenant=tenant).first()
 
     @action(detail=False, methods=['get'])
     def statistics(self, request):
