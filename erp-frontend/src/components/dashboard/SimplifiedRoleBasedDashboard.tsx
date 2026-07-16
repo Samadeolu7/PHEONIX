@@ -1488,17 +1488,23 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
               ))}
             </div>
 
-            {/* Repayment rate */}
+            {/* Portfolio at risk (PAR30) — replaces the old "repayment rate"
+                figure, which was a lifetime paid/(paid+outstanding) ratio
+                that read as a delinquency signal but wasn't one (a young,
+                fast-growing book scores low there regardless of collection
+                performance). PAR30 — balance of loans ≥30 days in arrears
+                over gross loan portfolio — is the standard risk metric and
+                was already computed server-side but not surfaced here. */}
             <div>
               <div className="flex justify-between items-baseline mb-2">
                 <span
                   className="text-xs font-bold uppercase tracking-wide"
                   style={{ color: 'rgba(255,255,255,0.45)' }}
                 >
-                  Loan Repayment Rate
+                  Portfolio at Risk (30d)
                 </span>
-                <span className="text-2xl font-black" style={{ color: BRAND.colors.gold }}>
-                  {formatPercent(liveStats.loan_repayment_rate)}
+                <span className="text-2xl font-black" style={{ color: '#f87171' }}>
+                  {formatPercent(liveStats.par30_ratio ?? 0)}
                 </span>
               </div>
               <div
@@ -1508,11 +1514,16 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
                 <div
                   className="h-3 rounded-full transition-all duration-700"
                   style={{
-                    width: `${Math.min(liveStats.loan_repayment_rate, 100)}%`,
-                    background: `linear-gradient(90deg, ${BRAND.colors.gold}, ${BRAND.colors.goldDark})`,
+                    width: `${Math.min(liveStats.par30_ratio ?? 0, 100)}%`,
+                    background: 'linear-gradient(90deg, #f87171, #dc2626)',
                   }}
                 />
               </div>
+              {liveStats.par30_amount && (
+                <p className="text-xs mt-1.5" style={{ color: 'rgba(255,255,255,0.40)' }}>
+                  {formatNaira(liveStats.par30_amount)} at risk
+                </p>
+              )}
             </div>
 
             {/* Overdue callout */}
