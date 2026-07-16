@@ -14,6 +14,7 @@ import {
   useRejectBankTransfer,
 } from '../../hooks/useBanks';
 import type { BankTransfer, TransferFilters } from '../../types/banks';
+import TransactionEntriesModal from '../../components/ledger/TransactionEntriesModal';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,7 @@ const BankTransferListPage: React.FC = () => {
   });
   const [rejectReason, setRejectReason] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [entriesModalTxnId, setEntriesModalTxnId] = useState<number | null>(null);
 
   // Build filters for the query
   const filters: TransferFilters = {
@@ -432,12 +434,17 @@ const BankTransferListPage: React.FC = () => {
                           </>
                         )}
 
-                        {/* Completed / approved — view GL reference */}
+                        {/* Completed / approved — view GL entries (both legs, linked to their ledgers) */}
                         {(transfer.status === 'completed' || transfer.status === 'approved') &&
+                          transfer.journal_entry &&
                           transfer.journal_entry_reference && (
-                            <span className="text-xs text-gray-400">
+                            <button
+                              onClick={() => setEntriesModalTxnId(transfer.journal_entry!)}
+                              className="text-xs text-blue-600 hover:underline font-mono"
+                              title="View debit/credit entries"
+                            >
                               GL: {transfer.journal_entry_reference}
-                            </span>
+                            </button>
                           )}
                       </div>
                     </td>
@@ -497,6 +504,14 @@ const BankTransferListPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* GL Entries Modal */}
+      {entriesModalTxnId != null && (
+        <TransactionEntriesModal
+          transactionId={entriesModalTxnId}
+          onClose={() => setEntriesModalTxnId(null)}
+        />
       )}
     </div>
   );

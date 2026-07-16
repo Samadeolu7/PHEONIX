@@ -299,6 +299,7 @@ class BankTransferSerializer(TenantModelSerializer):
     completed_by_name = serializers.SerializerMethodField()
     can_approve = serializers.SerializerMethodField()
     can_second_approve = serializers.SerializerMethodField()
+    journal_entry_reference = serializers.SerializerMethodField()
 
     # Status display
     status_display = serializers.CharField(source='get_status_display', read_only=True)
@@ -317,7 +318,7 @@ class BankTransferSerializer(TenantModelSerializer):
             'second_approved_by', 'second_approved_by_name', 'second_approved_at', 'second_approval_notes',
             'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',
             'completed_by', 'completed_by_name', 'completed_at',
-            'journal_entry', 'attachment',
+            'journal_entry', 'journal_entry_reference', 'attachment',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
