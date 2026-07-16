@@ -52,6 +52,28 @@ class ModulePageViewSetCatalogVisibilityTests(TestCase):
         codes = {row['code'] for row in results}
         self.assertIn('1130_transaction', codes)
 
+    def test_by_code_resolves_page_id(self):
+        self.client.force_authenticate(user=self.staff_user)
+        resp = self.client.get(
+            '/api/pages/module-pages/by-code/',
+            {'module': 'accounts', 'page': '1130_transaction'},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['data']['id'], self.page.id)
+
+    def test_by_code_404_for_unknown_page(self):
+        self.client.force_authenticate(user=self.staff_user)
+        resp = self.client.get(
+            '/api/pages/module-pages/by-code/',
+            {'module': 'accounts', 'page': 'nonexistent'},
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_by_code_requires_both_params(self):
+        self.client.force_authenticate(user=self.staff_user)
+        resp = self.client.get('/api/pages/module-pages/by-code/', {'module': 'accounts'})
+        self.assertEqual(resp.status_code, 400)
+
     def test_thread_config_get_returns_current_state(self):
         self.client.force_authenticate(user=self.staff_user)
         resp = self.client.get(f'/api/pages/module-pages/{self.page.id}/thread-config/')

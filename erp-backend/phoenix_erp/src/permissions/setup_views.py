@@ -5,10 +5,10 @@ Bulk permission-setup API used by the PermissionsSetupPage in the frontend.
 
 Design
 ──────
-• Module / ModulePage records are created as global (tenant=None, branch=None)
-  system records so that the globally-unique url_path constraint on ModulePage
-  is never violated across tenants.  RolePermissionPolicy is tenant-scoped via
-  the role FK (Role.tenant).
+• Module / ModulePage records are created as tenant-scoped (branch=None) catalog
+  records.  Migration 0005_backfill_module_page_tenant stamped all pre-existing
+  rows with the real tenant; new records follow suit.  RolePermissionPolicy is
+  tenant-scoped via the role FK (Role.tenant).
 
 • Syncing is idempotent: running it twice is safe.
 
@@ -76,8 +76,7 @@ class PermissionSetupSyncView(APIView):
     POST /api/permissions/setup/sync/
 
     Accepts the frontend PERMISSION_REGISTRY and ensures Module / ModulePage
-    DB records exist for every entry.  These records are global (not
-    tenant-scoped) so that ModulePage.url_path uniqueness is never violated.
+    DB records exist for every entry, scoped to the requesting user's tenant.
     """
 
     def post(self, request: Request):
@@ -95,17 +94,25 @@ class PermissionSetupSyncView(APIView):
         created_modules = 0
         created_pages = 0
 
+        # Migration 0005_backfill_module_page_tenant stamped all existing Module /
+        # ModulePage rows with the real tenant (previously they were tenant=None).
+        # New records must also use the real tenant so lookups stay consistent.
+        user_tenant = getattr(request.user, 'tenant', None)
+
         with db_tx.atomic():
             for idx, mod_data in enumerate(modules_data):
                 code = (mod_data.get('code') or '').strip()
                 if not code:
                     continue
 
-                # Get-or-create a global Module record.
-                # .all_tenants() bypasses OwnerBranchManager's automatic
-                # tenant=<current tenant> filter — without it, this lookup
-                # would AND that in on top of tenant=None and never match.
-                module_obj = Module.objects.all_tenants().filter(code=code, branch=None, tenant=None).first()
+                # Get-or-create the Module record.
+                # .all_tenants() bypasses OwnerBranchManager's automatic tenant
+                # filter.  Prefer the tenant-stamped row; fall back to any NULL-
+                # tenant row that predates the backfill migration.
+                module_obj = (
+                    Module.objects.all_tenants().filter(code=code, branch=None, tenant=user_tenant).first()
+                    or Module.objects.all_tenants().filter(code=code, branch=None, tenant__isnull=True).first()
+                )
                 if not module_obj:
                     try:
                         with db_tx.atomic():
@@ -117,13 +124,16 @@ class PermissionSetupSyncView(APIView):
                                 description=mod_data.get('description', ''),
                                 order=idx,
                                 is_active=True,
-                                tenant=None,
+                                tenant=user_tenant,
                                 branch=None,
                             )
                         created_modules += 1
                     except IntegrityError:
                         # Savepoint above rolled back; the outer transaction is still usable.
-                        module_obj = Module.objects.all_tenants().filter(code=code, branch=None, tenant=None).first()
+                        module_obj = (
+                            Module.objects.all_tenants().filter(code=code, branch=None, tenant=user_tenant).first()
+                            or Module.objects.all_tenants().filter(code=code, branch=None, tenant__isnull=True).first()
+                        )
                         if not module_obj:
                             logger.warning('Could not create or find Module code=%s', code)
                             continue
@@ -158,7 +168,7 @@ class PermissionSetupSyncView(APIView):
                                     page_type='list',
                                     order=pidx,
                                     is_active=True,
-                                    tenant=None,
+                                    tenant=user_tenant,
                                     branch=None,
                                 )
                             created_pages += 1
@@ -308,6 +318,11 @@ class PermissionSetupRolePoliciesView(APIView):
         new_policies = []
         warnings = []
 
+        # See the sync view comment: migration 0005 stamped all Module rows with
+        # the real tenant, so look for the tenant-stamped row first and fall back
+        # to any pre-migration NULL-tenant row.
+        user_tenant = getattr(request.user, 'tenant', None)
+
         for key, flags in policies_data.items():
             if ':' not in key:
                 warnings.append(f'Invalid key format: {key!r}')
@@ -315,10 +330,10 @@ class PermissionSetupRolePoliciesView(APIView):
 
             module_code, page_code = key.split(':', 1)
 
-            # Look up global Module/ModulePage records (tenant=None).
-            # .all_tenants() bypasses the manager's automatic current-tenant
-            # filter — see the comment in the sync view above.
-            module_obj = Module.objects.all_tenants().filter(code=module_code, tenant=None).first()
+            module_obj = (
+                Module.objects.all_tenants().filter(code=module_code, tenant=user_tenant).first()
+                or Module.objects.all_tenants().filter(code=module_code, tenant__isnull=True).first()
+            )
             if not module_obj:
                 warnings.append(
                     f'Module {module_code!r} not found. Run sync first.'

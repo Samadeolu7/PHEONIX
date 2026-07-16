@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import RoleSidebarPanel from '../dashboard/RoleSidebarPanel';
 import { ThreadProvider } from '../../contexts/ThreadContext';
 import { ThreadPanel } from '../threads/ThreadPanel';
+import { GlobalThreadToggle } from '../threads/GlobalThreadToggle';
 
 interface RoleBasedLayoutProps {
   children?: React.ReactNode;
@@ -92,6 +93,11 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
 
         {/* Thread slide panel — fixed overlay, available on all authenticated pages */}
         <ThreadPanel />
+
+        {/* Floating "Discuss" toggle — resolves the current route to its
+            ModulePage catalog row and shows itself only when a director has
+            marked that page threadable. See GlobalThreadToggle.tsx. */}
+        <GlobalThreadToggle />
       </div>
     </ThreadProvider>
   );

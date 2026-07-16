@@ -182,6 +182,38 @@ class ModulePageViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+    @action(detail=False, methods=['get'], url_path='by-code')
+    def by_code(self, request):
+        """
+        GET /api/pages/module-pages/by-code/?module=loans&page=loan-accounts
+
+        Resolve a ModulePage by its natural key (module.code, ModulePage.code
+        — see unique_together on the model). by-path only works when the
+        current URL IS the catalog page's own url_path, which isn't true for
+        hardcoded frontend routes (e.g. /loans/accounts/:id is its own React
+        route, distinct from the catalog's /loans/loan-accounts/ entry) —
+        those only know their module/page codes, via routeToPageMap.ts on
+        the frontend, so this is the lookup the global thread toggle uses.
+        """
+        module_code = request.query_params.get('module')
+        page_code = request.query_params.get('page')
+        if not module_code or not page_code:
+            return Response(
+                {'error': 'module and page parameters are required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            page = self.get_queryset().get(module__code=module_code, code=page_code)
+        except ModulePage.DoesNotExist:
+            return Response(
+                {'error': f'Page not found: {module_code}/{page_code}'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = self.get_serializer(page)
+        return Response({'success': True, 'data': serializer.data})
+
     @action(detail=True, methods=['get', 'patch'], url_path='thread-config')
     def thread_config(self, request, pk=None):
         """
