@@ -91,3 +91,36 @@ class ThreadPageUrlResolutionFieldsTests(TestCase):
         self.assertEqual(row['page_module_code'], 'clients')
         self.assertEqual(row['page_code'], 'clients')
         self.assertEqual(row['object_id'], 947)
+
+
+class ThreadListObjectIdFilterTests(TestCase):
+    """
+    ?object_id=<n> used to only filter when a content_type param was ALSO
+    given — but nothing in the frontend sends content_type today, so the
+    filter silently never activated and every thread on a page leaked into
+    every other record's discussion panel on that same page (e.g. two
+    different clients sharing the generic 'clients' list ModulePage would
+    see each other's threads). object_id alone must scope correctly.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='List Filter Org', slug='list-filter-org')
+        self.user = User.objects.create_user(username='lf_user', password='test123', tenant=self.tenant)
+
+        self.module = Module.objects.create(code='clients', name='Clients', icon='users')
+        self.page = ModulePage.objects.create(
+            module=self.module, code='clients', title='Client List',
+            page_type='list', is_threadable=True, url_path='/clients/clients/',
+        )
+
+    def test_object_id_alone_scopes_to_the_right_record(self):
+        self.client.force_authenticate(user=self.user)
+        self.client.post('/api/threads/threads/', {'page': self.page.id, 'object_id': 947}, format='json')
+        self.client.post('/api/threads/threads/', {'page': self.page.id, 'object_id': 999}, format='json')
+
+        resp = self.client.get('/api/threads/threads/', {'page_id': self.page.id, 'object_id': 947})
+        self.assertEqual(resp.status_code, 200)
+        results = resp.data['results']
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['object_id'], 947)

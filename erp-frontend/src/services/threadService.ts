@@ -24,9 +24,13 @@ export const threadService = {
     page?: number;
     page_size?: number;
   }): Promise<Thread[]> {
-    const res = await api.get(`${BASE}/`, { params });
-    if (res.data?.results) return res.data.results;
-    if (Array.isArray(res.data)) return res.data;
+    // ThreadViewSet.list() returns {results, total, page, pages} directly —
+    // api.get() already returns the parsed body, so `res` IS that object,
+    // not res.data. Checking res.data here always missed, silently
+    // returning [] regardless of what the API actually sent back — the
+    // thread panel showed "No discussions yet" even when threads existed.
+    if (Array.isArray(res?.results)) return res.results;
+    if (Array.isArray(res)) return res;
     return [];
   },
 
@@ -65,8 +69,8 @@ export const threadService = {
     if (afterId) params.after = afterId;
     if (page) params.page = page;
     const res = await api.get(`${MSG_BASE}/`, { params });
-    if (res.data?.results) return res.data.results;
-    if (Array.isArray(res.data)) return res.data;
+    if (Array.isArray(res?.results)) return res.results;
+    if (Array.isArray(res)) return res;
     return [];
   },
 
@@ -86,8 +90,8 @@ export const threadService = {
 
   async listParticipants(threadId: number): Promise<ThreadParticipantItem[]> {
     const res = await api.get(`${PART_BASE}/`, { params: { thread: threadId } });
-    if (res.data?.results) return res.data.results;
-    if (Array.isArray(res.data)) return res.data;
+    if (Array.isArray(res?.results)) return res.results;
+    if (Array.isArray(res)) return res;
     return [];
   },
 

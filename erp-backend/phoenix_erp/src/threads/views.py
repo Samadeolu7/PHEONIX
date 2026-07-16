@@ -127,8 +127,18 @@ class ThreadViewSet(ScopedModelViewSet):
             qs = qs.filter(status=params['status'])
         if params.get('page_id'):
             qs = qs.filter(page_id=params['page_id'])
-        if params.get('object_id') and params.get('content_type'):
-            qs = qs.filter(object_id=params['object_id'], content_type_id=params['content_type'])
+        # content_type is optional — the frontend never sends one today (no
+        # UI currently resolves a ContentType id), so requiring it alongside
+        # object_id meant this filter silently never activated and every
+        # thread on the page leaked into every other record's discussion
+        # list. object_id alone is enough scoping within a single page_id,
+        # since page_id already narrows to one page/model; content_type is
+        # only needed to disambiguate further when both are given.
+        if params.get('object_id'):
+            if params.get('content_type'):
+                qs = qs.filter(object_id=params['object_id'], content_type_id=params['content_type'])
+            else:
+                qs = qs.filter(object_id=params['object_id'])
         if params.get('branch') and _is_director(user):
             qs = qs.filter(branch_id=params['branch'])
 
