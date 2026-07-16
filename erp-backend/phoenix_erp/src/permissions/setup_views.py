@@ -156,7 +156,18 @@ class PermissionSetupSyncView(APIView):
                     if not pcode:
                         continue
 
-                    page_obj = ModulePage.objects.all_tenants().filter(module=module_obj, code=pcode).first()
+                    # Search by module CODE not the module FK: duplicate Module rows
+                    # (one tenant-stamped by migration, one NULL-tenant from an earlier
+                    # sync) may exist and pages could be attached to either one.
+                    page_obj = (
+                        ModulePage.objects.all_tenants()
+                        .filter(module=module_obj, code=pcode)
+                        .first()
+                        or ModulePage.objects.all_tenants()
+                        .filter(module__code=code, code=pcode)
+                        .select_related('module')
+                        .first()
+                    )
                     if not page_obj:
                         try:
                             with db_tx.atomic():
@@ -173,9 +184,15 @@ class PermissionSetupSyncView(APIView):
                                 )
                             created_pages += 1
                         except IntegrityError:
-                            # url_path already exists (another tenant's sync ran first).
-                            # Savepoint above rolled back; the outer transaction is still usable.
-                            page_obj = ModulePage.objects.all_tenants().filter(module=module_obj, code=pcode).first()
+                            # url_path already exists (a duplicate Module row means the
+                            # page was created under a different module PK).  Savepoint
+                            # rolled back; outer transaction is still usable.
+                            page_obj = (
+                                ModulePage.objects.all_tenants()
+                                .filter(module__code=code, code=pcode)
+                                .select_related('module')
+                                .first()
+                            )
                             if not page_obj:
                                 logger.warning(
                                     'Could not create or find ModulePage module=%s code=%s', code, pcode
@@ -318,11 +335,6 @@ class PermissionSetupRolePoliciesView(APIView):
         new_policies = []
         warnings = []
 
-        # See the sync view comment: migration 0005 stamped all Module rows with
-        # the real tenant, so look for the tenant-stamped row first and fall back
-        # to any pre-migration NULL-tenant row.
-        user_tenant = getattr(request.user, 'tenant', None)
-
         for key, flags in policies_data.items():
             if ':' not in key:
                 warnings.append(f'Invalid key format: {key!r}')
@@ -330,22 +342,23 @@ class PermissionSetupRolePoliciesView(APIView):
 
             module_code, page_code = key.split(':', 1)
 
-            module_obj = (
-                Module.objects.all_tenants().filter(code=module_code, tenant=user_tenant).first()
-                or Module.objects.all_tenants().filter(code=module_code, tenant__isnull=True).first()
+            # Look up the page directly by module code + page code.  This is
+            # robust when duplicate Module rows exist (e.g. one tenant-stamped
+            # by migration 0005 and one NULL-tenant created by an earlier sync)
+            # because pages may be attached to either Module instance.
+            # We derive module_obj from the page so the policy FK is consistent.
+            page_obj = (
+                ModulePage.objects.all_tenants()
+                .filter(module__code=module_code, code=page_code)
+                .select_related('module')
+                .first()
             )
-            if not module_obj:
-                warnings.append(
-                    f'Module {module_code!r} not found. Run sync first.'
-                )
-                continue
-
-            page_obj = ModulePage.objects.all_tenants().filter(module=module_obj, code=page_code).first()
             if not page_obj:
                 warnings.append(
                     f'Page {page_code!r} in module {module_code!r} not found. Run sync first.'
                 )
                 continue
+            module_obj = page_obj.module
 
             scope = flags.get('scope', SCOPE_OWN_BRANCH)
             if scope not in VALID_SCOPES:
