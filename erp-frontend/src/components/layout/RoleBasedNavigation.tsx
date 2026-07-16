@@ -18,6 +18,7 @@ import {
   GitBranch,
   ChevronDown,
   Check,
+  MessageSquare,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
@@ -26,6 +27,7 @@ import NotificationDropdown from '../notifications/NotificationDropdown';
 import { api } from '../../services/api';
 import { branchService, Branch } from '../../services/branchService';
 import { getRoleRank } from '../../types/roles';
+import { useThreadContext } from '../../contexts/ThreadContext';
 
 // ---------------------------------------------------------------------------
 // BranchSwitcher — only visible to director / admin / operations / owner
@@ -179,6 +181,7 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
 }) => {
   const { user, selectedRole, logout } = useAuth();
   const { hasAnyPageAccessInModule } = usePermission();
+  const { globalUnreadCount } = useThreadContext();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -331,6 +334,26 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
               >
                 <Clock className="h-4 w-4" />
                 <span>Approvals</span>
+              </Link>
+
+              {/* Discussions workspace */}
+              <Link
+                to="/discussions"
+                className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors relative ${
+                  isActivePath('/discussions') || isActivePath('/threads')
+                    ? 'bg-white/20 text-white'
+                    : 'text-white/80 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                <span className="relative">
+                  <MessageSquare className="h-4 w-4" />
+                  {globalUnreadCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
+                      {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
+                    </span>
+                  )}
+                </span>
+                <span>Discussions</span>
               </Link>
 
               {/* Branch Switcher — director/admin/operations/owner only */}
@@ -495,6 +518,32 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 >
                   <Clock className="h-5 w-5" />
                   <span>Pending Approvals</span>
+                </Link>
+                <Link
+                  to="/discussions"
+                  onClick={closeMobileMenu}
+                  className={`flex items-center space-x-3 px-3 py-3 rounded-md text-base font-medium transition-colors ${
+                    isActivePath('/discussions') || isActivePath('/threads')
+                      ? 'bg-white/20 text-white'
+                      : 'text-white/80 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <span className="relative">
+                    <MessageSquare className="h-5 w-5" />
+                    {globalUnreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
+                        {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
+                      </span>
+                    )}
+                  </span>
+                  <span>
+                    Discussions
+                    {globalUnreadCount > 0 && (
+                      <span className="ml-2 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
+                        {globalUnreadCount}
+                      </span>
+                    )}
+                  </span>
                 </Link>
                 <Link
                   to="/dashboard/select"
