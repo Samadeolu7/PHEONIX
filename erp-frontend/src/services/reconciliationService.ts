@@ -10,6 +10,7 @@ import type {
   OfficerReconciliationRiskRow,
   ReconciliationException,
   ReconciliationFilters,
+  ReconciliationTransactionsResponse,
   RerunReconciliationRequest,
   ResolveExceptionRequest,
   UploadReconciliationRequest,
@@ -74,6 +75,22 @@ export const reconciliationService = {
       `${BASE_URL}/reconciliations/${reconciliationId}/exceptions/${exceptionId}/resolve/`,
       data
     );
+  },
+
+  /**
+   * Every bank-statement line ingested for this reconciliation's bank
+   * account/date — matched and unmatched alike. Pass `matched: true/false`
+   * to filter to one side; omit for everything. Previously the only
+   * visibility into a reconciliation was its exceptions list, so a
+   * cleanly-matched transfer (the common case) was invisible anywhere.
+   */
+  async getTransactions(
+    reconciliationId: number,
+    matched?: boolean
+  ): Promise<ReconciliationTransactionsResponse> {
+    return api.get(`${BASE_URL}/reconciliations/${reconciliationId}/transactions/`, {
+      params: matched === undefined ? undefined : { matched: String(matched) },
+    });
   },
 
   /**

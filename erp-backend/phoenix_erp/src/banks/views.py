@@ -1105,6 +1105,7 @@ from .serializers import (
     DailyReconciliationSerializer,
     DailyReconciliationListSerializer,
     ReconciliationExceptionSerializer,
+    ReconciliationBankTransactionSerializer,
 )
 from .tasks import run_reconciliation_match
 
@@ -1319,6 +1320,71 @@ class DailyReconciliationDetailView(APIView):
         recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=pk)
         serializer = DailyReconciliationSerializer(recon)
         return Response(serializer.data)
+
+
+class MatchedTransactionsView(APIView):
+    """
+    GET /api/banks/reconciliations/<recon_pk>/transactions/
+
+    Every bank-statement line ingested for this reconciliation's bank
+    account/date — matched and unmatched alike. Before this endpoint
+    existed, the only visibility into a reconciliation was its exceptions
+    list, so a cleanly-matched transfer (the common case — see the
+    fetch_erp_payments/ReconciliationBankTransaction investigation that
+    prompted this) was invisible everywhere in the product even though
+    ReconciliationBankTransaction has tracked matched/matched_erp_payment_id
+    from the start.
+
+    ReconciliationBankTransaction has no FK to DailyReconciliation — it's a
+    persistent pool per bank_account, deduplicated by bank_ref and reused
+    across reruns and the ±window matching used by run_reconciliation_match
+    (see banks/tasks.py) — so rows are looked up by (bank_account,
+    value_date) rather than by reconciliation id, matching exactly what a
+    statement upload for this reconciliation's date would have populated.
+
+    Query params:
+      matched — 'true' | 'false' | omit for all
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get(self, request, recon_pk):
+        recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=recon_pk)
+
+        base_qs = ReconciliationBankTransaction.objects.filter(
+            bank_account=recon.bank_account,
+            value_date=recon.reconciliation_date,
+        )
+
+        qs = base_qs
+        matched_param = request.query_params.get('matched')
+        if matched_param is not None:
+            qs = qs.filter(matched=matched_param.strip().lower() == 'true')
+
+        transactions = list(qs.select_related('matched_erp_officer').order_by('-matched', '-amount'))
+
+        # matched_erp_payment_id is a plain int (Java's match response only
+        # names an id, not the transaction), so the ERP-side narration/date
+        # can't be resolved via select_related — batch-fetch and stash.
+        payment_ids = [tx.matched_erp_payment_id for tx in transactions if tx.matched_erp_payment_id]
+        if payment_ids:
+            from transactions.models import Transaction
+            txn_by_id = {
+                t.id: t for t in Transaction.objects.filter(id__in=payment_ids).only('id', 'description', 'date')
+            }
+            for tx in transactions:
+                erp_txn = txn_by_id.get(tx.matched_erp_payment_id)
+                if erp_txn:
+                    tx._erp_transaction_description = erp_txn.description
+                    tx._erp_transaction_date = erp_txn.date
+
+        serializer = ReconciliationBankTransactionSerializer(transactions, many=True)
+        return Response({
+            'results': serializer.data,
+            'matched_count': base_qs.filter(matched=True).count(),
+            'unmatched_count': base_qs.filter(matched=False).count(),
+        })
 
 
 class RerunReconciliationView(APIView):

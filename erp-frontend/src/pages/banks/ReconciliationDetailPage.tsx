@@ -16,7 +16,11 @@ import { reconciliationService } from '../../services/reconciliationService';
 import { ReconciliationWaitState } from '../../components/banks/ReconciliationWaitState';
 import { useToast } from '../../hooks/useToast';
 import { usePermission } from '../../hooks/usePermissions';
-import type { DailyReconciliation, ReconciliationException } from '../../types/banks';
+import type {
+  DailyReconciliation,
+  ReconciliationBankTransaction,
+  ReconciliationException,
+} from '../../types/banks';
 
 const STATUS_STYLES: Record<DailyReconciliation['status'], string> = {
   processing: 'bg-amber-100 text-amber-800',
@@ -54,6 +58,15 @@ const ReconciliationDetailPage: React.FC = () => {
   const [notesDraft, setNotesDraft] = useState<Record<number, string>>({});
   const [filter, setFilter] = useState<'all' | 'unresolved' | 'resolved'>('unresolved');
   const pollCountRef = useRef(0);
+
+  // Matched/unmatched bank transactions — previously the exceptions list was
+  // the only visibility into a reconciliation, so a cleanly-matched transfer
+  // (the common case) was invisible anywhere. Lazy-loaded on first expand
+  // since most visits are about resolving exceptions, not browsing matches.
+  const [showTransactions, setShowTransactions] = useState(false);
+  const [transactions, setTransactions] = useState<ReconciliationBankTransaction[] | null>(null);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [transactionsFilter, setTransactionsFilter] = useState<'all' | 'matched' | 'unmatched'>('all');
 
   // Returns true once the reconciliation is no longer 'processing' (i.e.
   // polling should stop), or on a fetch error (nothing more to wait for).
@@ -124,6 +137,25 @@ const ReconciliationDetailPage: React.FC = () => {
       setResolvingId(null);
     }
   };
+
+  const loadTransactions = useCallback(async (reconId: number, tFilter: 'all' | 'matched' | 'unmatched') => {
+    setTransactionsLoading(true);
+    try {
+      const matchedParam = tFilter === 'all' ? undefined : tFilter === 'matched';
+      const res = await reconciliationService.getTransactions(reconId, matchedParam);
+      setTransactions(res.results);
+    } catch (err: any) {
+      showError(err.message || 'Failed to load transactions');
+    } finally {
+      setTransactionsLoading(false);
+    }
+  }, [showError]);
+
+  useEffect(() => {
+    if (!showTransactions || !recon) return;
+    loadTransactions(recon.id, transactionsFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTransactions, transactionsFilter, recon?.id]);
 
   const handleRerun = async () => {
     if (!recon) return;
@@ -441,6 +473,96 @@ const ReconciliationDetailPage: React.FC = () => {
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+
+          {/* Matched / Unmatched Transactions — previously the exceptions
+              list above was the only visibility into a reconciliation, so a
+              cleanly-matched transfer (the common case) was invisible
+              anywhere in the product. Lazy-loaded on expand. */}
+          <div className="bg-white rounded-lg shadow overflow-hidden mt-6">
+            <button
+              onClick={() => setShowTransactions((v) => !v)}
+              className="w-full flex items-center justify-between px-6 py-4 text-left"
+            >
+              <h2 className="text-lg font-semibold text-gray-900">
+                Bank Transactions ({recon.total_bank_transactions})
+              </h2>
+              <span className="text-sm text-gray-500">{showTransactions ? 'Hide' : 'Show'}</span>
+            </button>
+
+            {showTransactions && (
+              <>
+                <div className="flex items-center justify-between px-6 py-3 border-t border-b border-gray-200 bg-gray-50">
+                  <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                    {(['all', 'matched', 'unmatched'] as const).map((key) => (
+                      <button
+                        key={key}
+                        onClick={() => setTransactionsFilter(key)}
+                        className={`px-3 py-1 text-sm rounded-md capitalize ${
+                          transactionsFilter === key ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+                        }`}
+                      >
+                        {key}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {transactionsLoading ? (
+                  <div className="text-center py-12">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                  </div>
+                ) : !transactions || transactions.length === 0 ? (
+                  <div className="text-center py-12">
+                    <p className="text-gray-600">Nothing to show for this filter.</p>
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-gray-200">
+                    {transactions.map((tx) => (
+                      <li key={tx.id} className="px-6 py-4">
+                        <div className="flex items-start gap-3 min-w-0">
+                          {tx.matched ? (
+                            <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5 shrink-0" />
+                          ) : (
+                            <XCircle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                                  tx.matched ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                }`}
+                              >
+                                {tx.matched
+                                  ? `Matched${tx.match_confidence ? ` (${tx.match_confidence})` : ''}`
+                                  : 'Unmatched'}
+                              </span>
+                              <span className="text-xs text-gray-400">{tx.direction}</span>
+                              {tx.matched_erp_officer_name && (
+                                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-700">
+                                  {tx.matched_erp_officer_name}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-900 mt-1 truncate">{tx.narration || '—'}</p>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              Bank: {formatAmount(tx.amount)} on {tx.value_date}
+                              {tx.matched && tx.erp_narration && (
+                                <>
+                                  {' '}
+                                  · ERP: {tx.erp_narration}
+                                  {tx.erp_date ? ` on ${tx.erp_date}` : ''}
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         </>

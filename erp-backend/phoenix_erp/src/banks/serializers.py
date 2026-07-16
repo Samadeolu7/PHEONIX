@@ -780,7 +780,7 @@ class BankAccountLedgerSerializer(serializers.Serializer):
 
 # ── Daily Reconciliation serializers ────────────────────────────────────────
 
-from .models import DailyReconciliation, ReconciliationException
+from .models import DailyReconciliation, ReconciliationException, ReconciliationBankTransaction
 
 
 class ReconciliationExceptionSerializer(serializers.ModelSerializer):
@@ -827,6 +827,48 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
         # from Transaction.description in the first place (reconciliation_utils.py).
         from .reconciliation_utils import _BANK_REFERENCE_RE
         return bool(obj.erp_narration and _BANK_REFERENCE_RE.search(obj.erp_narration))
+
+
+class ReconciliationBankTransactionSerializer(serializers.ModelSerializer):
+    """
+    One bank-statement line, matched or not. Exists so branch managers/
+    directors can actually confirm a transfer reconciled — previously the
+    only visibility into reconciliation was the exceptions list, so a
+    cleanly-matched transaction (the common case) was invisible anywhere in
+    the product even though ReconciliationBankTransaction has tracked its
+    match status all along. See MatchedTransactionsView (banks/views.py).
+
+    matched_erp_payment_id is a plain int (Java's match response only names
+    an id, not the transaction itself), so erp_narration/erp_date can't be
+    resolved via select_related — MatchedTransactionsView batches a lookup
+    and stashes the result as _erp_transaction_description/_date on each
+    instance before serializing.
+    """
+    matched_erp_officer_name = serializers.SerializerMethodField()
+    erp_narration = serializers.SerializerMethodField()
+    erp_date = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ReconciliationBankTransaction
+        fields = [
+            'id', 'bank_ref', 'value_date', 'direction', 'amount', 'narration',
+            'balance_after',
+            'matched', 'match_confidence', 'matched_erp_payment_id', 'matched_at',
+            'matched_erp_officer_name', 'matched_erp_had_reference', 'posting_lag_days',
+            'erp_narration', 'erp_date',
+        ]
+        read_only_fields = fields
+
+    def get_matched_erp_officer_name(self, obj):
+        officer = obj.matched_erp_officer
+        return officer.get_full_name() if officer else None
+
+    def get_erp_narration(self, obj):
+        return getattr(obj, '_erp_transaction_description', None)
+
+    def get_erp_date(self, obj):
+        erp_date = getattr(obj, '_erp_transaction_date', None)
+        return erp_date.isoformat() if erp_date else None
 
 
 class DailyReconciliationSerializer(serializers.ModelSerializer):

@@ -478,6 +478,39 @@ export interface ResolveExceptionRequest {
 }
 
 /**
+ * One bank-statement line ingested for a reconciliation, matched or not.
+ * Previously the only visibility into a reconciliation was its exceptions
+ * list — a cleanly-matched transfer (the common case) was invisible
+ * anywhere in the product. See MatchedTransactionsView (banks/views.py).
+ */
+export interface ReconciliationBankTransaction {
+  id: string;
+  bank_ref: string;
+  value_date: string;
+  direction: 'CREDIT' | 'DEBIT';
+  amount: string;
+  narration: string;
+  balance_after: string | null;
+  matched: boolean;
+  match_confidence: string;
+  matched_erp_payment_id: number | null;
+  matched_at: string | null;
+  matched_erp_officer_name: string | null;
+  matched_erp_had_reference: boolean | null;
+  posting_lag_days: number | null;
+  // ERP-side transaction description/date, resolved server-side from
+  // matched_erp_payment_id — null for unmatched lines.
+  erp_narration: string | null;
+  erp_date: string | null;
+}
+
+export interface ReconciliationTransactionsResponse {
+  results: ReconciliationBankTransaction[];
+  matched_count: number;
+  unmatched_count: number;
+}
+
+/**
  * One row of the Officer Reconciliation Risk report — accountability
  * signals aggregated across ALL of an officer's reconciliation activity
  * (matched transactions + erp_only exceptions, regardless of whether the
