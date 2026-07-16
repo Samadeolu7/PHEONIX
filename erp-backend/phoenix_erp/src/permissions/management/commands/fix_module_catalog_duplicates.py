@@ -111,7 +111,7 @@ class Command(BaseCommand):
                 f"deleted={canonical_module.is_deleted}) ---"
             )
             for m in modules:
-                marker = "KEEP" if m.id == canonical_module.id else "MERGE→delete"
+                marker = "KEEP" if m.id == canonical_module.id else "MERGE->delete"
                 self.stdout.write(
                     f"  id={m.id:<6} tenant={str(m.tenant_id):<6} deleted={m.is_deleted!s:<5} {marker}"
                 )
@@ -130,7 +130,17 @@ class Command(BaseCommand):
             for page_code, pages in pages_by_code.items():
                 canonical_page = _pick_canonical(pages)
                 dup_pages = [p for p in pages if p.id != canonical_page.id]
-                if not dup_pages:
+                # A page code that exists on only ONE of the duplicate modules
+                # (no same-code counterpart elsewhere in the group — e.g. a
+                # per-account transaction/report page generated just once)
+                # still needs its .module repointed to canonical_module before
+                # the module it currently sits on gets hard-deleted below;
+                # ModulePage.module CASCADEs on delete, so skipping this would
+                # silently destroy the page. Only truly skip when there's
+                # nothing to merge AND the page already sits on the surviving
+                # module.
+                needs_repoint = canonical_page.module_id != canonical_module.id
+                if not dup_pages and not needs_repoint:
                     continue
                 page_merge_plan.append((page_code, canonical_page, dup_pages))
 
@@ -138,10 +148,12 @@ class Command(BaseCommand):
                 policy_count = RolePermissionPolicy.objects.filter(page_id__in=dup_page_ids).count()
                 override_count = UserPermissionOverride.objects.filter(page_id__in=dup_page_ids).count()
                 thread_count = Thread.all_objects.all_tenants().filter(page_id__in=dup_page_ids).count()
+                repoint_note = '' if not needs_repoint else ' [repoint to surviving module]'
                 self.stdout.write(
                     f"    page '{page_code}': {len(pages)} rows, canonical id={canonical_page.id} — "
                     f"repoint {policy_count} policy row(s), {override_count} override(s), "
                     f"{thread_count} thread(s), then delete {len(dup_pages)} duplicate page row(s)"
+                    f"{repoint_note}"
                 )
 
             dup_module_ids = [m.id for m in dup_modules]
