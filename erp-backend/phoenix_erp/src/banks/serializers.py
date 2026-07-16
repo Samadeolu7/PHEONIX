@@ -791,6 +791,10 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
     requires_director = serializers.SerializerMethodField()
     pending_bank_payment_info = serializers.SerializerMethodField()
     netted_with_info = serializers.SerializerMethodField()
+    resolved_by_name = serializers.SerializerMethodField()
+    second_resolved_by_name = serializers.SerializerMethodField()
+    requires_dual_approval_to_resolve = serializers.BooleanField(read_only=True)
+    awaiting_second_resolution = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = ReconciliationException
@@ -805,9 +809,12 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
             'officer', 'officer_name', 'erp_branch', 'erp_branch_name',
             'is_high_priority', 'has_bank_reference',
             'is_perfect_match', 'requires_director',
+            'requires_dual_approval_to_resolve', 'awaiting_second_resolution',
             'pending_bank_payment', 'pending_bank_payment_info',
             'netted_with', 'netted_with_info',
-            'resolved', 'resolved_by', 'resolved_at', 'resolution_notes',
+            'resolved', 'resolved_by', 'resolved_by_name', 'resolved_at', 'resolution_notes',
+            'second_resolved_by', 'second_resolved_by_name', 'second_resolved_at',
+            'second_resolution_notes',
             'created_at',
         ]
         read_only_fields = ['id', 'created_at']
@@ -823,6 +830,12 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
 
     def get_erp_branch_name(self, obj):
         return obj.erp_branch.name if obj.erp_branch else None
+
+    def get_resolved_by_name(self, obj):
+        return obj.resolved_by.get_full_name() if obj.resolved_by else None
+
+    def get_second_resolved_by_name(self, obj):
+        return obj.second_resolved_by.get_full_name() if obj.second_resolved_by else None
 
     def get_pending_bank_payment_info(self, obj):
         payment = obj.pending_bank_payment

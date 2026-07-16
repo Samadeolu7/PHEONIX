@@ -31,6 +31,31 @@ def reason_too_short(reason: str) -> bool:
     return not reason or len(reason.strip()) < MIN_REASON_LENGTH
 
 
+def is_valid_exception_pairing(exc_a, exc_b):
+    """
+    Whether two ReconciliationException rows can be manually linked together
+    via LinkResolveExceptionsView — either:
+      - both bank_only, OPPOSITE direction — the compensating-transfer/
+        netting case (money left the account one way, e.g. sent to the
+        wrong bank, and a manual transfer brought it back the other way).
+      - one bank_only and one erp_only, SAME direction — the missed-
+        auto-match case (the bank line and the ERP payment are very
+        plausibly the same real transaction that just failed to fuzzy-match
+        on reference/narration; both describe money moving the same way).
+    erp_only+erp_only is never valid (neither side has a bank line to
+    anchor the pairing to), and amount_diff is never linkable — it already
+    has its own ERP-side match with a captured discrepancy, not a "no match
+    at all" case. Amount equality (resolve_amount) is checked separately by
+    the caller.
+    """
+    types = {exc_a.exception_type, exc_b.exception_type}
+    if types == {'bank_only'}:
+        return exc_a.direction != exc_b.direction
+    if types == {'bank_only', 'erp_only'}:
+        return exc_a.direction == exc_b.direction
+    return False
+
+
 def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exclude_payment_ids=()):
     """
     Returns ERP-recorded payments for a bank account within [date_from,

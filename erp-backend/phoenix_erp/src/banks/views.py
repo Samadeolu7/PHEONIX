@@ -1496,6 +1496,16 @@ class ResolveExceptionView(APIView):
     Everyone with visibility into the reconciliation can still see the
     exception, just not necessarily resolve it.
 
+    A single director resolving an exception was previously sufficient
+    regardless of amount — a director could clear an arbitrarily large
+    erp_only/bank_only/amount_diff discrepancy with nothing but a one-line
+    note. See ReconciliationException.requires_dual_approval_to_resolve:
+    at/above RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD (excluding
+    perfect matches, which stay branch-manager-resolvable as before), this
+    endpoint now only records the FIRST director's action and leaves
+    `resolved` False — SecondResolveExceptionView (below) is where a
+    second, different director actually closes it out.
+
     Request body:
       resolution_notes  (str; required unless the exception is a perfect match)
     """
@@ -1542,11 +1552,98 @@ class ResolveExceptionView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        exc_obj.resolved         = True
         exc_obj.resolved_by      = request.user
-        exc_obj.resolved_at      = tz.now()
         exc_obj.resolution_notes = resolution_notes
+
+        if exc_obj.requires_dual_approval_to_resolve:
+            # Hold: resolved stays False until a second, different director
+            # confirms via SecondResolveExceptionView. resolved_at stays
+            # unset too — it should reflect when the exception actually
+            # closed, not when the first director acted.
+            exc_obj.save(update_fields=['resolved_by', 'resolution_notes'])
+            serializer = ReconciliationExceptionSerializer(exc_obj)
+            return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+
+        exc_obj.resolved    = True
+        exc_obj.resolved_at = tz.now()
         exc_obj.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes'])
+
+        from .reconciliation_utils import recompute_reconciliation_counts
+        recompute_reconciliation_counts(recon)
+
+        serializer = ReconciliationExceptionSerializer(exc_obj)
+        return Response(serializer.data)
+
+
+class SecondResolveExceptionView(APIView):
+    """
+    PATCH /api/banks/reconciliations/<recon_pk>/exceptions/<exc_pk>/resolve/second/
+
+    The confirming half of dual-approval resolution — see
+    ReconciliationException.requires_dual_approval_to_resolve and
+    ResolveExceptionView's docstring. Only reachable once a first director
+    has already acted (resolved_by set, resolved still False) on an
+    exception at/above the dual-approval threshold. Director-only, must be
+    a different director from the first (mirrors BankTransfer.second_
+    approve's identical same-approver guard), mandatory reason.
+
+    Request body:
+      resolution_notes  (str, required)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def patch(self, request, recon_pk, exc_pk):
+        recon = get_object_or_404(DailyReconciliation.objects.for_user(request.user), pk=recon_pk)
+        exc_obj = get_object_or_404(ReconciliationException, pk=exc_pk, reconciliation=recon)
+
+        if exc_obj.resolved:
+            return Response({'detail': 'Exception is already resolved.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not exc_obj.resolved_by_id:
+            return Response(
+                {'detail': 'This exception has not been through a first resolution yet.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not exc_obj.requires_dual_approval_to_resolve:
+            return Response(
+                {'detail': 'This exception does not require a second approval.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may provide the second approval.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if exc_obj.resolved_by_id == request.user.id:
+            return Response(
+                {'detail': 'The second approver must be a different director from the first.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
+        resolution_notes = request.data.get('resolution_notes', '')
+        if reason_too_short(resolution_notes):
+            return Response(
+                {'detail': f'resolution_notes is required (at least {MIN_REASON_LENGTH} characters) '
+                           f'for the second approval.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = tz.now()
+        exc_obj.second_resolved_by = request.user
+        exc_obj.second_resolved_at = now
+        exc_obj.second_resolution_notes = resolution_notes
+        exc_obj.resolved = True
+        exc_obj.resolved_at = now
+        exc_obj.save(update_fields=[
+            'second_resolved_by', 'second_resolved_at', 'second_resolution_notes',
+            'resolved', 'resolved_at',
+        ])
+
+        from .reconciliation_utils import recompute_reconciliation_counts
+        recompute_reconciliation_counts(recon)
 
         serializer = ReconciliationExceptionSerializer(exc_obj)
         return Response(serializer.data)
@@ -1666,16 +1763,19 @@ class ResolveExceptionToExpenseView(APIView):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class UnresolvedBankOnlyExceptionsListView(generics.ListAPIView):
+class LinkCandidatesView(generics.ListAPIView):
     """
-    GET /api/banks/exceptions/?bank_account=<id>&direction=<CREDIT|DEBIT>
+    GET /api/banks/exceptions/<exc_id>/link-candidates/
 
-    Supports the "link to another exception" picker for LinkResolveExceptionsView
-    below: unresolved bank_only exceptions for a given bank account, optionally
-    narrowed to one direction (a director picking a netting partner for a
-    CREDIT exception wants to see DEBIT candidates, and vice versa). Exceptions
-    can span different reconciliation dates on the same account, so this isn't
-    nested under a single DailyReconciliation.
+    Valid partners for manually linking against the given exception via
+    LinkResolveExceptionsView below — see is_valid_exception_pairing
+    (banks/reconciliation_utils.py) for the exact rules this encodes:
+    bank_only+bank_only (opposite direction — a compensating transfer) or
+    bank_only+erp_only (same direction — the bank line and the ERP payment
+    plausibly failed to auto-match). erp_only+erp_only and amount_diff are
+    never returned. Same bank account, exact resolve_amount match,
+    unresolved, any reconciliation date — candidates can span dates, so
+    this isn't nested under a single DailyReconciliation.
     """
     serializer_class = ReconciliationExceptionSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -1683,20 +1783,33 @@ class UnresolvedBankOnlyExceptionsListView(generics.ListAPIView):
     permission_page = 'bank-reconciliation-exceptions'
 
     def get_queryset(self):
+        source = get_object_or_404(
+            ReconciliationException.objects.filter(
+                reconciliation__in=DailyReconciliation.objects.for_user(self.request.user),
+            ),
+            pk=self.kwargs['exc_id'],
+        )
+
+        amount = source.resolve_amount
+        if amount is None or source.exception_type not in ('bank_only', 'erp_only'):
+            return ReconciliationException.objects.none()
+
         qs = ReconciliationException.objects.filter(
             reconciliation__in=DailyReconciliation.objects.for_user(self.request.user),
-            exception_type='bank_only',
+            reconciliation__bank_account_id=source.reconciliation.bank_account_id,
             resolved=False,
-        ).select_related('reconciliation')
+        ).exclude(pk=source.pk).select_related('reconciliation')
 
-        bank_account_id = self.request.query_params.get('bank_account')
-        if bank_account_id:
-            qs = qs.filter(reconciliation__bank_account_id=bank_account_id)
+        if source.exception_type == 'bank_only':
+            opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
+            qs = qs.filter(
+                Q(exception_type='bank_only', direction=opposite)
+                | Q(exception_type='erp_only', direction=source.direction)
+            )
+        else:  # erp_only — only a bank_only, same-direction candidate is valid
+            qs = qs.filter(exception_type='bank_only', direction=source.direction)
 
-        direction = self.request.query_params.get('direction')
-        if direction:
-            qs = qs.filter(direction=direction.upper())
-
+        qs = qs.filter(Q(bank_amount=amount) | Q(erp_amount=amount))
         return qs.order_by('-is_high_priority', '-created_at')
 
 
@@ -1704,14 +1817,21 @@ class LinkResolveExceptionsView(APIView):
     """
     POST /api/banks/exceptions/link-resolve/
 
-    Manually net a bank_only CREDIT exception against a bank_only DEBIT
-    exception on the same bank account (compensating-transfer scenario:
-    money went to the wrong bank, then a manual transfer brought it back —
-    possibly on a different reconciliation date). Not nested under a single
-    DailyReconciliation for that reason. Director-only, exact amount match
-    only (no tolerance) — netting two unrelated-looking anomalies together
-    is at least as sensitive a judgment call as resolving a genuine amount
-    mismatch, which already requires director sign-off.
+    Manually link two exceptions on the same bank account together and
+    resolve both at once. Two cases (see is_valid_exception_pairing,
+    banks/reconciliation_utils.py):
+      - bank_only + bank_only, opposite direction — a compensating-transfer
+        scenario (money went to the wrong bank, then a manual transfer
+        brought it back).
+      - bank_only + erp_only, same direction — the bank line and the ERP
+        payment plausibly failed to auto-match on reference/narration and
+        are actually the same real transaction.
+    Either pair may span different reconciliation dates on the same
+    account, so this isn't nested under a single DailyReconciliation.
+    Director-only, exact amount match only (no tolerance) — linking two
+    unrelated-looking anomalies together is at least as sensitive a
+    judgment call as resolving a genuine amount mismatch, which already
+    requires director sign-off.
 
     Request body:
       exception_a_id, exception_b_id  (int, required)
@@ -1724,17 +1844,17 @@ class LinkResolveExceptionsView(APIView):
     def post(self, request):
         if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
             return Response(
-                {'detail': 'Only directors may net two reconciliation exceptions together.'},
+                {'detail': 'Only directors may link two reconciliation exceptions together.'},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
+        from .reconciliation_utils import is_valid_exception_pairing, reason_too_short, MIN_REASON_LENGTH
 
         resolution_notes = request.data.get('resolution_notes', '')
         if reason_too_short(resolution_notes):
             return Response(
                 {'detail': f'resolution_notes is required (at least {MIN_REASON_LENGTH} characters) '
-                           f'to net two exceptions together.'},
+                           f'to link two exceptions together.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1753,11 +1873,6 @@ class LinkResolveExceptionsView(APIView):
         exc_b = get_object_or_404(qs, pk=b_id)
 
         for exc in (exc_a, exc_b):
-            if exc.exception_type != 'bank_only':
-                return Response(
-                    {'detail': 'Only bank_only exceptions can be netted together.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
             if exc.resolved:
                 return Response(
                     {'detail': 'Exception is already resolved.'},
@@ -1769,14 +1884,16 @@ class LinkResolveExceptionsView(APIView):
                 {'detail': 'Both exceptions must belong to the same bank account.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if exc_a.direction == exc_b.direction:
+        if not is_valid_exception_pairing(exc_a, exc_b):
             return Response(
-                {'detail': 'The two exceptions must be opposite directions (one CREDIT, one DEBIT).'},
+                {'detail': 'These two exceptions cannot be linked — either two bank_only exceptions '
+                           'with opposite directions (a compensating transfer), or a bank_only and an '
+                           'erp_only exception with the same direction (a missed auto-match).'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if exc_a.bank_amount != exc_b.bank_amount:
+        if exc_a.resolve_amount != exc_b.resolve_amount:
             return Response(
-                {'detail': 'The two exceptions must have exactly the same amount to be netted.'},
+                {'detail': 'The two exceptions must have exactly the same amount to be linked.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

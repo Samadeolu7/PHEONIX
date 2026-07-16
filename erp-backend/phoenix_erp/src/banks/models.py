@@ -2183,6 +2183,23 @@ class ReconciliationException(TimeStampedModel):
     resolved_at      = models.DateTimeField(null=True, blank=True)
     resolution_notes = models.TextField(blank=True)
 
+    # Second sign-off for exceptions at/above RECONCILIATION_EXCEPTION_
+    # DUAL_APPROVAL_THRESHOLD — mirrors BankTransfer's approved_by/
+    # second_approved_by pattern (banks/models.py). While a second approval
+    # is pending, resolved_by/resolved_at/resolution_notes above hold the
+    # FIRST director's action and `resolved` stays False (still genuinely
+    # outstanding) until second_resolved_by confirms — see
+    # requires_dual_approval_to_resolve below and ResolveExceptionView/
+    # SecondResolveExceptionView (banks/views.py).
+    second_resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='second_resolved_recon_exceptions',
+    )
+    second_resolved_at = models.DateTimeField(null=True, blank=True)
+    second_resolution_notes = models.TextField(blank=True)
+
     # Set when a branch manager or director posts a bank-only DEBIT exception
     # (e.g. stamp duty, bank charges) straight to an expense — see
     # ResolveExceptionToExpenseView (banks/views.py). The exception is NOT
@@ -2197,16 +2214,20 @@ class ReconciliationException(TimeStampedModel):
         help_text='Draft/pending payment created to close this exception via expense posting',
     )
 
-    # Set when a director manually nets this bank_only exception against
-    # another bank_only exception of the opposite direction on the same bank
-    # account (compensating transfer scenario) — see LinkResolveExceptionsView
-    # (banks/views.py). Set symmetrically on both rows.
+    # Set when a director manually links this exception against another one
+    # on the same bank account — either another bank_only exception of the
+    # opposite direction (compensating-transfer/netting) or a bank_only+
+    # erp_only pair of the same direction (a missed auto-match — see
+    # is_valid_exception_pairing, banks/reconciliation_utils.py). Kept the
+    # name "netted_with" from when this only covered the netting case; the
+    # field itself is generic. See LinkResolveExceptionsView (banks/views.py).
+    # Set symmetrically on both rows.
     netted_with = models.ForeignKey(
         'self',
         null=True, blank=True,
         on_delete=models.SET_NULL,
         related_name='+',
-        help_text='The other bank_only exception this was manually netted against',
+        help_text='The other exception this was manually linked/netted against',
     )
 
     # Director-resolvable tolerance for amount mismatches: whichever is
@@ -2291,6 +2312,48 @@ class ReconciliationException(TimeStampedModel):
             self.AMOUNT_TOLERANCE_PERCENT * self.erp_amount,
         )
         return variance <= tolerance
+
+    @property
+    def resolve_amount(self):
+        """The amount relevant for the dual-approval threshold check —
+        whichever of bank_amount/erp_amount is present. Both are set for
+        amount_diff (they prefer bank_amount, the two are close by
+        definition); only one is ever set for bank_only/erp_only."""
+        return self.bank_amount if self.bank_amount is not None else self.erp_amount
+
+    @property
+    def requires_dual_approval_to_resolve(self):
+        """
+        True when a second director must confirm before this exception can
+        actually close — resolve_amount at/above
+        RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD (settings.py).
+
+        Deliberately excludes perfect matches: those are already resolvable
+        by a branch manager alone with no director involved at all (see
+        is_perfect_match), so gating them behind two directors would be a
+        far bigger workflow change than closing the gap this exists for —
+        a director single-handedly waving away a genuine large discrepancy
+        with one short note and no second opinion.
+        """
+        from django.conf import settings as django_settings
+
+        if self.is_perfect_match:
+            return False
+        threshold = getattr(django_settings, 'RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD', None)
+        if threshold is None or self.resolve_amount is None:
+            return False
+        return self.resolve_amount >= threshold
+
+    @property
+    def awaiting_second_resolution(self):
+        """True once the first director has acted but a second director's
+        confirmation is still outstanding — resolved stays False the whole
+        time this is True, since the exception is genuinely still open."""
+        return (
+            not self.resolved
+            and self.resolved_by_id is not None
+            and self.requires_dual_approval_to_resolve
+        )
 
 
 # ── Bank Feed Transactions (Java App 3 write-back) ─────────────────────────

@@ -18,6 +18,7 @@ import type {
   ResolveExceptionToExpenseRequest,
   RerunReconciliationRequest,
   ResolveExceptionRequest,
+  SecondResolveExceptionRequest,
   UnmatchTransactionRequest,
   UploadReconciliationRequest,
   UploadReconciliationResponse,
@@ -84,6 +85,23 @@ export const reconciliationService = {
   },
 
   /**
+   * Confirming half of dual-approval resolution — only reachable once a
+   * first director has already acted on an exception at/above the dual-
+   * approval threshold (requires_dual_approval_to_resolve). Must be a
+   * different director from the first; the backend 403s otherwise.
+   */
+  async secondResolveException(
+    reconciliationId: number,
+    exceptionId: number,
+    data: SecondResolveExceptionRequest
+  ): Promise<ReconciliationException> {
+    return api.patch(
+      `${BASE_URL}/reconciliations/${reconciliationId}/exceptions/${exceptionId}/resolve/second/`,
+      data
+    );
+  },
+
+  /**
    * Every bank-statement line ingested for this reconciliation's bank
    * account/date — matched and unmatched alike. Pass `matched: true/false`
    * to filter to one side; omit for everything. Previously the only
@@ -136,24 +154,24 @@ export const reconciliationService = {
   },
 
   /**
-   * Unresolved bank_only exceptions for a bank account, optionally narrowed
-   * to one direction — used to populate the "link to another exception"
-   * netting picker. Exceptions can span different reconciliation dates.
+   * Valid partners for manually linking against the given exception — used
+   * to populate the "link to another exception" picker. Covers both
+   * bank_only+bank_only (opposite direction, compensating transfer) and
+   * bank_only+erp_only (same direction, missed auto-match) pairings; the
+   * server computes which apply based on the source exception's own type
+   * and direction. Candidates can span different reconciliation dates.
    */
-  async listUnresolvedBankOnlyExceptions(
-    bankAccountId: number,
-    direction?: 'CREDIT' | 'DEBIT'
-  ): Promise<ReconciliationException[]> {
-    const res = await api.get(`${BASE_URL}/exceptions/`, {
-      params: { bank_account: bankAccountId, ...(direction ? { direction } : {}) },
-    });
+  async getLinkCandidates(exceptionId: number): Promise<ReconciliationException[]> {
+    const res = await api.get(`${BASE_URL}/exceptions/${exceptionId}/link-candidates/`);
     return Array.isArray(res) ? res : (res?.results ?? []);
   },
 
   /**
-   * Manually net a bank_only CREDIT exception against a bank_only DEBIT
-   * exception on the same bank account (compensating-transfer scenario).
-   * Director-only, exact amount match only — the backend 403s/400s otherwise.
+   * Manually link two exceptions on the same bank account together and
+   * resolve both at once — either two bank_only exceptions with opposite
+   * directions (a compensating transfer) or a bank_only/erp_only pair with
+   * the same direction (a missed auto-match). Director-only, exact amount
+   * match only — the backend 403s/400s otherwise.
    */
   async linkResolveExceptions(
     data: LinkResolveExceptionsRequest

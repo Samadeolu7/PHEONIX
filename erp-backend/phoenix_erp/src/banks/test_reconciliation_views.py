@@ -673,8 +673,11 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
 
         self.assertEqual(resp.status_code, 400)
 
-    def test_link_resolve_rejects_non_bank_only(self):
-        credit_exc = ReconciliationException.objects.create(
+    def test_link_resolve_rejects_bank_only_erp_only_opposite_direction(self):
+        # bank_only+erp_only is only valid SAME direction (missed-match
+        # case) — opposite direction has no sensible interpretation and
+        # must still be rejected.
+        bank_only_exc = ReconciliationException.objects.create(
             reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
             bank_amount=Decimal('50000.00'), bank_narration='A', bank_date='2026-07-01',
         )
@@ -684,11 +687,89 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         )
         self.client.force_authenticate(user=self.director)
         resp = self.client.post('/api/banks/exceptions/link-resolve/', {
-            'exception_a_id': credit_exc.id, 'exception_b_id': erp_only_exc.id,
-            'resolution_notes': 'attempt',
+            'exception_a_id': bank_only_exc.id, 'exception_b_id': erp_only_exc.id,
+            'resolution_notes': 'attempting an invalid opposite-direction pairing',
         }, format='json')
 
         self.assertEqual(resp.status_code, 400)
+        bank_only_exc.refresh_from_db()
+        self.assertFalse(bank_only_exc.resolved)
+
+    def test_link_resolve_accepts_bank_only_erp_only_same_direction(self):
+        # The missed-auto-match case: a bank_only and an erp_only of the
+        # same amount and same direction are plausibly the same real
+        # transaction that just failed to fuzzy-match.
+        bank_only_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('4000.00'), bank_narration='Unmatched credit', bank_date='2026-07-01',
+        )
+        erp_only_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('4000.00'), erp_narration='Loan repayment', erp_date='2026-06-30',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': bank_only_exc.id, 'exception_b_id': erp_only_exc.id,
+            'resolution_notes': 'Same amount and date range — reference just did not fuzzy-match',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        bank_only_exc.refresh_from_db()
+        erp_only_exc.refresh_from_db()
+        self.assertTrue(bank_only_exc.resolved)
+        self.assertTrue(erp_only_exc.resolved)
+        self.assertEqual(bank_only_exc.netted_with_id, erp_only_exc.id)
+
+    def test_link_resolve_rejects_erp_only_erp_only(self):
+        erp_only_a = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('4000.00'), erp_narration='A', erp_date='2026-07-01',
+        )
+        erp_only_b = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('4000.00'), erp_narration='B', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': erp_only_a.id, 'exception_b_id': erp_only_b.id,
+            'resolution_notes': 'attempting an invalid erp_only pairing',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_link_candidates_for_bank_only_includes_opposite_bank_only_and_same_direction_erp_only(self):
+        source = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('4000.00'), bank_narration='source', bank_date='2026-07-01',
+        )
+        opposite_bank_only = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('4000.00'), bank_narration='netting candidate', bank_date='2026-06-28',
+        )
+        same_direction_erp_only = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('4000.00'), erp_narration='missed match candidate', erp_date='2026-06-30',
+        )
+        # Should NOT appear: wrong amount, same-direction bank_only, opposite-direction erp_only.
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('9999.00'), bank_narration='wrong amount', bank_date='2026-06-28',
+        )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('4000.00'), bank_narration='same direction bank_only', bank_date='2026-06-28',
+        )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('4000.00'), erp_narration='opposite direction erp_only', erp_date='2026-06-28',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(f'/api/banks/exceptions/{source.id}/link-candidates/')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        candidate_ids = {row['id'] for row in resp.data['results']}
+        self.assertEqual(candidate_ids, {opposite_bank_only.id, same_direction_erp_only.id})
 
     def test_branch_manager_cannot_link_resolve(self):
         credit_exc = ReconciliationException.objects.create(
@@ -706,6 +787,214 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         }, format='json')
 
         self.assertEqual(resp.status_code, 403)
+
+
+class DualApprovalResolveTests(TestCase):
+    """
+    Tests for the dual-approval hold on ResolveExceptionView/
+    SecondResolveExceptionView: a single director resolving an exception at/
+    above RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD (default ₦3000,
+    see phoenix/settings.py) only records the first action — resolved stays
+    False until a second, different director confirms. Perfect matches are
+    excluded (see ReconciliationException.requires_dual_approval_to_resolve).
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Dual Approval Org', slug='dual-approval-org')
+        self.branch = Branch.objects.create(name='Branch A', code='DAA')
+
+        self.director = User.objects.create_user(
+            username='dual_director', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+
+        self.second_director = User.objects.create_user(
+            username='dual_director2', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
+        self.branch_manager = User.objects.create_user(
+            username='dual_bm', password='test123', tenant=self.tenant, branch=self.branch,
+        )
+
+        gl_account = Account.objects.create(
+            code='1799', name='Dual Approval GL', account_level=Account.LEVEL_PARENT
+        )
+        bank = Bank.objects.create(bank_name='Dual Approval Bank', bank_code='992')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000008', account_name='Dual Approval Account',
+            gl_account=gl_account, account_manager=self.director,
+        )
+        self.recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/dual.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+    def _resolve_url(self, exc_id):
+        return f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc_id}/resolve/'
+
+    def _second_resolve_url(self, exc_id):
+        return f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc_id}/resolve/second/'
+
+    def test_large_erp_only_exception_is_held_pending_second_approval(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('11000.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.patch(
+            self._resolve_url(exc.id),
+            {'resolution_notes': 'Investigated with the branch, payment genuinely never arrived'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 202, resp.data)
+        exc.refresh_from_db()
+        self.assertFalse(exc.resolved)
+        self.assertEqual(exc.resolved_by_id, self.director.id)
+        self.assertTrue(exc.awaiting_second_resolution)
+        self.assertIsNone(exc.resolved_at)
+
+    def test_small_exception_still_resolves_immediately(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('500.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.patch(
+            self._resolve_url(exc.id),
+            {'resolution_notes': 'Small amount, confirmed with the officer'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+        self.assertIsNotNone(exc.resolved_at)
+
+    def test_perfect_match_exception_bypasses_dual_approval_regardless_of_amount(self):
+        perfect_match = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='amount_diff', direction='CREDIT',
+            bank_amount=Decimal('50000.00'), bank_narration='Loan repayment', bank_date='2026-07-01',
+            erp_amount=Decimal('50000.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.branch_manager)
+        with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
+            mock_resolve.return_value = SimpleNamespace(can_edit=True, can_approve=False)
+            resp = self.client.patch(self._resolve_url(perfect_match.id), {}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        perfect_match.refresh_from_db()
+        self.assertTrue(perfect_match.resolved)
+
+    def test_same_director_cannot_provide_second_approval(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('11000.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        self.client.patch(
+            self._resolve_url(exc.id),
+            {'resolution_notes': 'Investigated with the branch, payment never arrived'},
+            format='json',
+        )
+
+        resp = self.client.patch(
+            self._second_resolve_url(exc.id),
+            {'resolution_notes': 'Confirming my own review'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 403)
+        exc.refresh_from_db()
+        self.assertFalse(exc.resolved)
+
+    def test_different_director_can_confirm_second_approval(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('11000.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        self.client.patch(
+            self._resolve_url(exc.id),
+            {'resolution_notes': 'Investigated with the branch, payment never arrived'},
+            format='json',
+        )
+
+        self.client.force_authenticate(user=self.second_director)
+        resp = self.client.patch(
+            self._second_resolve_url(exc.id),
+            {'resolution_notes': 'Independently verified with the bank statement'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+        self.assertEqual(exc.second_resolved_by_id, self.second_director.id)
+        self.assertIsNotNone(exc.resolved_at)
+
+        self.recon.refresh_from_db()
+        self.assertEqual(self.recon.unmatched_erp_count, 0)
+
+    def test_branch_manager_cannot_provide_second_approval(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('11000.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        self.client.patch(
+            self._resolve_url(exc.id),
+            {'resolution_notes': 'Investigated with the branch, payment never arrived'},
+            format='json',
+        )
+
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.patch(
+            self._second_resolve_url(exc.id),
+            {'resolution_notes': 'Branch manager attempting to confirm'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_second_approval_requires_a_first_resolution(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('11000.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.second_director)
+        resp = self.client.patch(
+            self._second_resolve_url(exc.id),
+            {'resolution_notes': 'Trying to confirm with no first resolution'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_second_approval_rejects_too_short_notes(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('11000.00'), erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        self.client.patch(
+            self._resolve_url(exc.id),
+            {'resolution_notes': 'Investigated with the branch, payment never arrived'},
+            format='json',
+        )
+
+        self.client.force_authenticate(user=self.second_director)
+        resp = self.client.patch(
+            self._second_resolve_url(exc.id), {'resolution_notes': 'ok'}, format='json',
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        exc.refresh_from_db()
+        self.assertFalse(exc.resolved)
 
 
 class ManualOverridesReportTests(TestCase):

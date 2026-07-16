@@ -488,6 +488,18 @@ RECONCILIATION_MATCH_WINDOW_DAYS = int(os.environ.get('RECONCILIATION_MATCH_WIND
 # threshold otherwise never surfaces on its own.
 RECONCILIATION_EXCEPTION_AGING_DAYS = int(os.environ.get('RECONCILIATION_EXCEPTION_AGING_DAYS', 3))
 
+# A director resolving an exception at/above this amount needs a second
+# director's confirmation before it actually closes (see
+# ReconciliationException.requires_dual_approval_to_resolve) — mirrors
+# BankTransfer's dual_approval_threshold pattern. Excludes "perfect match"
+# exceptions, which are already branch-manager-resolvable with no director
+# at all. Decimal (not int) since it's compared directly against
+# DecimalField amounts.
+from decimal import Decimal as _Decimal
+RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD = _Decimal(
+    os.environ.get('RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD', '3000')
+)
+
 # ==================================================
 # DRF SPECTACULAR (API DOCUMENTATION)
 # ==================================================

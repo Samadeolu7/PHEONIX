@@ -442,8 +442,22 @@ export interface ReconciliationException {
   // Resolution — director required unless is_perfect_match (see ResolveExceptionView)
   resolved: boolean;
   resolved_by: number | null;
+  resolved_by_name: string | null;
   resolved_at: string | null;
   resolution_notes: string;
+  // True when resolve_amount is at/above RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD
+  // (excludes perfect matches — see ReconciliationException.requires_dual_approval_to_resolve).
+  // A single director's resolve() call only records the first action when
+  // this is true; resolved stays false until a second, different director
+  // confirms via the /resolve/second/ endpoint.
+  requires_dual_approval_to_resolve: boolean;
+  // True once the first director has acted but resolved is still false and
+  // a second director's confirmation is outstanding.
+  awaiting_second_resolution: boolean;
+  second_resolved_by: number | null;
+  second_resolved_by_name: string | null;
+  second_resolved_at: string | null;
+  second_resolution_notes: string;
   created_at: string;
 }
 
@@ -517,6 +531,10 @@ export interface ReconciliationFilters {
 }
 
 export interface ResolveExceptionRequest {
+  resolution_notes: string;
+}
+
+export interface SecondResolveExceptionRequest {
   resolution_notes: string;
 }
 

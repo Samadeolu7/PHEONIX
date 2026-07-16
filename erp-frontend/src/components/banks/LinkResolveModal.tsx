@@ -4,7 +4,6 @@ import { reconciliationService } from '../../services/reconciliationService';
 import { MIN_REASON_LENGTH, type ReconciliationException } from '../../types/banks';
 
 interface LinkResolveModalProps {
-  bankAccountId: number;
   exception: ReconciliationException;
   onClose: () => void;
   onSuccess: (result: { exception_a: ReconciliationException; exception_b: ReconciliationException }) => void;
@@ -16,21 +15,34 @@ function formatAmount(value: string | null): string {
   return `₦${parseFloat(value).toLocaleString()}`;
 }
 
+// bank_only has only bank_amount, erp_only has only erp_amount — whichever
+// is present is the exception's resolve amount (mirrors the backend's
+// ReconciliationException.resolve_amount property).
+function resolveAmount(exc: ReconciliationException): string | null {
+  return exc.bank_amount ?? exc.erp_amount;
+}
+
+const TYPE_LABELS: Record<ReconciliationException['exception_type'], string> = {
+  bank_only: 'In bank, not in ERP',
+  erp_only: 'In ERP, not in bank',
+  amount_diff: 'Amount difference',
+};
+
 /**
- * Manually nets a bank_only exception against another bank_only exception
- * of the opposite direction on the same bank account — e.g. money sent to
- * the wrong bank (DEBIT) then clawed back with a compensating transfer
- * (CREDIT), possibly on a different reconciliation date. Director-only,
- * exact amount match only — see LinkResolveExceptionsView (banks/views.py).
+ * Manually links this exception against a candidate on the same bank
+ * account and resolves both at once — either another bank_only exception
+ * of the opposite direction (a compensating transfer: money sent to the
+ * wrong bank, then clawed back), or a bank_only/erp_only pair of the same
+ * direction (the bank line and the ERP payment plausibly failed to
+ * auto-match). The server computes which candidates are valid for this
+ * exception's own type/direction — see LinkCandidatesView (banks/views.py).
  */
 export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
-  bankAccountId,
   exception,
   onClose,
   onSuccess,
   onError,
 }) => {
-  const oppositeDirection = exception.direction === 'CREDIT' ? 'DEBIT' : 'CREDIT';
   const [candidates, setCandidates] = useState<ReconciliationException[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -41,11 +53,9 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
     let cancelled = false;
     setLoading(true);
     reconciliationService
-      .listUnresolvedBankOnlyExceptions(bankAccountId, oppositeDirection)
+      .getLinkCandidates(exception.id)
       .then((results) => {
-        if (!cancelled) {
-          setCandidates(results.filter((c) => c.id !== exception.id));
-        }
+        if (!cancelled) setCandidates(results);
       })
       .catch((err: any) => {
         if (!cancelled) onError(err.message || 'Failed to load candidates');
@@ -57,9 +67,7 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bankAccountId, oppositeDirection, exception.id]);
-
-  const exactMatches = (candidates || []).filter((c) => c.bank_amount === exception.bank_amount);
+  }, [exception.id]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,7 +82,7 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
       onSuccess(result);
       onClose();
     } catch (err: any) {
-      onError(err.message || 'Failed to net exceptions together');
+      onError(err.message || 'Failed to link exceptions together');
     } finally {
       setSubmitting(false);
     }
@@ -92,33 +100,38 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
 
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
           <p className="text-xs text-gray-500">
-            Netting requires an exact amount match — e.g. a compensating transfer that
-            reverses money sent to the wrong bank. Both exceptions are resolved together.
+            Linking requires an exact amount match. Two bank_only exceptions of opposite
+            directions is a compensating transfer; a bank_only paired with an erp_only of the
+            same direction means they're likely the same transaction that failed to auto-match.
+            Both exceptions are resolved together.
           </p>
 
           <div className="bg-gray-50 rounded-md p-3 text-sm">
             <p className="text-gray-900">
-              {exception.direction}: {exception.bank_narration || '—'}
+              {TYPE_LABELS[exception.exception_type]} · {exception.direction}:{' '}
+              {exception.bank_narration || exception.erp_narration || '—'}
             </p>
             <p className="text-gray-500 mt-1">
-              {formatAmount(exception.bank_amount)} on {exception.bank_date}
+              {formatAmount(resolveAmount(exception))} on{' '}
+              {exception.bank_date || exception.erp_date}
             </p>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select the matching {oppositeDirection.toLowerCase()} exception
+              Select a matching candidate
             </label>
             {loading ? (
               <p className="text-sm text-gray-500">Loading candidates…</p>
-            ) : exactMatches.length === 0 ? (
+            ) : !candidates || candidates.length === 0 ? (
               <p className="text-sm text-gray-500">
-                No unresolved {oppositeDirection.toLowerCase()} exceptions with a matching
-                amount ({formatAmount(exception.bank_amount)}) were found on this bank account.
+                No unresolved exceptions with a matching amount (
+                {formatAmount(resolveAmount(exception))}) and a valid pairing were found on this
+                bank account.
               </p>
             ) : (
               <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-56 overflow-y-auto">
-                {exactMatches.map((c) => (
+                {candidates.map((c) => (
                   <li key={c.id}>
                     <label className="flex items-start gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50">
                       <input
@@ -128,10 +141,24 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
                         onChange={() => setSelectedId(c.id)}
                         className="mt-1"
                       />
-                      <span className="text-sm">
-                        <span className="block text-gray-900">{c.bank_narration || '—'}</span>
+                      <span className="text-sm min-w-0">
+                        <span className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={`px-1.5 py-0.5 text-xs font-medium rounded-full ${
+                              c.exception_type === 'bank_only'
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {TYPE_LABELS[c.exception_type]}
+                          </span>
+                          <span className="text-xs text-gray-400">{c.direction}</span>
+                        </span>
+                        <span className="block text-gray-900 mt-0.5 truncate">
+                          {c.bank_narration || c.erp_narration || '—'}
+                        </span>
                         <span className="block text-gray-500 text-xs mt-0.5">
-                          {formatAmount(c.bank_amount)} on {c.bank_date}
+                          {formatAmount(resolveAmount(c))} on {c.bank_date || c.erp_date}
                         </span>
                       </span>
                     </label>
@@ -168,7 +195,7 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
               disabled={submitting || !selectedId || notes.trim().length < MIN_REASON_LENGTH}
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitting ? 'Linking…' : 'Net & Resolve Both'}
+              {submitting ? 'Linking…' : 'Link & Resolve Both'}
             </button>
           </div>
         </form>

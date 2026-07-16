@@ -18,6 +18,7 @@ import { PostToExpenseModal } from '../../components/banks/PostToExpenseModal';
 import { LinkResolveModal } from '../../components/banks/LinkResolveModal';
 import { useToast } from '../../hooks/useToast';
 import { usePermission } from '../../hooks/usePermissions';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   MIN_REASON_LENGTH,
   type DailyReconciliation,
@@ -43,6 +44,7 @@ const ReconciliationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { success, error: showError } = useToast();
+  const { user } = useAuth();
   const { hasPageAccess } = usePermission();
   // Director tier: may resolve ANY exception, including amount mismatches.
   const canApprove = hasPageAccess('banks', 'bank-reconciliation-exceptions', 'approve');
@@ -59,6 +61,8 @@ const ReconciliationDetailPage: React.FC = () => {
   const [resolvingId, setResolvingId] = useState<number | null>(null);
   const [rerunning, setRerunning] = useState(false);
   const [notesDraft, setNotesDraft] = useState<Record<number, string>>({});
+  const [secondResolvingId, setSecondResolvingId] = useState<number | null>(null);
+  const [secondNotesDraft, setSecondNotesDraft] = useState<Record<number, string>>({});
   const [filter, setFilter] = useState<'all' | 'unresolved' | 'resolved'>('unresolved');
   const pollCountRef = useRef(0);
 
@@ -147,11 +151,34 @@ const ReconciliationDetailPage: React.FC = () => {
         ...recon,
         exceptions: recon.exceptions?.map((e) => (e.id === exception.id ? updated : e)),
       });
-      success('Exception resolved');
+      success(
+        updated.awaiting_second_resolution
+          ? 'Recorded — a second director must confirm before this closes'
+          : 'Exception resolved'
+      );
     } catch (err: any) {
       showError(err.message || 'Failed to resolve exception');
     } finally {
       setResolvingId(null);
+    }
+  };
+
+  const handleSecondResolve = async (exception: ReconciliationException) => {
+    if (!recon) return;
+    setSecondResolvingId(exception.id);
+    try {
+      const updated = await reconciliationService.secondResolveException(recon.id, exception.id, {
+        resolution_notes: secondNotesDraft[exception.id] || '',
+      });
+      setRecon({
+        ...recon,
+        exceptions: recon.exceptions?.map((e) => (e.id === exception.id ? updated : e)),
+      });
+      success('Exception resolved');
+    } catch (err: any) {
+      showError(err.message || 'Failed to confirm the second approval');
+    } finally {
+      setSecondResolvingId(null);
     }
   };
 
@@ -496,6 +523,13 @@ const ReconciliationDetailPage: React.FC = () => {
                               {exception.pending_bank_payment_info.status})
                             </p>
                           )}
+                          {exception.awaiting_second_resolution && (
+                            <p className="text-xs text-amber-700 mt-1">
+                              Awaiting a second director's confirmation — first resolved by{' '}
+                              {exception.resolved_by_name || 'a director'}
+                              {exception.resolution_notes && `: "${exception.resolution_notes}"`}
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -512,8 +546,64 @@ const ReconciliationDetailPage: React.FC = () => {
                           exception.exception_type === 'bank_only' &&
                           exception.direction === 'DEBIT' &&
                           !exception.pending_bank_payment_info;
+                        // bank_only can link against another bank_only (opposite
+                        // direction, netting) or an erp_only (same direction,
+                        // missed auto-match); erp_only can only link against a
+                        // bank_only. amount_diff is never linkable — see
+                        // is_valid_exception_pairing (banks/reconciliation_utils.py).
                         const canLinkResolve =
-                          canApprove && exception.exception_type === 'bank_only';
+                          canApprove &&
+                          (exception.exception_type === 'bank_only' || exception.exception_type === 'erp_only');
+
+                        if (exception.awaiting_second_resolution) {
+                          const secondNotes = secondNotesDraft[exception.id] || '';
+                          const isFirstResolver = exception.resolved_by === user?.id;
+
+                          if (!canApprove || isFirstResolver) {
+                            return (
+                              <span
+                                className="flex items-center gap-1 text-xs text-amber-600 shrink-0"
+                                title={
+                                  isFirstResolver
+                                    ? "You resolved this first — a different director must confirm"
+                                    : 'Only directors may provide the second approval'
+                                }
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                                {isFirstResolver ? 'Awaiting another director' : 'Awaiting 2nd approval'}
+                              </span>
+                            );
+                          }
+
+                          return (
+                            <div className="flex items-center gap-2 shrink-0">
+                              <input
+                                type="text"
+                                placeholder={`Confirm notes (min ${MIN_REASON_LENGTH} chars)`}
+                                value={secondNotes}
+                                onChange={(e) =>
+                                  setSecondNotesDraft({ ...secondNotesDraft, [exception.id]: e.target.value })
+                                }
+                                className="w-40 px-2 py-1 text-sm border border-amber-300 rounded-md focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                              />
+                              <button
+                                onClick={() => handleSecondResolve(exception)}
+                                disabled={
+                                  secondResolvingId === exception.id ||
+                                  secondNotes.trim().length < MIN_REASON_LENGTH
+                                }
+                                title={
+                                  secondNotes.trim().length < MIN_REASON_LENGTH
+                                    ? `Confirmation notes (at least ${MIN_REASON_LENGTH} characters) are required`
+                                    : undefined
+                                }
+                                className="px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50 whitespace-nowrap"
+                              >
+                                {secondResolvingId === exception.id ? 'Confirming…' : 'Confirm (2nd director)'}
+                              </button>
+                            </div>
+                          );
+                        }
 
                         if (exception.resolved) return null;
 
@@ -731,7 +821,6 @@ const ReconciliationDetailPage: React.FC = () => {
 
       {linkResolveException && recon && (
         <LinkResolveModal
-          bankAccountId={recon.bank_account}
           exception={linkResolveException}
           onClose={() => setLinkResolveException(null)}
           onSuccess={handleLinkResolveSuccess}

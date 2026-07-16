@@ -16,9 +16,10 @@ from .views import (
     UnmatchTransactionView,
     RerunReconciliationView,
     ResolveExceptionView,
+    SecondResolveExceptionView,
     ResolveExceptionToExpenseView,
     LinkResolveExceptionsView,
-    UnresolvedBankOnlyExceptionsListView,
+    LinkCandidatesView,
     OfficerReconciliationRiskReportView,
     ManualOverridesReportView,
 )
@@ -69,6 +70,11 @@ urlpatterns = [
         name='reconciliation-exception-resolve',
     ),
     path(
+        'reconciliations/<int:recon_pk>/exceptions/<int:exc_pk>/resolve/second/',
+        SecondResolveExceptionView.as_view(),
+        name='reconciliation-exception-resolve-second',
+    ),
+    path(
         'reconciliations/<int:recon_pk>/exceptions/<int:exc_pk>/resolve-to-expense/',
         ResolveExceptionToExpenseView.as_view(),
         name='reconciliation-exception-resolve-to-expense',
@@ -79,9 +85,9 @@ urlpatterns = [
         name='reconciliation-exceptions-link-resolve',
     ),
     path(
-        'exceptions/',
-        UnresolvedBankOnlyExceptionsListView.as_view(),
-        name='reconciliation-exceptions-list',
+        'exceptions/<int:exc_id>/link-candidates/',
+        LinkCandidatesView.as_view(),
+        name='reconciliation-exception-link-candidates',
     ),
     path(
         'reports/officer-reconciliation-risk/',
