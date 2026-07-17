@@ -16,6 +16,7 @@ import {
 import { bankService } from '../../services/bankService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
+import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import {
   Banknote,
   CheckCircle,
@@ -193,6 +194,7 @@ const LoanDisbursementPage: React.FC = () => {
         >
           <ArrowLeft className="w-5 h-5 text-gray-600" />
         </button>
+        <ClientAvatar image={d.client_image} name={d.client_name} size="md" />
         <div className="flex-1">
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Banknote className="w-6 h-6 text-green-600" />
@@ -208,6 +210,13 @@ const LoanDisbursementPage: React.FC = () => {
       {/* Customer & Loan Summary */}
       <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
         <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Loan Details</h3>
+        <div className="flex items-center gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+          <ClientAvatar image={d.client_image} name={d.client_name} size="lg" />
+          <p className="text-xs text-amber-800">
+            Confirm this photo matches the recipient before releasing funds — a disbursement to
+            the wrong customer requires a formal, dual-approved correction to fix.
+          </p>
+        </div>
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
             <p className="text-gray-500">Client</p>
@@ -376,9 +385,12 @@ const LoanDisbursementPage: React.FC = () => {
           {/* Confirmation summary */}
           <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 text-sm space-y-1">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Confirm Transfer Details</p>
-            <div className="flex justify-between">
+            <div className="flex justify-between items-center">
               <span className="text-gray-500">To:</span>
-              <span className="font-semibold text-gray-900">{d.client_name}</span>
+              <span className="flex items-center gap-2 font-semibold text-gray-900">
+                <ClientAvatar image={d.client_image} name={d.client_name} size="sm" />
+                {d.client_name}
+              </span>
             </div>
             {d.client_bank_account_number && (
               <div className="flex justify-between">

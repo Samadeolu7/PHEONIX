@@ -61,6 +61,60 @@ def check_savings_requirement(client, loan_product, requested_amount: Decimal) -
         raise ValidationError(errors)
 
 
+def create_loan_account_shell(client, product, user, branch, tenant):
+    """
+    Allocate a unique loan_number and auto-create the child GL (LOAN) account
+    a new LoanAccount needs, under the product's parent_account — the same
+    account-code-allocation algorithm LoanAccountViewSet.perform_create uses
+    when a loan application is first submitted (loans/views.py).
+
+    Returns (loan_number: str, gl_account: accounts.models.Account).
+    Raises ValidationError if the product has no parent GL account configured
+    or no GL account code is available.
+    """
+    import uuid
+    from django.utils import timezone as tz
+    from accounts.models import Account as GlAccount
+
+    date_str = tz.localdate().strftime('%Y%m%d')
+    loan_number = f"LN-{date_str}-{uuid.uuid4().hex[:6].upper()}"
+
+    parent = product.parent_account
+    if not parent:
+        raise ValidationError('Loan product has no parent GL account configured.')
+
+    scope_filter = {}
+    if branch:
+        scope_filter['branch'] = branch
+    if tenant:
+        scope_filter['tenant'] = tenant
+
+    parent_int = int(parent.code)
+    candidate_code = None
+    for seq in range(1, 10000):
+        candidate = str(parent_int + seq)
+        if not GlAccount.objects.filter(**scope_filter, code=candidate).exists():
+            candidate_code = candidate
+            break
+    if not candidate_code:
+        raise ValidationError('No available GL account codes for this loan product.')
+
+    gl_account = GlAccount.objects.create(
+        code=candidate_code,
+        name=f"{client.full_name} – {product.product.name}",
+        account_type=GlAccount.LOAN,
+        account_level=GlAccount.LEVEL_CHILD,
+        parent=parent,
+        allow_manual_entries=True,
+        is_system_account=True,
+        balance=Decimal('0.00'),
+        owner=user,
+        branch=branch,
+        tenant=tenant,
+    )
+    return loan_number, gl_account
+
+
 @db_transaction.atomic
 def apply_loan_fees(
     loan_account: LoanAccount,

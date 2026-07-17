@@ -16,7 +16,7 @@ from common.views import ScopedModelViewSet
 from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest, LoanRestructure,
-    LoanRestructureRequest, OfflinePaymentRecord,
+    LoanRestructureRequest, OfflinePaymentRecord, LoanDisbursementCorrection,
 )
 from .serializers import (
     LoanProductSerializer,
@@ -26,6 +26,7 @@ from .serializers import (
     LoanRepaymentRequestSerializer, LoanRestructureSerializer,
     LoanRestructureRequestSerializer,
     OfflinePaymentRecordSerializer,
+    LoanDisbursementCorrectionSerializer,
 )
 from .utils import LoanVerifier
 from cash_management.services.payment_routing import PaymentRoutingService
@@ -2828,3 +2829,110 @@ class OfflinePaymentRecordViewSet(ScopedModelViewSet):
         return Response(
             OfflinePaymentRecordSerializer(rec, context={'request': request}).data,
         )
+
+
+class LoanDisbursementCorrectionViewSet(ScopedModelViewSet):
+    """
+    Correction workflow for a loan disbursed to the wrong customer — see
+    LoanDisbursementCorrection's docstring (loans/models.py) for the full
+    accounting treatment.
+
+    POST /api/loans/disbursement-corrections/                     — request a correction
+    GET  /api/loans/disbursement-corrections/                     — list (filter ?status=)
+    POST /api/loans/disbursement-corrections/:id/first_approve/   — first director sign-off
+    POST /api/loans/disbursement-corrections/:id/second_approve/  — second, different director
+                                                                      sign-off — executes the
+                                                                      reversal + re-disbursement
+    POST /api/loans/disbursement-corrections/:id/reject/          — either director rejects
+
+    Always requires two different, authorized approvers — no amount threshold.
+    Neither the requester nor the first approver may act as the second approver.
+    """
+    permission_module = 'loans'
+    permission_page = 'loan-disbursement-corrections'
+    queryset = LoanDisbursementCorrection.objects.select_related(
+        'original_loan', 'original_loan__client', 'original_loan__product',
+        'correct_client', 'new_loan',
+        'requested_by', 'first_approved_by', 'second_approved_by', 'rejected_by',
+    ).all()
+    serializer_class = LoanDisbursementCorrectionSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+
+    def get_queryset(self):
+        qs = LoanDisbursementCorrection.objects.select_related(
+            'original_loan', 'original_loan__client', 'original_loan__product',
+            'correct_client', 'new_loan',
+            'requested_by', 'first_approved_by', 'second_approved_by', 'rejected_by',
+        ).all()
+        qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+
+    def perform_create(self, serializer):
+        user, branch, tenant = self._resolve_create_scope()
+        serializer.save(requested_by=user, owner=tenant, branch=branch, tenant=tenant)
+
+    @action(detail=True, methods=['post'])
+    def first_approve(self, request, pk=None):
+        from common.approval_permissions import can_user_approve
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'You do not have approval authority for loan disbursement corrections.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        req = self.get_object()
+        notes = request.data.get('notes', '')
+        try:
+            req.first_approve(request.user, notes=notes)
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.messages if hasattr(exc, 'messages') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(LoanDisbursementCorrectionSerializer(req, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def second_approve(self, request, pk=None):
+        from common.approval_permissions import can_user_approve
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'You do not have approval authority for loan disbursement corrections.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        req = self.get_object()
+        notes = request.data.get('notes', '')
+        try:
+            req.second_approve(request.user, notes=notes)
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.messages if hasattr(exc, 'messages') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(LoanDisbursementCorrectionSerializer(req, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        from common.approval_permissions import can_user_approve
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'You do not have approval authority for loan disbursement corrections.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        req = self.get_object()
+        reason = request.data.get('rejection_reason', '')
+        try:
+            req.reject(request.user, reason=reason)
+        except ValidationError as exc:
+            return Response(
+                {'detail': exc.messages if hasattr(exc, 'messages') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(LoanDisbursementCorrectionSerializer(req, context={'request': request}).data)

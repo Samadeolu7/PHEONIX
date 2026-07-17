@@ -1245,6 +1245,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'loan-disbursement-corrections',
+    title: '⚠️ Disbursement Corrections',
+    description:
+      'Director inbox for loans disbursed to the wrong customer — always requires two different directors before reversing and re-disbursing',
+    path: '/loans/disbursement-corrections',
+    icon: ClipboardList,
+    requiredPermission: 'loan-correction-approve',
+    moduleId: 'client-services',
+    category: 'Loans',
+    isNew: true,
+  },
+  {
     id: 'loan-products',
     title: '🏷️ Loan Products',
     description: 'Manage loan product types, interest rates, terms, fees, and eligibility criteria',

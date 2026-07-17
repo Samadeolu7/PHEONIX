@@ -7,6 +7,7 @@ from .models import (
     LoanVerificationRequest, LoanDisbursement,
     LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
     LoanRepaymentRequest, LoanRestructure, LoanRestructureRequest, OfflinePaymentRecord,
+    LoanDisbursementCorrection,
 )
 
 
@@ -216,6 +217,7 @@ class LoanGuarantorSerializer(TenantModelSerializer):
 class LoanAccountListSerializer(TenantModelSerializer):
     """Lightweight list serializer."""
     client_name = serializers.CharField(source='client.full_name', read_only=True)
+    client_image = serializers.ImageField(source='client.image', read_only=True, use_url=True)
     client_phone = serializers.CharField(source='client.phone_primary', read_only=True, default='')
     group_name = serializers.CharField(source='client.group.name', read_only=True, default='')
     product_name = serializers.CharField(source='product.name', read_only=True)
@@ -232,7 +234,7 @@ class LoanAccountListSerializer(TenantModelSerializer):
     class Meta:
         model = LoanAccount
         fields = [
-            'id', 'loan_number', 'client', 'client_name',
+            'id', 'loan_number', 'client', 'client_name', 'client_image',
             'client_phone', 'group_name',
             'product', 'product_name',
             'requested_amount', 'disbursed_amount', 'outstanding_principal',
@@ -275,6 +277,7 @@ class LoanRestructureSerializer(serializers.ModelSerializer):
 class LoanAccountDetailSerializer(TenantModelSerializer):
     """Full detail serializer including Java App 1 batch fields."""
     client_name = serializers.CharField(source='client.full_name', read_only=True)
+    client_image = serializers.ImageField(source='client.image', read_only=True, use_url=True)
     client_bank_name = serializers.CharField(source='client.bank_name', read_only=True)
     client_bank_account_name = serializers.CharField(source='client.bank_account_name', read_only=True)
     client_bank_account_number = serializers.CharField(source='client.bank_account_number', read_only=True)
@@ -306,7 +309,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
         model = LoanAccount
         fields = [
             'id', 'loan_number',
-            'client', 'client_name',
+            'client', 'client_name', 'client_image',
             'client_bank_name', 'client_bank_account_name',
             'client_bank_account_number', 'client_bvn',
             'product', 'product_name',
@@ -347,7 +350,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'loan_number', 'client_name',
+            'id', 'loan_number', 'client_name', 'client_image',
             'client_bank_name', 'client_bank_account_name',
             'client_bank_account_number', 'client_bvn',
             'product_name',
@@ -441,11 +444,13 @@ class LoanAccountCreateSerializer(TenantModelSerializer):
 
 class LoanVerificationRequestSerializer(TenantModelSerializer):
     loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
+    client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
+    client_image = serializers.ImageField(source='loan.client.image', read_only=True, use_url=True)
 
     class Meta:
         model = LoanVerificationRequest
         fields = [
-            'id', 'loan', 'loan_number', 'nin_used',
+            'id', 'loan', 'loan_number', 'client_name', 'client_image', 'nin_used',
             'active_loans_elsewhere', 'total_active_exposure',
             'default_rate_pct', 'flags',
             'recommended_amount', 'verdict', 'notes',
@@ -453,7 +458,7 @@ class LoanVerificationRequestSerializer(TenantModelSerializer):
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'loan', 'loan_number', 'nin_used',
+            'id', 'loan', 'loan_number', 'client_name', 'client_image', 'nin_used',
             'active_loans_elsewhere', 'total_active_exposure',
             'default_rate_pct', 'flags',
             'owner', 'branch', 'created_at', 'updated_at',
@@ -463,6 +468,7 @@ class LoanVerificationRequestSerializer(TenantModelSerializer):
 class LoanDisbursementSerializer(TenantModelSerializer):
     loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
     client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
+    client_image = serializers.ImageField(source='loan.client.image', read_only=True, use_url=True)
     client_phone = serializers.CharField(source='loan.client.phone_primary', read_only=True)
     # Recipient bank details — needed by the officer executing the transfer
     client_bank_name = serializers.CharField(source='loan.client.bank_name', read_only=True, default=None)
@@ -518,7 +524,7 @@ class LoanDisbursementSerializer(TenantModelSerializer):
         model = LoanDisbursement
         fields = [
             'id', 'loan', 'loan_number',
-            'client_name', 'client_phone', 'loan_amount',
+            'client_name', 'client_image', 'client_phone', 'loan_amount',
             'client_bank_name', 'client_bank_account_name',
             'client_bank_account_number', 'client_bvn',
             'requested_by', 'requested_by_name',
@@ -612,6 +618,7 @@ class FeePreviewer(serializers.Serializer):
 class LoanRepaymentRequestSerializer(TenantModelSerializer):
     loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
     client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
+    client_image = serializers.ImageField(source='loan.client.image', read_only=True, use_url=True)
     savings_account_number = serializers.CharField(source='savings_account.account_number', read_only=True)
     requested_by_name = serializers.SerializerMethodField()
     reviewed_by_name = serializers.SerializerMethodField()
@@ -628,7 +635,7 @@ class LoanRepaymentRequestSerializer(TenantModelSerializer):
     class Meta:
         model = LoanRepaymentRequest
         fields = [
-            'id', 'loan', 'loan_number', 'client_name',
+            'id', 'loan', 'loan_number', 'client_name', 'client_image',
             'savings_account', 'savings_account_number',
             'amount', 'payment_date', 'notes',
             'requested_by', 'requested_by_name',
@@ -638,7 +645,7 @@ class LoanRepaymentRequestSerializer(TenantModelSerializer):
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'loan_number', 'client_name', 'savings_account_number',
+            'id', 'loan_number', 'client_name', 'client_image', 'savings_account_number',
             'requested_by', 'requested_by_name',
             'status', 'reviewed_by', 'reviewed_by_name',
             'reviewed_at', 'rejection_reason', 'journal_entry',
@@ -650,6 +657,7 @@ class LoanRepaymentRequestSerializer(TenantModelSerializer):
 class LoanRestructureRequestSerializer(TenantModelSerializer):
     loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
     client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
+    client_image = serializers.ImageField(source='loan.client.image', read_only=True, use_url=True)
     current_term = serializers.IntegerField(source='loan.term_months', read_only=True)
     current_term_unit = serializers.CharField(source='loan.term_unit', read_only=True)
     current_interest_rate = serializers.DecimalField(
@@ -702,7 +710,7 @@ class LoanRestructureRequestSerializer(TenantModelSerializer):
     class Meta:
         model = LoanRestructureRequest
         fields = [
-            'id', 'loan', 'loan_number', 'client_name',
+            'id', 'loan', 'loan_number', 'client_name', 'client_image',
             'current_term', 'current_term_unit', 'current_interest_rate', 'outstanding_principal',
             'new_term', 'effective_date', 'reason', 'notes', 'preview',
             'requested_by', 'requested_by_name',
@@ -711,7 +719,7 @@ class LoanRestructureRequestSerializer(TenantModelSerializer):
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'loan_number', 'client_name',
+            'id', 'loan_number', 'client_name', 'client_image',
             'current_term', 'current_term_unit', 'current_interest_rate', 'outstanding_principal', 'preview',
             'requested_by', 'requested_by_name',
             'status', 'reviewed_by', 'reviewed_by_name',
@@ -748,4 +756,71 @@ class OfflinePaymentRecordSerializer(TenantModelSerializer):
             'reviewed_at', 'rejection_reason', 'journal_entry',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
+
+
+class LoanDisbursementCorrectionSerializer(TenantModelSerializer):
+    original_loan_number = serializers.CharField(source='original_loan.loan_number', read_only=True)
+    wrong_client_name = serializers.CharField(source='original_loan.client.full_name', read_only=True)
+    wrong_client_image = serializers.ImageField(source='original_loan.client.image', read_only=True, use_url=True)
+    disbursed_amount = serializers.DecimalField(
+        source='original_loan.disbursed_amount', max_digits=18, decimal_places=2, read_only=True,
+    )
+    correct_client_name = serializers.CharField(source='correct_client.full_name', read_only=True)
+    correct_client_image = serializers.ImageField(source='correct_client.image', read_only=True, use_url=True)
+    new_loan_number = serializers.CharField(source='new_loan.loan_number', read_only=True, default=None)
+    requested_by_name = serializers.SerializerMethodField()
+    first_approved_by_name = serializers.SerializerMethodField()
+    second_approved_by_name = serializers.SerializerMethodField()
+    rejected_by_name = serializers.SerializerMethodField()
+
+    def get_requested_by_name(self, obj):
+        return obj.requested_by.get_full_name() if obj.requested_by else None
+
+    def get_first_approved_by_name(self, obj):
+        return obj.first_approved_by.get_full_name() if obj.first_approved_by else None
+
+    def get_second_approved_by_name(self, obj):
+        return obj.second_approved_by.get_full_name() if obj.second_approved_by else None
+
+    def get_rejected_by_name(self, obj):
+        return obj.rejected_by.get_full_name() if obj.rejected_by else None
+
+    class Meta:
+        model = LoanDisbursementCorrection
+        fields = [
+            'id', 'reference_number',
+            'original_loan', 'original_loan_number',
+            'wrong_client_name', 'wrong_client_image', 'disbursed_amount',
+            'correct_client', 'correct_client_name', 'correct_client_image',
+            'reason', 'status',
+            'requested_by', 'requested_by_name', 'requested_at',
+            'first_approved_by', 'first_approved_by_name', 'first_approved_at', 'first_approval_notes',
+            'second_approved_by', 'second_approved_by_name', 'second_approved_at', 'second_approval_notes',
+            'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',
+            'reversal_journal_entry', 'new_loan', 'new_loan_number',
+            'notes',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'reference_number',
+            'original_loan_number',
+            'wrong_client_name', 'wrong_client_image', 'disbursed_amount',
+            'correct_client_name', 'correct_client_image',
+            'status',
+            'requested_by', 'requested_by_name', 'requested_at',
+            'first_approved_by', 'first_approved_by_name', 'first_approved_at', 'first_approval_notes',
+            'second_approved_by', 'second_approved_by_name', 'second_approved_at', 'second_approval_notes',
+            'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',
+            'reversal_journal_entry', 'new_loan', 'new_loan_number',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+
+    def validate(self, attrs):
+        original_loan = attrs.get('original_loan') or (self.instance.original_loan if self.instance else None)
+        correct_client = attrs.get('correct_client') or (self.instance.correct_client if self.instance else None)
+        if original_loan and correct_client and original_loan.client_id == correct_client.pk:
+            raise serializers.ValidationError(
+                {'correct_client': "The correct client must be different from the loan's current client."}
+            )
+        return attrs
 

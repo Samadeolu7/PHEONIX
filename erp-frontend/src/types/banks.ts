@@ -8,6 +8,12 @@
 // keep both in sync if the threshold ever changes.
 export const MIN_REASON_LENGTH = 10;
 
+// Matches banks/reconciliation_utils.py's FEE_LINK_MAX_AMOUNT — the largest
+// bank_only/erp_only amount difference LinkResolveBankChargeView will treat
+// as a bank-deducted transfer fee rather than reject. UX pre-check only;
+// the server enforces this independently.
+export const FEE_LINK_MAX_AMOUNT = 75;
+
 /**
  * Bank - Physical banking institution
  */
@@ -390,6 +396,10 @@ export interface ReconciliationException {
   direction: 'CREDIT' | 'DEBIT';
   // Bank side (null for 'erp_only')
   bank_transaction_id: string | null;
+  // The bank's own statement reference (ReconciliationBankTransaction.bank_ref)
+  // — distinct from bank_transaction_id (Java's internal UUID) and from
+  // has_bank_reference (an ERP-narration accountability signal).
+  bank_reference: string | null;
   bank_amount: string | null;
   bank_narration: string;
   bank_date: string | null;
@@ -471,6 +481,18 @@ export interface LinkResolveExceptionsRequest {
   exception_a_id: number;
   exception_b_id: number;
   resolution_notes: string;
+}
+
+export interface LinkResolveBankChargeRequest {
+  bank_only_exception_id: number;
+  erp_only_exception_id: number;
+  resolution_notes: string;
+}
+
+export interface LinkResolveBankChargeResponse {
+  bank_only_exception: ReconciliationException;
+  erp_only_exception: ReconciliationException;
+  fee_amount: string;
 }
 
 export interface DailyReconciliation {
@@ -638,6 +660,45 @@ export interface ManualOverridesReportResponse {
 }
 
 export interface ManualOverridesReportFilters {
+  date_from?: string;
+  date_to?: string;
+}
+
+/**
+ * A single bank_only/erp_only totals bucket in the Missing Money Summary
+ * report. See MissingMoneySummaryView (banks/views.py).
+ */
+export interface MissingMoneyTotal {
+  count: number;
+  amount: string;
+}
+
+export interface MissingMoneyOfficerRow {
+  officer_id: number | null; // null = unattributed
+  officer_name: string;
+  branch_name: string | null;
+  count: number;
+  amount: string;
+}
+
+export interface MissingMoneyBankAccountRow {
+  bank_account_id: number;
+  bank_account_name: string | null;
+  count: number;
+  amount: string;
+}
+
+export interface MissingMoneySummary {
+  totals: {
+    erp_only: MissingMoneyTotal;
+    bank_only: MissingMoneyTotal;
+    grand_total_amount: string;
+  };
+  by_officer: MissingMoneyOfficerRow[];
+  by_bank_account: MissingMoneyBankAccountRow[];
+}
+
+export interface MissingMoneySummaryFilters {
   date_from?: string;
   date_to?: string;
 }

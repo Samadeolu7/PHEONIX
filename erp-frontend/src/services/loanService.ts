@@ -72,6 +72,7 @@ export interface LoanAccountList {
   loan_number: string;
   client: number;
   client_name: string;
+  client_image: string | null;
   client_phone: string;
   group_name: string;
   product: number;
@@ -221,6 +222,8 @@ export interface LoanVerificationRequest {
   id: number;
   loan: number;
   loan_number: string;
+  client_name: string;
+  client_image: string | null;
   branch: number;
   nin_used: string;
   active_loans_elsewhere: number;
@@ -244,6 +247,7 @@ export interface LoanDisbursement {
   loan: number;
   loan_number: string;
   client_name: string;
+  client_image: string | null;
   client_phone: string;
   // Recipient bank details for transfer execution
   client_bank_name: string | null;
@@ -549,6 +553,33 @@ export const loanService = {
     return api.post(`${BASE}/restructure-requests/${id}/reject/`, { rejection_reason });
   },
 
+  // ===== DISBURSEMENT CORRECTIONS (wrong-customer fix, dual director approval) =====
+
+  async requestDisbursementCorrection(data: RequestCorrectionPayload): Promise<LoanDisbursementCorrection> {
+    return api.post(`${BASE}/disbursement-corrections/`, data);
+  },
+
+  async listDisbursementCorrections(params?: { status?: string }): Promise<LoanDisbursementCorrection[]> {
+    const res = await api.get(`${BASE}/disbursement-corrections/`, { params });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  async getDisbursementCorrection(id: number): Promise<LoanDisbursementCorrection> {
+    return api.get(`${BASE}/disbursement-corrections/${id}/`);
+  },
+
+  async firstApproveCorrection(id: number, notes: string): Promise<LoanDisbursementCorrection> {
+    return api.post(`${BASE}/disbursement-corrections/${id}/first_approve/`, { notes });
+  },
+
+  async secondApproveCorrection(id: number, notes: string): Promise<LoanDisbursementCorrection> {
+    return api.post(`${BASE}/disbursement-corrections/${id}/second_approve/`, { notes });
+  },
+
+  async rejectCorrection(id: number, rejection_reason: string): Promise<LoanDisbursementCorrection> {
+    return api.post(`${BASE}/disbursement-corrections/${id}/reject/`, { rejection_reason });
+  },
+
   // ===== OFFLINE PAYMENT RECORDS (field collection) =====
 
   async createOfflinePayment(data: OfflinePaymentPayload): Promise<OfflinePaymentRecord> {
@@ -786,6 +817,7 @@ export interface LoanRepaymentRequest {
   loan: number;
   loan_number: string;
   client_name: string;
+  client_image: string | null;
   savings_account: number;
   savings_account_number: string;
   amount: string;
@@ -857,6 +889,7 @@ export interface LoanRestructureRequest {
   loan: number;
   loan_number: string;
   client_name: string;
+  client_image: string | null;
   current_term: number;
   current_term_unit: string;
   current_interest_rate: string;
@@ -874,6 +907,54 @@ export interface LoanRestructureRequest {
   reviewed_at: string | null;
   rejection_reason: string;
   restructure: number | null;
+  owner: number;
+  branch: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Disbursement Correction (wrong-customer fix, dual director approval) ────
+
+export type CorrectionStatus = 'pending' | 'awaiting_second_approval' | 'completed' | 'rejected';
+
+export interface RequestCorrectionPayload {
+  original_loan: number;
+  correct_client: number;
+  reason: string;
+}
+
+export interface LoanDisbursementCorrection {
+  id: number;
+  reference_number: string;
+  original_loan: number;
+  original_loan_number: string;
+  wrong_client_name: string;
+  wrong_client_image: string | null;
+  disbursed_amount: string;
+  correct_client: number;
+  correct_client_name: string;
+  correct_client_image: string | null;
+  reason: string;
+  status: CorrectionStatus;
+  requested_by: number;
+  requested_by_name: string | null;
+  requested_at: string;
+  first_approved_by: number | null;
+  first_approved_by_name: string | null;
+  first_approved_at: string | null;
+  first_approval_notes: string;
+  second_approved_by: number | null;
+  second_approved_by_name: string | null;
+  second_approved_at: string | null;
+  second_approval_notes: string;
+  rejected_by: number | null;
+  rejected_by_name: string | null;
+  rejected_at: string | null;
+  rejection_reason: string;
+  reversal_journal_entry: number | null;
+  new_loan: number | null;
+  new_loan_number: string | null;
+  notes: string;
   owner: number;
   branch: number;
   created_at: string;

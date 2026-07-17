@@ -83,6 +83,9 @@ export const PostToExpenseModal: React.FC<PostToExpenseModalProps> = ({
             <p className="text-gray-500 mt-1">
               {formatAmount(exception.bank_amount)} on {exception.bank_date}
             </p>
+            <p className="text-gray-500 mt-1">
+              Bank ref: {exception.bank_reference || '—'} — carried onto the payment automatically
+            </p>
           </div>
 
           <div>

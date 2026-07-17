@@ -16,6 +16,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { loanService, LoanRestructureRequest } from '../../services/loanService';
+import { ClientAvatar } from '../../components/ui/ClientAvatar';
 
 function fmt(v: string | number | null | undefined): string {
   const n = parseFloat(String(v ?? '0'));
@@ -103,8 +104,13 @@ function RequestRow({ req, onApprove, onReject, actionLoading }: RequestRowProps
         #{req.id}
       </td>
       <td className="px-4 py-3">
-        <p className="text-sm font-medium text-gray-900">{req.client_name}</p>
-        <p className="text-xs text-gray-500">{req.loan_number}</p>
+        <div className="flex items-center gap-2">
+          <ClientAvatar image={req.client_image} name={req.client_name} size="sm" />
+          <div>
+            <p className="text-sm font-medium text-gray-900">{req.client_name}</p>
+            <p className="text-xs text-gray-500">{req.loan_number}</p>
+          </div>
+        </div>
       </td>
       <td className="px-4 py-3 text-xs text-gray-600">
         <p>{req.current_term} → {req.new_term} {req.current_term_unit}</p>

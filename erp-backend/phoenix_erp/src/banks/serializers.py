@@ -787,6 +787,7 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
     officer_name = serializers.SerializerMethodField()
     erp_branch_name = serializers.SerializerMethodField()
     has_bank_reference = serializers.SerializerMethodField()
+    bank_reference = serializers.SerializerMethodField()
     is_perfect_match = serializers.BooleanField(read_only=True)
     requires_director = serializers.SerializerMethodField()
     pending_bank_payment_info = serializers.SerializerMethodField()
@@ -802,7 +803,7 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
             'id',
             'exception_type',
             'direction',
-            'bank_transaction_id',
+            'bank_transaction_id', 'bank_reference',
             'bank_amount', 'bank_narration', 'bank_date',
             'loan_payment_id',
             'erp_amount', 'erp_narration', 'erp_date',
@@ -827,6 +828,21 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
 
     def get_officer_name(self, obj):
         return obj.officer.get_full_name() if obj.officer else None
+
+    def get_bank_reference(self, obj):
+        # The bank's own statement reference (ReconciliationBankTransaction.
+        # bank_ref) — distinct from bank_transaction_id (Java's internal
+        # UUID for the line) and from has_bank_reference (which checks
+        # whether the ERP-side narration had a traceable reference, a
+        # different accountability signal entirely). Null for erp_only,
+        # which has no bank line to look up.
+        if not obj.bank_transaction_id:
+            return None
+        from .models import ReconciliationBankTransaction
+        bank_tx = ReconciliationBankTransaction.objects.filter(
+            pk=obj.bank_transaction_id
+        ).only('bank_ref').first()
+        return bank_tx.bank_ref if bank_tx else None
 
     def get_erp_branch_name(self, obj):
         return obj.erp_branch.name if obj.erp_branch else None

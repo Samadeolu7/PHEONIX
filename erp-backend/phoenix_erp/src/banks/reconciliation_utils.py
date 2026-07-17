@@ -10,6 +10,7 @@ request. Kept as a plain function (not a view) so StatementUploadView can
 call it directly with no HTTP round-trip.
 """
 import re
+from decimal import Decimal
 
 _LOAN_NUMBER_RE = re.compile(r'Loan repayment\s*[–-]\s*([^|]+)')
 _BANK_REFERENCE_RE = re.compile(r'\|\s*Ref:\s*(.+)$')
@@ -54,6 +55,59 @@ def is_valid_exception_pairing(exc_a, exc_b):
     if types == {'bank_only', 'erp_only'}:
         return exc_a.direction == exc_b.direction
     return False
+
+
+# The BankTransfer/MOVEB-series inter-bank transfer pattern found in the
+# missing-money gap analysis: the sending bank deducts a transfer fee that
+# was never recorded in the ERP, so the same real event produces a bank_only
+# DEBIT exception (the full amount including the fee) and a separate
+# erp_only DEBIT exception (the amount actually recorded) that differ by a
+# small, plausible fee rather than matching exactly. LinkResolveExceptionsView
+# requires an exact amount match by design, so this pattern needs its own
+# pathway — see LinkResolveBankChargeView (banks/views.py).
+FEE_LINK_MAX_AMOUNT = Decimal('75.00')
+
+
+def bank_charge_fee(exc_a, exc_b):
+    """
+    Returns the Decimal fee amount if `exc_a`/`exc_b` fit the "same transfer,
+    bank deducted a fee never recorded in the ERP" shape — one bank_only and
+    one erp_only exception, both DEBIT, with the bank_only amount larger than
+    the erp_only amount. Returns None for any other shape (wrong types,
+    directions, or the erp_only side being the larger one — a shortfall, not
+    a fee). Does NOT enforce FEE_LINK_MAX_AMOUNT — the caller checks that
+    separately so it can surface a clear "too large for this pathway"
+    message instead of a silent None.
+    """
+    types = {exc_a.exception_type, exc_b.exception_type}
+    if types != {'bank_only', 'erp_only'}:
+        return None
+    bank_exc, erp_exc = (exc_a, exc_b) if exc_a.exception_type == 'bank_only' else (exc_b, exc_a)
+    if bank_exc.direction != 'DEBIT' or erp_exc.direction != 'DEBIT':
+        return None
+    if bank_exc.bank_amount is None or erp_exc.erp_amount is None:
+        return None
+    fee = bank_exc.bank_amount - erp_exc.erp_amount
+    return fee if fee > 0 else None
+
+
+def get_or_create_bank_charges_category(branch, tenant, owner):
+    """
+    The fixed ExpenseCategory LinkResolveBankChargeView books fee expenses
+    against — auto-provisioned per branch/tenant on first use (mirrors
+    get_system_account()'s auto-create-on-first-use pattern) rather than
+    requiring a director to pick a category, since this pathway is
+    specifically and only for bank-deducted transfer fees.
+    """
+    from accounts.utils.account_creation import get_system_account
+    from expenses.models import ExpenseCategory
+
+    expense_account = get_system_account('bank_charges', owner, branch)
+    category, _ = ExpenseCategory.objects.get_or_create(
+        code='BANKCHG', branch=branch, tenant=tenant,
+        defaults={'name': 'Bank Charges', 'expense_account': expense_account, 'owner': owner},
+    )
+    return category
 
 
 def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exclude_payment_ids=()):

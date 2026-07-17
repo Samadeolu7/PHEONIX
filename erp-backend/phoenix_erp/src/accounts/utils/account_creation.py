@@ -416,6 +416,11 @@ SYSTEM_ACCOUNTS = {
         'name': 'General Administrative Expenses', 'account_type': 'EXPENSE',
         'parent_name': 'Administrative and General Expenses',
     },
+    'bank_charges': {
+        'parent_code': '5300', 'child_suffix': '002',
+        'name': 'Bank Charges', 'account_type': 'EXPENSE',
+        'parent_name': 'Administrative and General Expenses',
+    },
     # Asset disposal gain / loss accounts (FIRS: other income 4200, other expenses 5400)
     'asset_disposal': {
         'parent_code': '1900', 'child_suffix': '001',

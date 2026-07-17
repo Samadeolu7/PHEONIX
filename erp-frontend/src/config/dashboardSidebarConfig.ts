@@ -212,6 +212,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Statement Reconciliation (Auto-Match)', '/banks/reconciliations'),
         leaf('Officer Reconciliation Risk', '/banks/reconciliations/officer-risk-report'),
         leaf('Manual Overrides', '/banks/reconciliations/manual-overrides'),
+        leaf('Missing Money Summary', '/banks/reconciliations/missing-money-summary'),
         leaf('Cash Reconciliation', '/treasury/cash-reconciliation'),
         leaf('Cashier Accounts', '/treasury/cashier-accounts'),
         leaf('Cash Transfers', '/treasury/cash-transfers'),
@@ -299,6 +300,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Loan Collection', '/loans/collection'),
         leaf('Repayment Approvals', '/loans/repayment-approvals'),
         leaf('Restructure Approvals', '/loans/restructure-approvals'),
+        leaf('Disbursement Corrections', '/loans/disbursement-corrections'),
       ]),
       grp('btn-loans-rpt', 'REPORT', 'file-text', [
         leaf('Debtors Report', '/reports/loans/debtors'),

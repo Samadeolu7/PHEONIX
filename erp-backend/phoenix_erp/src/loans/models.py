@@ -3058,3 +3058,366 @@ class OfflinePaymentRecord(TimeStampedModel, BranchScopedModel):
             f"OfflinePmt #{self.pk} — {self.loan_number} "
             f"₦{self.amount} ({self.status})"
         )
+
+
+class LoanDisbursementCorrection(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Approval-gated correction for a loan disbursed to the wrong customer.
+
+    Standard accounting treatment (there is no shortcut — the loan's GL account
+    is client-specific by construction and a client cannot hold two active loans
+    on the same product, so the client FK can't just be edited in place):
+        1. Reverse the original loan's disbursement journal entry
+           (Transaction.reverse() — creates a mirror-image entry, never mutates
+           the original).
+        2. Cancel the original LoanAccount and zero its balances/schedule.
+        3. Create a brand-new LoanAccount (+ GL account) for the correct client
+           with the same terms, and disburse it through the normal disburse()
+           flow.
+
+    Always requires two different, authorized approvers — regardless of amount.
+    A misdirected disbursement is rare and high-stakes (real money already
+    moved), unlike routine reconciliation exceptions, so there's no threshold
+    to tune: the maker who requests the correction can never be either
+    approver, and the two approvers must be different people. This is the
+    control that keeps the feature from being usable to quietly redirect
+    an already-disbursed loan.
+
+    Workflow:
+        PENDING -> (first approve)  -> AWAITING_SECOND_APPROVAL
+                -> (second approve) -> COMPLETED  (executes the reversal + re-disbursement)
+        PENDING | AWAITING_SECOND_APPROVAL -> (reject) -> REJECTED
+    """
+    PENDING = 'pending'
+    AWAITING_SECOND = 'awaiting_second_approval'
+    COMPLETED = 'completed'
+    REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (PENDING, 'Pending First Approval'),
+        (AWAITING_SECOND, 'Awaiting Second Approval'),
+        (COMPLETED, 'Completed'),
+        (REJECTED, 'Rejected'),
+    ]
+
+    reference_number = models.CharField(
+        max_length=50, unique=True, db_index=True,
+        help_text='Auto-generated reference (e.g. LCOR-A1B2C3D4)',
+    )
+
+    original_loan = models.ForeignKey(
+        LoanAccount,
+        on_delete=models.PROTECT,
+        related_name='disbursement_corrections',
+        help_text='The loan that was disbursed to the wrong customer',
+    )
+    correct_client = models.ForeignKey(
+        Client,
+        on_delete=models.PROTECT,
+        related_name='loan_disbursement_corrections',
+        help_text='The customer the loan should have been disbursed to',
+    )
+
+    reason = models.TextField(help_text='Why the original loan was disbursed to the wrong customer')
+
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=PENDING, db_index=True)
+
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='loan_corrections_requested',
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+
+    first_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_corrections_first_approved',
+    )
+    first_approved_at = models.DateTimeField(null=True, blank=True)
+    first_approval_notes = models.TextField(blank=True)
+
+    second_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_corrections_second_approved',
+    )
+    second_approved_at = models.DateTimeField(null=True, blank=True)
+    second_approval_notes = models.TextField(blank=True)
+
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_corrections_rejected',
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+
+    # Results — set by _execute() on second approval
+    reversal_journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_correction_reversals',
+        help_text='The reversal of the original loan\'s disbursement journal entry',
+    )
+    new_loan = models.ForeignKey(
+        LoanAccount,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+        help_text='The replacement loan created and disbursed for the correct client',
+    )
+
+    notes = models.TextField(blank=True)
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-requested_at']
+        indexes = [
+            models.Index(fields=['status', 'requested_at']),
+            models.Index(fields=['original_loan', 'status']),
+        ]
+        verbose_name = 'Loan Disbursement Correction'
+        verbose_name_plural = 'Loan Disbursement Corrections'
+
+    def __str__(self):
+        return f"{self.reference_number} — {self.original_loan.loan_number} [{self.status}]"
+
+    def save(self, *args, **kwargs):
+        if not self.reference_number:
+            import uuid
+            self.reference_number = f"LCOR-{uuid.uuid4().hex[:8].upper()}"
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        if self.original_loan_id and self.correct_client_id:
+            if self.original_loan.client_id == self.correct_client_id:
+                raise ValidationError(
+                    {'correct_client': "The correct client must be different from the loan's current client — "
+                                        "that's not a wrong-customer error."}
+                )
+
+    MIN_REASON_LENGTH = 10
+
+    @classmethod
+    def _reason_too_short(cls, text):
+        return not text or len(text.strip()) < cls.MIN_REASON_LENGTH
+
+    @transaction.atomic
+    def first_approve(self, user, notes=''):
+        """First of two required approvals. Requester cannot approve their own request."""
+        if self.status != self.PENDING:
+            raise ValidationError('Only pending corrections can be first-approved.')
+        if user.pk == self.requested_by_id:
+            raise ValidationError(
+                'The person who requested this correction cannot also approve it (maker-checker violation).'
+            )
+        if self._reason_too_short(notes):
+            raise ValidationError(f'Approval notes (at least {self.MIN_REASON_LENGTH} characters) are required.')
+
+        self.first_approved_by = user
+        self.first_approved_at = timezone.now()
+        self.first_approval_notes = notes
+        self.status = self.AWAITING_SECOND
+        self.save(update_fields=[
+            'first_approved_by', 'first_approved_at', 'first_approval_notes', 'status', 'updated_at',
+        ])
+
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.LOAN_BALANCE_CORRECTION,
+            acted_by=user,
+            record_type='LoanDisbursementCorrection',
+            record_id=str(self.pk),
+            description=f'Correction {self.reference_number} for loan {self.original_loan.loan_number} — first approval',
+            extra={'reference_number': self.reference_number, 'original_loan': self.original_loan.loan_number},
+        )
+
+    @transaction.atomic
+    def second_approve(self, user, notes=''):
+        """
+        Second, different approver confirms — this is what actually executes the
+        reversal + re-disbursement. Neither the requester nor the first approver
+        may act here.
+        """
+        if self.status != self.AWAITING_SECOND:
+            raise ValidationError('This correction has not been through a first approval yet.')
+        if user.pk == self.requested_by_id:
+            raise ValidationError(
+                'The person who requested this correction cannot also approve it (maker-checker violation).'
+            )
+        if user.pk == self.first_approved_by_id:
+            raise ValidationError('The second approver must be a different person from the first approver.')
+        if self._reason_too_short(notes):
+            raise ValidationError(f'Approval notes (at least {self.MIN_REASON_LENGTH} characters) are required.')
+
+        self.second_approved_by = user
+        self.second_approved_at = timezone.now()
+        self.second_approval_notes = notes
+
+        self._execute(user)
+
+        self.status = self.COMPLETED
+        self.save(update_fields=[
+            'second_approved_by', 'second_approved_at', 'second_approval_notes',
+            'status', 'reversal_journal_entry', 'new_loan', 'updated_at',
+        ])
+
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.LOAN_BALANCE_CORRECTION,
+            acted_by=user,
+            record_type='LoanDisbursementCorrection',
+            record_id=str(self.pk),
+            amount=self.original_loan.disbursed_amount,
+            description=(
+                f'Correction {self.reference_number}: reversed {self.original_loan.loan_number} '
+                f'and re-disbursed as {self.new_loan.loan_number} for the correct client'
+            ),
+            extra={
+                'reference_number': self.reference_number,
+                'original_loan': self.original_loan.loan_number,
+                'wrong_client_id': str(self.original_loan.client_id),
+                'new_loan': self.new_loan.loan_number,
+                'correct_client_id': str(self.correct_client_id),
+                'reversal_journal_entry_id': str(self.reversal_journal_entry_id),
+                'requested_by': str(self.requested_by_id),
+                'first_approved_by': str(self.first_approved_by_id),
+                'second_approved_by': str(self.second_approved_by_id),
+            },
+        )
+
+    def reject(self, user, reason=''):
+        if self.status not in (self.PENDING, self.AWAITING_SECOND):
+            raise ValidationError('Only pending or awaiting-second-approval corrections can be rejected.')
+        if self._reason_too_short(reason):
+            raise ValidationError(f'A rejection reason (at least {self.MIN_REASON_LENGTH} characters) is required.')
+
+        self.status = self.REJECTED
+        self.rejected_by = user
+        self.rejected_at = timezone.now()
+        self.rejection_reason = reason
+        self.save(update_fields=['status', 'rejected_by', 'rejected_at', 'rejection_reason', 'updated_at'])
+
+    def _execute(self, executing_user):
+        """
+        Reverse the original disbursement and re-disburse a brand-new loan to
+        the correct client. Called only from second_approve(), inside its
+        atomic block.
+        """
+        loan = LoanAccount.objects.select_for_update().get(pk=self.original_loan_id)
+
+        if loan.status not in ('disbursed', 'active'):
+            raise ValidationError(
+                f"Loan {loan.loan_number} is {loan.status} — only a disbursed/active loan's "
+                "disbursement can be corrected this way."
+            )
+        if loan.total_paid and loan.total_paid > Decimal('0.00'):
+            raise ValidationError(
+                f"Loan {loan.loan_number} already has repayments recorded (₦{loan.total_paid}). "
+                "This automated correction only handles loans with no repayment history yet — "
+                "contact accounting for a manual adjustment."
+            )
+        if not loan.disbursement_journal_entry_id:
+            raise ValidationError(f"Loan {loan.loan_number} has no disbursement journal entry to reverse.")
+        if loan.disbursement_journal_entry.is_reversed:
+            raise ValidationError(f"Loan {loan.loan_number}'s disbursement has already been reversed.")
+
+        original_journal = loan.disbursement_journal_entry
+
+        # ── 1. Reverse the original disbursement's GL entry ────────────────
+        reversal_journal = original_journal.reverse(
+            executing_user,
+            reason=f"Loan correction {self.reference_number}: disbursed to wrong customer ({self.reason})",
+        )
+
+        # ── 2. Cancel the original loan and zero its balances/schedule ─────
+        loan.repayment_schedule.all().delete()
+        loan.outstanding_principal = Decimal('0.00')
+        loan.outstanding_interest = Decimal('0.00')
+        loan.outstanding_fees = Decimal('0.00')
+        loan.outstanding_penalties = Decimal('0.00')
+        loan.status = 'cancelled'
+        loan.save(update_fields=[
+            'outstanding_principal', 'outstanding_interest', 'outstanding_fees',
+            'outstanding_penalties', 'status', 'updated_at',
+        ])
+
+        # ── 3. Create and disburse a brand-new loan for the correct client ─
+        _TERMINAL = {'paid_off', 'written_off', 'rejected', 'cancelled'}
+        if LoanAccount.objects.filter(
+            client_id=self.correct_client_id, product_id=loan.product_id,
+        ).exclude(status__in=_TERMINAL).exists():
+            raise ValidationError(
+                f"{self.correct_client.full_name} already has an active loan account for "
+                f"{loan.product.product.name} — resolve or close it before correcting this loan into it."
+            )
+
+        from .services import create_loan_account_shell
+
+        new_loan_number, gl_account = create_loan_account_shell(
+            client=self.correct_client,
+            product=loan.product,
+            user=executing_user,
+            branch=loan.branch,
+            tenant=loan.tenant,
+        )
+
+        new_loan = LoanAccount.objects.create(
+            client=self.correct_client,
+            product=loan.product,
+            account=gl_account,
+            loan_number=new_loan_number,
+            application_date=timezone.localdate(),
+            application_notes=f"Replacement for {loan.loan_number} — {self.reference_number} (wrong-customer correction)",
+            requested_amount=loan.requested_amount,
+            approved_amount=loan.approved_amount,
+            interest_rate=loan.interest_rate,
+            processing_fee=loan.processing_fee,
+            insurance_amount=loan.insurance_amount,
+            term_months=loan.term_months,
+            term_unit=loan.term_unit,
+            repayment_frequency=loan.repayment_frequency,
+            status='approved',
+            approval_date=loan.approval_date or timezone.localdate(),
+            approved_by=loan.approved_by,
+            branch=loan.branch,
+            tenant=loan.tenant,
+            owner=loan.owner,
+            metadata={'corrected_from_loan': loan.loan_number, 'correction_reference': self.reference_number},
+        )
+
+        # Disburse from the exact same cash/bank account the original
+        # disbursement came from (which may differ from the product's default
+        # disbursement_account if the officer picked a specific bank account
+        # at the time) — the reversal above already put that cash back there.
+        # disburse() posts a CREDIT to the cash account and, when the product
+        # recognizes interest at disbursement, an additional CREDIT to its
+        # interest-income account(s); exclude those so only the genuine
+        # cash/bank leg remains.
+        from transactions.models import TransactionEntry as _JournalEntryLine
+
+        income_account_ids = {
+            loan.product.interest_income_account_id,
+            loan.product.unearned_interest_income_account_id,
+        }
+        income_account_ids.discard(None)
+        cash_entry = original_journal.entries.filter(
+            side=_JournalEntryLine.CREDIT,
+        ).exclude(account_id__in=income_account_ids).first()
+        if cash_entry is None:
+            raise ValidationError(
+                f"Could not determine the original disbursement's cash/bank account for {loan.loan_number}."
+            )
+        new_loan.disburse(
+            disbursement_account=cash_entry.account,
+            disbursed_by=executing_user,
+        )
+
+        self.reversal_journal_entry = reversal_journal
+        self.new_loan = new_loan

@@ -519,6 +519,7 @@ const ReconciliationUploadPage = lazy(() => import('./pages/banks/Reconciliation
 const ReconciliationDetailPage = lazy(() => import('./pages/banks/ReconciliationDetailPage'));
 const OfficerReconciliationRiskPage = lazy(() => import('./pages/banks/OfficerReconciliationRiskPage'));
 const ManualOverridesReportPage = lazy(() => import('./pages/banks/ManualOverridesReportPage'));
+const MissingMoneySummaryPage = lazy(() => import('./pages/banks/MissingMoneySummaryPage'));
 
 // Budget pages
 const BudgetPeriodList = lazy(() => import('./pages/budgets/BudgetPeriodList'));
@@ -568,6 +569,7 @@ const LoanRepaymentApprovalsPage = lazy(() => import('./pages/loans/LoanRepaymen
 
 // Loan restructure approvals (director inbox)
 const LoanRestructureApprovalsPage = lazy(() => import('./pages/loans/LoanRestructureApprovalsPage'));
+const LoanDisbursementCorrectionsPage = lazy(() => import('./pages/loans/LoanDisbursementCorrectionsPage'));
 
 // Loan new application form & products
 const LoanAccountFormPage = lazy(() => import('./pages/loans/LoanAccountFormPage'));
@@ -3899,6 +3901,14 @@ function App() {
                                   }
                                 />
                                 <Route
+                                  path="/banks/reconciliations/missing-money-summary"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
+                                      <MissingMoneySummaryPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
                                   path="/banks/transfers/approvals"
                                   element={
                                     <ProtectedRoute requiredPermission="bank-approve" module="banks" page="bank-transfers" action="approve">
@@ -4101,6 +4111,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-accounts" action="approve">
                                       <LoanRestructureApprovalsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Disbursement corrections (director inbox, dual approval) */}
+                                <Route
+                                  path="/loans/disbursement-corrections"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-disbursement-corrections" action="approve">
+                                      <LoanDisbursementCorrectionsPage />
                                     </ProtectedRoute>
                                   }
                                 />

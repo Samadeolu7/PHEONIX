@@ -901,7 +901,8 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             description=f"Transfer: {self.description}",
             workflow_reference=self.transfer_number,
             branch=self.branch,
-            owner=self.owner
+            owner=self.owner,
+            created_by=user,
         )
         
         # Determine source account
@@ -1284,6 +1285,7 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             workflow_reference=f"{self.payment_number}-CLR-{invoice_ref}",
             branch=self.branch,
             owner=self.owner,
+            created_by=posted_by,
         )
 
         # Dr: Accounts Payable — reduces the liability
@@ -1398,7 +1400,8 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 description=f"Bank Payment: {payable.invoice_number} - {self.description}",
                 workflow_reference=self.payment_number,
                 branch=self.branch,
-                owner=self.owner
+                owner=self.owner,
+                created_by=posted_by,
             )
 
             # Dr: Accounts Payable (liability decreases)
@@ -1460,7 +1463,8 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     description=f"Bank Payment for {expense.reference_number} - {self.description}",
                     workflow_reference=self.payment_number,
                     branch=self.branch,
-                    owner=self.owner
+                    owner=self.owner,
+                    created_by=posted_by,
                 )
 
                 JournalEntryLine.objects.create(
@@ -1490,7 +1494,8 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     description=f"Bank Payment: {expense.reference_number} - {self.description}",
                     workflow_reference=self.payment_number,
                     branch=self.branch,
-                    owner=self.owner
+                    owner=self.owner,
+                    created_by=posted_by,
                 )
 
                 JournalEntryLine.objects.create(
@@ -1540,7 +1545,8 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 ),
                 workflow_reference=self.payment_number,
                 branch=self.branch,
-                owner=self.owner
+                owner=self.owner,
+                created_by=posted_by,
             )
 
             # Dr: Supplier Advances (asset increases — we are owed delivery)

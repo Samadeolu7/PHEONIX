@@ -1712,6 +1712,24 @@ class ResolveExceptionToExpenseView(APIView):
         if not category_id:
             return Response({'detail': 'category is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # The bank's own reference (not exc_obj.bank_transaction_id, which is
+        # Java's internal UUID for the line, nor bank_narration, which is
+        # free text) lives on the ReconciliationBankTransaction row that id
+        # points to — see its bank_ref field. Carried onto BankPayment.
+        # reference_number (the field meant for "bank slip, invoice ref,
+        # etc.") so it survives approval; Expense.payment_reference is
+        # deliberately NOT relied on for this — BankPayment.post_payment()
+        # overwrites it with the internal BPM-XXXX number at posting time
+        # regardless of what's set here, so it's only ever a transient
+        # pre-approval value, not where this should permanently live.
+        bank_ref = ''
+        if exc_obj.bank_transaction_id:
+            bank_tx = ReconciliationBankTransaction.objects.filter(
+                pk=exc_obj.bank_transaction_id
+            ).only('bank_ref').first()
+            if bank_tx:
+                bank_ref = bank_tx.bank_ref
+
         from expenses.serializers import ExpenseSerializer
 
         expense_serializer = ExpenseSerializer(
@@ -1722,6 +1740,7 @@ class ResolveExceptionToExpenseView(APIView):
                 'amount': exc_obj.bank_amount,
                 'payee_name': request.data.get('payee_name', ''),
                 'payment_method': 'bank_transfer',
+                'payment_reference': bank_ref,
                 'bank_account': recon.bank_account_id,
             },
             context={'request': request},
@@ -1747,6 +1766,7 @@ class ResolveExceptionToExpenseView(APIView):
             bank_account=recon.bank_account,
             amount=exc_obj.bank_amount,
             description=expense.description,
+            reference_number=bank_ref,
             payment_date=exc_obj.bank_date,
             expense=expense,
             status='pending',
@@ -1767,15 +1787,21 @@ class LinkCandidatesView(generics.ListAPIView):
     """
     GET /api/banks/exceptions/<exc_id>/link-candidates/
 
-    Valid partners for manually linking against the given exception via
-    LinkResolveExceptionsView below — see is_valid_exception_pairing
-    (banks/reconciliation_utils.py) for the exact rules this encodes:
-    bank_only+bank_only (opposite direction — a compensating transfer) or
-    bank_only+erp_only (same direction — the bank line and the ERP payment
-    plausibly failed to auto-match). erp_only+erp_only and amount_diff are
-    never returned. Same bank account, exact resolve_amount match,
-    unresolved, any reconciliation date — candidates can span dates, so
-    this isn't nested under a single DailyReconciliation.
+    Valid partners for manually linking against the given exception — either
+    via LinkResolveExceptionsView (exact amount match) or, for a DEBIT
+    bank_only/erp_only pair, LinkResolveBankChargeView (bank_only up to
+    FEE_LINK_MAX_AMOUNT higher than erp_only — a bank-deducted transfer fee
+    never recorded in the ERP). See is_valid_exception_pairing and
+    bank_charge_fee (banks/reconciliation_utils.py) for the exact rules this
+    encodes: bank_only+bank_only (opposite direction — a compensating
+    transfer), bank_only+erp_only same direction+exact amount (missed
+    auto-match), or bank_only+erp_only same DEBIT direction+bank_only up to
+    FEE_LINK_MAX_AMOUNT higher (bank charge). erp_only+erp_only and
+    amount_diff are never returned. Same bank account, unresolved, any
+    reconciliation date — candidates can span dates, so this isn't nested
+    under a single DailyReconciliation. The frontend distinguishes exact vs.
+    fee candidates itself by comparing amounts (both bank_amount and
+    erp_amount are always serialized) and calls the matching endpoint.
     """
     serializer_class = ReconciliationExceptionSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -1800,16 +1826,34 @@ class LinkCandidatesView(generics.ListAPIView):
             resolved=False,
         ).exclude(pk=source.pk).select_related('reconciliation')
 
+        from .reconciliation_utils import FEE_LINK_MAX_AMOUNT
+
         if source.exception_type == 'bank_only':
             opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
+            same_direction_erp_only = Q(exception_type='erp_only', direction=source.direction)
+            if source.direction == 'DEBIT':
+                # Widened from exact match to include the bank-charge-fee
+                # case: erp_only amount up to FEE_LINK_MAX_AMOUNT lower than
+                # this bank_only exception's amount.
+                same_direction_erp_only &= Q(
+                    erp_amount__lte=amount, erp_amount__gte=amount - FEE_LINK_MAX_AMOUNT,
+                )
+            else:
+                same_direction_erp_only &= Q(erp_amount=amount)
             qs = qs.filter(
-                Q(exception_type='bank_only', direction=opposite)
-                | Q(exception_type='erp_only', direction=source.direction)
+                Q(exception_type='bank_only', direction=opposite, bank_amount=amount)
+                | same_direction_erp_only
             )
         else:  # erp_only — only a bank_only, same-direction candidate is valid
-            qs = qs.filter(exception_type='bank_only', direction=source.direction)
+            bank_only_same_direction = Q(exception_type='bank_only', direction=source.direction)
+            if source.direction == 'DEBIT':
+                bank_only_same_direction &= Q(
+                    bank_amount__gte=amount, bank_amount__lte=amount + FEE_LINK_MAX_AMOUNT,
+                )
+            else:
+                bank_only_same_direction &= Q(bank_amount=amount)
+            qs = qs.filter(bank_only_same_direction)
 
-        qs = qs.filter(Q(bank_amount=amount) | Q(erp_amount=amount))
         return qs.order_by('-is_high_priority', '-created_at')
 
 
@@ -1915,6 +1959,184 @@ class LinkResolveExceptionsView(APIView):
             'exception_a': ReconciliationExceptionSerializer(exc_a).data,
             'exception_b': ReconciliationExceptionSerializer(exc_b).data,
         })
+
+
+class LinkResolveBankChargeView(APIView):
+    """
+    POST /api/banks/exceptions/link-resolve-bank-charge/
+
+    The BankTransfer/MOVEB-series pattern found in the missing-money gap
+    analysis: the sending bank deducts a transfer fee that was never
+    recorded in the ERP, so the same real event shows up as a bank_only
+    DEBIT exception (the full amount, including the fee) and a separate
+    erp_only DEBIT exception (the amount actually recorded) that differ by
+    a small, plausible fee instead of matching exactly — so plain
+    LinkResolveExceptionsView (exact match only) can't close them.
+
+    This both (a) links and resolves the pair immediately, same as plain
+    Link — the director's confirmation that these are the same underlying
+    transfer is what closes them — and (b) creates a draft Expense +
+    pending BankPayment for the fee difference against a fixed "Bank
+    Charges" category (get_or_create_bank_charges_category), so the fee
+    itself still goes through the normal director-gated BankPayment
+    approval step before it posts to the GL — this endpoint never posts
+    money movement directly, matching every other resolve pathway. The
+    created Expense/BankPayment description spells out both source
+    exception ids, their amounts, and the computed fee, specifically so the
+    director approving the payment can see exactly where the charge came
+    from and how much it is, without having to dig back through the two
+    original exceptions.
+
+    Director-only (can_user_approve) — same tier as plain Link, and
+    stricter than resolve-to-expense's initiator step, since this both
+    closes two exceptions AND creates a new payment in one action.
+
+    Request body:
+      bank_only_exception_id, erp_only_exception_id  (int, required)
+      resolution_notes                                (str, required)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may link an exception pair as a bank charge.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .reconciliation_utils import (
+            bank_charge_fee, FEE_LINK_MAX_AMOUNT, get_or_create_bank_charges_category,
+            reason_too_short, recompute_reconciliation_counts, MIN_REASON_LENGTH,
+        )
+
+        resolution_notes = request.data.get('resolution_notes', '')
+        if reason_too_short(resolution_notes):
+            return Response(
+                {'detail': f'resolution_notes is required (at least {MIN_REASON_LENGTH} characters) '
+                           f'to link an exception pair as a bank charge.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        bank_id = request.data.get('bank_only_exception_id')
+        erp_id = request.data.get('erp_only_exception_id')
+        if not bank_id or not erp_id:
+            return Response(
+                {'detail': 'bank_only_exception_id and erp_only_exception_id are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user)
+        ).select_related('reconciliation')
+        bank_exc = get_object_or_404(qs, pk=bank_id)
+        erp_exc = get_object_or_404(qs, pk=erp_id)
+
+        if bank_exc.exception_type != 'bank_only' or erp_exc.exception_type != 'erp_only':
+            return Response(
+                {'detail': 'bank_only_exception_id must be a bank_only exception and '
+                           'erp_only_exception_id must be an erp_only exception.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for exc in (bank_exc, erp_exc):
+            if exc.resolved:
+                return Response({'detail': 'Exception is already resolved.'}, status=status.HTTP_400_BAD_REQUEST)
+        if bank_exc.pending_bank_payment_id:
+            return Response(
+                {'detail': f'A payment is already pending for the bank_only exception '
+                           f'({bank_exc.pending_bank_payment.payment_number}).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if bank_exc.reconciliation.bank_account_id != erp_exc.reconciliation.bank_account_id:
+            return Response(
+                {'detail': 'Both exceptions must belong to the same bank account.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        fee = bank_charge_fee(bank_exc, erp_exc)
+        if fee is None:
+            return Response(
+                {'detail': 'These two exceptions do not fit the bank-charge shape — both must be '
+                           'DEBIT, and the bank_only amount must be larger than the erp_only amount.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if fee > FEE_LINK_MAX_AMOUNT:
+            return Response(
+                {'detail': f'The difference (₦{fee}) exceeds the ₦{FEE_LINK_MAX_AMOUNT} cap for '
+                           f'this pathway. Use Resolve to Expense for a larger, uncategorized difference.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.db import transaction as db_transaction
+        from expenses.serializers import ExpenseSerializer
+
+        recon = bank_exc.reconciliation
+        category = get_or_create_bank_charges_category(
+            branch=recon.branch, tenant=recon.tenant, owner=request.user,
+        )
+        description = (
+            f"Bank charge on transfer — linked bank_only exception #{bank_exc.id} "
+            f"(₦{bank_exc.bank_amount}, {bank_exc.bank_narration or 'no narration'}) against "
+            f"erp_only exception #{erp_exc.id} (₦{erp_exc.erp_amount}, "
+            f"{erp_exc.erp_narration or 'no narration'}) — fee ₦{fee}"
+        )
+
+        try:
+            with db_transaction.atomic():
+                expense_serializer = ExpenseSerializer(
+                    data={
+                        'category': category.id,
+                        'expense_date': bank_exc.bank_date,
+                        'description': description,
+                        'amount': fee,
+                        'payment_method': 'bank_transfer',
+                        'bank_account': recon.bank_account_id,
+                    },
+                    context={'request': request},
+                )
+                expense_serializer.is_valid(raise_exception=True)
+                expense = expense_serializer.save(tenant=recon.tenant)
+
+                payment = BankPayment.objects.create(
+                    bank_account=recon.bank_account,
+                    amount=fee,
+                    description=description,
+                    payment_date=bank_exc.bank_date,
+                    expense=expense,
+                    status='pending',
+                    owner=request.user,
+                    branch=recon.branch,
+                    tenant=recon.tenant,
+                    created_by=request.user,
+                )
+
+                now = tz.now()
+                bank_exc.pending_bank_payment = payment
+                for exc, other in ((bank_exc, erp_exc), (erp_exc, bank_exc)):
+                    exc.resolved = True
+                    exc.resolved_by = request.user
+                    exc.resolved_at = now
+                    exc.resolution_notes = resolution_notes
+                    exc.netted_with = other
+                bank_exc.save(update_fields=[
+                    'resolved', 'resolved_by', 'resolved_at', 'resolution_notes',
+                    'netted_with', 'pending_bank_payment',
+                ])
+                erp_exc.save(update_fields=[
+                    'resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with',
+                ])
+
+                for r in {bank_exc.reconciliation, erp_exc.reconciliation}:
+                    recompute_reconciliation_counts(r)
+        except Exception as exc:
+            return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'bank_only_exception': ReconciliationExceptionSerializer(bank_exc).data,
+            'erp_only_exception': ReconciliationExceptionSerializer(erp_exc).data,
+            'fee_amount': str(fee),
+        }, status=status.HTTP_201_CREATED)
 
 
 def _is_global_user(user):
@@ -2045,6 +2267,148 @@ class ManualOverridesReportView(APIView):
         events.sort(key=lambda e: e['action_at'] or tz.now(), reverse=True)
 
         return Response({'results': events, 'count': len(events)})
+
+
+class MissingMoneySummaryView(APIView):
+    """
+    GET /api/banks/reports/missing-money-summary/
+
+    A single "how much is actually missing, and from whom" picture across
+    both sides of reconciliation — erp_only (recorded as paid, never hit
+    the bank — attributable to the officer who recorded it) and bank_only
+    (cash the bank shows with no ERP record — attributable to the bank
+    account/branch, since there's no officer to point to). Previously this
+    required piecing together counts from DailyReconciliation summaries
+    across many individual reconciliations; this aggregates unresolved
+    exceptions directly, tenant/branch-scoped the same way every other
+    reconciliation report is.
+
+    amount_diff is deliberately excluded — it already has a matched
+    counterpart on both sides with a captured (usually small, tolerance-
+    bounded) discrepancy; it isn't "missing money" in the same sense.
+
+    Query params (optional): date_from, date_to — ISO dates, applied to
+    each exception's created_at (when it was first flagged).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get(self, request):
+        scoped_recons = DailyReconciliation.objects.for_user(request.user)
+
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+
+        base_qs = ReconciliationException.objects.filter(
+            reconciliation__in=scoped_recons, resolved=False,
+        )
+        if date_from:
+            base_qs = base_qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            base_qs = base_qs.filter(created_at__date__lte=date_to)
+
+        erp_only_qs = base_qs.filter(exception_type='erp_only')
+        bank_only_qs = base_qs.filter(exception_type='bank_only')
+
+        erp_only_totals = erp_only_qs.aggregate(count=Count('id'), amount=Sum('erp_amount'))
+        bank_only_totals = bank_only_qs.aggregate(count=Count('id'), amount=Sum('bank_amount'))
+        erp_amount = erp_only_totals['amount'] or Decimal('0')
+        bank_amount = bank_only_totals['amount'] or Decimal('0')
+
+        by_officer_agg = (
+            erp_only_qs.values('officer_id', 'officer__first_name', 'officer__last_name', 'officer__branch__name')
+            .annotate(count=Count('id'), amount=Sum('erp_amount'))
+            .order_by('-amount')
+        )
+        by_officer = []
+        for row in by_officer_agg:
+            if row['officer_id'] is None:
+                name = 'Unattributed'
+            else:
+                name = f"{row['officer__first_name'] or ''} {row['officer__last_name'] or ''}".strip() or 'Unnamed officer'
+            by_officer.append({
+                'officer_id': row['officer_id'],
+                'officer_name': name,
+                'branch_name': row['officer__branch__name'],
+                'count': row['count'],
+                'amount': str(row['amount'] or Decimal('0')),
+            })
+
+        by_bank_account_agg = (
+            bank_only_qs.values(
+                'reconciliation__bank_account_id', 'reconciliation__bank_account__account_name',
+            )
+            .annotate(count=Count('id'), amount=Sum('bank_amount'))
+            .order_by('-amount')
+        )
+        by_bank_account = [
+            {
+                'bank_account_id': row['reconciliation__bank_account_id'],
+                'bank_account_name': row['reconciliation__bank_account__account_name'],
+                'count': row['count'],
+                'amount': str(row['amount'] or Decimal('0')),
+            }
+            for row in by_bank_account_agg
+        ]
+
+        return Response({
+            'totals': {
+                'erp_only': {'count': erp_only_totals['count'], 'amount': str(erp_amount)},
+                'bank_only': {'count': bank_only_totals['count'], 'amount': str(bank_amount)},
+                'grand_total_amount': str(erp_amount + bank_amount),
+            },
+            'by_officer': by_officer,
+            'by_bank_account': by_bank_account,
+        })
+
+
+class MissingMoneyOfficerExceptionsView(generics.ListAPIView):
+    """
+    GET /api/banks/reports/missing-money-summary/officer/<officer_id>/
+
+    Drill-down for MissingMoneySummaryView's by_officer rows: every
+    unresolved erp_only exception attributed to this officer. Pass
+    officer_id='unattributed' for the no-officer bucket.
+    """
+    serializer_class = ReconciliationExceptionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get_queryset(self):
+        qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(self.request.user),
+            exception_type='erp_only', resolved=False,
+        ).select_related('officer', 'erp_branch', 'reconciliation')
+
+        officer_id = self.kwargs['officer_id']
+        if officer_id == 'unattributed':
+            qs = qs.filter(officer__isnull=True)
+        else:
+            qs = qs.filter(officer_id=officer_id)
+
+        return qs.order_by('-erp_amount')
+
+
+class MissingMoneyBankAccountExceptionsView(generics.ListAPIView):
+    """
+    GET /api/banks/reports/missing-money-summary/bank-account/<bank_account_id>/
+
+    Drill-down for MissingMoneySummaryView's by_bank_account rows: every
+    unresolved bank_only exception on this bank account.
+    """
+    serializer_class = ReconciliationExceptionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get_queryset(self):
+        return ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(self.request.user),
+            reconciliation__bank_account_id=self.kwargs['bank_account_id'],
+            exception_type='bank_only', resolved=False,
+        ).select_related('reconciliation').order_by('-bank_amount')
 
 
 class OfficerReconciliationRiskReportView(APIView):

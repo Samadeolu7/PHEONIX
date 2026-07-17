@@ -33,6 +33,7 @@ import {
   OfflinePaymentPayload,
 } from '../../services/loanService';
 import { clientService, ClientGroup } from '../../services/clientService';
+import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
@@ -278,9 +279,12 @@ function NormalCollectionPanel() {
         <>
           <div className="rounded-xl bg-white shadow-sm">
             <div className="flex items-center justify-between border-b px-5 py-3">
-              <div>
-                <span className="font-semibold text-gray-900">{selectedLoan.loan_number}</span>
-                <span className="ml-2 text-sm text-gray-500">{selectedLoan.client_name}</span>
+              <div className="flex items-center gap-2">
+                <ClientAvatar image={selectedLoan.client_image} name={selectedLoan.client_name} size="sm" />
+                <div>
+                  <span className="font-semibold text-gray-900">{selectedLoan.loan_number}</span>
+                  <span className="ml-2 text-sm text-gray-500">{selectedLoan.client_name}</span>
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <Link to={`/loans/accounts/${selectedLoan.id}`} className="text-xs text-blue-600 hover:underline">
@@ -969,12 +973,15 @@ function SavingsDebitPanel() {
 
         {selectedLoan ? (
           <div className="flex items-start justify-between rounded-lg bg-blue-50 p-4">
-            <div>
-              <p className="font-medium text-blue-900">{selectedLoan.client_name}</p>
-              <p className="text-xs text-blue-700">{selectedLoan.loan_number}</p>
-              <p className="mt-1 text-xs text-gray-600">
-                Outstanding: ₦{fmt(selectedLoan.outstanding_principal)}
-              </p>
+            <div className="flex items-start gap-3">
+              <ClientAvatar image={selectedLoan.client_image} name={selectedLoan.client_name} size="sm" />
+              <div>
+                <p className="font-medium text-blue-900">{selectedLoan.client_name}</p>
+                <p className="text-xs text-blue-700">{selectedLoan.loan_number}</p>
+                <p className="mt-1 text-xs text-gray-600">
+                  Outstanding: ₦{fmt(selectedLoan.outstanding_principal)}
+                </p>
+              </div>
             </div>
             <button
               type="button"
@@ -1470,10 +1477,13 @@ function OfflineCollectionPanel() {
 
         {selectedLoan ? (
           <div className="flex items-start justify-between rounded-lg bg-blue-50 p-4">
-            <div>
-              <p className="font-medium text-blue-900">{selectedLoan.client_name}</p>
-              <p className="text-xs text-blue-700">{selectedLoan.loan_number}</p>
-              <p className="mt-1 text-xs text-gray-600">Outstanding: ₦{fmt(selectedLoan.outstanding_principal)}</p>
+            <div className="flex items-start gap-3">
+              <ClientAvatar image={selectedLoan.client_image} name={selectedLoan.client_name} size="sm" />
+              <div>
+                <p className="font-medium text-blue-900">{selectedLoan.client_name}</p>
+                <p className="text-xs text-blue-700">{selectedLoan.loan_number}</p>
+                <p className="mt-1 text-xs text-gray-600">Outstanding: ₦{fmt(selectedLoan.outstanding_principal)}</p>
+              </div>
             </div>
             <button type="button" aria-label="Clear" onClick={resetForm} className="text-blue-400 hover:text-blue-600">
               <X size={16} />

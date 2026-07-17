@@ -16,6 +16,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { loanService, LoanAccountList } from '../../services/loanService';
+import { ClientAvatar } from '../../components/ui/ClientAvatar';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -223,7 +224,12 @@ export default function LoanAccountsPage() {
                   <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">
                     {loan.loan_number}
                   </td>
-                  <td className="px-4 py-3 text-gray-700">{loan.client_name}</td>
+                  <td className="px-4 py-3 text-gray-700">
+                    <span className="flex items-center gap-2">
+                      <ClientAvatar image={loan.client_image} name={loan.client_name} size="xs" />
+                      {loan.client_name}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-gray-600">{loan.product_name}</td>
                   <td className="px-4 py-3 text-right text-gray-900">
                     ₦{fmt(loan.disbursed_amount)}

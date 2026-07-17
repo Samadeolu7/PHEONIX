@@ -17,6 +17,7 @@ a real director's global-scope Role would. Both are used here to exercise
 the "director" path without needing to seed the full permissions catalog
 in every test.
 """
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -32,6 +33,7 @@ from branches.models import Branch
 from banks.models import (
     Bank,
     BankAccount,
+    BankTransfer,
     DailyReconciliation,
     ReconciliationBankTransaction,
     ReconciliationException,
@@ -449,6 +451,61 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         self.assertEqual(payment.expense.category_id, self.category.id)
         self.assertEqual(payment.expense.payee_name, 'First Bank')
 
+    def test_resolve_to_expense_carries_the_banks_own_reference(self):
+        # The bank's own reference lives on ReconciliationBankTransaction.
+        # bank_ref, reachable via exc.bank_transaction_id — not bank_narration
+        # (free text) or bank_transaction_id itself (Java's internal UUID).
+        bank_tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='FBN-STMT-REF-99321', value_date='2026-07-01',
+            direction='DEBIT', amount=Decimal('75.00'), narration='Stamp duty',
+        )
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_transaction_id=bank_tx.id,
+            bank_amount=Decimal('75.00'), bank_narration='Stamp duty', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        resp = self.client.post(url, {'category': self.category.id}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        exc.refresh_from_db()
+        payment = exc.pending_bank_payment
+        self.assertEqual(payment.reference_number, 'FBN-STMT-REF-99321')
+        self.assertEqual(payment.expense.payment_reference, 'FBN-STMT-REF-99321')
+
+        # BankPayment.reference_number must survive approval/posting —
+        # Expense.payment_reference does NOT (post_payment() overwrites it
+        # with the internal BPM-XXXX number), so reference_number is the
+        # durable place this needs to live.
+        payment.approve_payment(approved_by=self.director, notes='ok')
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, 'posted')
+        self.assertEqual(payment.reference_number, 'FBN-STMT-REF-99321')
+
+    def test_posted_bank_payment_journal_entry_is_attributed_to_the_approver(self):
+        # BankPayment.post_payment() used to create its JournalEntry without
+        # created_by, so fetch_erp_payments()'s officer attribution (which
+        # reads txn.created_by) came back None for every bank payment —
+        # inflating the "Unattributed" bucket in the Missing Money Summary
+        # even though a real user posted the payment.
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('75.00'), bank_narration='Stamp duty', bank_date='2026-07-01',
+        )
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reconciliations/{self.recon.id}/exceptions/{exc.id}/resolve-to-expense/'
+        resp = self.client.post(url, {'category': self.category.id}, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+
+        exc.refresh_from_db()
+        payment = exc.pending_bank_payment
+        payment.approve_payment(approved_by=self.second_director, notes='ok')
+        payment.refresh_from_db()
+
+        self.assertIsNotNone(payment.journal_entry_id)
+        self.assertEqual(payment.journal_entry.created_by_id, self.second_director.id)
+
     def test_resolve_to_expense_rejects_credit_exception(self):
         exc = ReconciliationException.objects.create(
             reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
@@ -771,6 +828,41 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         candidate_ids = {row['id'] for row in resp.data['results']}
         self.assertEqual(candidate_ids, {opposite_bank_only.id, same_direction_erp_only.id})
 
+    def test_link_candidates_for_erp_only_source_only_includes_same_direction_bank_only(self):
+        # The reverse of the test above: starting FROM an erp_only exception,
+        # candidates must be bank_only, same direction — never another
+        # erp_only (no valid pairing), never opposite-direction bank_only
+        # (that's only valid for a bank_only+bank_only netting pair).
+        source = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('4000.00'), erp_narration='source', erp_date='2026-07-01',
+        )
+        valid_bank_only = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('4000.00'), bank_narration='missed match candidate', bank_date='2026-06-30',
+        )
+        # Should NOT appear: opposite-direction bank_only, any erp_only
+        # (regardless of direction), wrong amount.
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('4000.00'), bank_narration='opposite direction bank_only', bank_date='2026-06-28',
+        )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('4000.00'), erp_narration='same direction erp_only', erp_date='2026-06-28',
+        )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('9999.00'), bank_narration='wrong amount', bank_date='2026-06-28',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(f'/api/banks/exceptions/{source.id}/link-candidates/')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        candidate_ids = {row['id'] for row in resp.data['results']}
+        self.assertEqual(candidate_ids, {valid_bank_only.id})
+
     def test_branch_manager_cannot_link_resolve(self):
         credit_exc = ReconciliationException.objects.create(
             reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
@@ -787,6 +879,190 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         }, format='json')
 
         self.assertEqual(resp.status_code, 403)
+
+    # ── Link candidates: fee-tolerance widening for DEBIT bank_only/erp_only ──
+
+    def test_link_candidates_include_fee_tolerant_erp_only_for_debit_bank_only_source(self):
+        source = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('520.00'), bank_narration='MOVEB transfer', bank_date='2026-07-01',
+        )
+        within_fee = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('500.00'), erp_narration='transfer, fee 20 not recorded', erp_date='2026-07-01',
+        )
+        # Above the FEE_LINK_MAX_AMOUNT (75) cap — must not appear here.
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('400.00'), erp_narration='too far below', erp_date='2026-07-01',
+        )
+        # Higher than source — never a valid fee candidate either way.
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('600.00'), erp_narration='higher than source', erp_date='2026-07-01',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(f'/api/banks/exceptions/{source.id}/link-candidates/')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        candidate_ids = {row['id'] for row in resp.data['results']}
+        self.assertEqual(candidate_ids, {within_fee.id})
+
+    def test_link_candidates_include_fee_tolerant_bank_only_for_debit_erp_only_source(self):
+        source = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('500.00'), erp_narration='source', erp_date='2026-07-01',
+        )
+        within_fee = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('520.00'), bank_narration='MOVEB transfer', bank_date='2026-07-01',
+        )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('600.00'), bank_narration='too far above', bank_date='2026-07-01',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(f'/api/banks/exceptions/{source.id}/link-candidates/')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        candidate_ids = {row['id'] for row in resp.data['results']}
+        self.assertEqual(candidate_ids, {within_fee.id})
+
+    def test_link_candidates_credit_direction_is_not_fee_widened(self):
+        # Fee tolerance is a DEBIT-only concept (a bank only deducts a
+        # transfer fee when money leaves) — CREDIT stays exact-match only.
+        source = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('520.00'), bank_narration='credit', bank_date='2026-07-01',
+        )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('500.00'), erp_narration='near amount', erp_date='2026-07-01',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(f'/api/banks/exceptions/{source.id}/link-candidates/')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['results'], [])
+
+    # ── Link-resolve as bank charge ─────────────────────────────────────
+
+    def _create_fee_pair(self, bank_amount='520.00', erp_amount='500.00', direction='DEBIT'):
+        bank_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction=direction,
+            bank_amount=Decimal(bank_amount), bank_narration='MOVEB transfer', bank_date='2026-07-01',
+        )
+        erp_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction=direction,
+            erp_amount=Decimal(erp_amount), erp_narration='transfer', erp_date='2026-07-01',
+        )
+        return bank_exc, erp_exc
+
+    def test_link_resolve_bank_charge_creates_pending_payment_and_resolves_both(self):
+        bank_exc, erp_exc = self._create_fee_pair()
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve-bank-charge/', {
+            'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+            'resolution_notes': 'MOVEB transfer fee, bank deducted 20 never recorded in ERP',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['fee_amount'], '20.00')
+
+        bank_exc.refresh_from_db()
+        erp_exc.refresh_from_db()
+        self.assertTrue(bank_exc.resolved)
+        self.assertTrue(erp_exc.resolved)
+        self.assertEqual(bank_exc.netted_with_id, erp_exc.id)
+        self.assertEqual(erp_exc.netted_with_id, bank_exc.id)
+        self.assertEqual(bank_exc.resolved_by_id, self.director.id)
+
+        payment = bank_exc.pending_bank_payment
+        self.assertIsNotNone(payment)
+        self.assertEqual(payment.amount, Decimal('20.00'))
+        self.assertEqual(payment.status, 'pending')
+        self.assertEqual(payment.expense.category.code, 'BANKCHG')
+        self.assertIn(f'#{bank_exc.id}', payment.description)
+        self.assertIn(f'#{erp_exc.id}', payment.description)
+        self.assertIn('20.00', payment.description)
+
+        # The fee still has to go through the normal director-gated
+        # approval step — this endpoint never posts money movement itself.
+        payment.approve_payment(approved_by=self.second_director, notes='ok')
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, 'posted')
+        self.assertEqual(payment.journal_entry.created_by_id, self.second_director.id)
+
+    def test_link_resolve_bank_charge_rejects_fee_above_cap(self):
+        bank_exc, erp_exc = self._create_fee_pair(bank_amount='600.00', erp_amount='500.00')
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve-bank-charge/', {
+            'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+            'resolution_notes': 'fee is too large for this pathway',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+        bank_exc.refresh_from_db()
+        self.assertFalse(bank_exc.resolved)
+
+    def test_link_resolve_bank_charge_rejects_credit_direction(self):
+        bank_exc, erp_exc = self._create_fee_pair(direction='CREDIT')
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve-bank-charge/', {
+            'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+            'resolution_notes': 'credit direction should be rejected',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_link_resolve_bank_charge_rejects_shortfall(self):
+        # bank_only smaller than erp_only — not a bank-deducted fee.
+        bank_exc, erp_exc = self._create_fee_pair(bank_amount='480.00', erp_amount='500.00')
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve-bank-charge/', {
+            'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+            'resolution_notes': 'bank amount is smaller, not a fee',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_link_resolve_bank_charge_requires_director(self):
+        bank_exc, erp_exc = self._create_fee_pair()
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post('/api/banks/exceptions/link-resolve-bank-charge/', {
+            'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+            'resolution_notes': 'branch manager should not be able to do this',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_link_resolve_bank_charge_requires_a_reason(self):
+        bank_exc, erp_exc = self._create_fee_pair()
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve-bank-charge/', {
+            'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+            'resolution_notes': 'short',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_link_resolve_bank_charge_rejects_already_resolved(self):
+        bank_exc, erp_exc = self._create_fee_pair()
+        bank_exc.resolved = True
+        bank_exc.resolved_by = self.director
+        bank_exc.resolved_at = timezone.now()
+        bank_exc.save(update_fields=['resolved', 'resolved_by', 'resolved_at'])
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve-bank-charge/', {
+            'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+            'resolution_notes': 'already resolved should be rejected',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
 
 
 class DualApprovalResolveTests(TestCase):
@@ -1266,3 +1542,198 @@ class OfficerReconciliationRiskReportTests(TestCase):
         self.assertEqual(row['unresolved_erp_only_count'], 0)
         self.assertEqual(row['high_priority_count'], 0)
         self.assertEqual(row['avg_posting_lag_days'], -1)
+
+
+class BankTransferCompleteAttributionTests(TestCase):
+    """
+    BankTransfer.complete() used to create its JournalEntry without
+    created_by, so every completed transfer's Transaction row was
+    permanently unattributed for reconciliation purposes (officer =
+    txn.created_by in fetch_erp_payments()) even though complete(user)
+    receives — and records on the transfer itself as completed_by — exactly
+    who did it. Confirmed on production: 294/294 BTRF journal entries had
+    created_by NULL before this fix.
+    """
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name='Transfer Attribution Org', slug='transfer-attr-org')
+        self.branch = Branch.objects.create(name='Branch A', code='TAA')
+        self.director = User.objects.create_user(
+            username='attr_director', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+
+        source_gl = Account.objects.create(
+            code='1601', name='Source Bank GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        dest_gl = Account.objects.create(
+            code='1602', name='Dest Bank GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        bank = Bank.objects.create(bank_name='Attribution Bank', bank_code='997')
+        self.source_account = BankAccount.objects.create(
+            bank=bank, account_number='0000010', account_name='Source Account',
+            gl_account=source_gl, account_manager=self.director,
+        )
+        self.dest_account = BankAccount.objects.create(
+            bank=bank, account_number='0000011', account_name='Dest Account',
+            gl_account=dest_gl, account_manager=self.director,
+        )
+
+    def test_complete_tags_the_journal_entry_with_the_completing_user(self):
+        transfer = BankTransfer.objects.create(
+            transfer_number='BTRF-ATTR-1', source_type='bank', destination_type='bank',
+            source_bank_account=self.source_account, destination_bank_account=self.dest_account,
+            amount=Decimal('500.00'), description='Wrong bank clawback',
+            initiated_by=self.director, approved_by=self.director,
+            branch=self.branch, owner=self.director, tenant=self.tenant,
+        )
+        transfer.complete(user=self.director)
+
+        transfer.refresh_from_db()
+        self.assertIsNotNone(transfer.journal_entry_id)
+        self.assertEqual(transfer.journal_entry.created_by_id, self.director.id)
+
+
+class MissingMoneySummaryViewTests(TestCase):
+    """
+    Tests for the three Missing Money Summary endpoints (banks/views.py):
+    MissingMoneySummaryView, MissingMoneyOfficerExceptionsView,
+    MissingMoneyBankAccountExceptionsView.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Missing Money Org', slug='missing-money-org')
+        self.branch = Branch.objects.create(name='Branch A', code='MMA')
+
+        self.director = User.objects.create_user(
+            username='mm_director', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+
+        self.officer_x = User.objects.create_user(
+            username='mm_officer_x', password='test123', tenant=self.tenant, branch=self.branch,
+        )
+
+        gl_account = Account.objects.create(
+            code='1699', name='Missing Money GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        bank = Bank.objects.create(bank_name='Missing Money Bank', bank_code='996')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000020', account_name='Missing Money Account',
+            gl_account=gl_account, account_manager=self.director,
+        )
+        self.recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/mm.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+        # Attributed, unresolved erp_only — counts toward officer_x and totals.
+        self.erp_only_attributed = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            officer=self.officer_x, erp_amount=Decimal('1000.00'),
+            erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        # Unattributed, unresolved erp_only — falls into the 'Unattributed' bucket.
+        self.erp_only_unattributed = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            officer=None, erp_amount=Decimal('250.00'),
+            erp_narration='Loan repayment', erp_date='2026-07-01',
+        )
+        # Resolved erp_only — must be excluded from every total/breakdown.
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            officer=self.officer_x, erp_amount=Decimal('99999.00'),
+            erp_narration='Loan repayment', erp_date='2026-07-01',
+            resolved=True, resolved_by=self.director, resolved_at=timezone.now(),
+        )
+        # bank_only — counts toward the bank account bucket, not officer.
+        self.bank_only = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('300.00'), bank_narration='Unexplained credit', bank_date='2026-07-01',
+        )
+        # amount_diff — must be excluded from totals (already matched, not "missing").
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='amount_diff', direction='CREDIT',
+            officer=self.officer_x, erp_amount=Decimal('88888.00'), bank_amount=Decimal('88888.50'),
+            erp_narration='Loan repayment', bank_narration='Loan repayment', erp_date='2026-07-01',
+            bank_date='2026-07-01',
+        )
+
+    # ── Summary totals ──────────────────────────────────────────────────
+
+    def test_totals_exclude_resolved_and_amount_diff(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get('/api/banks/reports/missing-money-summary/')
+
+        self.assertEqual(resp.status_code, 200)
+        totals = resp.data['totals']
+        self.assertEqual(totals['erp_only']['count'], 2)
+        self.assertEqual(totals['erp_only']['amount'], '1250.00')
+        self.assertEqual(totals['bank_only']['count'], 1)
+        self.assertEqual(totals['bank_only']['amount'], '300.00')
+        self.assertEqual(totals['grand_total_amount'], '1550.00')
+
+    def test_by_officer_breakdown_separates_attributed_and_unattributed(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get('/api/banks/reports/missing-money-summary/')
+
+        rows = {row['officer_id']: row for row in resp.data['by_officer']}
+        self.assertEqual(rows[self.officer_x.id]['amount'], '1000.00')
+        self.assertEqual(rows[self.officer_x.id]['count'], 1)
+        self.assertEqual(rows[None]['officer_name'], 'Unattributed')
+        self.assertEqual(rows[None]['amount'], '250.00')
+
+    def test_by_bank_account_breakdown(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get('/api/banks/reports/missing-money-summary/')
+
+        rows = resp.data['by_bank_account']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['bank_account_id'], self.bank_account.id)
+        self.assertEqual(rows[0]['amount'], '300.00')
+        self.assertEqual(rows[0]['count'], 1)
+
+    def test_date_filters_narrow_the_totals(self):
+        self.client.force_authenticate(user=self.director)
+        # created_at defaults to now — a date_from in the future excludes everything.
+        future = (timezone.now().date() + timedelta(days=1)).isoformat()
+        resp = self.client.get('/api/banks/reports/missing-money-summary/', {'date_from': future})
+
+        self.assertEqual(resp.data['totals']['erp_only']['count'], 0)
+        self.assertEqual(resp.data['totals']['bank_only']['count'], 0)
+
+    # ── Officer drill-down ──────────────────────────────────────────────
+
+    def test_officer_drilldown_returns_only_that_officers_unresolved_erp_only(self):
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reports/missing-money-summary/officer/{self.officer_x.id}/'
+        resp = self.client.get(url)
+
+        self.assertEqual(resp.status_code, 200)
+        ids = {row['id'] for row in resp.data['results']}
+        self.assertEqual(ids, {self.erp_only_attributed.id})
+
+    def test_officer_drilldown_unattributed_bucket(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get('/api/banks/reports/missing-money-summary/officer/unattributed/')
+
+        self.assertEqual(resp.status_code, 200)
+        ids = {row['id'] for row in resp.data['results']}
+        self.assertEqual(ids, {self.erp_only_unattributed.id})
+
+    # ── Bank account drill-down ─────────────────────────────────────────
+
+    def test_bank_account_drilldown_returns_only_unresolved_bank_only(self):
+        self.client.force_authenticate(user=self.director)
+        url = f'/api/banks/reports/missing-money-summary/bank-account/{self.bank_account.id}/'
+        resp = self.client.get(url)
+
+        self.assertEqual(resp.status_code, 200)
+        ids = {row['id'] for row in resp.data['results']}
+        self.assertEqual(ids, {self.bank_only.id})

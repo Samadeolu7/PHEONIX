@@ -21,6 +21,7 @@ import {
 } from '../../services/loanService';
 import { clientService, Client } from '../../services/clientService';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
+import { ClientAvatar } from '../../components/ui/ClientAvatar';
 
 const REPAYMENT_FREQS = [
   { value: 'daily',   label: 'Daily' },
@@ -319,7 +320,8 @@ export default function LoanAccountFormPage() {
                 <div ref={clientComboRef} className="relative">
                   {selectedClient ? (
                     <div className="flex items-center justify-between border border-blue-400 rounded-lg px-3 py-2 bg-blue-50 text-sm">
-                      <span className="font-medium text-gray-900">
+                      <span className="flex items-center gap-2 font-medium text-gray-900">
+                        <ClientAvatar image={selectedClient.image} name={selectedClient.full_name} size="xs" />
                         {selectedClient.full_name}
                         {selectedClient.phone_primary && <span className="text-gray-500 font-normal"> · {selectedClient.phone_primary}</span>}
                       </span>
@@ -361,7 +363,10 @@ export default function LoanAccountFormPage() {
                               setClientDropdownOpen(false);
                             }}
                           >
-                            <span className="font-medium text-gray-900">{c.full_name}</span>
+                            <span className="flex items-center gap-2 font-medium text-gray-900">
+                              <ClientAvatar image={c.image} name={c.full_name} size="xs" />
+                              {c.full_name}
+                            </span>
                             {c.phone_primary && <span className="text-gray-400 text-xs ml-2">{c.phone_primary}</span>}
                           </button>
                         </li>
@@ -413,6 +418,13 @@ export default function LoanAccountFormPage() {
           {selectedClient && (
             <div className="bg-blue-50 rounded-xl border border-blue-200 p-4 space-y-3">
               <h2 className="text-xs font-semibold text-blue-800 uppercase tracking-wide">Client Information</h2>
+              <div className="flex items-center gap-3 pb-1">
+                <ClientAvatar image={selectedClient.image} name={selectedClient.full_name} size="lg" />
+                <p className="text-xs text-blue-700">
+                  Confirm this photo matches the applicant before submitting — loan disbursements
+                  cannot easily be undone once approved.
+                </p>
+              </div>
               <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
                 <div>
                   <span className="text-blue-600 text-xs">Full Name</span>

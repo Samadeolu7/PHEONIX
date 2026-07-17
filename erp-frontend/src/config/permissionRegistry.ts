@@ -62,6 +62,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
       { code: 'loan-repayment-approvals', title: 'Repayment Approvals', description: 'Approve savings-debit repayment requests', path: '/loans/repayment-approvals' },
       { code: 'loan-products', title: 'Loan Products', description: 'Configure loan product types', paths: ['/loans/products', '/loans/products/:id/config'] },
       { code: 'loan-disbursements', title: 'Disbursements', description: 'Disburse approved loans', paths: ['/loans/disbursements', '/loans/disbursements/:loanId'] },
+      { code: 'loan-disbursement-corrections', title: 'Disbursement Corrections', description: 'Fix loans disbursed to the wrong customer (always dual director approval)', path: '/loans/disbursement-corrections' },
       { code: 'loan-repayment-requests', title: 'Repayment Requests', description: 'Savings-debit repayment requests' },
       { code: 'loan-reports', title: 'Loan Reports', description: 'Portfolio, debtors, defaulters, PAR and daily summary reports', paths: ['/reports/daily-summary', '/reports/daily-transactions', '/reports/loans/debtors', '/reports/loans/defaulters', '/reports/loans/par', '/reports/officer-portfolio', '/reports/portfolio-performance', '/reports/summary'] },
     ],
@@ -142,7 +143,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
       { code: 'bank-accounts', title: 'Bank Accounts', description: 'Company bank account records', paths: ['/banks/accounts', '/banks/accounts/:id', '/banks/accounts/:id/edit', '/banks/accounts/new'] },
       { code: 'bank-transfers', title: 'Bank Transfers', description: 'Transfer between bank accounts', paths: ['/banks/transfers', '/banks/transfers/new', '/banks/transfers/approvals'] },
       { code: 'bank-payments', title: 'Bank Payments', description: 'Record outward bank payments', paths: ['/banks/payments', '/banks/payments/new'] },
-      { code: 'bank-statement-reconciliation', title: 'Statement Reconciliation (Auto-Match)', description: 'Upload bank statements and review matched/unmatched transactions', paths: ['/banks/reconciliations', '/banks/reconciliations/new', '/banks/reconciliations/:id', '/banks/reconciliations/officer-risk-report', '/banks/reconciliations/manual-overrides'] },
+      { code: 'bank-statement-reconciliation', title: 'Statement Reconciliation (Auto-Match)', description: 'Upload bank statements and review matched/unmatched transactions', paths: ['/banks/reconciliations', '/banks/reconciliations/new', '/banks/reconciliations/:id', '/banks/reconciliations/officer-risk-report', '/banks/reconciliations/manual-overrides', '/banks/reconciliations/missing-money-summary'] },
     ],
   },
   {

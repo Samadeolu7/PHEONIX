@@ -19,9 +19,13 @@ from .views import (
     SecondResolveExceptionView,
     ResolveExceptionToExpenseView,
     LinkResolveExceptionsView,
+    LinkResolveBankChargeView,
     LinkCandidatesView,
     OfficerReconciliationRiskReportView,
     ManualOverridesReportView,
+    MissingMoneySummaryView,
+    MissingMoneyOfficerExceptionsView,
+    MissingMoneyBankAccountExceptionsView,
 )
 
 router = DefaultRouter()
@@ -85,6 +89,11 @@ urlpatterns = [
         name='reconciliation-exceptions-link-resolve',
     ),
     path(
+        'exceptions/link-resolve-bank-charge/',
+        LinkResolveBankChargeView.as_view(),
+        name='reconciliation-exceptions-link-resolve-bank-charge',
+    ),
+    path(
         'exceptions/<int:exc_id>/link-candidates/',
         LinkCandidatesView.as_view(),
         name='reconciliation-exception-link-candidates',
@@ -98,5 +107,20 @@ urlpatterns = [
         'reports/manual-overrides/',
         ManualOverridesReportView.as_view(),
         name='manual-overrides-report',
+    ),
+    path(
+        'reports/missing-money-summary/',
+        MissingMoneySummaryView.as_view(),
+        name='missing-money-summary',
+    ),
+    path(
+        'reports/missing-money-summary/officer/<str:officer_id>/',
+        MissingMoneyOfficerExceptionsView.as_view(),
+        name='missing-money-officer-detail',
+    ),
+    path(
+        'reports/missing-money-summary/bank-account/<int:bank_account_id>/',
+        MissingMoneyBankAccountExceptionsView.as_view(),
+        name='missing-money-bank-account-detail',
     ),
 ]

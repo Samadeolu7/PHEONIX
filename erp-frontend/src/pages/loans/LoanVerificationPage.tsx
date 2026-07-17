@@ -15,6 +15,7 @@ import {
 } from '../../services/loanService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
+import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import {
   Shield,
   AlertTriangle,
@@ -130,12 +131,13 @@ const LoanVerificationPage: React.FC = () => {
         >
           <ArrowLeft className="w-5 h-5 text-gray-600" />
         </button>
+        <ClientAvatar image={vr.client_image} name={vr.client_name} size="md" />
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <Shield className="w-6 h-6 text-blue-600" />
             NIN Verification — {vr.loan_number}
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Cross-branch exposure check</p>
+          <p className="text-sm text-gray-500 mt-0.5">{vr.client_name} — Cross-branch exposure check</p>
         </div>
         <div className="ml-auto">
           <span className={`px-3 py-1 rounded-full text-sm font-medium border ${VERDICT_COLORS[vr.verdict]}`}>

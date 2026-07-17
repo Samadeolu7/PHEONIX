@@ -6,9 +6,13 @@
 import { api } from './api';
 import type {
   DailyReconciliation,
+  LinkResolveBankChargeRequest,
+  LinkResolveBankChargeResponse,
   LinkResolveExceptionsRequest,
   ManualOverridesReportFilters,
   ManualOverridesReportResponse,
+  MissingMoneySummary,
+  MissingMoneySummaryFilters,
   OfficerReconciliationRiskFilters,
   OfficerReconciliationRiskRow,
   ReconciliationException,
@@ -180,6 +184,20 @@ export const reconciliationService = {
   },
 
   /**
+   * Link a bank_only DEBIT exception against an erp_only DEBIT exception
+   * whose amount is up to FEE_LINK_MAX_AMOUNT lower — the bank-deducted-
+   * transfer-fee pattern (e.g. the MOVEB series) — and resolve both, while
+   * also creating a draft "Bank Charges" Expense + pending BankPayment for
+   * the fee difference so it still goes through the normal director-gated
+   * approval step before posting to the GL. Director-only.
+   */
+  async linkResolveBankCharge(
+    data: LinkResolveBankChargeRequest
+  ): Promise<LinkResolveBankChargeResponse> {
+    return api.post(`${BASE_URL}/exceptions/link-resolve-bank-charge/`, data);
+  },
+
+  /**
    * Per-officer accountability signals — match rate, reference compliance,
    * average posting lag, outstanding high-priority exceptions — across ALL
    * of an officer's reconciliation activity, not just outstanding cases.
@@ -204,5 +222,34 @@ export const reconciliationService = {
     params?: ManualOverridesReportFilters
   ): Promise<ManualOverridesReportResponse> {
     return api.get(`${BASE_URL}/reports/manual-overrides/`, { params });
+  },
+
+  /**
+   * How much is actually missing right now, and from whom — unresolved
+   * erp_only (attributable to the officer who recorded it) and bank_only
+   * (attributable to the bank account) totals, each broken down for
+   * drill-down. Branch-scoped like every other reconciliation report.
+   */
+  async getMissingMoneySummary(
+    params?: MissingMoneySummaryFilters
+  ): Promise<MissingMoneySummary> {
+    return api.get(`${BASE_URL}/reports/missing-money-summary/`, { params });
+  },
+
+  /**
+   * Every unresolved erp_only exception attributed to one officer — pass
+   * 'unattributed' for the no-officer bucket.
+   */
+  async getMissingMoneyByOfficer(officerId: number | 'unattributed'): Promise<ReconciliationException[]> {
+    const res = await api.get(`${BASE_URL}/reports/missing-money-summary/officer/${officerId}/`);
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  /**
+   * Every unresolved bank_only exception on one bank account.
+   */
+  async getMissingMoneyByBankAccount(bankAccountId: number): Promise<ReconciliationException[]> {
+    const res = await api.get(`${BASE_URL}/reports/missing-money-summary/bank-account/${bankAccountId}/`);
+    return Array.isArray(res) ? res : (res?.results ?? []);
   },
 };

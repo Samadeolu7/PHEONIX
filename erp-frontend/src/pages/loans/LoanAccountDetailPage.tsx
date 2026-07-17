@@ -39,7 +39,8 @@ import {
   RepayLoanPayload,
   ProposeRestructurePayload,
 } from '../../services/loanService';
-import { clientService, ClientOption } from '../../services/clientService';
+import { clientService, ClientOption, Client } from '../../services/clientService';
+import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import { guarantorService, GuarantorProfile } from '../../services/guarantorService';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
@@ -515,6 +516,202 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
   );
 }
 
+// ── Disbursement Correction Modal ───────────────────────────────────────────
+// Requests a wrong-customer correction — reverses this loan's disbursement and
+// re-disburses a new loan to the correct client. Always requires two director
+// approvals (see LoanDisbursementCorrection, loans/models.py) before anything
+// actually happens; submitting here only creates the request.
+
+interface CorrectionModalProps {
+  loan: LoanAccount;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function CorrectionModal({ loan, onClose, onSuccess }: CorrectionModalProps) {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Client[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const searchTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const hasRepayments = parseFloat(loan.total_paid || '0') > 0;
+
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (!query.trim()) { setResults([]); return; }
+    setSearching(true);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const res = await clientService.getClients({ search: query.trim(), status: 'active', page_size: 20 } as any);
+        const list: Client[] = (res as any)?.results ?? (res as any)?.data ?? (res as any) ?? [];
+        setResults(list.filter(c => c.id !== loan.client));
+        setDropdownOpen(true);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, [query, loan.client]);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!selectedClient) {
+      setError('Select the customer this loan should have gone to.');
+      return;
+    }
+    if (reason.trim().length < 10) {
+      setError('Explain what happened (at least 10 characters) — this becomes part of the audit trail.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const created = await loanService.requestDisbursementCorrection({
+        original_loan: loan.id,
+        correct_client: selectedClient.id,
+        reason: reason.trim(),
+      });
+      setSuccess(created.reference_number);
+      setTimeout(() => { onSuccess(); }, 1500);
+    } catch (e: unknown) {
+      setError(extractApiError(e, 'Could not submit the correction request.'));
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl overflow-y-auto max-h-[90vh]">
+        <button type="button" aria-label="Close" onClick={onClose}
+          className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100">
+          <X size={18} />
+        </button>
+        <h2 className="mb-1 text-lg font-semibold text-gray-900">Correct Disbursed-to-Wrong-Customer</h2>
+        <p className="mb-4 text-sm text-gray-500">{loan.loan_number} — ₦{fmt(loan.disbursed_amount)} disbursed</p>
+
+        <div className="mb-4 flex items-center gap-3 rounded-lg bg-red-50 border border-red-200 p-3">
+          <ClientAvatar image={loan.client_image} name={loan.client_name} size="md" />
+          <div className="text-sm">
+            <p className="text-red-700">Currently disbursed to</p>
+            <p className="font-semibold text-red-900">{loan.client_name}</p>
+          </div>
+        </div>
+
+        <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+          This only creates a request. Two different directors must approve it before anything
+          happens — neither you nor the first approver can also be the second. Once fully
+          approved, the disbursement to {loan.client_name} is reversed and a brand-new loan is
+          disbursed to the correct customer with the same terms.
+        </div>
+
+        {hasRepayments && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 p-3 text-xs text-red-800">
+            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+            <span>
+              ₦{fmt(loan.total_paid)} has already been repaid on this loan. The automated
+              correction only handles loans with no repayment history — contact accounting for a
+              manual adjustment instead.
+            </span>
+          </div>
+        )}
+
+        {success ? (
+          <div className="flex flex-col items-center py-6 text-center">
+            <CheckCircle size={40} className="mb-2 text-green-500" />
+            <p className="font-medium text-gray-900">Correction {success} submitted</p>
+            <p className="mt-1 text-sm text-gray-500">Awaiting first director approval.</p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Correct Customer</label>
+              {selectedClient ? (
+                <div className="flex items-center justify-between rounded-lg border border-blue-400 bg-blue-50 px-3 py-2 text-sm">
+                  <span className="flex items-center gap-2 font-medium text-gray-900">
+                    <ClientAvatar image={selectedClient.image} name={selectedClient.full_name} size="xs" />
+                    {selectedClient.full_name}
+                    {selectedClient.phone_primary && (
+                      <span className="font-normal text-gray-500"> · {selectedClient.phone_primary}</span>
+                    )}
+                  </span>
+                  <button type="button" aria-label="Clear selected customer" onClick={() => setSelectedClient(null)}
+                    className="text-gray-400 hover:text-gray-600">
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    onFocus={() => { if (results.length > 0) setDropdownOpen(true); }}
+                    placeholder="Search by name or phone…"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+                  />
+                  {searching && <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />}
+                  {dropdownOpen && results.length > 0 && (
+                    <ul className="absolute z-50 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg text-sm">
+                      {results.map(c => (
+                        <li key={c.id}>
+                          <button type="button" onMouseDown={e => e.preventDefault()}
+                            onClick={() => { setSelectedClient(c); setQuery(''); setDropdownOpen(false); }}
+                            className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-blue-50">
+                            <span className="flex items-center gap-2 font-medium text-gray-900">
+                              <ClientAvatar image={c.image} name={c.full_name} size="xs" />
+                              {c.full_name}
+                            </span>
+                            {c.phone_primary && <span className="ml-2 text-xs text-gray-400">{c.phone_primary}</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label htmlFor="cor-reason" className="mb-1 block text-sm font-medium text-gray-700">
+                What happened?
+              </label>
+              <textarea id="cor-reason" title="Reason for the correction" value={reason} onChange={e => setReason(e.target.value)} rows={3}
+                placeholder="e.g. Picked the wrong customer from the search results while creating the loan on 2026-07-16."
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle size={14} />{error}
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button type="button" onClick={onClose}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={submitting || !selectedClient}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                {submitting ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+                Submit for Approval
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Add Guarantor Modal ────────────────────────────────────────────────────
 
 /** Pulls the most user-readable message from a thrown api.ts error. */
@@ -924,6 +1121,8 @@ export default function LoanAccountDetailPage() {
   const [showRepayModal, setShowRepayModal] = useState(false);
   const [showRestructureModal, setShowRestructureModal] = useState(false);
   const [pendingRestructureRequestId, setPendingRestructureRequestId] = useState<number | null>(null);
+  const [showCorrectionModal, setShowCorrectionModal] = useState(false);
+  const [pendingCorrectionRef, setPendingCorrectionRef] = useState<string | null>(null);
   const [showAddGuarantorModal, setShowAddGuarantorModal] = useState(false);
   const [removingGuarantorId, setRemovingGuarantorId] = useState<number | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -956,6 +1155,17 @@ export default function LoanAccountDetailPage() {
         setPendingRestructureRequestId(match ? match.id : null);
       } catch {
         setPendingRestructureRequestId(null);
+      }
+
+      // Non-fatal: used only to disable "Correct Disbursement" while one is already in flight
+      try {
+        const corrections = await loanService.listDisbursementCorrections();
+        const match = corrections.find(
+          c => c.original_loan === loanData.id && (c.status === 'pending' || c.status === 'awaiting_second_approval')
+        );
+        setPendingCorrectionRef(match ? match.reference_number : null);
+      } catch {
+        setPendingCorrectionRef(null);
       }
     } catch (e: unknown) {
       const data = (e as any)?.response?.data;
@@ -1071,6 +1281,9 @@ export default function LoanAccountDetailPage() {
   // Matches the backend's record_payment() gate (models.py) — defaulted loans can
   // still take repayments, they just can't be newly disbursed/approved etc.
   const canRepay = ['active', 'disbursed', 'defaulted'].includes(loan.status);
+  // Matches LoanDisbursementCorrection._execute()'s status guard (loans/models.py) —
+  // only a disbursed/active loan's disbursement can be corrected this way.
+  const canCorrectDisbursement = ['active', 'disbursed'].includes(loan.status);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1108,6 +1321,17 @@ export default function LoanAccountDetailPage() {
         />
       )}
 
+      {showCorrectionModal && (
+        <CorrectionModal
+          loan={loan}
+          onClose={() => setShowCorrectionModal(false)}
+          onSuccess={() => {
+            setShowCorrectionModal(false);
+            load();
+          }}
+        />
+      )}
+
       {/* Header */}
       <div className="border-b bg-white px-6 py-4">
         <div className="flex items-center justify-between">
@@ -1120,6 +1344,7 @@ export default function LoanAccountDetailPage() {
             >
               <ArrowLeft size={18} />
             </button>
+            <ClientAvatar image={loan.client_image} name={loan.client_name} size="md" />
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-bold text-gray-900">{loan.loan_number}</h1>
@@ -1273,6 +1498,27 @@ export default function LoanAccountDetailPage() {
                 Collect Repayment
               </button>
             )}
+
+            {canCorrectDisbursement && (
+              pendingCorrectionRef ? (
+                <span
+                  className="flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700"
+                  title={`Correction ${pendingCorrectionRef} is already pending director approval for this loan`}
+                >
+                  <Loader2 size={14} />
+                  Correction Pending
+                </span>
+              ) : (
+                <button
+                  onClick={() => setShowCorrectionModal(true)}
+                  title="Reverse this disbursement and re-disburse to the correct customer"
+                  className="flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
+                >
+                  <AlertCircle size={14} />
+                  Correct Disbursement
+                </button>
+              )
+            )}
           </div>
         </div>
 
@@ -1402,9 +1648,12 @@ export default function LoanAccountDetailPage() {
               Client
             </h2>
             <div className="space-y-3 text-sm">
-              <div>
-                <p className="text-gray-500">Name</p>
-                <p className="font-semibold text-gray-900">{loan.client_name}</p>
+              <div className="flex items-center gap-3">
+                <ClientAvatar image={loan.client_image} name={loan.client_name} size="lg" />
+                <div>
+                  <p className="text-gray-500">Name</p>
+                  <p className="font-semibold text-gray-900">{loan.client_name}</p>
+                </div>
               </div>
               <div>
                 <p className="text-gray-500">Risk Classification</p>
