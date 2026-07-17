@@ -2872,7 +2872,7 @@ class LoanDisbursementCorrectionViewSet(ScopedModelViewSet):
 
     def perform_create(self, serializer):
         user, branch, tenant = self._resolve_create_scope()
-        serializer.save(requested_by=user, owner=tenant, branch=branch, tenant=tenant)
+        serializer.save(requested_by=user, owner=user, branch=branch, tenant=tenant)
 
     @action(detail=True, methods=['post'])
     def first_approve(self, request, pk=None):
