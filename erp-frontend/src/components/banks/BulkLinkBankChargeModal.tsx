@@ -40,7 +40,7 @@ export const BulkLinkBankChargeModal: React.FC<BulkLinkBankChargeModalProps> = (
     let cancelled = false;
     setLoading(true);
     reconciliationService
-      .bulkLinkResolveBankCharge({ bank_account_id: bankAccountId, dry_run: true })
+      .bulkLinkResolveBankChargePreview({ bank_account_id: bankAccountId })
       .then((data) => {
         if (!cancelled) setPreview(data);
       })
@@ -63,7 +63,6 @@ export const BulkLinkBankChargeModal: React.FC<BulkLinkBankChargeModalProps> = (
       const data = await reconciliationService.bulkLinkResolveBankCharge({
         bank_account_id: bankAccountId,
         resolution_notes: notes,
-        dry_run: false,
       });
       setResult(data);
     } catch (err: any) {

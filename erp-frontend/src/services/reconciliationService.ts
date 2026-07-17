@@ -207,16 +207,16 @@ export const reconciliationService = {
    * preview what would happen (pairs found, total fee, ambiguous/unmatched
    * counts) — there's no per-pair confirmation once the real run starts.
    */
+  async bulkLinkResolveBankChargePreview(
+    data: Omit<BulkLinkResolveBankChargeRequest, 'dry_run'>
+  ): Promise<BulkLinkResolveBankChargePreview> {
+    return api.post(`${BASE_URL}/exceptions/bulk-link-resolve-bank-charge/`, { ...data, dry_run: true });
+  },
+
   async bulkLinkResolveBankCharge(
-    data: BulkLinkResolveBankChargeRequest & { dry_run: true }
-  ): Promise<BulkLinkResolveBankChargePreview>;
-  async bulkLinkResolveBankCharge(
-    data: BulkLinkResolveBankChargeRequest & { dry_run?: false }
-  ): Promise<BulkLinkResolveBankChargeResult>;
-  async bulkLinkResolveBankCharge(
-    data: BulkLinkResolveBankChargeRequest
-  ): Promise<BulkLinkResolveBankChargePreview | BulkLinkResolveBankChargeResult> {
-    return api.post(`${BASE_URL}/exceptions/bulk-link-resolve-bank-charge/`, data);
+    data: Omit<BulkLinkResolveBankChargeRequest, 'dry_run'>
+  ): Promise<BulkLinkResolveBankChargeResult> {
+    return api.post(`${BASE_URL}/exceptions/bulk-link-resolve-bank-charge/`, { ...data, dry_run: false });
   },
 
   /**

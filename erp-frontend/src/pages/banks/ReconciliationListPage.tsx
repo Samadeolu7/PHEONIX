@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, FileSearch, CheckCircle2, XCircle, Clock } from 'lucide-react';
+import { Plus, FileSearch, CheckCircle2, XCircle, Clock, AlertTriangle, ShieldAlert, ClipboardList } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import { branchService, Branch } from '../../services/branchService';
 import type { DailyReconciliation } from '../../types/banks';
@@ -67,6 +67,30 @@ const ReconciliationListPage: React.FC = () => {
         >
           <Plus className="w-5 h-5" />
           New Reconciliation
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button
+          onClick={() => navigate('/banks/reconciliations/missing-money-summary')}
+          className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+        >
+          <AlertTriangle className="w-4 h-4 text-red-500" />
+          Missing Money Summary
+        </button>
+        <button
+          onClick={() => navigate('/banks/reconciliations/officer-risk-report')}
+          className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+        >
+          <ShieldAlert className="w-4 h-4 text-amber-500" />
+          Officer Reconciliation Risk
+        </button>
+        <button
+          onClick={() => navigate('/banks/reconciliations/manual-overrides')}
+          className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+        >
+          <ClipboardList className="w-4 h-4 text-blue-500" />
+          Manual Overrides Report
         </button>
       </div>
 
