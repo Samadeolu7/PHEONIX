@@ -309,7 +309,8 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Remittance Report', '/reports/daily-transactions'),
         leaf('Group Report', '/reports/clients/groups'),
         leaf('Report Summary by Date', '/reports/summary'),
-        leaf('Daily Summary Report', '/reports/daily-summary'),
+        leaf('Disbursement Master Roll', '/reports/disbursement-master-roll'),
+        leaf('Daily Collection Report', '/reports/daily-collection-report'),
       ]),
     ]),
 
@@ -329,7 +330,8 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Remittance Report', '/reports/daily-transactions'),
         leaf('Group Report', '/reports/clients/groups'),
         leaf('Report Summary by Date', '/reports/summary'),
-        leaf('Daily Summary Report', '/reports/daily-summary'),
+        leaf('Disbursement Master Roll', '/reports/disbursement-master-roll'),
+        leaf('Daily Collection Report', '/reports/daily-collection-report'),
       ]),
       grp('btn-reports-savings', 'SAVINGS', 'file-text', [
         leaf('Savings by Product', '/reports/savings-by-product'),

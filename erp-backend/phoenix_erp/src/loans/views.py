@@ -44,6 +44,76 @@ def _resolve_scope(user, fallback_obj=None):
     return tenant, branch
 
 
+def defaulted_loans_as_of(qs, as_of):
+    """
+    Shared arrears computation used by the defaulters report and any other
+    view that needs a historically-accurate "who was in default on date X"
+    answer (e.g. the disbursement master roll's defaulters tile) instead of
+    trusting the LoanAccount.days_in_arrears cached field, which can be
+    stale (see BulkLoanAccrualView / update_loan_status_task dual-write).
+
+    `qs` should already be date-scoped (active-as-of-`as_of`) by the caller —
+    this function only walks each loan's repayment_schedule to find arrears.
+
+    Yields (loan, days_in_arrears, arrears_amount) for every loan with at
+    least one qualifying overdue installment as of `as_of`.
+    """
+    qs = qs.select_related('client', 'product').prefetch_related('repayment_schedule')
+    for loan in qs:
+        # An installment is overdue as of `as_of` when its due_date is
+        # strictly before that date and it was not yet fully paid by
+        # then. Uses < (not <=) so an installment due *on* as_of itself
+        # — not yet late, days_in_arrears would be 0 — is excluded; this
+        # is a defaulters/arrears report, not a due-today report.
+        # The status check excludes installments cancelled by a
+        # restructure (status='restructured'): those never got a
+        # payment_date since they weren't paid, just superseded by the
+        # new schedule, so without this filter they'd resurface as
+        # ancient "overdue" rows and inflate days_in_arrears past the
+        # restructure date. Mirrors LoanAccount._calculate_arrears().
+        overdue = [
+            inst
+            for inst in loan.repayment_schedule.all()
+            if inst.due_date < as_of
+            and inst.status in ('pending', 'partial', 'overdue')
+            and (inst.payment_date is None or inst.payment_date > as_of)
+        ]
+        if not overdue:
+            continue
+
+        overdue.sort(key=lambda x: x.due_date)
+        earliest = overdue[0]
+        days_in_arrears = (as_of - earliest.due_date).days
+        arrears_amount = sum(inst.total_due - inst.total_paid for inst in overdue)
+        yield loan, days_in_arrears, arrears_amount
+
+
+def loans_active_as_of_qs(base_qs, as_of, today=None):
+    """
+    Scope `base_qs` (already tenant/branch/officer scoped) to loans that were
+    active as of `as_of` — shared by the defaulters report and the
+    disbursement master roll so "active loans on date X" means the same
+    thing everywhere instead of drifting into separate ad-hoc filters.
+    """
+    from django.utils import timezone as tz
+
+    if today is None:
+        today = tz.localdate()
+
+    if as_of >= today:
+        # Current / future report: rely on live status rather than the
+        # nullable disbursement_date field so no loans are silently dropped.
+        return base_qs.filter(status__in=['active', 'disbursed', 'defaulted']).filter(
+            Q(closed_date__isnull=True) | Q(closed_date__gte=today)
+        )
+    # Historical report: loans disbursed before the requested date and
+    # not yet closed by then. disbursement_date IS NULL rows are excluded
+    # deliberately (no record → can't place them in time).
+    return base_qs.filter(disbursement_date__isnull=False, disbursement_date__lte=as_of).filter(
+        Q(closed_date__isnull=True) | Q(closed_date__gt=as_of)
+    )
+
+
 def _build_scoped_qs(qs, user):
     """
     Apply tenant + branch scoping to an already-constructed QuerySet.
@@ -220,26 +290,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             as_of = tz.localdate()
 
         today = tz.localdate()
-
-        if as_of >= today:
-            # Current / future report: rely on live status rather than the
-            # nullable disbursement_date field so no loans are silently dropped.
-            qs = (
-                self.get_queryset()
-                .filter(status__in=['active', 'disbursed', 'defaulted'])
-                .filter(Q(closed_date__isnull=True) | Q(closed_date__gte=today))
-            )
-        else:
-            # Historical report: loans disbursed before the requested date and
-            # not yet closed by then.  disbursement_date IS NULL rows are
-            # excluded deliberately (no record → can't place them in time).
-            qs = (
-                self.get_queryset()
-                .filter(disbursement_date__isnull=False, disbursement_date__lte=as_of)
-                .filter(Q(closed_date__isnull=True) | Q(closed_date__gt=as_of))
-            )
-
-        qs = qs.select_related('client', 'product').prefetch_related('repayment_schedule')
+        qs = loans_active_as_of_qs(self.get_queryset(), as_of, today=today)
 
         search = request.query_params.get('search', '').strip()
         if search:
@@ -251,33 +302,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             )
 
         results = []
-        for loan in qs:
-            # An installment is overdue as of `as_of` when its due_date is
-            # strictly before that date and it was not yet fully paid by
-            # then. Uses < (not <=) so an installment due *on* as_of itself
-            # — not yet late, days_in_arrears would be 0 — is excluded; this
-            # is a defaulters/arrears report, not a due-today report.
-            # The status check excludes installments cancelled by a
-            # restructure (status='restructured'): those never got a
-            # payment_date since they weren't paid, just superseded by the
-            # new schedule, so without this filter they'd resurface as
-            # ancient "overdue" rows and inflate days_in_arrears past the
-            # restructure date. Mirrors LoanAccount._calculate_arrears().
-            overdue = [
-                inst
-                for inst in loan.repayment_schedule.all()
-                if inst.due_date < as_of
-                and inst.status in ('pending', 'partial', 'overdue')
-                and (inst.payment_date is None or inst.payment_date > as_of)
-            ]
-            if not overdue:
-                continue
-
-            overdue.sort(key=lambda x: x.due_date)
-            earliest = overdue[0]
-            days_in_arrears = (as_of - earliest.due_date).days
-            arrears_amount = sum(inst.total_due - inst.total_paid for inst in overdue)
-
+        for loan, days_in_arrears, arrears_amount in defaulted_loans_as_of(qs, as_of):
             data = LoanAccountListSerializer(loan, context={'request': request}).data
             data['days_in_arrears'] = days_in_arrears
             data['arrears_amount'] = str(arrears_amount)

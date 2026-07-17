@@ -13,6 +13,8 @@ from .views import (
     InterestIncomeByRecognitionModeView,
     ProvisioningComplianceView,
     OfficerScorecardTrendView,
+    DisbursementMasterRollView,
+    DailyCollectionReportView,
 )
 
 app_name = 'analytics'
@@ -34,5 +36,8 @@ urlpatterns = [
     path('portfolio-performance/interest-income/', InterestIncomeByRecognitionModeView.as_view(), name='portfolio-performance-interest-income'),
     path('portfolio-performance/provisioning/', ProvisioningComplianceView.as_view(), name='portfolio-performance-provisioning'),
     path('portfolio-performance/officer-trend/', OfficerScorecardTrendView.as_view(), name='portfolio-performance-officer-trend'),
+    # Track 3 — Disbursement Master Roll / Daily Collection Report
+    path('disbursement-master-roll/', DisbursementMasterRollView.as_view(), name='disbursement-master-roll'),
+    path('daily-collection-report/', DailyCollectionReportView.as_view(), name='daily-collection-report'),
 ]
 

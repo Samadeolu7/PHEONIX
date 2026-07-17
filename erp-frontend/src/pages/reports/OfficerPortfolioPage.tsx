@@ -447,8 +447,8 @@ export default function OfficerPortfolioPage() {
                   color: 'bg-yellow-50 text-yellow-700 border-yellow-200',
                 },
                 {
-                  label: 'Daily Summary',
-                  path: '/reports/daily-summary',
+                  label: 'Disbursement Master Roll',
+                  path: '/reports/disbursement-master-roll',
                   icon: <CheckCircle size={16} />,
                   color: 'bg-gray-50 text-gray-700 border-gray-200',
                 },

@@ -104,4 +104,25 @@ def collect_client_registration_fees(
         )
 
     journal.post()
+
+    # Mirrors SavingsAccount.deposit()'s FinancialAuditLog call: Transaction
+    # has no client FK, so without this a per-client collections report
+    # (e.g. daily collection sheet) has no reliable way to attribute a
+    # CLREG journal entry back to which client paid what.
+    from common.models import FinancialAuditLog, log_financial_event
+    log_financial_event(
+        FinancialAuditLog.CLIENT_REGISTRATION_FEE,
+        acted_by=transacted_by,
+        record_type='Client',
+        record_id=str(client.pk),
+        amount=total,
+        description=f"Registration + ID fee – {client.client_id} ({client.full_name})",
+        extra={
+            'client_id': str(client.pk),
+            'journal_entry_id': str(journal.pk),
+            'registration_fee': str(registration_fee),
+            'id_fee': str(id_fee),
+        },
+    )
+
     return journal

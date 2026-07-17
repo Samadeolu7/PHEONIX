@@ -378,6 +378,7 @@ class FinancialAuditLog(models.Model):
     JOURNAL_POST        = 'journal_post'
     PERMISSION_CHANGE   = 'permission_change'
     USER_ROLE_CHANGE    = 'user_role_change'
+    CLIENT_REGISTRATION_FEE = 'client_registration_fee'
 
     EVENT_CHOICES = [
         (LOAN_APPROVE,      'Loan Approved'),
@@ -389,6 +390,7 @@ class FinancialAuditLog(models.Model):
         (JOURNAL_POST,      'Journal Entry Posted'),
         (PERMISSION_CHANGE, 'Permission Changed'),
         (USER_ROLE_CHANGE,  'User Role Changed'),
+        (CLIENT_REGISTRATION_FEE, 'Client Registration Fee Collected'),
     ]
 
     event_type      = models.CharField(max_length=30, choices=EVENT_CHOICES, db_index=True)

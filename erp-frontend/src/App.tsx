@@ -598,7 +598,8 @@ const DebtorsReportPage = lazy(() => import('./pages/reports/loans/DebtorsReport
 const DefaultersReportPage = lazy(() => import('./pages/reports/loans/DefaultersReportPage'));
 const PARReportPage = lazy(() => import('./pages/reports/loans/PARReportPage'));
 const RemittanceReportPage = lazy(() => import('./pages/reports/loans/RemittanceReportPage'));
-const DailySummaryReportPage = lazy(() => import('./pages/reports/DailySummaryReportPage'));
+const DisbursementMasterRollPage = lazy(() => import('./pages/reports/DisbursementMasterRollPage'));
+const DailyCollectionReportPage = lazy(() => import('./pages/reports/DailyCollectionReportPage'));
 const GroupReportPage = lazy(() => import('./pages/reports/GroupReportPage'));
 const SavingsProductReportPage = lazy(() => import('./pages/reports/SavingsProductReportPage'));
 const DailyContributionReportPage = lazy(
@@ -4292,9 +4293,21 @@ function App() {
                                 />
                                 <Route
                                   path="/reports/daily-summary"
+                                  element={<Navigate to="/reports/disbursement-master-roll" replace />}
+                                />
+                                <Route
+                                  path="/reports/disbursement-master-roll"
                                   element={
                                     <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
-                                      <DailySummaryReportPage />
+                                      <DisbursementMasterRollPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/reports/daily-collection-report"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
+                                      <DailyCollectionReportPage />
                                     </ProtectedRoute>
                                   }
                                 />

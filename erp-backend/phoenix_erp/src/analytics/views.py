@@ -156,6 +156,32 @@ def _parse_date_range(request, default_days=365, max_days=1825):
     return start, end
 
 
+def _parse_day_range(request, max_days=92):
+    """
+    Parse start/end for reports whose natural default is "today", not a
+    trailing window (unlike _parse_date_range) — e.g. a daily operational
+    roll that can be widened to a month. Capped at max_days so a paginated-
+    free disbursements/collections table stays bounded regardless of how
+    wide a range is requested.
+    """
+    today = timezone.now().date()
+    start_raw = request.query_params.get('start')
+    end_raw = request.query_params.get('end')
+    try:
+        start = datetime.date.fromisoformat(start_raw) if start_raw else today
+    except ValueError:
+        start = today
+    try:
+        end = datetime.date.fromisoformat(end_raw) if end_raw else start
+    except ValueError:
+        end = start
+    if end < start:
+        start, end = end, start
+    if (end - start).days > max_days:
+        start = end - datetime.timedelta(days=max_days)
+    return start, end
+
+
 def _apply_report_filters(qs, request, branch_field='branch_id',
                            product_field='product__product_id',
                            officer_field='client__assigned_officer_id'):
@@ -1239,5 +1265,394 @@ class OfficerScorecardTrendView(APIView):
             return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
 
         return Response({'success': True, 'months': months, 'data': result})
+
+
+class DisbursementMasterRollView(APIView):
+    """
+    GET /api/analytics/disbursement-master-roll/?start=&end=&branch=&officer=&format=json|csv
+
+    Server-side, date-range-scoped replacement for the old client-side
+    "Daily Summary Report" (DailySummaryReportPage), which built its tiles
+    from paginated list() calls (PAGE_SIZE=20, no date filter server-side)
+    filtered by date in the browser — silently wrong beyond the newest ~20
+    rows — and had two tiles (collections, savings) that were never wired
+    to real data at all (hardcoded to 0). Every figure here is a real
+    server-side aggregate.
+
+    - Disbursements: LoanDisbursement (status='disbursed'), the primary
+      "master roll" content — returned in full for the range, not paginated
+      (bounded by the date-range cap below).
+    - Loan collections: LoanRepaymentSchedule.total_paid summed by
+      payment_date — same field pair OfficerScorecardTrendView uses.
+    - Savings deposits: TransactionEntry CREDIT lines on series 'SVDEP',
+      joined back to the client via SavingsAccount.
+    - Active loans / defaulters: computed as-of `end` using the same
+      loans_active_as_of_qs / defaulted_loans_as_of helpers the canonical
+      defaulters report uses, instead of "right now" status or the looser
+      status=='defaulted' check the old page used — so this figure always
+      agrees with /loans/accounts/defaulters/.
+
+    Query params: start, end (default: today), branch (director override),
+    officer, format (json|csv). Range capped at 92 days.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from loans.models import LoanAccount, LoanDisbursement, LoanRepaymentSchedule
+        from loans.views import loans_active_as_of_qs, defaulted_loans_as_of
+        from clients.models import Client
+        from transactions.models import TransactionEntry
+        from hr.models import Staff
+
+        user = request.user
+        branch_filter = _get_director_branch(request)
+        req_tenant = getattr(request, 'tenant', None)
+        today = timezone.now().date()
+        start, end = _parse_day_range(request)
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch_filter)
+
+        loan_qs = _apply_report_filters(
+            _apply_officer_scope(
+                scope_qs(LoanAccount.objects.for_user(user)),
+                user,
+                client_lookup='client__assigned_officer',
+            ),
+            request,
+        )
+
+        client_qs = _apply_officer_scope(
+            scope_qs(Client.objects.for_user(user)), user, client_lookup='assigned_officer',
+        )
+        officer_param = request.query_params.get('officer')
+        if officer_param:
+            try:
+                client_qs = client_qs.filter(assigned_officer_id=int(officer_param))
+            except (TypeError, ValueError):
+                pass
+
+        # ---- Disbursements (primary content) ----
+        disb_qs = (
+            LoanDisbursement.objects.filter(
+                status='disbursed',
+                disbursement_date__range=(start, end),
+                loan__in=loan_qs,
+            )
+            .select_related('loan', 'loan__client', 'loan__client__assigned_officer', 'disbursement_account', 'disbursed_by')
+            .order_by('disbursement_date', 'loan__loan_number')
+        )
+        disbursements = []
+        for d in disb_qs:
+            loan = d.loan
+            officer = loan.client.assigned_officer
+            disbursements.append({
+                'disbursement_id': d.pk,
+                'loan_id': loan.pk,
+                'loan_number': loan.loan_number,
+                'client_id': loan.client_id,
+                'client_name': loan.client.full_name,
+                'officer_id': officer.pk if officer else None,
+                'officer_name': f"{officer.first_name} {officer.last_name}".strip() if officer else '—',
+                'amount': str(loan.disbursed_amount or Decimal('0.00')),
+                'disbursement_date': str(d.disbursement_date),
+                'disbursed_by': (
+                    (d.disbursed_by.get_full_name() or d.disbursed_by.username)
+                    if d.disbursed_by else ''
+                ),
+                'account_name': d.disbursement_account.name if d.disbursement_account else '',
+            })
+        disb_agg = disb_qs.aggregate(total=Sum('loan__disbursed_amount'), cnt=Count('id'))
+        total_disbursed = disb_agg['total'] or Decimal('0.00')
+        disbursements_count = disb_agg['cnt'] or 0
+
+        # ---- Loan collections ----
+        sched_qs = LoanRepaymentSchedule.objects.filter(loan__in=loan_qs, payment_date__range=(start, end))
+        coll_agg = sched_qs.aggregate(total=Sum('total_paid'), cnt=Count('id'))
+        total_collections = coll_agg['total'] or Decimal('0.00')
+        collections_count = coll_agg['cnt'] or 0
+
+        # ---- Savings deposits ----
+        sav_qs = TransactionEntry.objects.filter(
+            transaction__series__code='SVDEP',
+            transaction__date__range=(start, end),
+            side=TransactionEntry.CREDIT,
+            account__savings_account_detail__client__in=client_qs,
+        )
+        sav_agg = sav_qs.aggregate(total=Sum('amount'), cnt=Count('id'))
+        total_savings_deposits = sav_agg['total'] or Decimal('0.00')
+        savings_deposits_count = sav_agg['cnt'] or 0
+
+        # ---- New clients ----
+        new_clients_count = client_qs.filter(created_at__date__range=(start, end)).count()
+
+        # ---- Active loans / defaulters, as-of `end` (not "right now") ----
+        active_qs = loans_active_as_of_qs(loan_qs, end, today=today)
+        active_loans_count = active_qs.count()
+        defaulters_count = sum(1 for _ in defaulted_loans_as_of(active_qs, end))
+
+        # ---- Officer breakdown ----
+        disb_by_officer = {
+            r['loan__client__assigned_officer']: r
+            for r in disb_qs.exclude(loan__client__assigned_officer__isnull=True)
+            .values('loan__client__assigned_officer')
+            .annotate(total=Sum('loan__disbursed_amount'), cnt=Count('id'))
+        }
+        coll_by_officer = {
+            r['loan__client__assigned_officer']: r
+            for r in sched_qs.exclude(loan__client__assigned_officer__isnull=True)
+            .values('loan__client__assigned_officer')
+            .annotate(total=Sum('total_paid'), cnt=Count('id'))
+        }
+        sav_by_officer = {
+            r['account__savings_account_detail__client__assigned_officer']: r
+            for r in sav_qs.exclude(account__savings_account_detail__client__assigned_officer__isnull=True)
+            .values('account__savings_account_detail__client__assigned_officer')
+            .annotate(total=Sum('amount'), cnt=Count('id'))
+        }
+        officer_ids = set(disb_by_officer) | set(coll_by_officer) | set(sav_by_officer)
+        staff_cache = {s.pk: s for s in Staff.objects.filter(pk__in=officer_ids)}
+
+        officer_breakdown = []
+        for oid in officer_ids:
+            s = staff_cache.get(oid)
+            name = f"{s.first_name} {s.last_name}".strip() if s else 'Unknown'
+            d_row = disb_by_officer.get(oid, {})
+            c_row = coll_by_officer.get(oid, {})
+            sv_row = sav_by_officer.get(oid, {})
+            officer_breakdown.append({
+                'officer_id': oid,
+                'officer_name': name,
+                'disbursed_total': str(d_row.get('total') or Decimal('0.00')),
+                'disbursed_count': d_row.get('cnt') or 0,
+                'collections_total': str(c_row.get('total') or Decimal('0.00')),
+                'collections_count': c_row.get('cnt') or 0,
+                'savings_total': str(sv_row.get('total') or Decimal('0.00')),
+                'savings_count': sv_row.get('cnt') or 0,
+            })
+        officer_breakdown.sort(key=lambda r: r['officer_name'])
+
+        summary = {
+            'total_disbursed': str(total_disbursed),
+            'disbursements_count': disbursements_count,
+            'total_collections': str(total_collections),
+            'collections_count': collections_count,
+            'total_savings_deposits': str(total_savings_deposits),
+            'savings_deposits_count': savings_deposits_count,
+            'new_clients_count': new_clients_count,
+            'active_loans_count': active_loans_count,
+            'defaulters_count': defaulters_count,
+        }
+
+        fmt = request.query_params.get('format', 'json')
+        if fmt == 'csv':
+            headers = ['loan_number', 'client_name', 'officer_name', 'amount',
+                       'disbursement_date', 'disbursed_by', 'account_name']
+            rows = [[row[h] for h in headers] for row in disbursements]
+            return _csv_response(f'disbursement-master-roll-{start}_{end}.csv', headers, rows)
+        if fmt != 'json':
+            return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
+
+        return Response({
+            'success': True,
+            'period': {'start': str(start), 'end': str(end)},
+            'summary': summary,
+            'disbursements': disbursements,
+            'officer_breakdown': officer_breakdown,
+        })
+
+
+class DailyCollectionReportView(APIView):
+    """
+    GET /api/analytics/daily-collection-report/?start=&end=&branch=&officer=&group=&format=json|csv
+
+    Digitizes the branch's existing paper "Daily Collection Report" sheet:
+    one row per (client, date) with activity in range, split into Savings
+    Collection (Savings / Registration / Risk Premium / Loan form / ID
+    Card) and Loan Collection (Amount Due / Amount Collected / Total
+    Collection). None of this data previously fed any report. Sources:
+
+      - Savings: TransactionEntry CREDIT lines on series 'SVDEP'.
+      - Registration / ID Card: FinancialAuditLog CLIENT_REGISTRATION_FEE
+        (extra.registration_fee / extra.id_fee) — added alongside this
+        report since Transaction has no client FK to join through directly
+        (see clients/services.py collect_client_registration_fees).
+      - Risk Premium / Loan form / anything else: LoanFeeApplication,
+        matched against LoanProductFee.name (case-insensitive substring
+        match on the branch-configured fee-line name); anything not
+        matching those two canonical columns lands in 'other_fees' rather
+        than being silently dropped.
+      - Loan collection: LoanRepaymentSchedule — Amount Due keyed by
+        due_date, Amount Collected keyed by payment_date (these can be
+        different installments/dates for the same client, e.g. catching up
+        on an older arrear).
+      - Total Collection = everything actually collected on that visit
+        (savings + registration + risk premium + loan form + id card +
+        amount collected) — same-day cash-in-hand, not the same figure as
+        Amount Due.
+
+    Query params: start, end (default: today), branch, officer, group
+    (ClientGroup pk), format (json|csv). Range capped at 92 days.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from clients.models import Client
+        from loans.models import LoanRepaymentSchedule, LoanFeeApplication
+        from transactions.models import TransactionEntry
+        from common.models import FinancialAuditLog
+
+        user = request.user
+        branch_filter = _get_director_branch(request)
+        req_tenant = getattr(request, 'tenant', None)
+        start, end = _parse_day_range(request)
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch_filter)
+
+        client_qs = _apply_officer_scope(
+            scope_qs(Client.objects.for_user(user)), user, client_lookup='assigned_officer',
+        ).select_related('assigned_officer', 'group')
+
+        officer_param = request.query_params.get('officer')
+        if officer_param:
+            try:
+                client_qs = client_qs.filter(assigned_officer_id=int(officer_param))
+            except (TypeError, ValueError):
+                pass
+        group_param = request.query_params.get('group')
+        if group_param:
+            try:
+                client_qs = client_qs.filter(group_id=int(group_param))
+            except (TypeError, ValueError):
+                pass
+
+        client_ids = set(client_qs.values_list('id', flat=True))
+        client_cache = {c.pk: c for c in client_qs}
+
+        rows = {}
+
+        def bucket(client_id, date_):
+            key = (client_id, date_)
+            if key not in rows:
+                rows[key] = {
+                    'savings': Decimal('0.00'), 'registration': Decimal('0.00'),
+                    'id_card': Decimal('0.00'), 'risk_premium': Decimal('0.00'),
+                    'loan_form': Decimal('0.00'), 'other_fees': Decimal('0.00'),
+                    'amount_due': Decimal('0.00'), 'amount_collected': Decimal('0.00'),
+                }
+            return rows[key]
+
+        # ---- Savings ----
+        sav_entries = TransactionEntry.objects.filter(
+            transaction__series__code='SVDEP',
+            transaction__date__range=(start, end),
+            side=TransactionEntry.CREDIT,
+            account__savings_account_detail__client_id__in=client_ids,
+        ).values('transaction__date', 'account__savings_account_detail__client_id', 'amount')
+        for r in sav_entries:
+            b = bucket(r['account__savings_account_detail__client_id'], r['transaction__date'])
+            b['savings'] += r['amount']
+
+        # ---- Registration + ID Card ----
+        reg_logs = FinancialAuditLog.objects.filter(
+            event_type=FinancialAuditLog.CLIENT_REGISTRATION_FEE,
+            timestamp__date__range=(start, end),
+        ).values('timestamp', 'extra')
+        for r in reg_logs:
+            try:
+                cid = int(r['extra'].get('client_id'))
+            except (TypeError, ValueError):
+                continue
+            if cid not in client_ids:
+                continue
+            b = bucket(cid, r['timestamp'].date())
+            b['registration'] += Decimal(r['extra'].get('registration_fee') or '0')
+            b['id_card'] += Decimal(r['extra'].get('id_fee') or '0')
+
+        # ---- Loan fees (Risk Premium / Loan form / other) ----
+        fee_apps = LoanFeeApplication.objects.filter(
+            posted=True,
+            posting_date__range=(start, end),
+            loan_account__client_id__in=client_ids,
+        ).select_related('fee_config', 'loan_account')
+        for fa in fee_apps:
+            b = bucket(fa.loan_account.client_id, fa.posting_date)
+            fee_name = (fa.fee_config.name or '').lower()
+            if 'risk premium' in fee_name:
+                b['risk_premium'] += fa.calculated_amount
+            elif 'loan form' in fee_name:
+                b['loan_form'] += fa.calculated_amount
+            else:
+                b['other_fees'] += fa.calculated_amount
+
+        # ---- Loan collection: due vs collected ----
+        due_rows = LoanRepaymentSchedule.objects.filter(
+            due_date__range=(start, end), loan__client_id__in=client_ids,
+        ).values('due_date', 'loan__client_id').annotate(total=Sum('total_due'))
+        for r in due_rows:
+            b = bucket(r['loan__client_id'], r['due_date'])
+            b['amount_due'] += r['total'] or Decimal('0.00')
+
+        paid_rows = LoanRepaymentSchedule.objects.filter(
+            payment_date__range=(start, end), loan__client_id__in=client_ids,
+        ).values('payment_date', 'loan__client_id').annotate(total=Sum('total_paid'))
+        for r in paid_rows:
+            b = bucket(r['loan__client_id'], r['payment_date'])
+            b['amount_collected'] += r['total'] or Decimal('0.00')
+
+        result = []
+        for (client_id, date_), b in rows.items():
+            client = client_cache.get(client_id)
+            if not client:
+                continue
+            officer = client.assigned_officer
+            group = client.group
+            total_collection = (
+                b['savings'] + b['registration'] + b['id_card']
+                + b['risk_premium'] + b['loan_form'] + b['other_fees']
+                + b['amount_collected']
+            )
+            result.append({
+                'date': str(date_),
+                'client_id': client_id,
+                'client_name': client.full_name,
+                'group_id': group.pk if group else None,
+                'group_name': group.name if group else '',
+                'officer_id': officer.pk if officer else None,
+                'officer_name': f"{officer.first_name} {officer.last_name}".strip() if officer else '',
+                'savings': str(b['savings']),
+                'registration': str(b['registration']),
+                'risk_premium': str(b['risk_premium']),
+                'loan_form': str(b['loan_form']),
+                'id_card': str(b['id_card']),
+                'other_fees': str(b['other_fees']),
+                'amount_due': str(b['amount_due']),
+                'amount_collected': str(b['amount_collected']),
+                'total_collection': str(total_collection),
+            })
+
+        result.sort(key=lambda r: (r['date'], r['group_name'], r['client_name']))
+
+        fmt = request.query_params.get('format', 'json')
+        if fmt == 'csv':
+            headers = ['date', 'group_name', 'officer_name', 'client_name', 'savings',
+                       'registration', 'risk_premium', 'loan_form', 'id_card', 'other_fees',
+                       'amount_due', 'amount_collected', 'total_collection']
+            csv_rows = [[r[h] for h in headers] for r in result]
+            return _csv_response(f'daily-collection-report-{start}_{end}.csv', headers, csv_rows)
+        if fmt != 'json':
+            return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
+
+        return Response({
+            'success': True,
+            'period': {'start': str(start), 'end': str(end)},
+            'count': len(result),
+            'results': result,
+        })
 
 
