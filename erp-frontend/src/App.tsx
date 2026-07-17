@@ -594,6 +594,7 @@ const MultiDayDepositPage = lazy(() => import('./pages/savings/thrift/ThriftMult
 const OfficerPortfolioPage = lazy(() => import('./pages/reports/OfficerPortfolioPage'));
 const DirectorPortfolioPage = lazy(() => import('./pages/reports/DirectorPortfolioPage'));
 const PortfolioPerformanceReportPage = lazy(() => import('./pages/reports/PortfolioPerformanceReportPage'));
+const StaffPerformanceReportPage = lazy(() => import('./pages/reports/StaffPerformanceReportPage'));
 const DebtorsReportPage = lazy(() => import('./pages/reports/loans/DebtorsReportPage'));
 const DefaultersReportPage = lazy(() => import('./pages/reports/loans/DefaultersReportPage'));
 const PARReportPage = lazy(() => import('./pages/reports/loans/PARReportPage'));
@@ -4256,6 +4257,14 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <PortfolioPerformanceReportPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/reports/staff-performance"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
+                                      <StaffPerformanceReportPage />
                                     </ProtectedRoute>
                                   }
                                 />

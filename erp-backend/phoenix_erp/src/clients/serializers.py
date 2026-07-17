@@ -450,6 +450,7 @@ class ClientGroupSerializer(TenantModelSerializer):
     """Serializer for Ajo / loan group management."""
     leader_name = serializers.CharField(source='leader.full_name', read_only=True, default=None)
     assigned_officer_name = serializers.SerializerMethodField(read_only=True)
+    member_officer_names = serializers.SerializerMethodField(read_only=True)
     member_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -458,10 +459,16 @@ class ClientGroupSerializer(TenantModelSerializer):
             'id', 'name', 'code', 'meeting_day', 'leader', 'leader_name',
             'description', 'is_active', 'member_count',
             'assigned_officer', 'assigned_officer_name',
+            'member_officers', 'member_officer_names',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'leader_name', 'assigned_officer_name', 'member_count',
+            # member_officers writes go through the assign_officer action
+            # (mirrors how assigned_officer's cascade-to-clients is also
+            # action-only), not a plain PATCH — keeps the "who else has to
+            # move" side-effects in one auditable place.
+            'id', 'leader_name', 'assigned_officer_name', 'member_officers',
+            'member_officer_names', 'member_count',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         extra_kwargs = {
@@ -477,17 +484,22 @@ class ClientGroupSerializer(TenantModelSerializer):
         officer = obj.assigned_officer
         return getattr(officer, 'full_name', None) or str(officer)
 
+    def get_member_officer_names(self, obj):
+        return [getattr(s, 'full_name', None) or str(s) for s in obj.member_officers.all()]
+
 
 class ClientGroupListSerializer(TenantModelSerializer):
     """Lightweight list serializer for ClientGroup dropdowns."""
     member_count = serializers.SerializerMethodField()
     assigned_officer_name = serializers.SerializerMethodField(read_only=True)
+    member_officer_names = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = ClientGroup
         fields = [
             'id', 'name', 'code', 'meeting_day', 'is_active', 'member_count',
             'assigned_officer', 'assigned_officer_name',
+            'member_officers', 'member_officer_names',
         ]
 
     def get_member_count(self, obj):
@@ -497,6 +509,9 @@ class ClientGroupListSerializer(TenantModelSerializer):
         if obj.assigned_officer_id is None:
             return None
         return getattr(obj.assigned_officer, 'full_name', None) or str(obj.assigned_officer)
+
+    def get_member_officer_names(self, obj):
+        return [getattr(s, 'full_name', None) or str(s) for s in obj.member_officers.all()]
 
 
 class GuarantorSerializer(TenantModelSerializer):

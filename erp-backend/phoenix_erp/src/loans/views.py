@@ -181,6 +181,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
     queryset = LoanAccount.objects.all()
     officer_client_lookup = 'client__assigned_officer'
     officer_group_lookup = 'client__group__assigned_officer'
+    officer_group_members_lookup = 'client__group__member_officers'
     permission_module = 'loans'
     permission_page = 'loan-accounts'
 

@@ -5,6 +5,9 @@
 
 import { api } from './api';
 import type {
+  BulkLinkResolveBankChargeRequest,
+  BulkLinkResolveBankChargePreview,
+  BulkLinkResolveBankChargeResult,
   DailyReconciliation,
   LinkResolveBankChargeRequest,
   LinkResolveBankChargeResponse,
@@ -195,6 +198,25 @@ export const reconciliationService = {
     data: LinkResolveBankChargeRequest
   ): Promise<LinkResolveBankChargeResponse> {
     return api.post(`${BASE_URL}/exceptions/link-resolve-bank-charge/`, data);
+  },
+
+  /**
+   * Batch version of linkResolveBankCharge — auto-pairs every unambiguous
+   * bank_only/erp_only DEBIT bank-charge match on one bank account and
+   * resolves them all at once. Always call with dry_run: true first to
+   * preview what would happen (pairs found, total fee, ambiguous/unmatched
+   * counts) — there's no per-pair confirmation once the real run starts.
+   */
+  async bulkLinkResolveBankCharge(
+    data: BulkLinkResolveBankChargeRequest & { dry_run: true }
+  ): Promise<BulkLinkResolveBankChargePreview>;
+  async bulkLinkResolveBankCharge(
+    data: BulkLinkResolveBankChargeRequest & { dry_run?: false }
+  ): Promise<BulkLinkResolveBankChargeResult>;
+  async bulkLinkResolveBankCharge(
+    data: BulkLinkResolveBankChargeRequest
+  ): Promise<BulkLinkResolveBankChargePreview | BulkLinkResolveBankChargeResult> {
+    return api.post(`${BASE_URL}/exceptions/bulk-link-resolve-bank-charge/`, data);
   },
 
   /**

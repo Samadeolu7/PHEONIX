@@ -1064,6 +1064,135 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
 
         self.assertEqual(resp.status_code, 400)
 
+    # ── Bulk link-resolve as bank charge ────────────────────────────────
+
+    def test_bulk_link_bank_charge_dry_run_previews_without_changes(self):
+        bank_exc, erp_exc = self._create_fee_pair()
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/bulk-link-resolve-bank-charge/', {
+            'bank_account_id': self.bank_account.id, 'dry_run': True,
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['would_resolve_count'], 1)
+        self.assertEqual(resp.data['would_resolve'][0]['bank_only_exception_id'], bank_exc.id)
+        self.assertEqual(resp.data['would_resolve'][0]['erp_only_exception_id'], erp_exc.id)
+        self.assertEqual(resp.data['total_fee_amount'], '20.00')
+
+        bank_exc.refresh_from_db()
+        erp_exc.refresh_from_db()
+        self.assertFalse(bank_exc.resolved)
+        self.assertFalse(erp_exc.resolved)
+        self.assertIsNone(bank_exc.pending_bank_payment_id)
+
+    def test_bulk_link_bank_charge_resolves_all_unambiguous_pairs(self):
+        pair_1 = self._create_fee_pair(bank_amount='520.00', erp_amount='500.00')
+        pair_2 = self._create_fee_pair(bank_amount='1050.00', erp_amount='1000.00')
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/bulk-link-resolve-bank-charge/', {
+            'bank_account_id': self.bank_account.id,
+            'resolution_notes': 'bulk-linking all unambiguous MOVEB fee pairs for this account',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['resolved_count'], 2)
+        self.assertEqual(resp.data['total_fee_amount'], '70.00')
+        self.assertEqual(resp.data['ambiguous_count'], 0)
+        self.assertEqual(resp.data['unmatched_count'], 0)
+
+        for bank_exc, erp_exc in (pair_1, pair_2):
+            bank_exc.refresh_from_db()
+            erp_exc.refresh_from_db()
+            self.assertTrue(bank_exc.resolved)
+            self.assertTrue(erp_exc.resolved)
+            self.assertIsNotNone(bank_exc.pending_bank_payment_id)
+            self.assertEqual(bank_exc.pending_bank_payment.status, 'pending')
+
+    def test_bulk_link_bank_charge_excludes_ambiguous_matches(self):
+        # One bank_only within fee tolerance of TWO erp_only candidates —
+        # neither side should be auto-linked; a human has to pick.
+        bank_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('520.00'), bank_narration='ambiguous', bank_date='2026-07-01',
+        )
+        erp_a = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('500.00'), erp_narration='candidate A', erp_date='2026-07-01',
+        )
+        erp_b = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('460.00'), erp_narration='candidate B', erp_date='2026-07-01',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/bulk-link-resolve-bank-charge/', {
+            'bank_account_id': self.bank_account.id,
+            'resolution_notes': 'attempt bulk link with an ambiguous candidate present',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['resolved_count'], 0)
+        self.assertEqual(resp.data['ambiguous_count'], 1)
+        self.assertEqual(resp.data['ambiguous_bank_only_exception_ids'], [bank_exc.id])
+
+        for exc in (bank_exc, erp_a, erp_b):
+            exc.refresh_from_db()
+            self.assertFalse(exc.resolved)
+
+    def test_bulk_link_bank_charge_excludes_pairs_outside_date_window(self):
+        bank_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('520.00'), bank_narration='old bank line', bank_date='2026-07-01',
+        )
+        erp_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('500.00'), erp_narration='far apart in time', erp_date='2026-06-01',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/bulk-link-resolve-bank-charge/', {
+            'bank_account_id': self.bank_account.id,
+            'resolution_notes': 'dates too far apart to auto-pair',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['resolved_count'], 0)
+        self.assertEqual(resp.data['unmatched_count'], 1)
+        self.assertEqual(resp.data['unmatched_bank_only_exception_ids'], [bank_exc.id])
+
+        bank_exc.refresh_from_db()
+        erp_exc.refresh_from_db()
+        self.assertFalse(bank_exc.resolved)
+        self.assertFalse(erp_exc.resolved)
+
+    def test_bulk_link_bank_charge_requires_director(self):
+        self._create_fee_pair()
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post('/api/banks/exceptions/bulk-link-resolve-bank-charge/', {
+            'bank_account_id': self.bank_account.id,
+            'resolution_notes': 'branch manager should not be able to bulk-link',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_bulk_link_bank_charge_requires_a_reason_unless_dry_run(self):
+        self._create_fee_pair()
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/bulk-link-resolve-bank-charge/', {
+            'bank_account_id': self.bank_account.id, 'resolution_notes': 'short',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_bulk_link_bank_charge_requires_bank_account_id(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/bulk-link-resolve-bank-charge/', {
+            'resolution_notes': 'no bank account given',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
 
 class DualApprovalResolveTests(TestCase):
     """

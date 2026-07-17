@@ -20,6 +20,7 @@ from .views import (
     ResolveExceptionToExpenseView,
     LinkResolveExceptionsView,
     LinkResolveBankChargeView,
+    BulkLinkResolveBankChargeView,
     LinkCandidatesView,
     OfficerReconciliationRiskReportView,
     ManualOverridesReportView,
@@ -92,6 +93,11 @@ urlpatterns = [
         'exceptions/link-resolve-bank-charge/',
         LinkResolveBankChargeView.as_view(),
         name='reconciliation-exceptions-link-resolve-bank-charge',
+    ),
+    path(
+        'exceptions/bulk-link-resolve-bank-charge/',
+        BulkLinkResolveBankChargeView.as_view(),
+        name='reconciliation-exceptions-bulk-link-resolve-bank-charge',
     ),
     path(
         'exceptions/<int:exc_id>/link-candidates/',

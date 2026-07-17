@@ -2068,67 +2068,8 @@ class LinkResolveBankChargeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from django.db import transaction as db_transaction
-        from expenses.serializers import ExpenseSerializer
-
-        recon = bank_exc.reconciliation
-        category = get_or_create_bank_charges_category(
-            branch=recon.branch, tenant=recon.tenant, owner=request.user,
-        )
-        description = (
-            f"Bank charge on transfer — linked bank_only exception #{bank_exc.id} "
-            f"(₦{bank_exc.bank_amount}, {bank_exc.bank_narration or 'no narration'}) against "
-            f"erp_only exception #{erp_exc.id} (₦{erp_exc.erp_amount}, "
-            f"{erp_exc.erp_narration or 'no narration'}) — fee ₦{fee}"
-        )
-
         try:
-            with db_transaction.atomic():
-                expense_serializer = ExpenseSerializer(
-                    data={
-                        'category': category.id,
-                        'expense_date': bank_exc.bank_date,
-                        'description': description,
-                        'amount': fee,
-                        'payment_method': 'bank_transfer',
-                        'bank_account': recon.bank_account_id,
-                    },
-                    context={'request': request},
-                )
-                expense_serializer.is_valid(raise_exception=True)
-                expense = expense_serializer.save(tenant=recon.tenant)
-
-                payment = BankPayment.objects.create(
-                    bank_account=recon.bank_account,
-                    amount=fee,
-                    description=description,
-                    payment_date=bank_exc.bank_date,
-                    expense=expense,
-                    status='pending',
-                    owner=request.user,
-                    branch=recon.branch,
-                    tenant=recon.tenant,
-                    created_by=request.user,
-                )
-
-                now = tz.now()
-                bank_exc.pending_bank_payment = payment
-                for exc, other in ((bank_exc, erp_exc), (erp_exc, bank_exc)):
-                    exc.resolved = True
-                    exc.resolved_by = request.user
-                    exc.resolved_at = now
-                    exc.resolution_notes = resolution_notes
-                    exc.netted_with = other
-                bank_exc.save(update_fields=[
-                    'resolved', 'resolved_by', 'resolved_at', 'resolution_notes',
-                    'netted_with', 'pending_bank_payment',
-                ])
-                erp_exc.save(update_fields=[
-                    'resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with',
-                ])
-
-                for r in {bank_exc.reconciliation, erp_exc.reconciliation}:
-                    recompute_reconciliation_counts(r)
+            payment = _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, resolution_notes)
         except Exception as exc:
             return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2136,6 +2077,195 @@ class LinkResolveBankChargeView(APIView):
             'bank_only_exception': ReconciliationExceptionSerializer(bank_exc).data,
             'erp_only_exception': ReconciliationExceptionSerializer(erp_exc).data,
             'fee_amount': str(fee),
+            'payment_id': payment.id,
+        }, status=status.HTTP_201_CREATED)
+
+
+def _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, resolution_notes):
+    """
+    The actual work behind both LinkResolveBankChargeView (one pair) and
+    BulkLinkResolveBankChargeView (many pairs found by find_bank_charge_pairs)
+    — atomically creates the draft Expense + pending "Bank Charges"
+    BankPayment for `fee` and resolves+links both exceptions. Never posts
+    money movement itself; the created BankPayment still needs its own
+    director approval before it hits the GL, same as every other resolve
+    pathway. Raises on failure (validation, race conditions) — the caller
+    decides how to report that (400 response for the single-pair view, a
+    per-pair "failed" entry for the bulk view).
+    """
+    from django.db import transaction as db_transaction
+    from expenses.serializers import ExpenseSerializer
+    from .reconciliation_utils import get_or_create_bank_charges_category, recompute_reconciliation_counts
+
+    recon = bank_exc.reconciliation
+    category = get_or_create_bank_charges_category(
+        branch=recon.branch, tenant=recon.tenant, owner=request.user,
+    )
+    description = (
+        f"Bank charge on transfer — linked bank_only exception #{bank_exc.id} "
+        f"(₦{bank_exc.bank_amount}, {bank_exc.bank_narration or 'no narration'}) against "
+        f"erp_only exception #{erp_exc.id} (₦{erp_exc.erp_amount}, "
+        f"{erp_exc.erp_narration or 'no narration'}) — fee ₦{fee}"
+    )
+
+    with db_transaction.atomic():
+        expense_serializer = ExpenseSerializer(
+            data={
+                'category': category.id,
+                'expense_date': bank_exc.bank_date,
+                'description': description,
+                'amount': fee,
+                'payment_method': 'bank_transfer',
+                'bank_account': recon.bank_account_id,
+            },
+            context={'request': request},
+        )
+        expense_serializer.is_valid(raise_exception=True)
+        expense = expense_serializer.save(tenant=recon.tenant)
+
+        payment = BankPayment.objects.create(
+            bank_account=recon.bank_account,
+            amount=fee,
+            description=description,
+            payment_date=bank_exc.bank_date,
+            expense=expense,
+            status='pending',
+            owner=request.user,
+            branch=recon.branch,
+            tenant=recon.tenant,
+            created_by=request.user,
+        )
+
+        now = tz.now()
+        bank_exc.pending_bank_payment = payment
+        for exc, other in ((bank_exc, erp_exc), (erp_exc, bank_exc)):
+            exc.resolved = True
+            exc.resolved_by = request.user
+            exc.resolved_at = now
+            exc.resolution_notes = resolution_notes
+            exc.netted_with = other
+        bank_exc.save(update_fields=[
+            'resolved', 'resolved_by', 'resolved_at', 'resolution_notes',
+            'netted_with', 'pending_bank_payment',
+        ])
+        erp_exc.save(update_fields=[
+            'resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with',
+        ])
+
+        for r in {bank_exc.reconciliation, erp_exc.reconciliation}:
+            recompute_reconciliation_counts(r)
+
+    return payment
+
+
+class BulkLinkResolveBankChargeView(APIView):
+    """
+    POST /api/banks/exceptions/bulk-link-resolve-bank-charge/
+
+    Auto-pairs every unambiguous bank_only/erp_only DEBIT bank-charge match
+    on one bank account (find_bank_charge_pairs, banks/reconciliation_utils.py)
+    and resolves them all in one action — the batch equivalent of repeatedly
+    using LinkResolveBankChargeView one pair at a time. Deliberately
+    conservative: any bank_only exception with more than one viable erp_only
+    candidate (or vice versa) is left out entirely rather than guessed at —
+    those still show up for manual review via the ordinary Link picker.
+
+    Each pair still creates its own pending "Bank Charges" BankPayment
+    requiring individual director approval before it posts — this endpoint
+    never posts money movement itself, only resolves+links the exceptions
+    and drafts the payments, same invariant as the single-pair pathway.
+
+    Pass dry_run: true to preview what would happen (pairs found, total
+    fee, counts of ambiguous/unmatched) without creating or resolving
+    anything — strongly recommended before the real run, since this acts
+    on however many pairs are found in a single request with no per-pair
+    confirmation step.
+
+    Director-only (can_user_approve) — same tier as the single-pair pathway.
+
+    Request body:
+      bank_account_id    (int, required)
+      resolution_notes   (str, required unless dry_run)
+      dry_run            (bool, optional, default false)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may bulk-link exceptions as bank charges.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .reconciliation_utils import find_bank_charge_pairs, reason_too_short, MIN_REASON_LENGTH
+
+        bank_account_id = request.data.get('bank_account_id')
+        if not bank_account_id:
+            return Response({'detail': 'bank_account_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        get_object_or_404(BankAccount, pk=bank_account_id)
+
+        dry_run = bool(request.data.get('dry_run', False))
+        resolution_notes = request.data.get('resolution_notes', '')
+        if not dry_run and reason_too_short(resolution_notes):
+            return Response(
+                {'detail': f'resolution_notes is required (at least {MIN_REASON_LENGTH} characters) '
+                           f'to bulk-link exceptions as bank charges.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        scoped_qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user)
+        )
+        pairs, ambiguous, unmatched = find_bank_charge_pairs(bank_account_id, scoped_qs)
+
+        if dry_run:
+            total_fee = sum((fee for _b, _e, fee in pairs), Decimal('0'))
+            return Response({
+                'would_resolve_count': len(pairs),
+                'would_resolve': [
+                    {
+                        'bank_only_exception_id': b.id, 'erp_only_exception_id': e.id,
+                        'fee_amount': str(fee),
+                    }
+                    for b, e, fee in pairs
+                ],
+                'total_fee_amount': str(total_fee),
+                'ambiguous_count': len(ambiguous),
+                'ambiguous_bank_only_exception_ids': [b.id for b in ambiguous],
+                'unmatched_count': len(unmatched),
+                'unmatched_bank_only_exception_ids': [b.id for b in unmatched],
+            })
+
+        resolved = []
+        failed = []
+        total_fee = Decimal('0')
+        for bank_exc, erp_exc, fee in pairs:
+            try:
+                payment = _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, resolution_notes)
+            except Exception as exc:
+                failed.append({
+                    'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+                    'detail': _error_message(exc),
+                })
+                continue
+            resolved.append({
+                'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+                'fee_amount': str(fee), 'payment_id': payment.id,
+            })
+            total_fee += fee
+
+        return Response({
+            'resolved_count': len(resolved),
+            'resolved': resolved,
+            'total_fee_amount': str(total_fee),
+            'failed_count': len(failed),
+            'failed': failed,
+            'ambiguous_count': len(ambiguous),
+            'ambiguous_bank_only_exception_ids': [b.id for b in ambiguous],
+            'unmatched_count': len(unmatched),
+            'unmatched_bank_only_exception_ids': [b.id for b in unmatched],
         }, status=status.HTTP_201_CREATED)
 
 

@@ -110,6 +110,81 @@ def get_or_create_bank_charges_category(branch, tenant, owner):
     return category
 
 
+# Safety margin for find_bank_charge_pairs' automatic pairing only — the
+# manual single-pair candidate picker (LinkCandidatesView) has no date
+# filter since a human reviews the narration/reference directly before
+# confirming. A bulk auto-pairer has no human in that loop per-pair, so it
+# additionally requires the two dates to be plausibly the same event (an
+# officer may log a repayment a day or two early, and the bank may not post
+# for several days — see fetch_erp_payments' docstring for the same reasoning).
+FEE_LINK_DATE_WINDOW_DAYS = 10
+
+
+def find_bank_charge_pairs(bank_account_id, scoped_qs):
+    """
+    Finds unambiguous bank_only DEBIT / erp_only DEBIT exception pairs on
+    `bank_account_id` that fit bank_charge_fee's shape, for
+    BulkLinkResolveBankChargeView. `scoped_qs` is a caller-supplied
+    ReconciliationException queryset already filtered to the requesting
+    user's visible reconciliations (DailyReconciliation.objects.for_user()),
+    so this never needs its own authorization check.
+
+    Deliberately conservative: a pair is only returned if each side is the
+    OTHER's single viable candidate — a bank_only with two erp_only
+    candidates within tolerance (or an erp_only claimed by two bank_onlys)
+    is never guessed at, since a wrong auto-link would misfile real money.
+    Ambiguous and unmatched bank_only exceptions are returned separately so
+    the caller can report them — those still need the manual Link picker,
+    where a human reviewing narration/reference can actually tell them apart.
+
+    Returns (pairs, ambiguous_bank_only, unmatched_bank_only):
+      pairs                — list of (bank_exc, erp_exc, fee) tuples
+      ambiguous_bank_only  — bank_only exceptions with >1 viable candidate
+      unmatched_bank_only  — bank_only exceptions with 0 viable candidates
+    """
+    bank_onlys = list(scoped_qs.filter(
+        reconciliation__bank_account_id=bank_account_id,
+        exception_type='bank_only', direction='DEBIT', resolved=False,
+    ).select_related('reconciliation').order_by('bank_date'))
+    erp_onlys = list(scoped_qs.filter(
+        reconciliation__bank_account_id=bank_account_id,
+        exception_type='erp_only', direction='DEBIT', resolved=False,
+    ).select_related('reconciliation').order_by('erp_date'))
+
+    def within_date_window(bank_exc, erp_exc):
+        if not bank_exc.bank_date or not erp_exc.erp_date:
+            return True
+        return abs((bank_exc.bank_date - erp_exc.erp_date).days) <= FEE_LINK_DATE_WINDOW_DAYS
+
+    bank_viable = {}
+    erp_viable_count = {}
+    for bank_exc in bank_onlys:
+        viable = []
+        for erp_exc in erp_onlys:
+            fee = bank_charge_fee(bank_exc, erp_exc)
+            if fee is None or fee > FEE_LINK_MAX_AMOUNT:
+                continue
+            if not within_date_window(bank_exc, erp_exc):
+                continue
+            viable.append((erp_exc, fee))
+        bank_viable[bank_exc.id] = viable
+        for erp_exc, _fee in viable:
+            erp_viable_count[erp_exc.id] = erp_viable_count.get(erp_exc.id, 0) + 1
+
+    pairs, ambiguous, unmatched = [], [], []
+    for bank_exc in bank_onlys:
+        viable = bank_viable[bank_exc.id]
+        if not viable:
+            unmatched.append(bank_exc)
+        elif len(viable) == 1 and erp_viable_count[viable[0][0].id] == 1:
+            erp_exc, fee = viable[0]
+            pairs.append((bank_exc, erp_exc, fee))
+        else:
+            ambiguous.append(bank_exc)
+
+    return pairs, ambiguous, unmatched
+
+
 def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exclude_payment_ids=()):
     """
     Returns ERP-recorded payments for a bank account within [date_from,

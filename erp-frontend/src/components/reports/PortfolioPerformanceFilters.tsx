@@ -48,9 +48,11 @@ interface Props {
   onFiltersChange: (filters: ReportFilters) => void;
   groupBy: GroupByDimension[];
   onGroupByChange: (groupBy: GroupByDimension[]) => void;
+  /** Hide the "Group breakdown by" row for pages that don't use groupBy (e.g. Staff Performance). */
+  showGroupBy?: boolean;
 }
 
-export default function PortfolioPerformanceFilters({ filters, onFiltersChange, groupBy, onGroupByChange }: Props) {
+export default function PortfolioPerformanceFilters({ filters, onFiltersChange, groupBy, onGroupByChange, showGroupBy = true }: Props) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [products, setProducts] = useState<LoanProduct[]>([]);
@@ -179,20 +181,22 @@ export default function PortfolioPerformanceFilters({ filters, onFiltersChange, 
         </button>
       </div>
 
-      <div className="mt-4 flex items-center gap-4 border-t pt-3">
-        <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Group breakdown by:</span>
-        {GROUP_BY_OPTIONS.map((opt) => (
-          <label key={opt.key} className="flex items-center gap-1.5 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={groupBy.includes(opt.key)}
-              onChange={() => toggleGroupBy(opt.key)}
-              className="rounded border-gray-300"
-            />
-            {opt.label}
-          </label>
-        ))}
-      </div>
+      {showGroupBy && (
+        <div className="mt-4 flex items-center gap-4 border-t pt-3">
+          <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Group breakdown by:</span>
+          {GROUP_BY_OPTIONS.map((opt) => (
+            <label key={opt.key} className="flex items-center gap-1.5 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={groupBy.includes(opt.key)}
+                onChange={() => toggleGroupBy(opt.key)}
+                className="rounded border-gray-300"
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

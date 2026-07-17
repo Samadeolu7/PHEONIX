@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Banknote, Users, X } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
+import { BulkLinkBankChargeModal } from '../../components/banks/BulkLinkBankChargeModal';
+import { useToast } from '../../hooks/useToast';
 import type {
   MissingMoneyBankAccountRow,
   MissingMoneyOfficerRow,
@@ -25,6 +27,7 @@ type DrilldownTarget =
  * (banks/views.py).
  */
 const MissingMoneySummaryPage: React.FC = () => {
+  const { success, error: showError } = useToast();
   const [summary, setSummary] = useState<MissingMoneySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +38,8 @@ const MissingMoneySummaryPage: React.FC = () => {
   const [drilldownRows, setDrilldownRows] = useState<ReconciliationException[] | null>(null);
   const [drilldownLoading, setDrilldownLoading] = useState(false);
   const [drilldownError, setDrilldownError] = useState<string | null>(null);
+
+  const [bulkLinkTarget, setBulkLinkTarget] = useState<{ id: number; name: string } | null>(null);
 
   useEffect(() => {
     load();
@@ -222,10 +227,10 @@ const MissingMoneySummaryPage: React.FC = () => {
               ) : (
                 <ul className="divide-y divide-gray-200 max-h-96 overflow-y-auto">
                   {summary.by_bank_account.map((row) => (
-                    <li key={row.bank_account_id}>
+                    <li key={row.bank_account_id} className="flex items-center gap-2 px-4 py-3 hover:bg-gray-50">
                       <button
                         onClick={() => openBankAccountDrilldown(row)}
-                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
+                        className="flex-1 min-w-0 flex items-center justify-between text-left"
                       >
                         <span className="min-w-0">
                           <span className="block text-sm font-medium text-gray-900 truncate">
@@ -236,6 +241,18 @@ const MissingMoneySummaryPage: React.FC = () => {
                         <span className="text-sm font-semibold text-red-600 shrink-0 ml-3">
                           {formatAmount(row.amount)}
                         </span>
+                      </button>
+                      <button
+                        onClick={() =>
+                          setBulkLinkTarget({
+                            id: row.bank_account_id,
+                            name: row.bank_account_name || `Account #${row.bank_account_id}`,
+                          })
+                        }
+                        className="shrink-0 px-2 py-1 text-xs font-medium text-purple-700 border border-purple-200 rounded-md hover:bg-purple-50"
+                        title="Auto-link bank-charge fee pairs on this account"
+                      >
+                        Bulk-Link
                       </button>
                     </li>
                   ))}
@@ -297,6 +314,19 @@ const MissingMoneySummaryPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {bulkLinkTarget && (
+        <BulkLinkBankChargeModal
+          bankAccountId={bulkLinkTarget.id}
+          bankAccountName={bulkLinkTarget.name}
+          onClose={() => setBulkLinkTarget(null)}
+          onSuccess={() => {
+            success('Bank charges bulk-linked — reloading summary');
+            load();
+          }}
+          onError={showError}
+        />
       )}
     </div>
   );

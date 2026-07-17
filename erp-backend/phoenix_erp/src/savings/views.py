@@ -124,6 +124,7 @@ class SavingsAccountViewSet(ScopedModelViewSet):
     serializer_class = SavingsAccountSerializer
     officer_client_lookup = 'client__assigned_officer'
     officer_group_lookup = 'client__group__assigned_officer'
+    officer_group_members_lookup = 'client__group__member_officers'
 
     def get_queryset(self):
         qs = super().get_queryset()

@@ -643,7 +643,20 @@ class ClientGroup(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         blank=True,
         on_delete=models.SET_NULL,
         related_name='managed_groups',
-        help_text='Credit officer responsible for managing this group and all its members.',
+        help_text='Primary credit officer for this group — cascades to '
+                   'Client.assigned_officer on every member client, driving '
+                   'data-access scoping. Always kept as a member of '
+                   'member_officers (see assign_officer action).',
+    )
+    member_officers = models.ManyToManyField(
+        'hr.Staff',
+        blank=True,
+        related_name='member_of_groups',
+        help_text='Full roster of officers who can view/manage this group and '
+                   'its clients (e.g. a supervisor covering for the primary '
+                   'officer). Does not by itself change any client\'s '
+                   'assigned_officer — only assigned_officer cascades to '
+                   'clients.',
     )
 
     objects = OwnerBranchManager()

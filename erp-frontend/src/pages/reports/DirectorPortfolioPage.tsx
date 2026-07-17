@@ -49,6 +49,7 @@ import {
   LoanPortfolioByProductRow,
   formatNaira,
 } from '../../services/dashboardStatsService';
+import { portfolioPerformanceService } from '../../services/portfolioPerformanceService';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -117,6 +118,12 @@ export default function DirectorPortfolioPage() {
   const [cbn, setCbn] = useState<CBNReturns | null>(null);
   const [defaulters, setDefaulters] = useState<any[]>([]);
   const [staffPerf, setStaffPerf] = useState<StaffPerformanceRow[]>([]);
+  // Current-month collection_rate (paid/due for THIS period) keyed by staff_id,
+  // from OfficerScorecardTrendView — replaces StaffPerformanceRow.collection_rate
+  // (a lifetime paid/(paid+outstanding) ratio that mostly reflects loan age, not
+  // repayment behaviour) so this table doesn't show a different, misleading
+  // "collection rate" than the dedicated Staff Performance report.
+  const [periodCollectionRates, setPeriodCollectionRates] = useState<Record<number, string>>({});
   const [cashInflow, setCashInflow] = useState<CashInflowPoint[]>([]);
   const [byProduct, setByProduct] = useState<LoanPortfolioByProductRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,7 +133,7 @@ export default function DirectorPortfolioPage() {
     setLoading(true);
     setError(null);
     try {
-      const [statsData, parData, cbnData, defaultersRes, staffData, cashData, productData] = await Promise.all([
+      const [statsData, parData, cbnData, defaultersRes, staffData, cashData, productData, trendData] = await Promise.all([
         dashboardStatsService.getStats(),
         loanService.getPARSummary(),
         loanService.getCBNReturns(),
@@ -134,6 +141,7 @@ export default function DirectorPortfolioPage() {
         dashboardStatsService.getStaffPerformance(),
         dashboardStatsService.getCashInflowTrend(),
         dashboardStatsService.getLoanPortfolioByProduct(),
+        portfolioPerformanceService.getOfficerTrend({}, 1),
       ]);
       setStats(statsData);
       setPar(parData);
@@ -142,6 +150,9 @@ export default function DirectorPortfolioPage() {
       setStaffPerf(staffData);
       setCashInflow(cashData);
       setByProduct(productData);
+      setPeriodCollectionRates(
+        Object.fromEntries(trendData.data.map((r) => [r.staff_id, r.collection_rate]))
+      );
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setError(err?.detail ?? err?.message ?? 'Failed to load portfolio overview.');
@@ -384,7 +395,15 @@ export default function DirectorPortfolioPage() {
           </SectionCard>
 
           {/* ── Staff Performance ── */}
-          <SectionCard title="Loan Officer Performance" icon={<UserCog size={16} className="text-teal-600" />}>
+          <SectionCard
+            title="Loan Officer Performance"
+            icon={<UserCog size={16} className="text-teal-600" />}
+            right={
+              <Link to="/reports/staff-performance" className="text-xs font-medium text-blue-600 hover:underline">
+                Full trend &amp; drill-down →
+              </Link>
+            }
+          >
             {staffPerf.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -393,12 +412,14 @@ export default function DirectorPortfolioPage() {
                       <th className="px-3 py-2">Officer</th>
                       <th className="px-3 py-2 text-right">Portfolio Size</th>
                       <th className="px-3 py-2 text-right">Loans</th>
-                      <th className="px-3 py-2 text-right">Collection Rate</th>
+                      <th className="px-3 py-2 text-right">Collection Rate (This Month)</th>
                       <th className="px-3 py-2 text-right">Disbursed This Month</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {staffPerf.map((row) => (
+                    {staffPerf.map((row) => {
+                      const periodRate = periodCollectionRates[row.staff_id];
+                      return (
                       <tr key={row.staff_id}>
                         <td className="px-3 py-2 font-medium text-gray-800">
                           {row.name}
@@ -406,12 +427,13 @@ export default function DirectorPortfolioPage() {
                         </td>
                         <td className="px-3 py-2 text-right font-medium text-gray-900">{formatNaira(row.portfolio_size)}</td>
                         <td className="px-3 py-2 text-right text-gray-600">{fmtInt(row.loan_count)}</td>
-                        <td className={`px-3 py-2 text-right font-semibold ${parseFloat(row.collection_rate) >= 90 ? 'text-green-600' : 'text-orange-600'}`}>
-                          {fmt(row.collection_rate)}%
+                        <td className={`px-3 py-2 text-right font-semibold ${periodRate === undefined ? 'text-gray-400' : parseFloat(periodRate) >= 90 ? 'text-green-600' : 'text-orange-600'}`}>
+                          {periodRate === undefined ? '—' : `${fmt(periodRate)}%`}
                         </td>
                         <td className="px-3 py-2 text-right text-gray-600">{formatNaira(row.disbursed_this_month)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

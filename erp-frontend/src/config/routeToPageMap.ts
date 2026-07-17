@@ -378,6 +378,7 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/reports/daily-summary': { module: 'loans', page: 'loan-reports', action: 'view' },
   '/reports/disbursement-master-roll': { module: 'loans', page: 'loan-reports', action: 'view' },
   '/reports/daily-collection-report': { module: 'loans', page: 'loan-reports', action: 'view' },
+  '/reports/staff-performance': { module: 'loans', page: 'loan-reports', action: 'view' },
   '/reports/daily-transactions': { module: 'loans', page: 'loan-reports', action: 'view' },
   '/reports/financial/balance-sheet': { module: 'reports', page: 'financial-reports', action: 'view' },
   '/reports/financial/cash-flow': { module: 'reports', page: 'financial-reports', action: 'view' },

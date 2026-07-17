@@ -85,6 +85,14 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # assigned to this officer (e.g. 'group__assigned_officer' for Client).
     officer_group_lookup: 'str | None' = None
 
+    # Optional: ORM path from the model to the group's member_officers M2M.
+    # When set, the officer scope also includes records whose group lists
+    # this officer as a member (not just the primary assigned_officer) —
+    # e.g. 'group__member_officers' for Client. Lets a supervisor added as a
+    # secondary officer on a group see that group's clients/loans/savings
+    # without becoming each client's cascading assigned_officer.
+    officer_group_members_lookup: 'str | None' = None
+
     # ------------------------------------------------------------------
     # Officer-scope helper
     # ------------------------------------------------------------------
@@ -133,6 +141,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
             return qs.none()
 
         group_lookup = self.officer_group_lookup
+        group_members_lookup = self.officer_group_members_lookup
         # Every caller of this scoping tier documents unassigned records
         # (officer_client_lookup IS NULL) as visible to everyone, not just
         # the officers they'd otherwise be scoped to — e.g. ClientViewSet's
@@ -150,6 +159,9 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
             )
             if group_lookup:
                 q |= Q(**{group_lookup: staff})
+            if group_members_lookup:
+                q |= Q(**{group_members_lookup: staff})
+                return qs.filter(q).distinct()
             return qs.filter(q)
 
         # own_records / assigned_clients (and any other/unrecognized value) —
@@ -157,6 +169,9 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         q = Q(**{lookup: staff}) | unassigned
         if group_lookup:
             q |= Q(**{group_lookup: staff})
+        if group_members_lookup:
+            q |= Q(**{group_members_lookup: staff})
+            return qs.filter(q).distinct()
         return qs.filter(q)
 
     def list(self, request, *args, **kwargs):

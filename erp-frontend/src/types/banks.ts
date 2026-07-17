@@ -493,6 +493,41 @@ export interface LinkResolveBankChargeResponse {
   bank_only_exception: ReconciliationException;
   erp_only_exception: ReconciliationException;
   fee_amount: string;
+  payment_id: number;
+}
+
+export interface BulkLinkResolveBankChargeRequest {
+  bank_account_id: number;
+  resolution_notes?: string;
+  dry_run?: boolean;
+}
+
+interface BulkLinkResolveBankChargePairResult {
+  bank_only_exception_id: number;
+  erp_only_exception_id: number;
+  fee_amount: string;
+}
+
+export interface BulkLinkResolveBankChargePreview {
+  would_resolve_count: number;
+  would_resolve: BulkLinkResolveBankChargePairResult[];
+  total_fee_amount: string;
+  ambiguous_count: number;
+  ambiguous_bank_only_exception_ids: number[];
+  unmatched_count: number;
+  unmatched_bank_only_exception_ids: number[];
+}
+
+export interface BulkLinkResolveBankChargeResult {
+  resolved_count: number;
+  resolved: (BulkLinkResolveBankChargePairResult & { payment_id: number })[];
+  total_fee_amount: string;
+  failed_count: number;
+  failed: { bank_only_exception_id: number; erp_only_exception_id: number; detail: string }[];
+  ambiguous_count: number;
+  ambiguous_bank_only_exception_ids: number[];
+  unmatched_count: number;
+  unmatched_bank_only_exception_ids: number[];
 }
 
 export interface DailyReconciliation {

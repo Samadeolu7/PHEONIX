@@ -11,6 +11,7 @@
  * stubs elsewhere in the app; this ships a real, working CSV instead).
  */
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   BarChart3,
@@ -24,13 +25,10 @@ import {
 import {
   BarChart,
   Bar,
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from 'recharts';
 import { formatNaira } from '../../services/dashboardStatsService';
@@ -42,7 +40,6 @@ import {
   PortfolioBreakdownRow,
   InterestIncomeByModeResponse,
   ProvisioningComplianceResponse,
-  OfficerTrendRow,
 } from '../../services/portfolioPerformanceService';
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -111,17 +108,14 @@ function SectionCard({
 
 const ALL_DIMENSIONS: GroupByDimension[] = ['branch', 'product', 'officer', 'risk_band'];
 const RISK_ORDER = ['performing', 'watch', 'substandard', 'doubtful', 'loss'];
-const TREND_COLORS = ['#4f46e5', '#16a34a', '#ea580c', '#db2777', '#0891b2', '#7c3aed'];
 
 export default function PortfolioPerformanceReportPage() {
   const [filters, setFilters] = useState<ReportFilters>({});
   const [groupBy, setGroupBy] = useState<GroupByDimension[]>(ALL_DIMENSIONS);
-  const [months, setMonths] = useState(6);
 
   const [breakdown, setBreakdown] = useState<PortfolioBreakdownRow[]>([]);
   const [interestIncome, setInterestIncome] = useState<InterestIncomeByModeResponse['data'] | null>(null);
   const [provisioning, setProvisioning] = useState<ProvisioningComplianceResponse['data'] | null>(null);
-  const [officerTrend, setOfficerTrend] = useState<OfficerTrendRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -129,18 +123,16 @@ export default function PortfolioPerformanceReportPage() {
     setLoading(true);
     setError(null);
     try {
-      const [breakdownRes, interestRes, provisioningRes, trendRes] = await Promise.all([
+      const [breakdownRes, interestRes, provisioningRes] = await Promise.all([
         portfolioPerformanceService.getBreakdown(filters, groupBy),
         portfolioPerformanceService.getInterestIncomeByMode(filters),
         portfolioPerformanceService.getProvisioningSnapshot({
           branch: filters.branch, product: filters.product, officer: filters.officer,
         }),
-        portfolioPerformanceService.getOfficerTrend(filters, months),
       ]);
       setBreakdown(breakdownRes.data);
       setInterestIncome(interestRes.data);
       setProvisioning(provisioningRes.data);
-      setOfficerTrend(trendRes.data);
     } catch (e: unknown) {
       const err = e as { detail?: string; message?: string };
       setError(err?.detail ?? err?.message ?? 'Failed to load the portfolio & performance report.');
@@ -150,25 +142,13 @@ export default function PortfolioPerformanceReportPage() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [filters, groupBy, months]);
+  useEffect(() => { load(); }, [filters, groupBy]);
 
   const primaryDim = groupBy[0];
   const breakdownChartData = breakdown.map((row) => ({
     name: rowLabel(row, groupBy),
     Outstanding: parseFloat(row.outstanding_principal),
   }));
-
-  // Officer trend chart: one line per officer, collection_rate over month.
-  const officerNames = Array.from(new Set(officerTrend.map((r) => r.name)));
-  const monthLabels = Array.from(new Set(officerTrend.map((r) => r.month))).sort();
-  const trendChartData = monthLabels.map((m) => {
-    const point: Record<string, string | number> = { month: officerTrend.find((r) => r.month === m)?.label ?? m };
-    for (const name of officerNames) {
-      const row = officerTrend.find((r) => r.month === m && r.name === name);
-      point[name] = row ? parseFloat(row.collection_rate) : 0;
-    }
-    return point;
-  });
 
   const totalOutstanding = breakdown.reduce((sum, r) => sum + parseFloat(r.outstanding_principal), 0);
   const totalRecognized = interestIncome ? parseFloat(interestIncome.total_recognized_income) : 0;
@@ -358,72 +338,22 @@ export default function PortfolioPerformanceReportPage() {
             )}
           </SectionCard>
 
-          {/* ── Officer Scorecard Trend ── */}
+          {/* ── Staff Performance (promoted to its own report) ── */}
           <SectionCard
-            title="Officer Scorecard Trend"
+            title="Staff Performance"
             icon={<UserCog size={16} className="text-teal-600" />}
-            onDownload={() => portfolioPerformanceService.downloadCsv('officer-trend', filters, { months })}
-            right={
-              <select
-                value={months}
-                onChange={(e) => setMonths(Number(e.target.value))}
-                className="rounded-lg border border-gray-300 py-1.5 px-2 text-xs"
-              >
-                <option value={3}>Last 3 months</option>
-                <option value={6}>Last 6 months</option>
-                <option value={12}>Last 12 months</option>
-                <option value={24}>Last 24 months</option>
-              </select>
-            }
           >
-            {officerTrend.length > 0 ? (
-              <>
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={trendChartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} unit="%" />
-                    <Tooltip formatter={(v: number) => `${v.toFixed(1)}%`} />
-                    <Legend />
-                    {officerNames.map((name, i) => (
-                      <Line key={name} type="monotone" dataKey={name} stroke={TREND_COLORS[i % TREND_COLORS.length]} strokeWidth={2} dot={false} />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                        <th className="px-3 py-2">Month</th>
-                        <th className="px-3 py-2">Officer</th>
-                        <th className="px-3 py-2 text-right">Disbursed</th>
-                        <th className="px-3 py-2 text-right">Loans Disbursed</th>
-                        <th className="px-3 py-2 text-right">Amount Due</th>
-                        <th className="px-3 py-2 text-right">Collected</th>
-                        <th className="px-3 py-2 text-right">Collection Rate</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {officerTrend.map((row, i) => (
-                        <tr key={i}>
-                          <td className="px-3 py-2 text-gray-600">{row.label}</td>
-                          <td className="px-3 py-2 font-medium text-gray-800">{row.name}</td>
-                          <td className="px-3 py-2 text-right text-gray-600">{formatNaira(row.disbursed_amount)}</td>
-                          <td className="px-3 py-2 text-right text-gray-600">{fmtInt(row.loans_disbursed_count)}</td>
-                          <td className="px-3 py-2 text-right text-gray-600">{formatNaira(row.amount_due)}</td>
-                          <td className="px-3 py-2 text-right text-gray-600">{formatNaira(row.collections_received)}</td>
-                          <td className={`px-3 py-2 text-right font-semibold ${parseFloat(row.collection_rate) >= 90 ? 'text-green-600' : 'text-orange-600'}`}>
-                            {fmt(row.collection_rate)}%
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : (
-              <p className="text-sm text-gray-400">No officer activity in the selected trend window.</p>
-            )}
+            <p className="text-sm text-gray-500 mb-3">
+              Per-officer expected-vs-actual collections trend now lives in its own report,
+              with per-officer drill-down and links to disbursements and client assignment.
+            </p>
+            <Link
+              to="/reports/staff-performance"
+              className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white"
+              style={{ backgroundColor: '#0a1857' }}
+            >
+              View Staff Performance Report →
+            </Link>
           </SectionCard>
         </>
       )}

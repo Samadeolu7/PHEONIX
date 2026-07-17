@@ -1342,6 +1342,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'staff-performance-report',
+    title: '📈 Staff Performance Report',
+    description:
+      'Per-officer expected-vs-actual collections trend, with drill-down and links to disbursements and client assignment',
+    path: '/reports/staff-performance',
+    icon: BarChart3,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'client-services',
+    category: 'Loan Reports',
+    isNew: true,
+  },
+  {
     id: 'report-summary-by-date',
     title: '🗓️ Report Summary by Date',
     description:
@@ -2128,6 +2140,17 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     title: '🧾 Daily Collection Report',
     description: 'Group / officer / customer collection sheet — savings and loan repayment collections',
     path: '/reports/daily-collection-report',
+    icon: BarChart3,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'loans',
+    category: 'Reports',
+    isNew: true,
+  },
+  {
+    id: 'loans-mod-staff-performance',
+    title: '📈 Staff Performance Report',
+    description: 'Per-officer expected-vs-actual collections trend, with drill-down and reassignment links',
+    path: '/reports/staff-performance',
     icon: BarChart3,
     requiredPermission: 'loan-accounts-view',
     moduleId: 'loans',

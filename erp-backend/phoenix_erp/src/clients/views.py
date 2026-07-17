@@ -97,6 +97,7 @@ class ClientViewSet(ScopedModelViewSet):
     queryset = Client.objects.all()
     officer_client_lookup = 'assigned_officer'
     officer_group_lookup = 'group__assigned_officer'
+    officer_group_members_lookup = 'group__member_officers'
 
     def get_queryset(self):
         # Get the base scoped + officer-scoped queryset from parent class
@@ -1702,6 +1703,56 @@ class ClientViewSet(ScopedModelViewSet):
         except Client.DoesNotExist:
             return Response({'exists': False})
 
+    @action(detail=False, methods=['post'], url_path='bulk-assign-officer')
+    def bulk_assign_officer(self, request):
+        """
+        POST /clients/bulk-assign-officer/
+        Body: { "client_ids": [<pk>, ...], "officer_id": <Staff PK> | null }
+
+        Reassign an arbitrary set of clients to an officer in one atomic
+        update — for the Client Assignment page's individual/ungrouped
+        client picker. Complements ClientGroupViewSet.assign_officer, which
+        only handles "every client in one group"; this handles any selection
+        a director/supervisor makes, regardless of group membership.
+        Productionizes the same logic as the CLI-only
+        assign_officer_clients management command, behind a permission-
+        checked endpoint. Capped at 500 clients per call to keep it a single
+        bulk UPDATE regardless of selection size, not a per-row loop.
+        """
+        from hr.models import Staff
+
+        client_ids = request.data.get('client_ids')
+        if not isinstance(client_ids, list) or not client_ids:
+            raise DRFValidationError({'client_ids': 'A non-empty list of client IDs is required.'})
+        if len(client_ids) > 500:
+            raise DRFValidationError({'client_ids': 'Cannot reassign more than 500 clients in one request.'})
+
+        officer_id = request.data.get('officer_id')
+        officer = None
+        if officer_id is not None:
+            try:
+                officer = Staff.objects.get(pk=officer_id, tenant=request.user.tenant)
+            except Staff.DoesNotExist:
+                raise DRFValidationError({'officer_id': 'Staff member not found in this tenant.'})
+
+        # Scope to clients this user is actually allowed to see/edit —
+        # get_queryset() already applies tenant/branch/officer scoping, so a
+        # non-privileged caller can't reassign clients outside their reach.
+        qs = self.filter_queryset(self.get_queryset()).filter(pk__in=client_ids, is_deleted=False)
+        found_ids = set(qs.values_list('pk', flat=True))
+        missing = set(client_ids) - found_ids
+        updated = qs.update(assigned_officer=officer)
+
+        return Response({
+            'detail': (
+                f'{updated} client(s) reassigned to "{officer}".' if officer
+                else f'{updated} client(s) unassigned.'
+            ),
+            'updated_clients': updated,
+            'officer_id': officer.pk if officer else None,
+            'skipped_ids': sorted(missing),
+        })
+
     # ------------------------------------------------------------------
     # Feature #4 — Customer audit trail
     # ------------------------------------------------------------------
@@ -1868,6 +1919,7 @@ class ClientGroupViewSet(ScopedModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
     queryset = ClientGroup.objects.all()
     officer_client_lookup = 'assigned_officer'
+    officer_group_members_lookup = 'member_officers'
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -1897,43 +1949,85 @@ class ClientGroupViewSet(ScopedModelViewSet):
     @action(detail=True, methods=['post'], url_path='assign-officer')
     def assign_officer(self, request, pk=None):
         """
-        Assign a credit officer to this group and cascade to all member clients.
+        Assign a primary credit officer to this group (cascades to
+        Client.assigned_officer on all member clients, driving data-access
+        scoping) and, optionally, set the group's full officer roster.
 
-        Body: { "officer_id": <Staff PK> }  or  { "officer_id": null }  to unassign.
+        Body:
+          { "officer_id": <Staff PK> | null }
+              Primary officer — unchanged behavior: cascades to every member
+              client's assigned_officer. null unassigns the primary and
+              clears assigned_officer on all member clients.
+          "member_officer_ids": [<Staff PK>, ...]  (optional)
+              Full replacement of the group's member_officers roster (not a
+              delta). These officers gain visibility into the group and its
+              clients/loans/savings but do NOT become any client's
+              assigned_officer — only the primary does. If officer_id is
+              provided and not already in this list, it is added
+              automatically so the primary can always see their own group.
         """
         from hr.models import Staff
         from django.db import transaction as db_tx
 
         group = self.get_object()
+        officer_id_provided = 'officer_id' in request.data
         officer_id = request.data.get('officer_id')
+        member_officer_ids = request.data.get('member_officer_ids')
 
-        if officer_id is None:
-            # Unassign — clear the group and all members
-            with db_tx.atomic():
+        if not officer_id_provided and member_officer_ids is None:
+            raise DRFValidationError(
+                {'detail': 'Provide officer_id and/or member_officer_ids.'}
+            )
+
+        response_data = {}
+
+        with db_tx.atomic():
+            if officer_id_provided and officer_id is None:
+                # Explicit unassign — clear the group primary and all members
                 group.assigned_officer = None
                 group.save(update_fields=['assigned_officer'])
                 updated = Client.objects.filter(group=group, is_deleted=False).update(assigned_officer=None)
-            return Response({
-                'detail': f'Officer unassigned from group and {updated} member client(s).',
-                'updated_clients': updated,
-            })
+                response_data['updated_clients'] = updated
+                response_data['detail'] = f'Primary officer unassigned from group and {updated} member client(s).'
+            elif officer_id is not None:
+                try:
+                    officer = Staff.objects.get(pk=officer_id, tenant=request.user.tenant)
+                except Staff.DoesNotExist:
+                    raise DRFValidationError({'officer_id': 'Staff member not found in this tenant.'})
+                group.assigned_officer = officer
+                group.save(update_fields=['assigned_officer'])
+                updated = Client.objects.filter(group=group, is_deleted=False).update(assigned_officer=officer)
+                group.member_officers.add(officer)
+                response_data.update({
+                    'updated_clients': updated,
+                    'officer_id': officer.pk,
+                    'officer_name': getattr(officer, 'full_name', str(officer)),
+                    'detail': f'Primary officer "{officer}" assigned to group and {updated} member client(s) updated.',
+                })
 
-        try:
-            officer = Staff.objects.get(pk=officer_id, tenant=request.user.tenant)
-        except Staff.DoesNotExist:
-            raise DRFValidationError({'officer_id': 'Staff member not found in this tenant.'})
+            if member_officer_ids is not None:
+                members = Staff.objects.filter(pk__in=member_officer_ids, tenant=request.user.tenant)
+                found_ids = set(members.values_list('pk', flat=True))
+                missing = set(int(i) for i in member_officer_ids) - found_ids
+                if missing:
+                    raise DRFValidationError(
+                        {'member_officer_ids': f'Staff not found in this tenant: {sorted(missing)}'}
+                    )
+                group.member_officers.set(members)
+                # The primary officer is always a member — never silently
+                # drop them from the roster just because the caller sent a
+                # replacement list that omitted them.
+                if group.assigned_officer_id and group.assigned_officer_id not in found_ids:
+                    group.member_officers.add(group.assigned_officer)
 
-        with db_tx.atomic():
-            group.assigned_officer = officer
-            group.save(update_fields=['assigned_officer'])
-            updated = Client.objects.filter(group=group, is_deleted=False).update(assigned_officer=officer)
-
-        return Response({
-            'detail': f'Officer "{officer}" assigned to group and {updated} member client(s) updated.',
-            'updated_clients': updated,
-            'officer_id': officer.pk,
-            'officer_name': getattr(officer, 'full_name', str(officer)),
-        })
+        member_officer_ids_out = list(group.member_officers.values_list('pk', flat=True))
+        response_data['member_officer_ids'] = member_officer_ids_out
+        response_data['member_officer_names'] = [
+            getattr(s, 'full_name', str(s))
+            for s in Staff.objects.filter(pk__in=member_officer_ids_out)
+        ]
+        response_data.setdefault('detail', 'Group officer roster updated.')
+        return Response(response_data)
 
 
 class ClientRegistrationConfigViewSet(ScopedModelViewSet):

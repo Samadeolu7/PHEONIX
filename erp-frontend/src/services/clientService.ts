@@ -223,6 +223,9 @@ export interface ClientGroup {
   members_count: number;
   assigned_officer: number | null;
   assigned_officer_name: string | null;
+  /** Full officer roster for this group (primary + any additional members). */
+  member_officers: number[];
+  member_officer_names: string[];
   created_at: string;
 }
 
@@ -488,8 +491,30 @@ export const clientService = {
   async assignOfficerToGroup(
     groupId: number,
     officerId: number | null,
-  ): Promise<{ detail: string; updated_clients: number; officer_id?: number; officer_name?: string }> {
-    return api.post(`/clients/groups/${groupId}/assign-officer/`, { officer_id: officerId });
+    memberOfficerIds?: number[],
+  ): Promise<{
+    detail: string;
+    updated_clients?: number;
+    officer_id?: number;
+    officer_name?: string;
+    member_officer_ids: number[];
+    member_officer_names: string[];
+  }> {
+    const body: Record<string, unknown> = { officer_id: officerId };
+    if (memberOfficerIds !== undefined) body.member_officer_ids = memberOfficerIds;
+    return api.post(`/clients/groups/${groupId}/assign-officer/`, body);
+  },
+
+  /**
+   * Bulk-reassign an arbitrary set of clients (not necessarily in the same
+   * group) to an officer in one call — for the Client Assignment page's
+   * individual/ungrouped client picker.
+   */
+  async bulkAssignOfficer(
+    clientIds: number[],
+    officerId: number | null,
+  ): Promise<{ detail: string; updated_clients: number; officer_id: number | null; skipped_ids: number[] }> {
+    return api.post('/clients/clients/bulk-assign-officer/', { client_ids: clientIds, officer_id: officerId });
   },
 
   async activateClient(id: number): Promise<{ success: boolean; status: string }> {

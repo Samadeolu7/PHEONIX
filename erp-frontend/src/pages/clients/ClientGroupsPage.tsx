@@ -4,13 +4,14 @@ import {
   ClientGroup,
   ClientGroupPayload,
   ClientOption,
+  Client,
 } from '../../services/clientService';
 import { hrService } from '../../services/hrService';
 import { api } from '../../services/api';
 import { useToast } from '../../hooks/useToast';
 import { useAuth } from '../../contexts/AuthContext';
 import { getRoleRank } from '../../types/roles';
-import { Users, X, ChevronRight, UserCog } from 'lucide-react';
+import { Users, X, ChevronRight, UserCog, Search, UserPlus } from 'lucide-react';
 
 const MEETING_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -47,7 +48,17 @@ const ClientGroupsPage: React.FC = () => {
 
   const [assignModal, setAssignModal] = useState<ClientGroup | null>(null);
   const [assignOfficerId, setAssignOfficerId] = useState<string>('');
+  const [assignMemberIds, setAssignMemberIds] = useState<Set<number>>(new Set());
   const [assigning, setAssigning] = useState(false);
+  const [reassigningClientId, setReassigningClientId] = useState<number | null>(null);
+
+  // ── Individual / ungrouped client assignment ──────────────────────────
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientResults, setClientResults] = useState<Client[]>([]);
+  const [clientSearchLoading, setClientSearchLoading] = useState(false);
+  const [selectedClientIds, setSelectedClientIds] = useState<Set<number>>(new Set());
+  const [bulkOfficerId, setBulkOfficerId] = useState<string>('');
+  const [bulkAssigning, setBulkAssigning] = useState(false);
 
   const { success, error: showError } = useToast();
 
@@ -150,6 +161,15 @@ const ClientGroupsPage: React.FC = () => {
   const openAssignModal = (group: ClientGroup) => {
     setAssignModal(group);
     setAssignOfficerId(group.assigned_officer ? String(group.assigned_officer) : '');
+    setAssignMemberIds(new Set(group.member_officers ?? []));
+  };
+
+  const toggleAssignMember = (staffId: number) => {
+    setAssignMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(staffId)) next.delete(staffId); else next.add(staffId);
+      return next;
+    });
   };
 
   const handleAssignOfficer = async () => {
@@ -157,7 +177,15 @@ const ClientGroupsPage: React.FC = () => {
     try {
       setAssigning(true);
       const officerId = assignOfficerId ? Number(assignOfficerId) : null;
-      const result = await clientService.assignOfficerToGroup(assignModal.id, officerId);
+      // The primary is always a member too — the backend also enforces this,
+      // but keep the request consistent with what the user sees checked.
+      const memberIds = new Set(assignMemberIds);
+      if (officerId !== null) memberIds.add(officerId);
+      const result = await clientService.assignOfficerToGroup(
+        assignModal.id,
+        officerId,
+        Array.from(memberIds),
+      );
       success(`${result.detail}`);
       setAssignModal(null);
       loadGroups();
@@ -165,6 +193,79 @@ const ClientGroupsPage: React.FC = () => {
       showError(e?.message || 'Failed to assign officer');
     } finally {
       setAssigning(false);
+    }
+  };
+
+  // ── Per-client officer override (drill-down from a group's member list) ──
+  const handleReassignClient = async (clientId: number, officerId: number | null) => {
+    try {
+      setReassigningClientId(clientId);
+      await clientService.updateClient(clientId, { assigned_officer: officerId } as Partial<Client>);
+      setSlideOver((prev) => {
+        if (!prev) return prev;
+        const officer = staffOptions.find((s) => s.id === officerId);
+        return {
+          ...prev,
+          members: prev.members.map((m: any) =>
+            m.id === clientId
+              ? { ...m, assigned_officer: officerId, assigned_officer_name: officer?.name ?? null }
+              : m
+          ),
+        };
+      });
+      success('Client reassigned.');
+    } catch (e: any) {
+      showError(e?.message || 'Failed to reassign client');
+    } finally {
+      setReassigningClientId(null);
+    }
+  };
+
+  // ── Individual / ungrouped client assignment ──────────────────────────
+  const searchClients = useCallback(async () => {
+    if (!clientSearch.trim()) {
+      setClientResults([]);
+      return;
+    }
+    setClientSearchLoading(true);
+    try {
+      const res = await clientService.getClients({ search: clientSearch, status: 'active' });
+      const results: Client[] = Array.isArray(res) ? res : ((res as any)?.results ?? []);
+      setClientResults(results);
+    } catch {
+      setClientResults([]);
+    } finally {
+      setClientSearchLoading(false);
+    }
+  }, [clientSearch]);
+
+  useEffect(() => {
+    const t = setTimeout(searchClients, 350);
+    return () => clearTimeout(t);
+  }, [searchClients]);
+
+  const toggleSelectedClient = (id: number) => {
+    setSelectedClientIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkAssign = async () => {
+    if (selectedClientIds.size === 0) return;
+    try {
+      setBulkAssigning(true);
+      const officerId = bulkOfficerId ? Number(bulkOfficerId) : null;
+      const result = await clientService.bulkAssignOfficer(Array.from(selectedClientIds), officerId);
+      success(result.detail);
+      setSelectedClientIds(new Set());
+      setClientResults([]);
+      setClientSearch('');
+    } catch (e: any) {
+      showError(e?.message || 'Failed to bulk-assign clients');
+    } finally {
+      setBulkAssigning(false);
     }
   };
 
@@ -229,6 +330,90 @@ const ClientGroupsPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Individual / ungrouped client assignment */}
+      {canManageOfficers && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center gap-2 mb-1">
+            <UserPlus className="w-5 h-5 text-indigo-600" />
+            <h3 className="text-lg font-medium text-gray-900">Assign Individual Clients</h3>
+          </div>
+          <p className="text-sm text-gray-600 mb-4">
+            Search for any clients — regardless of group — select as many as you need, and assign them
+            to an officer in one go. For assigning a whole group at once, use the &quot;Assign&quot;
+            action in the table below instead.
+          </p>
+          <div className="flex gap-4 mb-3">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search clients by name, ID, or phone..."
+                value={clientSearch}
+                onChange={e => setClientSearch(e.target.value)}
+                className="w-full border border-gray-300 rounded-md pl-9 pr-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+
+          {clientSearchLoading ? (
+            <div className="flex items-center justify-center py-6">
+              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-600" />
+            </div>
+          ) : clientResults.length > 0 ? (
+            <div className="max-h-56 overflow-y-auto border border-gray-200 rounded-md divide-y divide-gray-100 mb-4">
+              {clientResults.map(c => (
+                <label key={c.id} className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedClientIds.has(c.id)}
+                    onChange={() => toggleSelectedClient(c.id)}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="flex-1 text-gray-900">
+                    {c.first_name} {c.last_name}
+                    <span className="ml-2 text-xs text-gray-400">{c.client_id}</span>
+                  </span>
+                  {(c as any).assigned_officer_name && (
+                    <span className="text-xs text-gray-400">currently: {(c as any).assigned_officer_name}</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          ) : clientSearch.trim() ? (
+            <p className="text-sm text-gray-400 mb-4">No clients match &quot;{clientSearch}&quot;.</p>
+          ) : null}
+
+          {selectedClientIds.size > 0 && (
+            <div className="flex items-center gap-3 border-t border-gray-100 pt-4">
+              <span className="text-sm text-gray-600">{selectedClientIds.size} client(s) selected</span>
+              <select
+                value={bulkOfficerId}
+                onChange={e => setBulkOfficerId(e.target.value)}
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm"
+              >
+                <option value="">— Unassign —</option>
+                {staffOptions.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleBulkAssign}
+                disabled={bulkAssigning}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {bulkAssigning ? 'Assigning...' : 'Assign Selected'}
+              </button>
+              <button
+                onClick={() => setSelectedClientIds(new Set())}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Clear selection
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Search */}
       <div className="bg-white rounded-lg shadow p-6">
@@ -303,9 +488,15 @@ const ClientGroupsPage: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {group.assigned_officer_name ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                            title={group.member_officer_names?.length > 1 ? group.member_officer_names.join(', ') : undefined}
+                          >
                             <UserCog size={11} />
                             {group.assigned_officer_name}
+                            {group.member_officer_names?.length > 1 && (
+                              <span className="ml-0.5 text-blue-500">+{group.member_officer_names.length - 1}</span>
+                            )}
                           </span>
                         ) : (
                           <span className="text-gray-400 text-xs">Unassigned</span>
@@ -404,12 +595,14 @@ const ClientGroupsPage: React.FC = () => {
               </div>
 
               <p className="text-sm text-gray-600 mb-4">
-                Assigning an officer will also update <strong>all clients</strong> in this group to the
-                same assigned officer.
+                The <strong>primary officer</strong> cascades to every client in this group (their
+                individual assigned officer changes to match). Additional <strong>member officers</strong>{' '}
+                gain visibility into this group and its clients, but client records themselves are
+                unchanged.
               </p>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Credit Officer</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Primary Officer</label>
                 <select
                   value={assignOfficerId}
                   onChange={e => setAssignOfficerId(e.target.value)}
@@ -422,6 +615,29 @@ const ClientGroupsPage: React.FC = () => {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Member Officers <span className="text-gray-400 font-normal">(optional — a group can have more than one)</span>
+                </label>
+                <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-md divide-y divide-gray-100">
+                  {staffOptions.map(s => (
+                    <label key={s.id} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={assignMemberIds.has(s.id) || String(s.id) === assignOfficerId}
+                        disabled={String(s.id) === assignOfficerId}
+                        onChange={() => toggleAssignMember(s.id)}
+                        className="rounded border-gray-300"
+                      />
+                      {s.name}
+                      {String(s.id) === assignOfficerId && (
+                        <span className="text-xs text-gray-400">(primary)</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div className="flex justify-end gap-3 mt-6">
@@ -599,12 +815,28 @@ const ClientGroupsPage: React.FC = () => {
                           {(m.full_name || m.name || '?').charAt(0)}
                         </span>
                       </div>
-                      <div>
+                      <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900">
                           {m.full_name || m.name || `Member ${i + 1}`}
                         </p>
                         <p className="text-xs text-gray-500">{m.client_id || m.phone_primary || ''}</p>
                       </div>
+                      {canManageOfficers && (
+                        <select
+                          value={m.assigned_officer ?? ''}
+                          disabled={reassigningClientId === m.id}
+                          onChange={e =>
+                            handleReassignClient(m.id, e.target.value ? Number(e.target.value) : null)
+                          }
+                          className="border border-gray-300 rounded-md px-2 py-1 text-xs max-w-[9rem]"
+                          title="Override this client's individual officer, without changing the rest of the group"
+                        >
+                          <option value="">— Unassigned —</option>
+                          {staffOptions.map(s => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                      )}
                     </li>
                   ))}
                 </ul>

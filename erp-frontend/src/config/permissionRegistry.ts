@@ -64,7 +64,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
       { code: 'loan-disbursements', title: 'Disbursements', description: 'Disburse approved loans', paths: ['/loans/disbursements', '/loans/disbursements/:loanId'] },
       { code: 'loan-disbursement-corrections', title: 'Disbursement Corrections', description: 'Fix loans disbursed to the wrong customer (always dual director approval)', path: '/loans/disbursement-corrections' },
       { code: 'loan-repayment-requests', title: 'Repayment Requests', description: 'Savings-debit repayment requests' },
-      { code: 'loan-reports', title: 'Loan Reports', description: 'Portfolio, debtors, defaulters, PAR, disbursement master roll and daily collection reports', paths: ['/reports/daily-summary', '/reports/disbursement-master-roll', '/reports/daily-collection-report', '/reports/daily-transactions', '/reports/loans/debtors', '/reports/loans/defaulters', '/reports/loans/par', '/reports/officer-portfolio', '/reports/portfolio-performance', '/reports/summary'] },
+      { code: 'loan-reports', title: 'Loan Reports', description: 'Portfolio, debtors, defaulters, PAR, disbursement master roll, daily collection and staff performance reports', paths: ['/reports/daily-summary', '/reports/disbursement-master-roll', '/reports/daily-collection-report', '/reports/staff-performance', '/reports/daily-transactions', '/reports/loans/debtors', '/reports/loans/defaulters', '/reports/loans/par', '/reports/officer-portfolio', '/reports/portfolio-performance', '/reports/summary'] },
     ],
   },
   {
