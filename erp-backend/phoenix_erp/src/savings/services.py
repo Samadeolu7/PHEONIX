@@ -66,7 +66,17 @@ def handle_first_deposit_income(
 
     today = deposit_date if deposit_date else timezone.now().date()
 
-    # Check if any deposit already exists this month for this account
+    # Check if any deposit already exists this month for this account.
+    # Two cases count as "already deposited this month":
+    #  1. A normal deposit already credited the savings account itself.
+    #  2. The first-deposit-income charge was already posted this month — that
+    #     credits first_deposit_income_account, NOT savings_account.account, so
+    #     it must be tracked separately (last_first_deposit_income_date) rather
+    #     than inferred from credits on the savings account. Relying solely on
+    #     (1) previously meant every deposit in the month kept being classified
+    #     as "first" since the income-diverted deposit never left a credit on
+    #     the savings account — the entire month's contributions were swept to
+    #     income instead of only the first one.
     from transactions.models import TransactionEntry as JournalEntryLine
     already_deposited = JournalEntryLine.objects.filter(
         account=savings_account.account,
@@ -75,7 +85,13 @@ def handle_first_deposit_income(
         transaction__date__month=today.month,
     ).exists()
 
-    if already_deposited:
+    already_income_posted = (
+        savings_account.last_first_deposit_income_date is not None
+        and savings_account.last_first_deposit_income_date.year == today.year
+        and savings_account.last_first_deposit_income_date.month == today.month
+    )
+
+    if already_deposited or already_income_posted:
         # Not the first deposit — normal flow
         return None, False
 
@@ -110,7 +126,6 @@ def handle_first_deposit_income(
         account=cashier_account,
         side=TransactionEntry.DEBIT,
         amount=amount,
-        description=f"Cash received – first deposit income from {savings_account.client.full_name}",
     )
 
     # Credit: Income account (does NOT touch savings balance)
@@ -119,13 +134,13 @@ def handle_first_deposit_income(
         account=config.first_deposit_income_account,
         side=TransactionEntry.CREDIT,
         amount=amount,
-        description=f"First deposit income – {savings_account.account_number}",
     )
 
     journal.post()
 
     savings_account.last_transaction_date = today
-    savings_account.save(update_fields=['last_transaction_date'])
+    savings_account.last_first_deposit_income_date = today
+    savings_account.save(update_fields=['last_transaction_date', 'last_first_deposit_income_date'])
 
     return journal, True
 
@@ -197,14 +212,12 @@ def apply_cycle_interest(savings_account: SavingsAccount, transacted_by) -> obje
         account=config.interest_expense_account,
         side=TransactionEntry.DEBIT,
         amount=interest_amount,
-        description="Cycle interest expense",
     )
     TransactionEntry.objects.create(
         transaction=journal,
         account=savings_account.account,
         side=TransactionEntry.CREDIT,
         amount=interest_amount,
-        description=f"Cycle interest credited – {savings_account.account_number}",
     )
 
     journal.post()
@@ -300,14 +313,12 @@ def apply_cycle_break_penalty(
         account=savings_account.account,
         side=TransactionEntry.DEBIT,
         amount=penalty_amount,
-        description=f"Cycle break penalty deducted – {savings_account.account_number}",
     )
     TransactionEntry.objects.create(
         transaction=journal,
         account=config.penalty_income_account,
         side=TransactionEntry.CREDIT,
         amount=penalty_amount,
-        description="Cycle break penalty income",
     )
 
     journal.post()

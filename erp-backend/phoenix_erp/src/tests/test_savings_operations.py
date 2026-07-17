@@ -29,7 +29,9 @@ from savings.models import (
     SavingsGoal,
     InterestAccrual,
     CompulsorySavingsPolicy,
+    SavingsProduct,
 )
+from savings.services import handle_first_deposit_income
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +144,120 @@ class SavingsAccountTests(TestCase):
     def test_savings_account_minimum_balance_stored(self):
         sa = self._create_savings_account()
         self.assertEqual(sa.minimum_balance, Decimal("500.00"))
+
+
+# ---------------------------------------------------------------------------
+# Daily contribution — first-deposit-income tests
+# ---------------------------------------------------------------------------
+
+class FirstDepositIncomeTests(TestCase):
+    """
+    Regression coverage for handle_first_deposit_income(): only the FIRST
+    deposit of a calendar month on a daily-contribution product should be
+    swept to income; every later deposit that month must credit the client's
+    savings balance normally. Previously the "already deposited this month?"
+    check only looked for credits on the savings account itself — which the
+    income-diverted deposit never produces — so every deposit in the month
+    kept being misclassified as "first" and swept to income.
+    """
+
+    def setUp(self):
+        self.user, self.tenant, self.branch = _make_env("dc_test")
+        _, self.child_acc, self.product, self.client = _make_savings_setup(
+            self.user, self.tenant, self.branch
+        )
+        self.cashier_acc = Account.objects.create(
+            name="Cash Till", code="1001", account_type=Account.ASSET,
+            account_level=Account.LEVEL_CHILD, owner=self.user,
+            created_by=self.user, branch=self.branch,
+        )
+        income_parent = Account.objects.create(
+            name="Income", code="4000", account_type=Account.INCOME,
+            account_level=Account.LEVEL_PARENT, owner=self.user,
+            created_by=self.user, branch=self.branch,
+        )
+        self.income_acc = Account.objects.create(
+            name="Daily Contribution Income", code="4001",
+            account_type=Account.INCOME, account_level=Account.LEVEL_CHILD,
+            parent=income_parent, owner=self.user, created_by=self.user,
+            branch=self.branch,
+        )
+        SavingsProduct.objects.create(
+            product=self.product,
+            is_daily_contribution=True,
+            first_deposit_is_income=True,
+            first_deposit_income_account=self.income_acc,
+            owner=self.user, branch=self.branch,
+        )
+        self.sa = SavingsAccount.objects.create(
+            client=self.client,
+            account=self.child_acc,
+            product=self.product,
+            account_number="SAV-DC-001",
+            interest_rate=Decimal("0.00"),
+            interest_calculation_method="monthly",
+            minimum_balance=Decimal("0.00"),
+            opened_on=timezone.now().date(),
+            status="active",
+            owner=self.user,
+            branch=self.branch,
+        )
+
+    def _deposit(self, amount, day):
+        date = timezone.now().date().replace(day=day)
+        journal, was_income = handle_first_deposit_income(
+            savings_account=self.sa,
+            amount=Decimal(amount),
+            deposit_date=date,
+            cashier_account=self.cashier_acc,
+            transacted_by=self.user,
+        )
+        if not was_income:
+            journal = self.sa.deposit(
+                amount=Decimal(amount),
+                cashier_account=self.cashier_acc,
+                transacted_by=self.user,
+                date=date,
+            )
+        return journal, was_income
+
+    def test_first_deposit_of_month_is_posted_as_income(self):
+        _, was_income = self._deposit("500.00", day=1)
+        self.assertTrue(was_income)
+        self.child_acc.refresh_from_db()
+        self.assertEqual(self.child_acc.balance, Decimal("0.00"))
+        self.income_acc.refresh_from_db()
+        self.assertEqual(self.income_acc.balance, Decimal("500.00"))
+
+    def test_second_deposit_of_month_credits_savings_balance(self):
+        self._deposit("500.00", day=1)
+        _, was_income = self._deposit("500.00", day=2)
+        self.assertFalse(was_income)
+        self.child_acc.refresh_from_db()
+        self.assertEqual(self.child_acc.balance, Decimal("500.00"))
+        self.income_acc.refresh_from_db()
+        self.assertEqual(self.income_acc.balance, Decimal("500.00"))
+
+    def test_third_deposit_of_month_also_credits_savings_balance(self):
+        self._deposit("500.00", day=1)
+        self._deposit("500.00", day=2)
+        _, was_income = self._deposit("500.00", day=3)
+        self.assertFalse(was_income)
+        self.child_acc.refresh_from_db()
+        self.assertEqual(self.child_acc.balance, Decimal("1000.00"))
+
+    def test_first_deposit_of_next_month_is_income_again(self):
+        self._deposit("500.00", day=1)
+        self._deposit("500.00", day=2)
+        next_month_day1 = (timezone.now().date().replace(day=1) + timezone.timedelta(days=32)).replace(day=1)
+        journal, was_income = handle_first_deposit_income(
+            savings_account=self.sa,
+            amount=Decimal("500.00"),
+            deposit_date=next_month_day1,
+            cashier_account=self.cashier_acc,
+            transacted_by=self.user,
+        )
+        self.assertTrue(was_income)
 
 
 # ---------------------------------------------------------------------------

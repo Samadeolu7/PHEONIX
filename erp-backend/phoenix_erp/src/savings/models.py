@@ -50,6 +50,15 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     opened_on = models.DateField()
     closed_on = models.DateField(null=True, blank=True)
     last_transaction_date = models.DateField(null=True, blank=True)
+    last_first_deposit_income_date = models.DateField(
+        null=True, blank=True,
+        help_text=(
+            "Date of the most recent deposit posted as first-deposit-income "
+            "(daily contribution). Used to detect whether this calendar month's "
+            "first-deposit-income has already been charged — deliberately separate "
+            "from last_transaction_date, which is also touched by withdrawals."
+        ),
+    )
     
     # Financial Terms
     interest_rate = models.DecimalField(max_digits=5, decimal_places=2)
