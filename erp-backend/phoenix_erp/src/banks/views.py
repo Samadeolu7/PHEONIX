@@ -2061,6 +2061,205 @@ class BulkLinkResolveBankChargeView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+class UnresolveExceptionView(APIView):
+    """
+    POST /api/banks/exceptions/<exc_id>/unresolve/
+
+    Reopens an exception that was resolved standalone (the plain per-row
+    Resolve action) before it was properly paired against its real
+    counterpart — e.g. an erp_only exception resolved with a generic note
+    like "Inter bank" instead of being Linked to the bank_only line it
+    actually belongs to, permanently consuming the one valid match and
+    stranding the other side. See ReconciliationException.unresolve() for
+    the validation this enforces (refuses anything resolved via Link/
+    Bulk-Link or with a pending/posted payment attached — those need their
+    own remediation).
+
+    Director-only (can_user_approve), no branch-manager fallback — same
+    tier as UnmatchTransactionView, since this reopens something already
+    closed rather than closing something new.
+
+    Request body:
+      reason  (str, required)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request, exc_id):
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may unresolve a reconciliation exception.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        exc = get_object_or_404(
+            ReconciliationException.objects.filter(
+                reconciliation__in=DailyReconciliation.objects.for_user(request.user),
+            ),
+            pk=exc_id,
+        )
+
+        reason = request.data.get('reason', '')
+        try:
+            exc.unresolve(request.user, reason)
+        except Exception as exc_err:
+            return Response({'detail': _error_message(exc_err)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ReconciliationExceptionSerializer(exc)
+        return Response(serializer.data)
+
+
+def _clean_up_stranded_pair(request, resolved_exc, unresolved_exc, fee, resolution_notes):
+    """
+    The actual work behind BulkCleanUpStrandedPairsView for one pair found
+    by find_stranded_resolved_pairs — reopens the standalone-resolved side
+    (ReconciliationException.unresolve(), which itself refuses anything
+    already netted or with a pending payment, so this can never double-
+    charge a fee that already went through), then links it against its
+    real counterpart: an exact amount match nets with no fee (mirrors
+    LinkResolveExceptionsView's resolve loop); a fee-tolerant match reuses
+    _resolve_bank_charge_pair to create the real "Bank Charges" payment.
+    Raises on failure — the caller reports that as a per-pair "failed" entry.
+    """
+    from django.db import transaction as db_transaction
+
+    unresolve_reason = f'Auto-reopened by Clean Up: {resolution_notes}'
+
+    with db_transaction.atomic():
+        resolved_exc.unresolve(request.user, unresolve_reason)
+
+        if fee is not None:
+            bank_exc, erp_exc = (
+                (resolved_exc, unresolved_exc) if resolved_exc.exception_type == 'bank_only'
+                else (unresolved_exc, resolved_exc)
+            )
+            payment = _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, resolution_notes)
+            return {'fee_amount': str(fee), 'payment_id': payment.id}
+
+        from .reconciliation_utils import recompute_reconciliation_counts
+
+        now = tz.now()
+        for exc, other in ((resolved_exc, unresolved_exc), (unresolved_exc, resolved_exc)):
+            exc.resolved = True
+            exc.resolved_by = request.user
+            exc.resolved_at = now
+            exc.resolution_notes = resolution_notes
+            exc.netted_with = other
+            exc.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with'])
+        for r in {resolved_exc.reconciliation, unresolved_exc.reconciliation}:
+            recompute_reconciliation_counts(r)
+
+        return {'fee_amount': None, 'payment_id': None}
+
+
+class BulkCleanUpStrandedPairsView(APIView):
+    """
+    POST /api/banks/exceptions/bulk-clean-up-stranded-pairs/
+
+    Finds every bank_only/erp_only exception that was resolved standalone
+    (the plain per-row Resolve action — netted_with and pending_bank_payment
+    both None) while its real counterpart on the same bank account is still
+    sitting unresolved, across every bank account the requesting user can
+    see (find_stranded_resolved_pairs, banks/reconciliation_utils.py) — the
+    production pattern that motivated this: a director resolved an erp_only
+    exception with a generic note like "Inter bank" instead of Linking it
+    to the bank_only line it actually belonged to, permanently consuming
+    the one valid match and stranding the other side.
+
+    For each unambiguous pair found, atomically reopens the standalone-
+    resolved side and links it against its real counterpart — an exact
+    amount match nets with no fee; a DEBIT bank_only up to
+    FEE_LINK_MAX_AMOUNT higher creates a real "Bank Charges" payment for the
+    difference, same machinery as LinkResolveBankChargeView. Structurally
+    cannot double-charge a fee: unresolve() refuses anything already netted
+    or with a pending payment attached, so a pair already properly linked
+    (by this or any other pathway) is never touched again, no matter how
+    many times this is run.
+
+    Does NOT trigger a reconciliation rerun — this only cleans up existing
+    exception state, it doesn't go looking for newly-posted ERP payments.
+    Run "Re-run matching" on the relevant reconciliation separately first if
+    you need those picked up before cleaning up.
+
+    Pass dry_run: true to preview every pair this would touch (and how)
+    without changing anything — strongly recommended before the real run,
+    since this reopens exceptions your team already closed, with no
+    per-pair confirmation once the real run starts.
+
+    Director-only (can_user_approve) — same tier as Unresolve/Link/Bulk-Link.
+
+    Request body:
+      resolution_notes   (str, required unless dry_run)
+      dry_run             (bool, optional, default false)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may clean up stranded exception pairs.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .reconciliation_utils import find_stranded_resolved_pairs, reason_too_short, MIN_REASON_LENGTH
+
+        dry_run = bool(request.data.get('dry_run', False))
+        resolution_notes = request.data.get('resolution_notes', '')
+        if not dry_run and reason_too_short(resolution_notes):
+            return Response(
+                {'detail': f'resolution_notes is required (at least {MIN_REASON_LENGTH} characters) '
+                           f'to clean up stranded exception pairs.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        scoped_qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user)
+        )
+        pairs, ambiguous = find_stranded_resolved_pairs(scoped_qs)
+
+        if dry_run:
+            return Response({
+                'would_clean_up_count': len(pairs),
+                'would_clean_up': [
+                    {
+                        'resolved_exception_id': r.id, 'unresolved_exception_id': u.id,
+                        'fee_amount': str(fee) if fee is not None else None,
+                    }
+                    for r, u, fee in pairs
+                ],
+                'ambiguous_count': len(ambiguous),
+                'ambiguous_exception_ids': [e.id for e in ambiguous],
+            })
+
+        cleaned_up = []
+        failed = []
+        for resolved_exc, unresolved_exc, fee in pairs:
+            try:
+                result = _clean_up_stranded_pair(request, resolved_exc, unresolved_exc, fee, resolution_notes)
+            except Exception as exc:
+                failed.append({
+                    'resolved_exception_id': resolved_exc.id, 'unresolved_exception_id': unresolved_exc.id,
+                    'detail': _error_message(exc),
+                })
+                continue
+            cleaned_up.append({
+                'resolved_exception_id': resolved_exc.id, 'unresolved_exception_id': unresolved_exc.id,
+                **result,
+            })
+
+        return Response({
+            'cleaned_up_count': len(cleaned_up),
+            'cleaned_up': cleaned_up,
+            'failed_count': len(failed),
+            'failed': failed,
+            'ambiguous_count': len(ambiguous),
+            'ambiguous_exception_ids': [e.id for e in ambiguous],
+        }, status=status.HTTP_201_CREATED)
+
+
 def _is_global_user(user):
     """
     True when the user has cross-branch access — same convention as

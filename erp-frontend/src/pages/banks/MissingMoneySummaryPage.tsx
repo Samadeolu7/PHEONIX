@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Banknote, Users, X } from 'lucide-react';
+import { AlertTriangle, Banknote, Sparkles, Users, X } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import { BulkLinkBankChargeModal } from '../../components/banks/BulkLinkBankChargeModal';
+import { CleanUpStrandedPairsModal } from '../../components/banks/CleanUpStrandedPairsModal';
 import { useToast } from '../../hooks/useToast';
 import type {
   MissingMoneyBankAccountRow,
@@ -40,6 +41,7 @@ const MissingMoneySummaryPage: React.FC = () => {
   const [drilldownError, setDrilldownError] = useState<string | null>(null);
 
   const [bulkLinkTarget, setBulkLinkTarget] = useState<{ id: number; name: string } | null>(null);
+  const [showCleanUpModal, setShowCleanUpModal] = useState(false);
 
   useEffect(() => {
     load();
@@ -105,9 +107,18 @@ const MissingMoneySummaryPage: React.FC = () => {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex items-center gap-3 mb-2">
-        <AlertTriangle className="w-7 h-7 text-red-600" />
-        <h1 className="text-3xl font-bold text-gray-900">Missing Money Summary</h1>
+      <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+        <div className="flex items-center gap-3">
+          <AlertTriangle className="w-7 h-7 text-red-600" />
+          <h1 className="text-3xl font-bold text-gray-900">Missing Money Summary</h1>
+        </div>
+        <button
+          onClick={() => setShowCleanUpModal(true)}
+          className="flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-lg hover:bg-amber-100"
+        >
+          <Sparkles className="w-4 h-4" />
+          Clean Up Stranded Pairs
+        </button>
       </div>
       <p className="text-gray-600 mb-6">
         Every unresolved bank_only and erp_only exception, totalled and broken down by who
@@ -323,6 +334,17 @@ const MissingMoneySummaryPage: React.FC = () => {
           onClose={() => setBulkLinkTarget(null)}
           onSuccess={() => {
             success('Bank charges bulk-linked — reloading summary');
+            load();
+          }}
+          onError={showError}
+        />
+      )}
+
+      {showCleanUpModal && (
+        <CleanUpStrandedPairsModal
+          onClose={() => setShowCleanUpModal(false)}
+          onSuccess={() => {
+            success('Stranded pairs cleaned up — reloading summary');
             load();
           }}
           onError={showError}

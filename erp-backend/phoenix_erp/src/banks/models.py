@@ -2236,6 +2236,22 @@ class ReconciliationException(TimeStampedModel):
         help_text='The other exception this was manually linked/netted against',
     )
 
+    # Reopens a resolved exception — director-only, mandatory reason (see
+    # unresolve() below and UnresolveExceptionView, banks/views.py).
+    # Non-destructive, styled after ReconciliationBankTransaction.unmatch():
+    # resolved_by/resolved_at/resolution_notes above are left untouched as a
+    # record of the original (now-reversed) resolution; these three fields
+    # capture who reopened it, when, and why. Overwritten (not accumulated)
+    # if the exception is ever unresolved more than once.
+    unresolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='unresolved_recon_exceptions',
+    )
+    unresolved_at = models.DateTimeField(null=True, blank=True)
+    unresolved_reason = models.TextField(blank=True)
+
     # Director-resolvable tolerance for amount mismatches: whichever is
     # smaller of a flat cap or a percentage of the ERP amount, so small
     # transactions aren't swamped by the flat cap and large ones aren't
@@ -2360,6 +2376,52 @@ class ReconciliationException(TimeStampedModel):
             and self.resolved_by_id is not None
             and self.requires_dual_approval_to_resolve
         )
+
+    def unresolve(self, user, reason):
+        """
+        Reopen an exception that was resolved standalone (the plain per-row
+        Resolve action) before it should have been — e.g. a director clicked
+        Resolve on an erp_only exception with a generic note instead of
+        pairing it against the real bank line, permanently consuming the
+        one valid match and stranding the other side. Styled after
+        ReconciliationBankTransaction.unmatch(): validate first, mutate
+        second, explicit update_fields, non-destructive (resolved_by/
+        resolved_at/resolution_notes stay as history of the original
+        resolution rather than being cleared).
+
+        Deliberately narrower than unmatch(): refuses to touch an exception
+        that was resolved via Link/Bulk-Link (netted_with set) or has a
+        pending/posted BankPayment attached (pending_bank_payment set) —
+        those already have real side effects (a linked partner exception, or
+        a payment that may already be approved) that this single-exception
+        action can't safely unwind. Those need their own remediation, not a
+        blind flip back to unresolved.
+        """
+        from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
+
+        if not self.resolved:
+            raise ValidationError('This exception is not currently resolved.')
+        if reason_too_short(reason):
+            raise ValidationError(f'A reason of at least {MIN_REASON_LENGTH} characters is required to unresolve an exception.')
+        if self.netted_with_id:
+            raise ValidationError(
+                'This exception was resolved by linking it to another exception — '
+                'it cannot be unresolved on its own.'
+            )
+        if self.pending_bank_payment_id:
+            raise ValidationError(
+                'This exception has a pending or posted bank payment attached — '
+                'resolve that payment first before unresolving the exception.'
+            )
+
+        self.resolved = False
+        self.unresolved_by = user
+        self.unresolved_at = timezone.now()
+        self.unresolved_reason = reason
+        self.save(update_fields=['resolved', 'unresolved_by', 'unresolved_at', 'unresolved_reason'])
+
+        from .reconciliation_utils import recompute_reconciliation_counts
+        recompute_reconciliation_counts(self.reconciliation)
 
 
 # ── Bank Feed Transactions (Java App 3 write-back) ─────────────────────────

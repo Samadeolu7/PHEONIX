@@ -189,6 +189,96 @@ def find_bank_charge_pairs(bank_account_id, scoped_qs):
     return pairs, ambiguous, unmatched
 
 
+def find_stranded_resolved_pairs(scoped_qs):
+    """
+    Finds bank_only/erp_only exception pairs where one side was resolved
+    STANDALONE — the plain per-row Resolve action, with netted_with and
+    pending_bank_payment both still None — while its real counterpart on
+    the same bank account is still sitting unresolved. This is the
+    production pattern that motivated it: a director resolved an erp_only
+    exception with a generic note like "Inter bank" instead of Linking it
+    to the bank_only line it actually belonged to, permanently consuming
+    the one valid match and stranding the other side with nothing left to
+    pair against.
+
+    `scoped_qs` is a caller-supplied ReconciliationException queryset
+    already filtered to the requesting user's visible reconciliations, so
+    this never needs its own authorization check. Unlike
+    find_bank_charge_pairs, this scans every bank account represented in
+    that queryset at once (no bank_account_id parameter) — the caller is
+    global (BulkCleanUpStrandedPairsView), not per-account.
+
+    Two pairing shapes, both same-direction bank_only+erp_only:
+      - EXACT resolve_amount match — nets with no fee, like plain Link.
+      - DEBIT only, bank_only up to FEE_LINK_MAX_AMOUNT higher than
+        erp_only — nets with a real "Bank Charges" fee for the difference,
+        like LinkResolveBankChargeView.
+    Deliberately conservative, same philosophy as find_bank_charge_pairs: a
+    standalone-resolved exception is only paired if it has exactly one
+    viable unresolved candidate, AND that candidate has exactly one viable
+    standalone-resolved partner in return — anything else is left alone and
+    reported as ambiguous rather than guessed at.
+
+    Returns (pairs, ambiguous):
+      pairs      — list of (resolved_exc, unresolved_exc, fee_or_None) tuples
+      ambiguous  — standalone-resolved exceptions with 0 or >1 viable candidates
+    """
+    standalone_resolved_qs = scoped_qs.filter(
+        exception_type__in=('bank_only', 'erp_only'), resolved=True,
+        netted_with__isnull=True, pending_bank_payment__isnull=True,
+    ).select_related('reconciliation')
+    bank_account_ids = set(
+        standalone_resolved_qs.values_list('reconciliation__bank_account_id', flat=True)
+    )
+
+    def viable_candidates(resolved_exc, unresolved_pool):
+        candidates = []
+        for other in unresolved_pool:
+            if other.exception_type == resolved_exc.exception_type:
+                continue
+            if other.direction != resolved_exc.direction:
+                continue
+            if resolved_exc.resolve_amount is None or other.resolve_amount is None:
+                continue
+            if resolved_exc.resolve_amount == other.resolve_amount:
+                candidates.append((other, None))
+                continue
+            if resolved_exc.direction == 'DEBIT':
+                fee = bank_charge_fee(resolved_exc, other)
+                if fee is not None and fee <= FEE_LINK_MAX_AMOUNT:
+                    candidates.append((other, fee))
+        return candidates
+
+    pairs, ambiguous = [], []
+    for bank_account_id in bank_account_ids:
+        standalone = list(standalone_resolved_qs.filter(reconciliation__bank_account_id=bank_account_id))
+        unresolved = list(scoped_qs.filter(
+            reconciliation__bank_account_id=bank_account_id,
+            exception_type__in=('bank_only', 'erp_only'), resolved=False,
+        ).select_related('reconciliation'))
+
+        resolved_viable = {}
+        unresolved_viable_count = {}
+        for resolved_exc in standalone:
+            viable = viable_candidates(resolved_exc, unresolved)
+            resolved_viable[resolved_exc.id] = viable
+            for other, _fee in viable:
+                unresolved_viable_count[other.id] = unresolved_viable_count.get(other.id, 0) + 1
+
+        for resolved_exc in standalone:
+            viable = resolved_viable[resolved_exc.id]
+            if len(viable) == 1 and unresolved_viable_count[viable[0][0].id] == 1:
+                other, fee = viable[0]
+                pairs.append((resolved_exc, other, fee))
+            elif viable:
+                ambiguous.append(resolved_exc)
+            # No viable candidate at all: nothing to clean up, left alone —
+            # not reported, since this is the ordinary/expected case for
+            # the vast majority of legitimately standalone-resolved exceptions.
+
+    return pairs, ambiguous
+
+
 def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exclude_payment_ids=()):
     """
     Returns ERP-recorded payments for a bank account within [date_from,

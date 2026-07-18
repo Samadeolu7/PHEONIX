@@ -33,6 +33,7 @@ from branches.models import Branch
 from banks.models import (
     Bank,
     BankAccount,
+    BankPayment,
     BankTransfer,
     DailyReconciliation,
     ReconciliationBankTransaction,
@@ -1374,6 +1375,418 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         resp = self.client.post('/api/banks/exceptions/bulk-link-resolve-bank-charge/', {
             'resolution_notes': 'no bank account given',
         }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+
+class UnresolveExceptionViewTests(TestCase):
+    """
+    Tests for UnresolveExceptionView / ReconciliationException.unresolve() —
+    reopens an exception resolved standalone (the plain per-row Resolve
+    action) before it was properly paired against its real counterpart, the
+    exact bug pattern found in production: an erp_only exception resolved
+    with a generic note like "Inter bank" instead of being Linked to the
+    bank_only line it actually belonged to.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Unresolve Org', slug='unresolve-org')
+        self.branch = Branch.objects.create(name='Branch A', code='URA')
+
+        self.director = User.objects.create_user(
+            username='unresolve_director', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+        self.branch_manager = User.objects.create_user(
+            username='unresolve_bm', password='test123', tenant=self.tenant, branch=self.branch,
+        )
+
+        gl_account = Account.objects.create(
+            code='1901', name='Unresolve GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        bank = Bank.objects.create(bank_name='Unresolve Bank', bank_code='992')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000050', account_name='Unresolve Account',
+            gl_account=gl_account, account_manager=self.director,
+        )
+        self.recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/unresolve.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+    def _resolved_exception(self, **overrides):
+        defaults = dict(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('140000.00'), erp_narration='Transfer: Inter bank transfer',
+            erp_date='2026-07-14', resolved=True, resolved_by=self.director,
+            resolved_at=timezone.now(), resolution_notes='Inter bank',
+        )
+        defaults.update(overrides)
+        return ReconciliationException.objects.create(**defaults)
+
+    def test_director_can_unresolve_a_standalone_resolved_exception(self):
+        exc = self._resolved_exception()
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{exc.id}/unresolve/',
+            {'reason': 'resolved standalone before the real bank line was found'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        exc.refresh_from_db()
+        self.assertFalse(exc.resolved)
+        self.assertEqual(exc.unresolved_by_id, self.director.id)
+        self.assertIsNotNone(exc.unresolved_at)
+        self.assertEqual(exc.unresolved_reason, 'resolved standalone before the real bank line was found')
+        # Original resolution history is preserved, not cleared.
+        self.assertEqual(exc.resolved_by_id, self.director.id)
+        self.assertEqual(exc.resolution_notes, 'Inter bank')
+
+    def test_unresolve_recomputes_reconciliation_counts(self):
+        exc = self._resolved_exception()
+        self.recon.unmatched_erp_count = 0
+        self.recon.save(update_fields=['unmatched_erp_count'])
+
+        self.client.force_authenticate(user=self.director)
+        self.client.post(f'/api/banks/exceptions/{exc.id}/unresolve/', {'reason': 'reopening this one'}, format='json')
+
+        self.recon.refresh_from_db()
+        self.assertEqual(self.recon.unmatched_erp_count, 1)
+
+    def test_unresolve_rejects_already_unresolved_exception(self):
+        exc = self._resolved_exception(resolved=False)
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{exc.id}/unresolve/', {'reason': 'not actually resolved'}, format='json',
+        )
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unresolve_requires_a_reason(self):
+        exc = self._resolved_exception()
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(f'/api/banks/exceptions/{exc.id}/unresolve/', {'reason': 'short'}, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+
+    def test_unresolve_rejects_a_netted_exception(self):
+        partner = self._resolved_exception(
+            exception_type='bank_only', erp_amount=None, bank_amount=Decimal('140000.00'),
+            bank_narration='inter bank', bank_date='2026-07-14',
+        )
+        exc = self._resolved_exception(netted_with=partner)
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{exc.id}/unresolve/',
+            {'reason': 'this one was actually linked properly'}, format='json',
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+
+    def test_unresolve_rejects_exception_with_pending_bank_payment(self):
+        expense_parent_gl = Account.objects.create(
+            code='6100', name='Expenses', account_level=Account.LEVEL_PARENT,
+            account_type=Account.EXPENSE, branch=self.branch,
+        )
+        expense_gl = Account.objects.create(
+            code='6101', name='Bank Charges', account_level=Account.LEVEL_CHILD,
+            account_type=Account.EXPENSE, parent=expense_parent_gl, branch=self.branch,
+        )
+        from expenses.models import ExpenseCategory, Expense
+        category = ExpenseCategory.objects.create(
+            name='Bank Charges', code='BANKCHG', expense_account=expense_gl,
+            branch=self.branch, tenant=self.tenant, owner=self.director,
+        )
+        expense = Expense.objects.create(
+            category=category, expense_date='2026-07-14', description='fee',
+            amount=Decimal('20.00'), subtotal=Decimal('20.00'), total_amount=Decimal('20.00'),
+            payment_method='bank_transfer', bank_account=self.bank_account,
+            branch=self.branch, owner=self.director, tenant=self.tenant, created_by=self.director,
+        )
+        payment = BankPayment.objects.create(
+            payment_number='BKPAY-UR-1', bank_account=self.bank_account, amount=Decimal('20.00'),
+            description='fee', expense=expense, status='pending',
+            owner=self.director, branch=self.branch, tenant=self.tenant, created_by=self.director,
+        )
+        exc = self._resolved_exception(
+            exception_type='bank_only', erp_amount=None, bank_amount=Decimal('140020.00'),
+            bank_narration='inter bank', bank_date='2026-07-14', pending_bank_payment=payment,
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{exc.id}/unresolve/',
+            {'reason': 'this one has a pending payment attached'}, format='json',
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+
+    def test_branch_manager_cannot_unresolve(self):
+        exc = self._resolved_exception()
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{exc.id}/unresolve/', {'reason': 'branch manager should not do this'}, format='json',
+        )
+
+        self.assertEqual(resp.status_code, 403)
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+
+    def test_unresolved_exception_becomes_a_valid_link_candidate_again(self):
+        # The exact production scenario: an erp_only exception was resolved
+        # standalone, stranding its real bank_only counterpart with no
+        # available match. Unresolving it should make it reappear as a
+        # valid LinkCandidatesView/LinkResolveBankChargeView target.
+        erp_exc = self._resolved_exception()
+        bank_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('140020.00'), bank_narration='inter bank', bank_date='2026-07-14',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        candidates_before = self.client.get(f'/api/banks/exceptions/{bank_exc.id}/link-candidates/')
+        self.assertEqual([r['id'] for r in candidates_before.data['results']], [])
+
+        unresolve_resp = self.client.post(
+            f'/api/banks/exceptions/{erp_exc.id}/unresolve/',
+            {'reason': 'reopening so it can be properly linked to the bank line'}, format='json',
+        )
+        self.assertEqual(unresolve_resp.status_code, 200, unresolve_resp.data)
+
+        candidates_after = self.client.get(f'/api/banks/exceptions/{bank_exc.id}/link-candidates/')
+        self.assertEqual([r['id'] for r in candidates_after.data['results']], [erp_exc.id])
+
+        link_resp = self.client.post('/api/banks/exceptions/link-resolve-bank-charge/', {
+            'bank_only_exception_id': bank_exc.id, 'erp_only_exception_id': erp_exc.id,
+            'resolution_notes': 'properly linked now that the erp side is reopened',
+        }, format='json')
+        self.assertEqual(link_resp.status_code, 201, link_resp.data)
+
+        bank_exc.refresh_from_db()
+        erp_exc.refresh_from_db()
+        self.assertTrue(bank_exc.resolved)
+        self.assertTrue(erp_exc.resolved)
+        self.assertEqual(bank_exc.netted_with_id, erp_exc.id)
+
+
+class BulkCleanUpStrandedPairsTests(TestCase):
+    """
+    Tests for BulkCleanUpStrandedPairsView / find_stranded_resolved_pairs —
+    the global "Clean Up" action that finds exceptions resolved standalone
+    (plain Resolve, netted_with and pending_bank_payment both None) whose
+    real counterpart is still unresolved, reopens them, and links them
+    properly — exact matches with no fee, DEBIT fee-tolerant matches with a
+    real "Bank Charges" payment. Must never touch a pair that's already
+    properly linked (the double-charge guard).
+    """
+
+    URL = '/api/banks/exceptions/bulk-clean-up-stranded-pairs/'
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Clean Up Org', slug='clean-up-org')
+        self.branch = Branch.objects.create(name='Branch A', code='CUA')
+
+        self.director = User.objects.create_user(
+            username='cleanup_director', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+        self.branch_manager = User.objects.create_user(
+            username='cleanup_bm', password='test123', tenant=self.tenant, branch=self.branch,
+        )
+
+        self.bank_account = self._make_bank_account('0000060', 'Clean Up Account A', '991')
+        self.recon = self._make_recon(self.bank_account, 'cleanup_a.csv')
+
+    def _make_bank_account(self, account_number, name, bank_code):
+        gl_account = Account.objects.create(
+            code=f'19{bank_code}', name=f'{name} GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        bank = Bank.objects.create(bank_name=f'Bank {bank_code}', bank_code=bank_code)
+        return BankAccount.objects.create(
+            bank=bank, account_number=account_number, account_name=name,
+            gl_account=gl_account, account_manager=self.director,
+        )
+
+    def _make_recon(self, bank_account, filename):
+        return DailyReconciliation.objects.create(
+            bank_account=bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file=f'bank_statements/{filename}',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+    def _standalone_resolved(self, recon, **overrides):
+        defaults = dict(
+            reconciliation=recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('140000.00'), erp_narration='Transfer: Inter bank transfer',
+            erp_date='2026-07-14', resolved=True, resolved_by=self.director,
+            resolved_at=timezone.now(), resolution_notes='Inter bank',
+        )
+        defaults.update(overrides)
+        return ReconciliationException.objects.create(**defaults)
+
+    def _unresolved(self, recon, **overrides):
+        defaults = dict(
+            reconciliation=recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('140020.00'), bank_narration='inter bank', bank_date='2026-07-14',
+        )
+        defaults.update(overrides)
+        return ReconciliationException.objects.create(**defaults)
+
+    def test_dry_run_previews_fee_and_exact_pairs_without_changing_anything(self):
+        fee_resolved = self._standalone_resolved(self.recon)
+        fee_unresolved = self._unresolved(self.recon)
+        exact_resolved = self._standalone_resolved(
+            self.recon, erp_amount=Decimal('5000.00'), erp_narration='exact',
+        )
+        exact_unresolved = self._unresolved(
+            self.recon, bank_amount=Decimal('5000.00'), bank_narration='exact',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'dry_run': True}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['would_clean_up_count'], 2)
+        by_resolved_id = {row['resolved_exception_id']: row for row in resp.data['would_clean_up']}
+        self.assertEqual(by_resolved_id[fee_resolved.id]['unresolved_exception_id'], fee_unresolved.id)
+        self.assertEqual(by_resolved_id[fee_resolved.id]['fee_amount'], '20.00')
+        self.assertEqual(by_resolved_id[exact_resolved.id]['unresolved_exception_id'], exact_unresolved.id)
+        self.assertIsNone(by_resolved_id[exact_resolved.id]['fee_amount'])
+
+        fee_resolved.refresh_from_db()
+        self.assertTrue(fee_resolved.resolved)  # untouched by dry_run
+
+    def test_clean_up_resolves_exact_match_pair_with_no_fee(self):
+        resolved_exc = self._standalone_resolved(
+            self.recon, erp_amount=Decimal('5000.00'), erp_narration='exact',
+        )
+        unresolved_exc = self._unresolved(
+            self.recon, bank_amount=Decimal('5000.00'), bank_narration='exact',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'resolution_notes': 'cleaning up exact stranded pairs'}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['cleaned_up_count'], 1)
+        self.assertIsNone(resp.data['cleaned_up'][0]['fee_amount'])
+
+        resolved_exc.refresh_from_db()
+        unresolved_exc.refresh_from_db()
+        self.assertTrue(resolved_exc.resolved)
+        self.assertTrue(unresolved_exc.resolved)
+        self.assertEqual(resolved_exc.netted_with_id, unresolved_exc.id)
+        self.assertIsNotNone(resolved_exc.unresolved_at)  # audit trail of the reopen
+        self.assertIsNone(resolved_exc.pending_bank_payment_id)
+
+    def test_clean_up_resolves_fee_pair_and_creates_bank_charges_payment(self):
+        resolved_exc = self._standalone_resolved(self.recon)
+        unresolved_exc = self._unresolved(self.recon)
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'resolution_notes': 'cleaning up the fee stranded pair'}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['cleaned_up_count'], 1)
+        self.assertEqual(resp.data['cleaned_up'][0]['fee_amount'], '20.00')
+
+        unresolved_exc.refresh_from_db()
+        resolved_exc.refresh_from_db()
+        self.assertTrue(unresolved_exc.resolved)
+        self.assertTrue(resolved_exc.resolved)
+        self.assertEqual(unresolved_exc.netted_with_id, resolved_exc.id)
+        payment = unresolved_exc.pending_bank_payment
+        self.assertIsNotNone(payment)
+        self.assertEqual(payment.amount, Decimal('20.00'))
+        self.assertEqual(payment.expense.category.code, 'BANKCHG')
+
+    def test_clean_up_never_touches_an_already_properly_linked_pair(self):
+        partner = self._unresolved(self.recon, resolved=True, resolved_by=self.director, resolved_at=timezone.now())
+        already_linked = self._standalone_resolved(self.recon, netted_with=partner)
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'dry_run': True}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['would_clean_up_count'], 0)
+        already_linked.refresh_from_db()
+        self.assertTrue(already_linked.resolved)  # confirm nothing was touched
+
+    def test_clean_up_leaves_ambiguous_pairs_for_manual_review(self):
+        resolved_exc = self._standalone_resolved(self.recon)
+        self._unresolved(self.recon, bank_narration='candidate A')
+        self._unresolved(self.recon, bank_narration='candidate B')
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'dry_run': True}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['would_clean_up_count'], 0)
+        self.assertEqual(resp.data['ambiguous_count'], 1)
+        self.assertEqual(resp.data['ambiguous_exception_ids'], [resolved_exc.id])
+
+        resolved_exc.refresh_from_db()
+        self.assertTrue(resolved_exc.resolved)
+
+    def test_clean_up_works_across_multiple_bank_accounts_in_one_call(self):
+        other_account = self._make_bank_account('0000061', 'Clean Up Account B', '990')
+        other_recon = self._make_recon(other_account, 'cleanup_b.csv')
+
+        pair_a_resolved = self._standalone_resolved(self.recon)
+        self._unresolved(self.recon)
+        pair_b_resolved = self._standalone_resolved(
+            other_recon, erp_amount=Decimal('9000.00'), erp_narration='account B pair',
+        )
+        self._unresolved(other_recon, bank_amount=Decimal('9000.00'), bank_narration='account B pair')
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'resolution_notes': 'cleaning up across both accounts'}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['cleaned_up_count'], 2)
+        cleaned_ids = {row['resolved_exception_id'] for row in resp.data['cleaned_up']}
+        self.assertEqual(cleaned_ids, {pair_a_resolved.id, pair_b_resolved.id})
+
+    def test_clean_up_is_idempotent(self):
+        self._standalone_resolved(self.recon)
+        self._unresolved(self.recon)
+
+        self.client.force_authenticate(user=self.director)
+        first = self.client.post(self.URL, {'resolution_notes': 'first pass cleanup'}, format='json')
+        self.assertEqual(first.data['cleaned_up_count'], 1)
+
+        second = self.client.post(self.URL, {'dry_run': True}, format='json')
+        self.assertEqual(second.data['would_clean_up_count'], 0)
+
+    def test_branch_manager_cannot_clean_up(self):
+        self._standalone_resolved(self.recon)
+        self._unresolved(self.recon)
+
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(self.URL, {'resolution_notes': 'branch manager should not do this'}, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_clean_up_requires_a_reason_unless_dry_run(self):
+        self._standalone_resolved(self.recon)
+        self._unresolved(self.recon)
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'resolution_notes': 'short'}, format='json')
 
         self.assertEqual(resp.status_code, 400)
 

@@ -78,6 +78,8 @@ const ReconciliationDetailPage: React.FC = () => {
   const [unmatchReasonDraft, setUnmatchReasonDraft] = useState<Record<string, string>>({});
   const [postToExpenseException, setPostToExpenseException] = useState<ReconciliationException | null>(null);
   const [linkResolveException, setLinkResolveException] = useState<ReconciliationException | null>(null);
+  const [unresolvingId, setUnresolvingId] = useState<number | null>(null);
+  const [unresolveReasonDraft, setUnresolveReasonDraft] = useState<Record<number, string>>({});
 
   // Defaults to the reconciliation's own persisted include_debits so a
   // debit-enabled recon doesn't silently revert to credit-only on rerun —
@@ -243,6 +245,25 @@ const ReconciliationDetailPage: React.FC = () => {
       showError(err.message || 'Failed to unmatch transaction');
     } finally {
       setUnmatchingId(null);
+    }
+  };
+
+  const handleUnresolve = async (exception: ReconciliationException) => {
+    if (!recon) return;
+    const reason = unresolveReasonDraft[exception.id] || '';
+    if (reason.trim().length < MIN_REASON_LENGTH) return;
+    setUnresolvingId(exception.id);
+    try {
+      const updated = await reconciliationService.unresolveException(exception.id, { reason });
+      setRecon({
+        ...recon,
+        exceptions: recon.exceptions?.map((e) => (e.id === exception.id ? updated : e)),
+      });
+      success('Exception reopened — it can now be resolved or linked properly');
+    } catch (err: any) {
+      showError(err.message || 'Failed to unresolve exception');
+    } finally {
+      setUnresolvingId(null);
     }
   };
 
@@ -510,6 +531,14 @@ const ReconciliationDetailPage: React.FC = () => {
                               "{exception.resolution_notes}"
                             </p>
                           )}
+                          {!exception.resolved && exception.unresolved_by_name && (
+                            <p className="text-xs text-amber-700 mt-1">
+                              Reopened by {exception.unresolved_by_name}
+                              {exception.unresolved_reason && `: "${exception.unresolved_reason}"`} — previously
+                              resolved{exception.resolved_by_name && ` by ${exception.resolved_by_name}`}
+                              {exception.resolution_notes && ` ("${exception.resolution_notes}")`}
+                            </p>
+                          )}
                           {exception.netted_with_info && (
                             <p className="text-xs text-purple-700 mt-1">
                               Netted against {exception.netted_with_info.direction}{' '}
@@ -605,7 +634,40 @@ const ReconciliationDetailPage: React.FC = () => {
                           );
                         }
 
-                        if (exception.resolved) return null;
+                        if (exception.resolved) {
+                          if (!canApprove) return null;
+                          // Mirrors ReconciliationException.unresolve()'s guards
+                          // (banks/models.py) — netted/paid exceptions need their
+                          // own remediation, not a blind flip back to unresolved.
+                          const unresolveBlocked = !!exception.netted_with_info || !!exception.pending_bank_payment_info;
+                          if (unresolveBlocked) return null;
+
+                          const unresolveReason = unresolveReasonDraft[exception.id] || '';
+                          return (
+                            <div className="flex items-center gap-2 shrink-0">
+                              <input
+                                type="text"
+                                placeholder={`Reason to reopen (min ${MIN_REASON_LENGTH} chars)`}
+                                value={unresolveReason}
+                                onChange={(e) =>
+                                  setUnresolveReasonDraft({ ...unresolveReasonDraft, [exception.id]: e.target.value })
+                                }
+                                className="w-48 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                              />
+                              <button
+                                onClick={() => handleUnresolve(exception)}
+                                disabled={
+                                  unresolvingId === exception.id ||
+                                  unresolveReason.trim().length < MIN_REASON_LENGTH
+                                }
+                                title="Reopen this exception — e.g. it was resolved standalone before being properly linked to its real counterpart"
+                                className="px-3 py-1.5 text-sm font-medium text-amber-700 border border-amber-300 rounded-md hover:bg-amber-50 disabled:opacity-50 whitespace-nowrap"
+                              >
+                                {unresolvingId === exception.id ? 'Reopening…' : 'Unresolve'}
+                              </button>
+                            </div>
+                          );
+                        }
 
                         return (
                           <div className="flex items-center gap-2 shrink-0">

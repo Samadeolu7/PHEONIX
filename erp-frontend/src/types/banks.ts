@@ -468,6 +468,15 @@ export interface ReconciliationException {
   second_resolved_by_name: string | null;
   second_resolved_at: string | null;
   second_resolution_notes: string;
+  // Set when a director reopens a standalone-resolved exception (the plain
+  // per-row Resolve action used before it was properly paired against its
+  // real counterpart) — see UnresolveExceptionView. resolved_by/resolved_at/
+  // resolution_notes above are left untouched as history of the original
+  // (now-reversed) resolution.
+  unresolved_by: number | null;
+  unresolved_by_name: string | null;
+  unresolved_at: string | null;
+  unresolved_reason: string;
   created_at: string;
 }
 
@@ -475,6 +484,10 @@ export interface ResolveExceptionToExpenseRequest {
   category: number;
   payee_name?: string;
   description?: string;
+}
+
+export interface UnresolveExceptionRequest {
+  reason: string;
 }
 
 export interface LinkResolveExceptionsRequest {
@@ -528,6 +541,33 @@ export interface BulkLinkResolveBankChargeResult {
   ambiguous_bank_only_exception_ids: number[];
   unmatched_count: number;
   unmatched_bank_only_exception_ids: number[];
+}
+
+export interface BulkCleanUpStrandedPairsRequest {
+  resolution_notes?: string;
+  dry_run?: boolean;
+}
+
+interface BulkCleanUpStrandedPairResult {
+  resolved_exception_id: number;
+  unresolved_exception_id: number;
+  fee_amount: string | null;
+}
+
+export interface BulkCleanUpStrandedPairsPreview {
+  would_clean_up_count: number;
+  would_clean_up: BulkCleanUpStrandedPairResult[];
+  ambiguous_count: number;
+  ambiguous_exception_ids: number[];
+}
+
+export interface BulkCleanUpStrandedPairsResult {
+  cleaned_up_count: number;
+  cleaned_up: (BulkCleanUpStrandedPairResult & { payment_id: number | null })[];
+  failed_count: number;
+  failed: { resolved_exception_id: number; unresolved_exception_id: number; detail: string }[];
+  ambiguous_count: number;
+  ambiguous_exception_ids: number[];
 }
 
 export interface DailyReconciliation {

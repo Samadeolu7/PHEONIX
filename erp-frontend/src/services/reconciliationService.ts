@@ -5,6 +5,9 @@
 
 import { api } from './api';
 import type {
+  BulkCleanUpStrandedPairsRequest,
+  BulkCleanUpStrandedPairsPreview,
+  BulkCleanUpStrandedPairsResult,
   BulkLinkResolveBankChargeRequest,
   BulkLinkResolveBankChargePreview,
   BulkLinkResolveBankChargeResult,
@@ -27,6 +30,7 @@ import type {
   ResolveExceptionRequest,
   SecondResolveExceptionRequest,
   UnmatchTransactionRequest,
+  UnresolveExceptionRequest,
   UploadReconciliationRequest,
   UploadReconciliationResponse,
 } from '../types/banks';
@@ -142,6 +146,22 @@ export const reconciliationService = {
   },
 
   /**
+   * Reopen an exception that was resolved standalone (the plain per-row
+   * Resolve action) before it was properly paired against its real
+   * counterpart — e.g. an erp_only exception resolved with a generic note
+   * instead of being Linked to the bank_only line it actually belonged to.
+   * Director-only, mandatory reason. Refuses anything resolved via Link/
+   * Bulk-Link (netted_with set) or with a pending/posted payment attached
+   * — the backend 400s in those cases with an explanation.
+   */
+  async unresolveException(
+    exceptionId: number,
+    data: UnresolveExceptionRequest
+  ): Promise<ReconciliationException> {
+    return api.post(`${BASE_URL}/exceptions/${exceptionId}/unresolve/`, data);
+  },
+
+  /**
    * Post a bank-only DEBIT exception (e.g. stamp duty, bank charges)
    * straight to a draft expense + pending payment. Branch manager or
    * director may initiate — the real control point is the separate bank
@@ -217,6 +237,25 @@ export const reconciliationService = {
     data: Omit<BulkLinkResolveBankChargeRequest, 'dry_run'>
   ): Promise<BulkLinkResolveBankChargeResult> {
     return api.post(`${BASE_URL}/exceptions/bulk-link-resolve-bank-charge/`, { ...data, dry_run: false });
+  },
+
+  /**
+   * Global "Clean Up" scan across every bank account the requesting user
+   * can see: finds bank_only/erp_only exceptions resolved standalone (the
+   * plain per-row Resolve action, netted_with and pending_bank_payment both
+   * still None) whose real counterpart is still unresolved, and previews
+   * reopening + properly linking them. Handles both exact-amount matches
+   * (no fee) and DEBIT fee-tolerant matches (creates a real "Bank Charges"
+   * payment). Structurally can never double-charge an already-linked pair.
+   */
+  async bulkCleanUpStrandedPairsPreview(): Promise<BulkCleanUpStrandedPairsPreview> {
+    return api.post(`${BASE_URL}/exceptions/bulk-clean-up-stranded-pairs/`, { dry_run: true });
+  },
+
+  async bulkCleanUpStrandedPairs(
+    data: Omit<BulkCleanUpStrandedPairsRequest, 'dry_run'>
+  ): Promise<BulkCleanUpStrandedPairsResult> {
+    return api.post(`${BASE_URL}/exceptions/bulk-clean-up-stranded-pairs/`, { ...data, dry_run: false });
   },
 
   /**

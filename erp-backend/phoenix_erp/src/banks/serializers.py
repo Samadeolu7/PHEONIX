@@ -794,6 +794,7 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
     netted_with_info = serializers.SerializerMethodField()
     resolved_by_name = serializers.SerializerMethodField()
     second_resolved_by_name = serializers.SerializerMethodField()
+    unresolved_by_name = serializers.SerializerMethodField()
     requires_dual_approval_to_resolve = serializers.BooleanField(read_only=True)
     awaiting_second_resolution = serializers.BooleanField(read_only=True)
 
@@ -816,6 +817,7 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
             'resolved', 'resolved_by', 'resolved_by_name', 'resolved_at', 'resolution_notes',
             'second_resolved_by', 'second_resolved_by_name', 'second_resolved_at',
             'second_resolution_notes',
+            'unresolved_by', 'unresolved_by_name', 'unresolved_at', 'unresolved_reason',
             'created_at',
         ]
         read_only_fields = ['id', 'created_at']
@@ -852,6 +854,9 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
 
     def get_second_resolved_by_name(self, obj):
         return obj.second_resolved_by.get_full_name() if obj.second_resolved_by else None
+
+    def get_unresolved_by_name(self, obj):
+        return obj.unresolved_by.get_full_name() if obj.unresolved_by else None
 
     def get_pending_bank_payment_info(self, obj):
         payment = obj.pending_bank_payment
