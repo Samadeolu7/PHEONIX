@@ -546,6 +546,11 @@ export interface BulkLinkResolveBankChargeResult {
 export interface BulkCleanUpStrandedPairsRequest {
   resolution_notes?: string;
   dry_run?: boolean;
+  /** Skips these specific pairs for this run — "unambiguous" (exactly one
+   * candidate found) isn't the same as "correct"; a director reviewing the
+   * preview may disagree with a specific pairing. Excluded pairs are left
+   * exactly as-is, available for manual review via Unresolve + Link. */
+  excluded_resolved_exception_ids?: number[];
 }
 
 export interface StrandedExceptionCandidate {

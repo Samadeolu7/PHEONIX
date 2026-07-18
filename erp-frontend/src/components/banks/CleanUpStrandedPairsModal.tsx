@@ -49,6 +49,16 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
   const [selectedCandidate, setSelectedCandidate] = useState<Record<number, number>>({});
   const [linkingId, setLinkingId] = useState<number | null>(null);
   const [manuallyLinkedCount, setManuallyLinkedCount] = useState(0);
+  const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
+
+  const toggleExcluded = (resolvedExceptionId: number) => {
+    setExcludedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(resolvedExceptionId)) next.delete(resolvedExceptionId);
+      else next.add(resolvedExceptionId);
+      return next;
+    });
+  };
 
   const loadPreview = () => {
     setLoading(true);
@@ -75,7 +85,10 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
     if (notes.trim().length < MIN_REASON_LENGTH) return;
     setSubmitting(true);
     try {
-      const data = await reconciliationService.bulkCleanUpStrandedPairs({ resolution_notes: notes });
+      const data = await reconciliationService.bulkCleanUpStrandedPairs({
+        resolution_notes: notes,
+        excluded_resolved_exception_ids: Array.from(excludedIds),
+      });
       setResult(data);
     } catch (err: any) {
       onError(err.message || 'Failed to clean up stranded pairs');
@@ -160,38 +173,54 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
                   {preview.would_clean_up_count > 0 && (
                     <>
                       <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-sm text-amber-900">
-                        <strong>{preview.would_clean_up_count}</strong> unambiguous pair(s) would be
-                        reopened and linked automatically.
+                        <strong>{preview.would_clean_up_count - excludedIds.size}</strong> of{' '}
+                        {preview.would_clean_up_count} unambiguous pair(s) selected — "unambiguous"
+                        means exactly one candidate was found, not that it's necessarily correct.
+                        Uncheck any you disagree with; they'll be left untouched for manual review.
                       </div>
                       <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-64 overflow-y-auto">
-                        {preview.would_clean_up.map((p) => (
-                          <li key={`${p.resolved_exception_id}-${p.unresolved_exception_id}`} className="px-3 py-2 text-sm">
-                            <div className="flex items-center justify-between">
-                              <span className="text-gray-500 text-xs">
-                                #{p.resolved_exception_id} (was resolved) ↔ #{p.unresolved_exception_id} (unresolved)
-                              </span>
-                              <span className="font-medium text-amber-700 shrink-0 ml-2">
-                                {p.fee_amount ? `Fee ${formatNaira(p.fee_amount)}` : 'Exact match'}
-                              </span>
-                            </div>
-                            <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
-                              <div className="min-w-0">
-                                <p className="text-gray-900 truncate">{p.resolved_exception.narration || '—'}</p>
-                                <p className="text-gray-500 text-xs">
-                                  {formatNaira(p.resolved_exception.amount)} on {p.resolved_exception.date || '—'} ·{' '}
-                                  {p.resolved_exception.exception_type} {p.resolved_exception.direction}
-                                </p>
+                        {preview.would_clean_up.map((p) => {
+                          const excluded = excludedIds.has(p.resolved_exception_id);
+                          return (
+                            <li
+                              key={`${p.resolved_exception_id}-${p.unresolved_exception_id}`}
+                              className={`px-3 py-2 text-sm flex items-start gap-2 ${excluded ? 'opacity-50' : ''}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!excluded}
+                                onChange={() => toggleExcluded(p.resolved_exception_id)}
+                                className="mt-1 shrink-0"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-gray-500 text-xs">
+                                    #{p.resolved_exception_id} (was resolved) ↔ #{p.unresolved_exception_id} (unresolved)
+                                  </span>
+                                  <span className="font-medium text-amber-700 shrink-0 ml-2">
+                                    {p.fee_amount ? `Fee ${formatNaira(p.fee_amount)}` : 'Exact match'}
+                                  </span>
+                                </div>
+                                <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+                                  <div className="min-w-0">
+                                    <p className="text-gray-900 truncate">{p.resolved_exception.narration || '—'}</p>
+                                    <p className="text-gray-500 text-xs">
+                                      {formatNaira(p.resolved_exception.amount)} on {p.resolved_exception.date || '—'} ·{' '}
+                                      {p.resolved_exception.exception_type} {p.resolved_exception.direction}
+                                    </p>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-gray-900 truncate">{p.unresolved_exception.narration || '—'}</p>
+                                    <p className="text-gray-500 text-xs">
+                                      {formatNaira(p.unresolved_exception.amount)} on {p.unresolved_exception.date || '—'} ·{' '}
+                                      {p.unresolved_exception.exception_type} {p.unresolved_exception.direction}
+                                    </p>
+                                  </div>
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <p className="text-gray-900 truncate">{p.unresolved_exception.narration || '—'}</p>
-                                <p className="text-gray-500 text-xs">
-                                  {formatNaira(p.unresolved_exception.amount)} on {p.unresolved_exception.date || '—'} ·{' '}
-                                  {p.unresolved_exception.exception_type} {p.unresolved_exception.direction}
-                                </p>
-                              </div>
-                            </div>
-                          </li>
-                        ))}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </>
                   )}
@@ -317,10 +346,12 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
               {preview && preview.would_clean_up_count > 0 && (
                 <button
                   onClick={handleConfirm}
-                  disabled={submitting || !notesReady}
+                  disabled={submitting || !notesReady || preview.would_clean_up_count - excludedIds.size === 0}
                   className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50"
                 >
-                  {submitting ? 'Cleaning up…' : `Clean Up ${preview.would_clean_up_count} Pair(s)`}
+                  {submitting
+                    ? 'Cleaning up…'
+                    : `Clean Up ${preview.would_clean_up_count - excludedIds.size} Pair(s)`}
                 </button>
               )}
             </>

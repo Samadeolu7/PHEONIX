@@ -1821,6 +1821,40 @@ class BulkCleanUpStrandedPairsTests(TestCase):
 
         self.assertEqual(resp.status_code, 400)
 
+    def test_excluded_resolved_exception_ids_are_skipped_and_left_untouched(self):
+        keep_resolved = self._standalone_resolved(self.recon)
+        keep_unresolved = self._unresolved(self.recon)
+        skip_resolved = self._standalone_resolved(
+            self.recon, erp_amount=Decimal('5000.00'), erp_narration='disagree with this one',
+        )
+        skip_unresolved = self._unresolved(
+            self.recon, bank_amount=Decimal('5000.00'), bank_narration='disagree with this one',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {
+            'resolution_notes': 'cleaning up only the ones I am sure of',
+            'excluded_resolved_exception_ids': [skip_resolved.id],
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['cleaned_up_count'], 1)
+        self.assertEqual(resp.data['cleaned_up'][0]['resolved_exception_id'], keep_resolved.id)
+
+        keep_resolved.refresh_from_db()
+        keep_unresolved.refresh_from_db()
+        self.assertTrue(keep_resolved.resolved)
+        self.assertTrue(keep_unresolved.resolved)
+        self.assertEqual(keep_resolved.netted_with_id, keep_unresolved.id)
+
+        # Excluded pair: left exactly as it was — still standalone-resolved,
+        # its would-be partner still unresolved, no netted_with either side.
+        skip_resolved.refresh_from_db()
+        skip_unresolved.refresh_from_db()
+        self.assertTrue(skip_resolved.resolved)
+        self.assertIsNone(skip_resolved.netted_with_id)
+        self.assertFalse(skip_unresolved.resolved)
+
 
 class BulkCreateOfficerEvidenceThreadsTests(TestCase):
     """

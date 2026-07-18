@@ -2212,13 +2212,19 @@ class BulkCleanUpStrandedPairsView(APIView):
     Pass dry_run: true to preview every pair this would touch (and how)
     without changing anything — strongly recommended before the real run,
     since this reopens exceptions your team already closed, with no
-    per-pair confirmation once the real run starts.
+    per-pair confirmation once the real run starts. "Unambiguous" (exactly
+    one candidate found) is not the same as "correct" — pass
+    excluded_resolved_exception_ids to skip specific pairs a director
+    disagrees with after reviewing the preview; excluded pairs are left
+    exactly as-is, available for manual review via Unresolve + Link.
 
     Director-only (can_user_approve) — same tier as Unresolve/Link/Bulk-Link.
 
     Request body:
-      resolution_notes   (str, required unless dry_run)
-      dry_run             (bool, optional, default false)
+      resolution_notes                    (str, required unless dry_run)
+      dry_run                             (bool, optional, default false)
+      excluded_resolved_exception_ids     (list[int], optional — skips these
+                                            pairs entirely for this run)
     """
     permission_classes = [permissions.IsAuthenticated]
     permission_module = 'banks'
@@ -2246,6 +2252,17 @@ class BulkCleanUpStrandedPairsView(APIView):
             reconciliation__in=DailyReconciliation.objects.for_user(request.user)
         )
         pairs, ambiguous = find_stranded_resolved_pairs(scoped_qs)
+
+        # A pair the automatic matcher calls "unambiguous" isn't necessarily
+        # right — a director reviewing the preview may disagree with a
+        # specific pairing even though it was the only candidate found.
+        # Excluding it here just skips it for this run; it's left exactly
+        # as-is (still standalone-resolved, its would-be partner still
+        # unresolved) for manual review via Unresolve + Link instead.
+        excluded_ids = {int(i) for i in (request.data.get('excluded_resolved_exception_ids') or [])}
+        if excluded_ids:
+            pairs = [(r, u, fee) for r, u, fee in pairs if r.id not in excluded_ids]
+
         ambiguous_detail = [_serialize_ambiguous_exception(r, candidates) for r, candidates in ambiguous]
 
         if dry_run:
