@@ -20,7 +20,7 @@ User = get_user_model()
 def _bank_transfer_approve_grant(user) -> bool:
     """True if RolePermissionPolicy(module='banks', page='bank-transfers')
     grants this user can_approve — mirrors
-    BankTransferViewSet._has_bank_transfer_approve_grant exactly, so the
+    banks.services._has_bank_transfer_approve_grant exactly, so the
     can_approve/can_second_approve fields shown in the UI never disagree with
     what the approve()/second_approve() endpoints will actually accept."""
     from permissions.services import PermissionResolver

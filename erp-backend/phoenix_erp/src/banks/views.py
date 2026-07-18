@@ -16,6 +16,13 @@ import logging
 from common.views import ScopedModelViewSet
 from common.approval_permissions import IsApprover, can_user_approve, can_user_edit
 from .models import Bank, BankAccount, BankTransfer, BankPayment
+from .services import (
+    check_transfer_approval_permission,
+    check_exception_resolution_authority,
+    resolve_exception_first,
+    check_exception_second_resolution_authority,
+    resolve_exception_second,
+)
 from .serializers import (
     BankSerializer,
     BankAccountSerializer,
@@ -869,104 +876,16 @@ class BankTransferViewSet(ScopedModelViewSet):
     
     def _check_approval_permission(self, request, transfer, *, allow_bank_to_cashier=True):
         """Return a 403 Response if request.user may not act (approve/reject) on
-        this transfer, or None if they may.
-
-        RolePermissionPolicy.can_approve on banks:bank-transfers (the Permission
-        Setup page — director-level authority) governs the bank-to-bank branch,
-        and ALSO acts as a fallback for cashier-to-bank AND cashier-to-cashier,
-        so a director can always step in regardless of which specific account
-        or cashier is involved. This was deliberately NOT the case originally
-        (cashier-to-cashier was a hard, no-override invariant) — changed per a
-        business decision that senior staff can themselves hold a cashier
-        float, and requiring a junior staff member (as the literal destination
-        cashier) to be the only one who can confirm receipt into a senior's
-        float was unworkable. A director now serves as the escalation path.
-        The remaining branch is gated purely by object identity, not by
-        anything grantable on that page:
-          - bank-to-cashier: the branch-manager-tier role check
-            (BankTransfer.can_user_manage_bank_to_cashier), which already
-            includes directors/admins — not a RolePermissionPolicy grant.
-        Both cashier-to-bank and cashier-to-cashier allow EITHER the relevant
-        object-identity check (destination BankAccount's account_manager, or
-        destination CashierAccount's cashier) OR a director, so a cashier who
-        happens to also be that account's manager still can't rubber-stamp
-        their own transfer (see the maker-checker guard below, which blocks
-        that regardless).
-
-        allow_bank_to_cashier=False is used by second_approve(), which
-        structurally never reaches a bank-to-cashier transfer (those are
-        single-approval) and omits that branch entirely, matching the
-        original inline logic.
-
-        Maker-checker: whoever initiated the transfer may never approve or
-        reject it themselves, no matter which branch below would otherwise
-        allow them through (director authority included) — segregation of
-        duties between the person who moves the money and the person who
-        signs off on it.
+        this transfer, or None if they may. See
+        banks.services.check_transfer_approval_permission for the business
+        rules this delegates to.
         """
-        if transfer.initiated_by_id == request.user.id:
-            return Response(
-                {'error': 'You cannot approve or reject a transfer you initiated.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        if allow_bank_to_cashier and transfer.source_type == 'bank' and transfer.destination_type == 'cashier':
-            # Bank-to-cashier: same role gate as initiating one (branch manager /
-            # supervisor / director / admin) — see BankTransfer.can_user_manage_bank_to_cashier
-            # for why this is a separate, looser gate than plain bank-to-bank.
-            if not BankTransfer.can_user_manage_bank_to_cashier(request.user):
-                return Response(
-                    {'error': 'Only branch managers, supervisors, and directors can approve '
-                               'bank-to-cashier transfers'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-        elif transfer.source_type == 'bank':
-            # Bank-to-bank transfers require director/admin approval — driven by
-            # RolePermissionPolicy(module='banks', page='bank-transfers').can_approve.
-            # See migrate_bank_transfer_policies.py for the equivalent-grant migration
-            # from the old staff_profile.role_level check this replaces.
-            if not self._has_bank_transfer_approve_grant(request.user):
-                return Response(
-                    {'error': 'Only directors can approve bank-to-bank transfers'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-        elif transfer.destination_type == 'cashier':
-            # Cashier-to-cashier transfers require the destination cashier —
-            # OR a director (see docstring above for why this is no longer a
-            # hard, no-override invariant).
-            is_destination_cashier = bool(
-                transfer.destination_cashier_account
-                and transfer.destination_cashier_account.cashier == request.user
-            )
-            if not is_destination_cashier and not self._has_bank_transfer_approve_grant(request.user):
-                return Response(
-                    {'error': 'Only the destination cashier or a director can approve this transfer'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-        else:
-            # Cashier-to-bank transfers require the destination account manager
-            # — OR a director (same RolePermissionPolicy grant as bank-to-bank),
-            # so a director can always step in regardless of transfer type,
-            # while an ordinary cashier still can't approve their own transfer
-            # to an account they don't manage (and the maker-checker guard
-            # above blocks them even if they DO happen to manage it themselves).
-            is_account_manager = transfer.destination_bank_account.account_manager == request.user
-            if not is_account_manager and not self._has_bank_transfer_approve_grant(request.user):
-                return Response(
-                    {'error': 'Only the destination account manager or a director can approve '
-                               'this transfer'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        error_message = check_transfer_approval_permission(
+            transfer, request.user, allow_bank_to_cashier=allow_bank_to_cashier
+        )
+        if error_message:
+            return Response({'error': error_message}, status=status.HTTP_403_FORBIDDEN)
         return None
-
-    @staticmethod
-    def _has_bank_transfer_approve_grant(user):
-        """True if RolePermissionPolicy(module='banks', page='bank-transfers')
-        grants this user can_approve — i.e. they hold director-level approval
-        authority regardless of which specific bank account is involved."""
-        from permissions.services import PermissionResolver
-        eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers', action='approve')
-        return bool(eff.can_approve)
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
@@ -1527,20 +1446,9 @@ class ResolveExceptionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        is_director = can_user_approve(request.user, module=self.permission_module, page=self.permission_page)
-        if exc_obj.is_perfect_match:
-            allowed = is_director or can_user_edit(
-                request.user, module=self.permission_module, page=self.permission_page
-            )
-        else:
-            allowed = is_director
-
-        if not allowed:
-            return Response(
-                {'detail': 'Only directors may resolve reconciliation exceptions with an amount '
-                           'mismatch. Perfect matches may be resolved by a branch manager.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        error_message = check_exception_resolution_authority(exc_obj, request.user)
+        if error_message:
+            return Response({'detail': error_message}, status=status.HTTP_403_FORBIDDEN)
 
         resolution_notes = request.data.get('resolution_notes', '')
         if not exc_obj.is_perfect_match:
@@ -1552,26 +1460,11 @@ class ResolveExceptionView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        exc_obj.resolved_by      = request.user
-        exc_obj.resolution_notes = resolution_notes
-
-        if exc_obj.requires_dual_approval_to_resolve:
-            # Hold: resolved stays False until a second, different director
-            # confirms via SecondResolveExceptionView. resolved_at stays
-            # unset too — it should reflect when the exception actually
-            # closed, not when the first director acted.
-            exc_obj.save(update_fields=['resolved_by', 'resolution_notes'])
-            serializer = ReconciliationExceptionSerializer(exc_obj)
-            return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
-
-        exc_obj.resolved    = True
-        exc_obj.resolved_at = tz.now()
-        exc_obj.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes'])
-
-        from .reconciliation_utils import recompute_reconciliation_counts
-        recompute_reconciliation_counts(recon)
+        fully_resolved = resolve_exception_first(exc_obj, request.user, resolution_notes)
 
         serializer = ReconciliationExceptionSerializer(exc_obj)
+        if not fully_resolved:
+            return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
         return Response(serializer.data)
 
 
@@ -1611,16 +1504,9 @@ class SecondResolveExceptionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
-            return Response(
-                {'detail': 'Only directors may provide the second approval.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        if exc_obj.resolved_by_id == request.user.id:
-            return Response(
-                {'detail': 'The second approver must be a different director from the first.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        error_message = check_exception_second_resolution_authority(exc_obj, request.user)
+        if error_message:
+            return Response({'detail': error_message}, status=status.HTTP_403_FORBIDDEN)
 
         from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
         resolution_notes = request.data.get('resolution_notes', '')
@@ -1631,19 +1517,7 @@ class SecondResolveExceptionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        now = tz.now()
-        exc_obj.second_resolved_by = request.user
-        exc_obj.second_resolved_at = now
-        exc_obj.second_resolution_notes = resolution_notes
-        exc_obj.resolved = True
-        exc_obj.resolved_at = now
-        exc_obj.save(update_fields=[
-            'second_resolved_by', 'second_resolved_at', 'second_resolution_notes',
-            'resolved', 'resolved_at',
-        ])
-
-        from .reconciliation_utils import recompute_reconciliation_counts
-        recompute_reconciliation_counts(recon)
+        resolve_exception_second(exc_obj, request.user, resolution_notes)
 
         serializer = ReconciliationExceptionSerializer(exc_obj)
         return Response(serializer.data)

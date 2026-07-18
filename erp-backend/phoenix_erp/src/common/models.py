@@ -375,6 +375,7 @@ class FinancialAuditLog(models.Model):
     LOAN_BALANCE_CORRECTION = 'loan_balance_correction'
     SAVINGS_DEPOSIT     = 'savings_deposit'
     SAVINGS_WITHDRAW    = 'savings_withdraw'
+    SAVINGS_INCOME_BACKFILL = 'savings_income_backfill'
     JOURNAL_POST        = 'journal_post'
     PERMISSION_CHANGE   = 'permission_change'
     USER_ROLE_CHANGE    = 'user_role_change'
@@ -387,6 +388,7 @@ class FinancialAuditLog(models.Model):
         (LOAN_BALANCE_CORRECTION, 'Loan Balance Correction'),
         (SAVINGS_DEPOSIT,   'Savings Deposit'),
         (SAVINGS_WITHDRAW,  'Savings Withdrawal'),
+        (SAVINGS_INCOME_BACKFILL, 'Savings First-Deposit-Income Backfill Correction'),
         (JOURNAL_POST,      'Journal Entry Posted'),
         (PERMISSION_CHANGE, 'Permission Changed'),
         (USER_ROLE_CHANGE,  'User Role Changed'),
