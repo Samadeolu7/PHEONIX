@@ -962,7 +962,10 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         self.assertTrue(erp_only_exc.resolved)
         self.assertEqual(bank_only_exc.netted_with_id, erp_only_exc.id)
 
-    def test_link_resolve_rejects_erp_only_erp_only(self):
+    def test_link_resolve_rejects_same_direction_erp_only_pair(self):
+        # Two payments moving money the SAME way don't cancel each other —
+        # only an opposite-direction erp_only pair (an internal ERP movement
+        # netting to zero) is linkable, tested separately below.
         erp_only_a = ReconciliationException.objects.create(
             reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
             erp_amount=Decimal('4000.00'), erp_narration='A', erp_date='2026-07-01',
@@ -978,6 +981,35 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         }, format='json')
 
         self.assertEqual(resp.status_code, 400)
+
+    def test_link_resolve_accepts_opposite_direction_erp_only_pair(self):
+        # The internal-movement case found in production: a petty-cash
+        # relink posts two opposite legs of the same amount against the
+        # bank GL on the same day — no bank statement line will ever exist
+        # for either, so linking them together is the correct closure.
+        reversal_in = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            erp_amount=Decimal('15643.09'),
+            erp_narration='Transfer: Reversal from petty cash re link', erp_date='2026-07-09',
+        )
+        relink_out = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('15643.09'),
+            erp_narration='Petty cash relink: moving 15643.09 from 1102 to 1120', erp_date='2026-07-09',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': reversal_in.id, 'exception_b_id': relink_out.id,
+            'resolution_notes': 'Internal petty cash relink — both legs net to zero, no bank movement',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        reversal_in.refresh_from_db()
+        relink_out.refresh_from_db()
+        self.assertTrue(reversal_in.resolved)
+        self.assertTrue(relink_out.resolved)
+        self.assertEqual(reversal_in.netted_with_id, relink_out.id)
+        self.assertEqual(relink_out.netted_with_id, reversal_in.id)
 
     def test_link_candidates_for_bank_only_includes_opposite_bank_only_and_same_direction_erp_only(self):
         source = ReconciliationException.objects.create(
@@ -1013,11 +1045,13 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         candidate_ids = {row['id'] for row in resp.data['results']}
         self.assertEqual(candidate_ids, {opposite_bank_only.id, same_direction_erp_only.id})
 
-    def test_link_candidates_for_erp_only_source_only_includes_same_direction_bank_only(self):
-        # The reverse of the test above: starting FROM an erp_only exception,
-        # candidates must be bank_only, same direction — never another
-        # erp_only (no valid pairing), never opposite-direction bank_only
-        # (that's only valid for a bank_only+bank_only netting pair).
+    def test_link_candidates_for_erp_only_source(self):
+        # Starting FROM an erp_only exception, candidates are: bank_only
+        # same direction (missed auto-match), or erp_only OPPOSITE
+        # direction with the exact amount (internal ERP movement netting to
+        # zero). Never a same-direction erp_only, never opposite-direction
+        # bank_only (that's only valid for a bank_only+bank_only netting
+        # pair), never a wrong amount.
         source = ReconciliationException.objects.create(
             reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
             erp_amount=Decimal('4000.00'), erp_narration='source', erp_date='2026-07-01',
@@ -1026,8 +1060,12 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
             reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
             bank_amount=Decimal('4000.00'), bank_narration='missed match candidate', bank_date='2026-06-30',
         )
-        # Should NOT appear: opposite-direction bank_only, any erp_only
-        # (regardless of direction), wrong amount.
+        valid_opposite_erp_only = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('4000.00'), erp_narration='internal movement candidate', erp_date='2026-07-01',
+        )
+        # Should NOT appear: opposite-direction bank_only, same-direction
+        # erp_only, wrong amount.
         ReconciliationException.objects.create(
             reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
             bank_amount=Decimal('4000.00'), bank_narration='opposite direction bank_only', bank_date='2026-06-28',
@@ -1040,13 +1078,17 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
             reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
             bank_amount=Decimal('9999.00'), bank_narration='wrong amount', bank_date='2026-06-28',
         )
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('9999.00'), erp_narration='opposite erp_only wrong amount', erp_date='2026-06-28',
+        )
 
         self.client.force_authenticate(user=self.director)
         resp = self.client.get(f'/api/banks/exceptions/{source.id}/link-candidates/')
 
         self.assertEqual(resp.status_code, 200, resp.data)
         candidate_ids = {row['id'] for row in resp.data['results']}
-        self.assertEqual(candidate_ids, {valid_bank_only.id})
+        self.assertEqual(candidate_ids, {valid_bank_only.id, valid_opposite_erp_only.id})
 
     def test_branch_manager_cannot_link_resolve(self):
         credit_exc = ReconciliationException.objects.create(

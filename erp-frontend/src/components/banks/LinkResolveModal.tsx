@@ -51,12 +51,15 @@ function bankChargeFee(
 
 /**
  * Manually links this exception against a candidate on the same bank
- * account and resolves both at once — either another bank_only exception
- * of the opposite direction (a compensating transfer: money sent to the
- * wrong bank, then clawed back), or a bank_only/erp_only pair of the same
- * direction (the bank line and the ERP payment plausibly failed to
- * auto-match). The server computes which candidates are valid for this
- * exception's own type/direction — see LinkCandidatesView (banks/views.py).
+ * account and resolves both at once — another bank_only exception of the
+ * opposite direction (a compensating transfer: money sent to the wrong
+ * bank, then clawed back), a bank_only/erp_only pair of the same direction
+ * (the bank line and the ERP payment plausibly failed to auto-match), or
+ * another erp_only exception of the opposite direction (an internal ERP
+ * movement, e.g. a petty-cash relink, whose two legs net to zero with no
+ * bank line ever expected). The server computes which candidates are valid
+ * for this exception's own type/direction — see LinkCandidatesView
+ * (banks/views.py).
  */
 export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
   exception,

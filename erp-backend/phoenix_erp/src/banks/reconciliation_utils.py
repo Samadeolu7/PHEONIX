@@ -39,7 +39,7 @@ def reason_too_short(reason: str) -> bool:
 def is_valid_exception_pairing(exc_a, exc_b):
     """
     Whether two ReconciliationException rows can be manually linked together
-    via LinkResolveExceptionsView — either:
+    via LinkResolveExceptionsView — one of:
       - both bank_only, OPPOSITE direction — the compensating-transfer/
         netting case (money left the account one way, e.g. sent to the
         wrong bank, and a manual transfer brought it back the other way).
@@ -47,14 +47,21 @@ def is_valid_exception_pairing(exc_a, exc_b):
         auto-match case (the bank line and the ERP payment are very
         plausibly the same real transaction that just failed to fuzzy-match
         on reference/narration; both describe money moving the same way).
-    erp_only+erp_only is never valid (neither side has a bank line to
-    anchor the pairing to), and amount_diff is never linkable — it already
-    has its own ERP-side match with a captured discrepancy, not a "no match
-    at all" case. Amount equality (resolve_amount) is checked separately by
-    the caller.
+      - both erp_only, OPPOSITE direction — the internal-movement case: an
+        ERP-side correction (e.g. a petty-cash relink) posts two opposite
+        legs of the same amount against the bank's GL that net to zero, so
+        NO bank statement line will ever exist for either. Found in
+        production as an unlinkable stranded pair (a "Transfer: Reversal"
+        CREDIT and its "relink" DEBIT, same amount, same day) that the old
+        rules left permanently open.
+    Same-direction erp_only+erp_only stays invalid (two payments out, or
+    two in, don't cancel each other), and amount_diff is never linkable —
+    it already has its own ERP-side match with a captured discrepancy, not
+    a "no match at all" case. Amount equality (resolve_amount) is checked
+    separately by the caller.
     """
     types = {exc_a.exception_type, exc_b.exception_type}
-    if types == {'bank_only'}:
+    if types == {'bank_only'} or types == {'erp_only'}:
         return exc_a.direction != exc_b.direction
     if types == {'bank_only', 'erp_only'}:
         return exc_a.direction == exc_b.direction
@@ -367,12 +374,29 @@ def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exc
     """
     from transactions.models import TransactionEntry
 
+    from .models import ReconciliationException
+
     if not bank_account.gl_account_id:
         return []  # no GL account linked — nothing to reconcile against
 
     # A repayment debits the receiving account (asset increase); a
     # disbursement/expense/withdrawal credits it (asset decrease).
     side = TransactionEntry.DEBIT if direction == 'CREDIT' else TransactionEntry.CREDIT
+
+    # Fee payments created by the bank-charge Link pathway
+    # (_resolve_bank_charge_pair, banks/views.py — pending_bank_payment set
+    # AND netted_with set) must never enter the candidate pool: their fee
+    # was embedded inside the bigger bank line the link already consumed,
+    # so no separate statement line for the fee exists or ever will — every
+    # rerun would otherwise resurface them as false erp_only exceptions.
+    # Resolve-to-expense payments (pending_bank_payment set, netted_with
+    # None) are deliberately NOT excluded — their bank line is still
+    # unmatched and the payment must be offered so the match can close it.
+    fee_link_txn_ids = ReconciliationException.objects.filter(
+        pending_bank_payment__isnull=False,
+        netted_with__isnull=False,
+        pending_bank_payment__journal_entry_id__isnull=False,
+    ).values_list('pending_bank_payment__journal_entry_id', flat=True)
 
     entries = (
         TransactionEntry.objects
@@ -384,6 +408,7 @@ def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exc
             transaction__is_deleted=False,
         )
         .exclude(transaction_id__in=exclude_payment_ids)
+        .exclude(transaction_id__in=fee_link_txn_ids)
         .select_related('transaction', 'transaction__created_by', 'transaction__created_by__branch')
     )
 

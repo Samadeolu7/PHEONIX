@@ -1636,7 +1636,8 @@ class LinkCandidatesView(generics.ListAPIView):
                 Q(exception_type='bank_only', direction=opposite, bank_amount=amount)
                 | same_direction_erp_only
             )
-        else:  # erp_only — only a bank_only, same-direction candidate is valid
+        else:  # erp_only — a same-direction bank_only, or an opposite-direction erp_only
+            opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
             bank_only_same_direction = Q(exception_type='bank_only', direction=source.direction)
             if source.direction == 'DEBIT':
                 bank_only_same_direction &= Q(
@@ -1644,7 +1645,14 @@ class LinkCandidatesView(generics.ListAPIView):
                 )
             else:
                 bank_only_same_direction &= Q(bank_amount=amount)
-            qs = qs.filter(bank_only_same_direction)
+            qs = qs.filter(
+                bank_only_same_direction
+                # Internal ERP movement netting to zero (e.g. a petty-cash
+                # relink posting both legs against the bank GL) — see
+                # is_valid_exception_pairing for why opposite-direction
+                # erp_only pairs are linkable.
+                | Q(exception_type='erp_only', direction=opposite, erp_amount=amount)
+            )
 
         return qs.order_by('-is_high_priority', '-created_at')
 
@@ -1654,7 +1662,7 @@ class LinkResolveExceptionsView(APIView):
     POST /api/banks/exceptions/link-resolve/
 
     Manually link two exceptions on the same bank account together and
-    resolve both at once. Two cases (see is_valid_exception_pairing,
+    resolve both at once. Three cases (see is_valid_exception_pairing,
     banks/reconciliation_utils.py):
       - bank_only + bank_only, opposite direction — a compensating-transfer
         scenario (money went to the wrong bank, then a manual transfer
@@ -1662,6 +1670,9 @@ class LinkResolveExceptionsView(APIView):
       - bank_only + erp_only, same direction — the bank line and the ERP
         payment plausibly failed to auto-match on reference/narration and
         are actually the same real transaction.
+      - erp_only + erp_only, opposite direction — an internal ERP movement
+        (e.g. a petty-cash relink) whose two legs net to zero against the
+        bank GL, with no bank statement line ever expected for either.
     Either pair may span different reconciliation dates on the same
     account, so this isn't nested under a single DailyReconciliation.
     Director-only, exact amount match only (no tolerance) — linking two
@@ -1722,9 +1733,11 @@ class LinkResolveExceptionsView(APIView):
             )
         if not is_valid_exception_pairing(exc_a, exc_b):
             return Response(
-                {'detail': 'These two exceptions cannot be linked — either two bank_only exceptions '
-                           'with opposite directions (a compensating transfer), or a bank_only and an '
-                           'erp_only exception with the same direction (a missed auto-match).'},
+                {'detail': 'These two exceptions cannot be linked — two bank_only exceptions '
+                           'with opposite directions (a compensating transfer), a bank_only and an '
+                           'erp_only exception with the same direction (a missed auto-match), or two '
+                           'erp_only exceptions with opposite directions (an internal ERP movement '
+                           'that nets to zero with no bank line).'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if exc_a.resolve_amount != exc_b.resolve_amount:
