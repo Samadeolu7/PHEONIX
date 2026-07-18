@@ -36,16 +36,29 @@ that's what this command finds and repairs.
   2. REPAIR (--apply only): unmatch() every confirmed victim — the
      existing, audited, non-destructive action (ReconciliationBankTransaction
      .unmatch(), banks/models.py) that frees the ERP payment and reopens the
-     bank line as a bank_only exception — then re-run matching
-     (banks/tasks.py's run_reconciliation_match, called synchronously, same
-     as the tests in banks/test_tasks.py do) for every DailyReconciliation
-     date touched, so the now-fixed Java scorer re-derives each correct
-     exact-day pairing on its own. No manual re-Linking needed.
+     bank line as a bank_only exception — then queue a re-run (via .delay(),
+     same as the "Re-run matching" button — banks/tasks.py's
+     run_reconciliation_match must never be called synchronously here, since
+     Bank-Recon is only reachable from the celery_worker container) for
+     every DailyReconciliation date touched, so the now-fixed Java scorer
+     re-derives each correct exact-day pairing on its own.
+
+--include-ambiguous additionally unmatches the "No exact-day candidate" and
+"Ambiguous (>1 candidate)" buckets. Those are left alone by default because
+my own amount+date-only heuristic genuinely can't tell them apart — but
+re-running them through Java's FULL scorer (narration + reference +
+tolerance, not just amount+date) is safe either way: if Java can
+disambiguate, it fixes them properly; if it can't, they correctly surface
+as open exceptions instead of silently staying on a possibly-wrong old
+match. Never worse than leaving them as-is, just a much bigger action (more
+unmatches, more notifications, more Java calls) — hence the separate flag
+rather than doing it by default.
 
 Usage:
     python manage.py repair_adjacent_day_match_cascade --user-id <id> --dry-run
     python manage.py repair_adjacent_day_match_cascade --user-id <id> --apply
     python manage.py repair_adjacent_day_match_cascade --user-id <id> --apply --bank-account-id <id>
+    python manage.py repair_adjacent_day_match_cascade --user-id <id> --apply --include-ambiguous
 
 Always run --dry-run first and review the report before --apply.
 """
@@ -71,6 +84,11 @@ class Command(BaseCommand):
         parser.add_argument('--apply', action='store_true', help='Actually unmatch and re-run matching (default is a dry-run report).')
         parser.add_argument('--dry-run', action='store_true', help='Preview only — the default behaviour; this flag is accepted for explicitness and does not change anything.')
         parser.add_argument('--bank-account-id', type=int, default=None, help='Restrict to a single bank account.')
+        parser.add_argument(
+            '--include-ambiguous', action='store_true',
+            help='Also unmatch the "no exact-day candidate" and "ambiguous" buckets and let '
+                 "Java's full scorer (narration/reference, not just amount+date) re-derive them on rerun.",
+        )
 
     def handle(self, *args, **options):
         from datetime import timedelta
@@ -126,9 +144,9 @@ class Command(BaseCommand):
                 value_date=erp_date, amount=tx.amount,
             ))
             if len(candidates) == 0:
-                no_candidate.append(tx)
+                no_candidate.append((tx, erp_date))
             elif len(candidates) > 1:
-                ambiguous.append(tx)
+                ambiguous.append((tx, erp_date))
             else:
                 confirmed.append((tx, candidates[0], erp_date))
 
@@ -153,26 +171,31 @@ class Command(BaseCommand):
 
         if ambiguous:
             self.stdout.write('Ambiguous — more than one same-day/amount candidate, needs manual review:')
-            for tx in ambiguous:
+            for tx, _erp_date in ambiguous:
                 self.stdout.write(f'  bank_tx id={tx.id} ({tx.bank_account} — {tx.direction} {tx.amount} on {tx.value_date})')
             self.stdout.write('')
 
+        include_ambiguous = options['include_ambiguous']
+        to_unmatch = [(tx, erp_date) for tx, sibling, erp_date in confirmed]
+        if include_ambiguous:
+            to_unmatch += no_candidate + ambiguous
+
         if not apply_changes:
-            if confirmed:
-                touched_dates = self._touched_dates(confirmed)
-                self.stdout.write(f'Would unmatch {len(confirmed)} transaction(s) and re-run matching for {len(touched_dates)} reconciliation date(s).')
+            if to_unmatch:
+                touched_dates = self._touched_dates(to_unmatch)
+                self.stdout.write(f'Would unmatch {len(to_unmatch)} transaction(s) and re-run matching for {len(touched_dates)} reconciliation date(s).')
             return
 
-        if confirmed:
-            self.stdout.write('Unmatching confirmed cascade victims...')
-            for tx, sibling, erp_date in confirmed:
+        if to_unmatch:
+            self.stdout.write(f'Unmatching {len(to_unmatch)} transaction(s)...')
+            for tx, erp_date in to_unmatch:
                 try:
                     tx.unmatch(acting_user, REPAIR_REASON)
                     self.stdout.write(f'  unmatched bank_tx id={tx.id}')
                 except ValidationError as exc:
                     self.stdout.write(self.style.WARNING(f'  skipped bank_tx id={tx.id}: {exc}'))
 
-        touched_dates = self._touched_dates(confirmed)
+        touched_dates = self._touched_dates(to_unmatch)
 
         # Recovery: a previous --apply may have unmatched rows but failed
         # before (or without) queuing their rerun — e.g. run from a
@@ -219,16 +242,16 @@ class Command(BaseCommand):
             queued += 1
 
         self.stdout.write(self.style.SUCCESS(
-            f'\nDone — {len(confirmed)} unmatched this run, {queued} reconciliation date(s) queued for re-run. '
+            f'\nDone — {len(to_unmatch)} unmatched this run, {queued} reconciliation date(s) queued for re-run. '
             f'Check each recon\'s status/exception counts once the celery_worker has processed the queue.'
         ))
 
     @staticmethod
-    def _touched_dates(confirmed):
+    def _touched_dates(tx_erp_date_pairs):
         """Every (bank_account_id, date) pair whose reconciliation needs a rerun —
         both the wrongly-matched line's own date and the freed ERP payment's date."""
         dates = set()
-        for tx, sibling, erp_date in confirmed:
+        for tx, erp_date in tx_erp_date_pairs:
             dates.add((tx.bank_account_id, tx.value_date))
             dates.add((tx.bank_account_id, erp_date))
         return dates

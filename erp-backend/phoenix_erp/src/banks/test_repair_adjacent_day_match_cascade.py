@@ -164,6 +164,47 @@ class RepairAdjacentDayMatchCascadeTests(TestCase):
         self.assertTrue(tx.matched)
         self.assertIn('Ambiguous', out.getvalue())
 
+    def test_include_ambiguous_unmatches_no_candidate_and_ambiguous_buckets(self):
+        # No-candidate case
+        erp_a = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        no_candidate_tx = self._bank_tx(
+            date(2026, 7, 14), Decimal('50.00'), matched=True,
+            matched_erp_payment_id=erp_a.id, posting_lag_days=-1,
+        )
+        # Ambiguous case (different amount so it doesn't collide with the above)
+        erp_b = self._erp_payment(date(2026, 7, 15), Decimal('75.00'))
+        ambiguous_tx = self._bank_tx(
+            date(2026, 7, 14), Decimal('75.00'), matched=True,
+            matched_erp_payment_id=erp_b.id, posting_lag_days=-1,
+        )
+        self._bank_tx(date(2026, 7, 15), Decimal('75.00'), bank_ref='dup-a')
+        self._bank_tx(date(2026, 7, 15), Decimal('75.00'), bank_ref='dup-b')
+
+        with patch('banks.tasks.run_reconciliation_match'):
+            out = StringIO()
+            call_command(
+                'repair_adjacent_day_match_cascade', f'--user-id={self.director.id}',
+                '--apply', '--include-ambiguous', stdout=out,
+            )
+
+        no_candidate_tx.refresh_from_db()
+        ambiguous_tx.refresh_from_db()
+        self.assertFalse(no_candidate_tx.matched)
+        self.assertFalse(ambiguous_tx.matched)
+        self.assertIn('2 unmatched this run', out.getvalue())
+
+    def test_default_leaves_no_candidate_and_ambiguous_buckets_matched(self):
+        erp = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        no_candidate_tx = self._bank_tx(
+            date(2026, 7, 14), Decimal('50.00'), matched=True,
+            matched_erp_payment_id=erp.id, posting_lag_days=-1,
+        )
+
+        call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=StringIO())
+
+        no_candidate_tx.refresh_from_db()
+        self.assertTrue(no_candidate_tx.matched)
+
     def test_leaves_alone_when_erp_amount_does_not_exactly_match(self):
         # A legitimate reference/tolerance-based match with a near amount —
         # not the exact-tier tie bug, must not be touched.
