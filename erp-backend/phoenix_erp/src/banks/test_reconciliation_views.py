@@ -1742,6 +1742,29 @@ class BulkCleanUpStrandedPairsTests(TestCase):
         resolved_exc.refresh_from_db()
         self.assertTrue(resolved_exc.resolved)
 
+    def test_ambiguous_pairs_include_full_candidate_detail(self):
+        resolved_exc = self._standalone_resolved(self.recon)
+        candidate_a = self._unresolved(self.recon, bank_narration='candidate A')
+        candidate_b = self._unresolved(
+            self.recon, bank_narration='candidate B', bank_amount=Decimal('140010.00'),
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'dry_run': True}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(len(resp.data['ambiguous']), 1)
+        row = resp.data['ambiguous'][0]
+        self.assertEqual(row['resolved_exception_id'], resolved_exc.id)
+        self.assertEqual(row['exception_type'], 'erp_only')
+        self.assertEqual(row['amount'], '140000.00')
+        candidate_ids = {c['id'] for c in row['candidates']}
+        self.assertEqual(candidate_ids, {candidate_a.id, candidate_b.id})
+        by_id = {c['id']: c for c in row['candidates']}
+        self.assertEqual(by_id[candidate_a.id]['fee_amount'], '20.00')
+        self.assertEqual(by_id[candidate_b.id]['fee_amount'], '10.00')
+        self.assertEqual(by_id[candidate_a.id]['narration'], 'candidate A')
+
     def test_clean_up_works_across_multiple_bank_accounts_in_one_call(self):
         other_account = self._make_bank_account('0000061', 'Clean Up Account B', '990')
         other_recon = self._make_recon(other_account, 'cleanup_b.csv')

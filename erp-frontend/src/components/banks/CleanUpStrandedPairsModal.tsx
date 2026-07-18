@@ -1,7 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { X, AlertTriangle } from 'lucide-react';
+import { X, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
-import { MIN_REASON_LENGTH, type BulkCleanUpStrandedPairsPreview, type BulkCleanUpStrandedPairsResult } from '../../types/banks';
+import {
+  MIN_REASON_LENGTH,
+  type AmbiguousStrandedException,
+  type BulkCleanUpStrandedPairsPreview,
+  type BulkCleanUpStrandedPairsResult,
+} from '../../types/banks';
 
 interface CleanUpStrandedPairsModalProps {
   onClose: () => void;
@@ -9,7 +14,8 @@ interface CleanUpStrandedPairsModalProps {
   onError: (message: string) => void;
 }
 
-function formatNaira(value: string): string {
+function formatNaira(value: string | null): string {
+  if (value === null) return '—';
   return `₦${parseFloat(value).toLocaleString()}`;
 }
 
@@ -20,6 +26,12 @@ function formatNaira(value: string): string {
  * see UnresolveExceptionView) and reopens + properly links them. Always
  * previews first (dry_run) — this reopens exceptions the team already
  * closed, with no per-pair confirmation once the real run starts.
+ *
+ * Ambiguous exceptions (more than one plausible candidate) are never
+ * auto-linked — that's exactly the case a wrong guess could misfile real
+ * money. Instead each one is listed with its full candidate set so a
+ * director can review and manually pick+link the right one, right here,
+ * without hunting the exception down elsewhere in the app.
  */
 export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps> = ({
   onClose,
@@ -32,23 +44,30 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const [ambiguousList, setAmbiguousList] = useState<AmbiguousStrandedException[]>([]);
+  const [showAmbiguous, setShowAmbiguous] = useState(false);
+  const [selectedCandidate, setSelectedCandidate] = useState<Record<number, number>>({});
+  const [linkingId, setLinkingId] = useState<number | null>(null);
+  const [manuallyLinkedCount, setManuallyLinkedCount] = useState(0);
+
+  const loadPreview = () => {
     setLoading(true);
-    reconciliationService
+    return reconciliationService
       .bulkCleanUpStrandedPairsPreview()
       .then((data) => {
-        if (!cancelled) setPreview(data);
+        setPreview(data);
+        setAmbiguousList(data.ambiguous);
       })
       .catch((err: any) => {
-        if (!cancelled) onError(err.message || 'Failed to preview the clean-up scan');
+        onError(err.message || 'Failed to preview the clean-up scan');
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
+  };
+
+  useEffect(() => {
+    loadPreview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -65,14 +84,52 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
     }
   };
 
+  const handleManualLink = async (row: AmbiguousStrandedException) => {
+    const candidateId = selectedCandidate[row.resolved_exception_id];
+    const candidate = row.candidates.find((c) => c.id === candidateId);
+    if (!candidate || notes.trim().length < MIN_REASON_LENGTH) return;
+
+    setLinkingId(row.resolved_exception_id);
+    try {
+      await reconciliationService.unresolveException(row.resolved_exception_id, {
+        reason: `Manually reviewed via Clean Up: ${notes}`,
+      });
+
+      if (candidate.fee_amount) {
+        const bankOnlyId = row.exception_type === 'bank_only' ? row.resolved_exception_id : candidate.id;
+        const erpOnlyId = row.exception_type === 'erp_only' ? row.resolved_exception_id : candidate.id;
+        await reconciliationService.linkResolveBankCharge({
+          bank_only_exception_id: bankOnlyId,
+          erp_only_exception_id: erpOnlyId,
+          resolution_notes: notes,
+        });
+      } else {
+        await reconciliationService.linkResolveExceptions({
+          exception_a_id: row.resolved_exception_id,
+          exception_b_id: candidate.id,
+          resolution_notes: notes,
+        });
+      }
+
+      setAmbiguousList((prev) => prev.filter((r) => r.resolved_exception_id !== row.resolved_exception_id));
+      setManuallyLinkedCount((n) => n + 1);
+    } catch (err: any) {
+      onError(err.message || 'Failed to link this pair');
+    } finally {
+      setLinkingId(null);
+    }
+  };
+
   const handleDone = () => {
     onSuccess();
     onClose();
   };
 
+  const notesReady = notes.trim().length >= MIN_REASON_LENGTH;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold text-gray-900">Clean Up Stranded Pairs</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -90,49 +147,39 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
                 before it was properly paired against its real counterpart — while that counterpart
                 is still sitting unresolved on the same bank account. Reopens each one and links it
                 properly: an exact amount match nets with no fee; a small bank-deducted difference
-                creates a real "Bank Charges" payment for a director to approve separately. Only
-                unambiguous pairs are touched — anything with more than one plausible match is left
-                for manual review. Runs across every bank account at once.
+                creates a real "Bank Charges" payment for a director to approve separately. Runs
+                across every bank account at once.
               </p>
 
-              {preview.would_clean_up_count === 0 ? (
+              {preview.would_clean_up_count === 0 && ambiguousList.length === 0 ? (
                 <div className="bg-gray-50 rounded-md p-3 text-sm text-gray-700">
                   Nothing to clean up right now.
-                  {preview.ambiguous_count > 0 && (
-                    <span className="block mt-1 text-amber-700">
-                      {preview.ambiguous_count} standalone-resolved exception(s) have more than one
-                      plausible match — review those manually via Unresolve + Link.
-                    </span>
-                  )}
                 </div>
               ) : (
                 <>
-                  <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-sm text-amber-900">
-                    <p>
-                      <strong>{preview.would_clean_up_count}</strong> pair(s) would be reopened and
-                      linked.
-                    </p>
-                    {preview.ambiguous_count > 0 && (
-                      <p className="mt-1 text-xs text-amber-700">
-                        {preview.ambiguous_count} left as ambiguous for manual review.
-                      </p>
-                    )}
-                  </div>
-                  <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-40 overflow-y-auto">
-                    {preview.would_clean_up.map((p) => (
-                      <li
-                        key={`${p.resolved_exception_id}-${p.unresolved_exception_id}`}
-                        className="px-3 py-2 text-sm flex justify-between"
-                      >
-                        <span className="text-gray-700">
-                          #{p.resolved_exception_id} ↔ #{p.unresolved_exception_id}
-                        </span>
-                        <span className="font-medium text-amber-700">
-                          {p.fee_amount ? `Fee ${formatNaira(p.fee_amount)}` : 'Exact match'}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                  {preview.would_clean_up_count > 0 && (
+                    <>
+                      <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-sm text-amber-900">
+                        <strong>{preview.would_clean_up_count}</strong> unambiguous pair(s) would be
+                        reopened and linked automatically.
+                      </div>
+                      <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-40 overflow-y-auto">
+                        {preview.would_clean_up.map((p) => (
+                          <li
+                            key={`${p.resolved_exception_id}-${p.unresolved_exception_id}`}
+                            className="px-3 py-2 text-sm flex justify-between"
+                          >
+                            <span className="text-gray-700">
+                              #{p.resolved_exception_id} ↔ #{p.unresolved_exception_id}
+                            </span>
+                            <span className="font-medium text-amber-700">
+                              {p.fee_amount ? `Fee ${formatNaira(p.fee_amount)}` : 'Exact match'}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -142,11 +189,84 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
                       type="text"
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
-                      placeholder={`Explain the clean-up (min ${MIN_REASON_LENGTH} chars) — applied to every pair`}
+                      placeholder={`Explain the clean-up (min ${MIN_REASON_LENGTH} chars) — applied to every pair you confirm or link below`}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                   </div>
                 </>
+              )}
+
+              {ambiguousList.length > 0 && (
+                <div className="border border-amber-200 rounded-md overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShowAmbiguous((v) => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2 bg-amber-50 text-sm font-medium text-amber-900"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      {showAmbiguous ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      {ambiguousList.length} ambiguous — needs manual review
+                    </span>
+                    {manuallyLinkedCount > 0 && (
+                      <span className="text-green-700">{manuallyLinkedCount} linked this session</span>
+                    )}
+                  </button>
+
+                  {showAmbiguous && (
+                    <ul className="divide-y divide-gray-200 max-h-72 overflow-y-auto">
+                      {ambiguousList.map((row) => (
+                        <li key={row.resolved_exception_id} className="p-3">
+                          <p className="text-sm text-gray-900">
+                            #{row.resolved_exception_id} · {row.exception_type} {row.direction} ·{' '}
+                            {formatNaira(row.amount)} on {row.date || '—'}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate mb-2">{row.narration || '—'}</p>
+
+                          <div className="space-y-1">
+                            {row.candidates.map((c) => (
+                              <label
+                                key={c.id}
+                                className="flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-gray-50 cursor-pointer text-sm"
+                              >
+                                <input
+                                  type="radio"
+                                  name={`candidate-${row.resolved_exception_id}`}
+                                  checked={selectedCandidate[row.resolved_exception_id] === c.id}
+                                  onChange={() =>
+                                    setSelectedCandidate({ ...selectedCandidate, [row.resolved_exception_id]: c.id })
+                                  }
+                                  className="mt-0.5"
+                                />
+                                <span className="min-w-0">
+                                  <span className="block text-gray-900 truncate">
+                                    #{c.id} · {formatNaira(c.amount)} on {c.date || '—'}
+                                    {c.fee_amount && (
+                                      <span className="text-purple-700 font-medium"> · Fee {formatNaira(c.fee_amount)}</span>
+                                    )}
+                                  </span>
+                                  <span className="block text-gray-500 truncate">{c.narration || '—'}</span>
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+
+                          <button
+                            onClick={() => handleManualLink(row)}
+                            disabled={
+                              linkingId === row.resolved_exception_id ||
+                              !selectedCandidate[row.resolved_exception_id] ||
+                              !notesReady
+                            }
+                            title={!notesReady ? 'Fill in Notes above first' : undefined}
+                            className="mt-2 px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50"
+                          >
+                            {linkingId === row.resolved_exception_id ? 'Linking…' : 'Unresolve & Link Selected'}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
             </>
           )}
@@ -154,7 +274,8 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
           {result && (
             <div className="space-y-3">
               <div className="bg-green-50 border border-green-200 rounded-md p-3 text-sm text-green-900">
-                Reopened and linked <strong>{result.cleaned_up_count}</strong> pair(s).
+                Reopened and linked <strong>{result.cleaned_up_count}</strong> pair(s) automatically
+                {manuallyLinkedCount > 0 && <> plus <strong>{manuallyLinkedCount}</strong> linked manually above</>}.
               </div>
               {result.failed_count > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-md p-3 text-sm text-red-900 flex gap-2">
@@ -173,15 +294,15 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
           {!result ? (
             <>
               <button
-                onClick={onClose}
+                onClick={manuallyLinkedCount > 0 ? handleDone : onClose}
                 className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50"
               >
-                Cancel
+                {manuallyLinkedCount > 0 ? 'Close' : 'Cancel'}
               </button>
               {preview && preview.would_clean_up_count > 0 && (
                 <button
                   onClick={handleConfirm}
-                  disabled={submitting || notes.trim().length < MIN_REASON_LENGTH}
+                  disabled={submitting || !notesReady}
                   className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50"
                 >
                   {submitting ? 'Cleaning up…' : `Clean Up ${preview.would_clean_up_count} Pair(s)`}

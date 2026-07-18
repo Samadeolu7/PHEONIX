@@ -2153,6 +2153,33 @@ def _clean_up_stranded_pair(request, resolved_exc, unresolved_exc, fee, resoluti
         return {'fee_amount': None, 'payment_id': None}
 
 
+def _serialize_exception_summary(exc, fee=None):
+    """Compact shape for one exception inside an ambiguous-pair candidate
+    list — just enough for a director to visually tell candidates apart
+    (amount, narration, date) without a second round-trip per candidate."""
+    return {
+        'id': exc.id,
+        'exception_type': exc.exception_type,
+        'direction': exc.direction,
+        'amount': str(exc.resolve_amount) if exc.resolve_amount is not None else None,
+        'narration': exc.bank_narration or exc.erp_narration or '',
+        'date': str(exc.bank_date or exc.erp_date) if (exc.bank_date or exc.erp_date) else None,
+        'fee_amount': str(fee) if fee is not None else None,
+    }
+
+
+def _serialize_ambiguous_exception(resolved_exc, candidates):
+    """One standalone-resolved exception plus every viable-but-not-unique
+    candidate found for it — enough detail for a director to review in the
+    Clean Up modal and manually pick the right one, rather than the backend
+    guessing at something that could misfile real money."""
+    return {
+        **_serialize_exception_summary(resolved_exc),
+        'resolved_exception_id': resolved_exc.id,
+        'candidates': [_serialize_exception_summary(c, fee) for c, fee in candidates],
+    }
+
+
 class BulkCleanUpStrandedPairsView(APIView):
     """
     POST /api/banks/exceptions/bulk-clean-up-stranded-pairs/
@@ -2219,6 +2246,7 @@ class BulkCleanUpStrandedPairsView(APIView):
             reconciliation__in=DailyReconciliation.objects.for_user(request.user)
         )
         pairs, ambiguous = find_stranded_resolved_pairs(scoped_qs)
+        ambiguous_detail = [_serialize_ambiguous_exception(r, candidates) for r, candidates in ambiguous]
 
         if dry_run:
             return Response({
@@ -2231,7 +2259,8 @@ class BulkCleanUpStrandedPairsView(APIView):
                     for r, u, fee in pairs
                 ],
                 'ambiguous_count': len(ambiguous),
-                'ambiguous_exception_ids': [e.id for e in ambiguous],
+                'ambiguous_exception_ids': [r.id for r, _candidates in ambiguous],
+                'ambiguous': ambiguous_detail,
             })
 
         cleaned_up = []
@@ -2256,7 +2285,8 @@ class BulkCleanUpStrandedPairsView(APIView):
             'failed_count': len(failed),
             'failed': failed,
             'ambiguous_count': len(ambiguous),
-            'ambiguous_exception_ids': [e.id for e in ambiguous],
+            'ambiguous_exception_ids': [r.id for r, _candidates in ambiguous],
+            'ambiguous': ambiguous_detail,
         }, status=status.HTTP_201_CREATED)
 
 

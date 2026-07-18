@@ -554,11 +554,27 @@ interface BulkCleanUpStrandedPairResult {
   fee_amount: string | null;
 }
 
+export interface StrandedExceptionCandidate {
+  id: number;
+  exception_type: 'bank_only' | 'erp_only' | 'amount_diff';
+  direction: 'CREDIT' | 'DEBIT';
+  amount: string | null;
+  narration: string;
+  date: string | null;
+  fee_amount: string | null;
+}
+
+export interface AmbiguousStrandedException extends StrandedExceptionCandidate {
+  resolved_exception_id: number;
+  candidates: StrandedExceptionCandidate[];
+}
+
 export interface BulkCleanUpStrandedPairsPreview {
   would_clean_up_count: number;
   would_clean_up: BulkCleanUpStrandedPairResult[];
   ambiguous_count: number;
   ambiguous_exception_ids: number[];
+  ambiguous: AmbiguousStrandedException[];
 }
 
 export interface BulkCleanUpStrandedPairsResult {
@@ -568,6 +584,7 @@ export interface BulkCleanUpStrandedPairsResult {
   failed: { resolved_exception_id: number; unresolved_exception_id: number; detail: string }[];
   ambiguous_count: number;
   ambiguous_exception_ids: number[];
+  ambiguous: AmbiguousStrandedException[];
 }
 
 export interface DailyReconciliation {

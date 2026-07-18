@@ -221,7 +221,11 @@ def find_stranded_resolved_pairs(scoped_qs):
 
     Returns (pairs, ambiguous):
       pairs      — list of (resolved_exc, unresolved_exc, fee_or_None) tuples
-      ambiguous  — standalone-resolved exceptions with 0 or >1 viable candidates
+      ambiguous  — list of (resolved_exc, [(candidate_exc, fee_or_None), ...])
+                   tuples — standalone-resolved exceptions with >1 viable
+                   candidate, each with the full candidate list so a director
+                   can review and manually pick the right one (see
+                   BulkCleanUpStrandedPairsView's dry-run response)
     """
     standalone_resolved_qs = scoped_qs.filter(
         exception_type__in=('bank_only', 'erp_only'), resolved=True,
@@ -271,7 +275,7 @@ def find_stranded_resolved_pairs(scoped_qs):
                 other, fee = viable[0]
                 pairs.append((resolved_exc, other, fee))
             elif viable:
-                ambiguous.append(resolved_exc)
+                ambiguous.append((resolved_exc, viable))
             # No viable candidate at all: nothing to clean up, left alone —
             # not reported, since this is the ordinary/expected case for
             # the vast majority of legitimately standalone-resolved exceptions.
