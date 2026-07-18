@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, AlertTriangle, MessageSquare } from 'lucide-react';
+import { X, AlertTriangle, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import type {
   BulkCreateOfficerEvidenceThreadsPreview,
@@ -23,6 +23,12 @@ function formatNaira(value: string): string {
  * genuinely unexplained set worth a formal evidence request. Always
  * previews first — this messages real staff, with no per-thread
  * confirmation once the real run starts.
+ *
+ * Each officer's row expands to the full item list (amount, date,
+ * narration) with a checkbox per item, so a director can drop specific
+ * items before sending — e.g. one they already know the answer for. An
+ * officer whose every item gets unchecked is skipped entirely rather than
+ * sent an empty thread.
  */
 export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceThreadsModalProps> = ({
   onClose,
@@ -33,6 +39,8 @@ export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceTh
   const [result, setResult] = useState<BulkCreateOfficerEvidenceThreadsResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [expandedOfficerId, setExpandedOfficerId] = useState<number | null>(null);
+  const [excludedItemIds, setExcludedItemIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -54,10 +62,19 @@ export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceTh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const toggleItem = (itemId: number) => {
+    setExcludedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
+
   const handleConfirm = async () => {
     setSubmitting(true);
     try {
-      const data = await reconciliationService.bulkCreateOfficerEvidenceThreads();
+      const data = await reconciliationService.bulkCreateOfficerEvidenceThreads(Array.from(excludedItemIds));
       setResult(data);
     } catch (err: any) {
       onError(err.message || 'Failed to create evidence request threads');
@@ -71,9 +88,16 @@ export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceTh
     onClose();
   };
 
+  const selectedItemCountFor = (row: BulkCreateOfficerEvidenceThreadsPreview['would_create'][number]) =>
+    row.items.filter((item) => !excludedItemIds.has(item.id)).length;
+
+  const officersStillIncluded = preview
+    ? preview.would_create.filter((row) => selectedItemCountFor(row) > 0).length
+    : 0;
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold text-gray-900">Request Evidence From Officers</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -89,10 +113,10 @@ export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceTh
               <p className="text-xs text-gray-500">
                 Finds unresolved erp_only exceptions with no plausible bank_only match anywhere on
                 the account — not the ambiguous/exact/fee-tolerant pairs Clean Up handles (those
-                already have real bank money nearby). For each officer with any, opens a Discussions
-                thread listing their items and asking them to attach evidence (bank slip, transfer
-                receipt, client confirmation). Run Clean Up first so this only targets what's
-                genuinely left unexplained.
+                already have real bank money nearby). Click a row to review the individual items
+                before sending — uncheck any you want to leave out (e.g. one you already know the
+                answer for). Run Clean Up first so this only targets what's genuinely left
+                unexplained.
               </p>
 
               {preview.would_create_count === 0 ? (
@@ -103,23 +127,63 @@ export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceTh
               ) : (
                 <>
                   <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-sm text-amber-900">
-                    <strong>{preview.would_create_count}</strong> officer(s) would receive an
-                    evidence-request thread.
+                    <strong>{officersStillIncluded}</strong> of {preview.would_create_count} officer(s)
+                    would receive an evidence-request thread.
                   </div>
-                  <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-64 overflow-y-auto">
-                    {preview.would_create.map((row) => (
-                      <li key={row.officer_id} className="px-3 py-2 text-sm flex items-center justify-between">
-                        <span className="min-w-0">
-                          <span className="block text-gray-900 truncate">{row.officer_name}</span>
-                          <span className="block text-gray-500 text-xs">
-                            {row.branch_name || '—'} · {row.item_count} item(s)
-                          </span>
-                        </span>
-                        <span className="font-medium text-amber-700 shrink-0 ml-2">
-                          {formatNaira(row.total_amount)}
-                        </span>
-                      </li>
-                    ))}
+                  <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-96 overflow-y-auto">
+                    {preview.would_create.map((row) => {
+                      const selectedCount = selectedItemCountFor(row);
+                      const expanded = expandedOfficerId === row.officer_id;
+                      return (
+                        <li key={row.officer_id}>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedOfficerId(expanded ? null : row.officer_id)}
+                            className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50"
+                          >
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              {expanded ? <ChevronDown className="w-4 h-4 shrink-0" /> : <ChevronRight className="w-4 h-4 shrink-0" />}
+                              <span className="min-w-0">
+                                <span className={`block text-left truncate ${selectedCount === 0 ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                                  {row.officer_name}
+                                </span>
+                                <span className="block text-left text-gray-500 text-xs">
+                                  {row.branch_name || '—'} · {selectedCount} of {row.item_count} item(s) selected
+                                </span>
+                              </span>
+                            </span>
+                            <span className="font-medium text-amber-700 shrink-0 ml-2">
+                              {formatNaira(row.total_amount)}
+                            </span>
+                          </button>
+
+                          {expanded && (
+                            <ul className="bg-gray-50 divide-y divide-gray-200 px-3 py-2 space-y-1">
+                              {row.items.map((item) => (
+                                <label
+                                  key={item.id}
+                                  className="flex items-start gap-2 py-1.5 cursor-pointer text-sm"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={!excludedItemIds.has(item.id)}
+                                    onChange={() => toggleItem(item.id)}
+                                    className="mt-0.5 shrink-0"
+                                  />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="flex items-center justify-between">
+                                      <span className="text-gray-900">{formatNaira(item.amount || '0')}</span>
+                                      <span className="text-gray-500 text-xs">{item.date || '—'}</span>
+                                    </span>
+                                    <span className="block text-gray-500 truncate">{item.narration || '—'}</span>
+                                  </span>
+                                </label>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </>
               )}
@@ -132,6 +196,9 @@ export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceTh
                 <MessageSquare className="h-4 w-4 shrink-0 mt-0.5" />
                 <span>
                   Created <strong>{result.created_count}</strong> evidence-request thread(s).
+                  {result.skipped_count > 0 && (
+                    <> Skipped {result.skipped_count} officer(s) whose items were all left out.</>
+                  )}
                 </span>
               </div>
               {result.failed_count > 0 && (
@@ -156,10 +223,10 @@ export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceTh
               {preview && preview.would_create_count > 0 && (
                 <button
                   onClick={handleConfirm}
-                  disabled={submitting}
+                  disabled={submitting || officersStillIncluded === 0}
                   className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50"
                 >
-                  {submitting ? 'Sending…' : `Send ${preview.would_create_count} Evidence Request(s)`}
+                  {submitting ? 'Sending…' : `Send ${officersStillIncluded} Evidence Request(s)`}
                 </button>
               )}
             </>

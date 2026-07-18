@@ -2448,13 +2448,21 @@ class BulkCreateOfficerEvidenceThreadsView(APIView):
     Unattributed exceptions (no officer recorded) are always excluded —
     there is no user to address a thread to.
 
-    Pass dry_run: true to preview which officers would receive a thread and
-    how many items/how much each covers, without creating anything.
+    Pass dry_run: true to preview which officers would receive a thread, how
+    many items/how much each covers, and the full per-item detail (amount,
+    date, narration) — without creating anything. Pass
+    excluded_exception_ids on the real run to leave specific items out of
+    whichever officer's thread they belong to (e.g. a director already
+    knows the answer for one and wants to handle it separately); an officer
+    whose every item gets excluded is skipped entirely rather than sent an
+    empty thread.
 
     Director-only (can_user_approve).
 
     Request body:
-      dry_run  (bool, optional, default false)
+      dry_run                   (bool, optional, default false)
+      excluded_exception_ids    (list[int], optional — leaves these specific
+                                  items out of the officer's thread)
     """
     permission_classes = [permissions.IsAuthenticated]
     permission_module = 'banks'
@@ -2470,16 +2478,28 @@ class BulkCreateOfficerEvidenceThreadsView(APIView):
         from .reconciliation_utils import find_unexplained_erp_only_by_officer
 
         dry_run = bool(request.data.get('dry_run', False))
+        excluded_ids = {int(i) for i in (request.data.get('excluded_exception_ids') or [])}
 
         scoped_qs = ReconciliationException.objects.filter(
             reconciliation__in=DailyReconciliation.objects.for_user(request.user)
         )
         by_officer = find_unexplained_erp_only_by_officer(scoped_qs)
 
+        if excluded_ids:
+            for bucket in by_officer.values():
+                bucket['exceptions'] = [exc for exc in bucket['exceptions'] if exc.id not in excluded_ids]
+
         previews = []
+        skipped = []
         for officer_id, bucket in by_officer.items():
             officer = bucket['officer']
             exceptions = bucket['exceptions']
+            if not exceptions:
+                skipped.append({
+                    'officer_id': officer_id,
+                    'officer_name': officer.get_full_name() or officer.username,
+                })
+                continue
             total = sum((exc.erp_amount or Decimal('0')) for exc in exceptions)
             previews.append({
                 'officer_id': officer_id,
@@ -2488,6 +2508,7 @@ class BulkCreateOfficerEvidenceThreadsView(APIView):
                 'item_count': len(exceptions),
                 'total_amount': str(total),
                 'exception_ids': [exc.id for exc in exceptions],
+                'items': [_serialize_exception_summary(exc) for exc in exceptions],
             })
         previews.sort(key=lambda p: Decimal(p['total_amount']), reverse=True)
 
@@ -2495,6 +2516,8 @@ class BulkCreateOfficerEvidenceThreadsView(APIView):
             return Response({
                 'would_create_count': len(previews),
                 'would_create': previews,
+                'skipped_count': len(skipped),
+                'skipped': skipped,
             })
 
         from pages.models import ModulePage
@@ -2523,6 +2546,8 @@ class BulkCreateOfficerEvidenceThreadsView(APIView):
         for officer_id, bucket in by_officer.items():
             officer = bucket['officer']
             exceptions = bucket['exceptions']
+            if not exceptions:
+                continue  # every item for this officer was excluded — already in `skipped`
             try:
                 thread = _create_officer_evidence_thread(request, page, officer, exceptions)
             except Exception as exc:
@@ -2535,6 +2560,8 @@ class BulkCreateOfficerEvidenceThreadsView(APIView):
         return Response({
             'created_count': len(created),
             'created': created,
+            'skipped_count': len(skipped),
+            'skipped': skipped,
             'failed_count': len(failed),
             'failed': failed,
         }, status=status.HTTP_201_CREATED)

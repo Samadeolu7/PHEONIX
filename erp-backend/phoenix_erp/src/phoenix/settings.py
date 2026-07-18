@@ -774,6 +774,16 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        # Without this, banks.parsers' logger.warning() calls for skipped
+        # statement rows fall through to the root logger — console only,
+        # not the persistent file — so they're lost the moment the
+        # container restarts, with no way to retroactively confirm whether
+        # a real transaction was silently dropped during parsing.
+        'banks': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }
 

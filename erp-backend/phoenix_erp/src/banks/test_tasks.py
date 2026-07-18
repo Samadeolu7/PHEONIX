@@ -472,6 +472,63 @@ class RunReconciliationMatchTests(TestCase):
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
+    def test_erp_only_exception_never_left_open_for_an_already_matched_payment(self, mock_post, mock_fetch):
+        # Reproduces the production race: a DIFFERENT reconciliation's run
+        # (overlapping window) already matched this exact ERP payment to a
+        # bank line before THIS run's Java response comes back — simulated
+        # by matching self.tx to loan_payment_id=555 directly, then having
+        # THIS run's outcome still report 555 as erp_only (Java worked off
+        # this run's own, now-stale, exclude_payment_ids snapshot). The old
+        # auto-resolve step only fired for exceptions that existed BEFORE a
+        # match was found in the SAME run — it could never catch this.
+        self.tx.matched = True
+        self.tx.matched_erp_payment_id = 555
+        self.tx.save(update_fields=['matched', 'matched_erp_payment_id'])
+
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 1,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'erp_only', 'direction': 'CREDIT',
+                    'loanPaymentId': 555, 'erpAmount': '5000.00',
+                    'erpNarration': 'Loan repayment LN-555', 'erpDate': '2026-07-01',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        exc = ReconciliationException.objects.get(reconciliation=self.recon, loan_payment_id=555)
+        self.assertTrue(exc.resolved)
+        self.assertIn('Auto-resolved', exc.resolution_notes)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_bank_only_exception_never_left_open_for_an_already_matched_transaction(self, mock_post, mock_fetch):
+        # Symmetric case: the bank line itself is already matched (by
+        # another run) by the time this run's response still reports it as
+        # bank_only.
+        self.tx.matched = True
+        self.tx.matched_erp_payment_id = 777
+        self.tx.save(update_fields=['matched', 'matched_erp_payment_id'])
+
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [
+                {
+                    'exceptionType': 'bank_only', 'direction': 'CREDIT',
+                    'bankTransactionId': str(self.tx.id), 'bankAmount': '5000.00',
+                    'bankNarration': 'Test credit', 'bankDate': '2026-07-01',
+                },
+            ],
+        })
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        exc = ReconciliationException.objects.get(reconciliation=self.recon, bank_transaction_id=self.tx.id)
+        self.assertTrue(exc.resolved)
+        self.assertIn('Auto-resolved', exc.resolution_notes)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
     def test_unmatched_bank_count_reflects_resolved_exceptions_not_raw_transaction_flag(self, mock_post, mock_fetch):
         # Regression test: resolving a bank_only exception (by a director,
         # or via auto-resolve) never flips ReconciliationBankTransaction

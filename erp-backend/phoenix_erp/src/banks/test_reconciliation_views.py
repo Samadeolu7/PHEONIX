@@ -2035,6 +2035,46 @@ class BulkCreateOfficerEvidenceThreadsTests(TestCase):
         self.assertEqual(resp.status_code, 201, resp.data)
         self.assertEqual(resp.data['created_count'], 0)
 
+    def test_dry_run_includes_full_item_detail(self):
+        exc = self._erp_only(self.officer_a, erp_amount=Decimal('12345.00'))
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'dry_run': True}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        row = resp.data['would_create'][0]
+        self.assertEqual(len(row['items']), 1)
+        item = row['items'][0]
+        self.assertEqual(item['id'], exc.id)
+        self.assertEqual(item['amount'], '12345.00')
+        self.assertIn('LN-9001', item['narration'])
+
+    def test_excluded_exception_ids_are_left_out_of_the_officers_thread(self):
+        keep = self._erp_only(self.officer_a, erp_amount=Decimal('10000.00'), erp_narration='keep this one')
+        skip = self._erp_only(self.officer_a, erp_amount=Decimal('20000.00'), erp_narration='skip this one')
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'excluded_exception_ids': [skip.id]}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['created_count'], 1)
+        self.assertEqual(resp.data['created'][0]['item_count'], 1)
+
+        thread = self.Thread.objects.get(pk=resp.data['created'][0]['thread_id'])
+        body = thread.messages.first().body
+        self.assertIn('keep this one', body)
+        self.assertNotIn('skip this one', body)
+
+    def test_officer_is_skipped_entirely_when_every_item_is_excluded(self):
+        exc = self._erp_only(self.officer_a)
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'excluded_exception_ids': [exc.id]}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['created_count'], 0)
+        self.assertEqual(resp.data['skipped_count'], 1)
+        self.assertEqual(resp.data['skipped'][0]['officer_id'], self.officer_a.id)
+        self.assertEqual(self.Thread.objects.count(), 0)
+
 
 class DualApprovalResolveTests(TestCase):
     """

@@ -606,16 +606,21 @@ export interface OfficerEvidenceThreadPreview {
   item_count: number;
   total_amount: string;
   exception_ids: number[];
+  items: StrandedExceptionCandidate[];
 }
 
 export interface BulkCreateOfficerEvidenceThreadsPreview {
   would_create_count: number;
   would_create: OfficerEvidenceThreadPreview[];
+  skipped_count: number;
+  skipped: { officer_id: number; officer_name: string }[];
 }
 
 export interface BulkCreateOfficerEvidenceThreadsResult {
   created_count: number;
   created: { officer_id: number; thread_id: number; item_count: number }[];
+  skipped_count: number;
+  skipped: { officer_id: number; officer_name: string }[];
   failed_count: number;
   failed: { officer_id: number; detail: string }[];
 }

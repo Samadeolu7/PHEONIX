@@ -273,8 +273,13 @@ export const reconciliationService = {
     return api.post(`${BASE_URL}/exceptions/bulk-create-officer-evidence-threads/`, { dry_run: true });
   },
 
-  async bulkCreateOfficerEvidenceThreads(): Promise<BulkCreateOfficerEvidenceThreadsResult> {
-    return api.post(`${BASE_URL}/exceptions/bulk-create-officer-evidence-threads/`, { dry_run: false });
+  async bulkCreateOfficerEvidenceThreads(
+    excludedExceptionIds: number[] = []
+  ): Promise<BulkCreateOfficerEvidenceThreadsResult> {
+    return api.post(`${BASE_URL}/exceptions/bulk-create-officer-evidence-threads/`, {
+      dry_run: false,
+      excluded_exception_ids: excludedExceptionIds,
+    });
   },
 
   /**

@@ -406,6 +406,33 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
             },
         )
 
+        # Defense-in-depth against a cross-reconciliation race: two dates'
+        # windows commonly overlap (±RECONCILIATION_MATCH_WINDOW_DAYS), so a
+        # DIFFERENT date's run can match this exact bank line/ERP payment
+        # between when this run's own exclude_payment_ids snapshot was taken
+        # (top of run_reconciliation_match) and this point — or this row can
+        # already be a stale exception from exactly that race on an earlier
+        # run. The auto-resolve step above only catches exceptions that
+        # existed BEFORE a match was found in the SAME run; it can't catch
+        # one born after, on a different run, for something already matched.
+        # Re-check live state right here instead of trusting the snapshot.
+        already_matched = False
+        if not exc_obj.resolved and exc_type == 'bank_only' and bank_transaction_id:
+            already_matched = ReconciliationBankTransaction.objects.filter(
+                pk=bank_transaction_id, matched=True,
+            ).exists()
+        elif not exc_obj.resolved and exc_type == 'erp_only' and loan_payment_id:
+            already_matched = ReconciliationBankTransaction.objects.filter(
+                matched_erp_payment_id=loan_payment_id, matched=True,
+            ).exists()
+
+        if already_matched:
+            exc_obj.resolved = True
+            exc_obj.resolved_at = now
+            exc_obj.resolution_notes = AUTO_RESOLVE_NOTE
+            exc_obj.save(update_fields=['resolved', 'resolved_at', 'resolution_notes'])
+            continue
+
         if created and exc_type in ('bank_only', 'erp_only'):
             _notify_directors_of_high_priority_exception(target_recon, exc_obj, directors)
 
