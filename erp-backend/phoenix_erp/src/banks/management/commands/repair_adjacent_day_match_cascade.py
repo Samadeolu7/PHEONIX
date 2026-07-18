@@ -16,7 +16,6 @@ The Java fix (graduated scoring: an exact-day match now strictly outscores
 a within-tolerance-but-not-exact one) stops this from happening again, but
 does nothing for pairs the old scorer already mismatched historically —
 that's what this command finds and repairs.
-
   1. DETECT: every currently-matched ReconciliationBankTransaction whose
      stored posting_lag_days is exactly +-1 (the only lag the old scorer
      could tie at the top score — anything further apart never scored the
