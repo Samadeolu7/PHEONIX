@@ -95,6 +95,18 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
 
   const selectedCandidate = candidates?.find((c) => c.id === selectedId) ?? null;
   const selectedFee = selectedCandidate ? bankChargeFee(exception, selectedCandidate) : null;
+  // Cross-account erp_only pair = a phantom inter-bank transfer (recorded
+  // in the ERP, but neither leg reached its bank). Resolving it also posts
+  // counter entries reversing the recorded transaction — each bank GL is
+  // otherwise left permanently misstated by the amount. Surfaced as an
+  // explicit warning so the director knows real GL entries will be posted.
+  const selectedPhantomTransfer =
+    selectedCandidate &&
+    exception.exception_type === 'erp_only' &&
+    selectedCandidate.exception_type === 'erp_only' &&
+    selectedCandidate.bank_account_name !== exception.bank_account_name
+      ? selectedCandidate
+      : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,10 +151,12 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
           <p className="text-xs text-gray-500">
             Linking normally requires an exact amount match. Two bank_only exceptions of opposite
             directions is a compensating transfer; a bank_only paired with an erp_only of the
-            same direction means they're likely the same transaction that failed to auto-match.
-            For a DEBIT bank_only/erp_only pair, a candidate up to ₦{FEE_LINK_MAX_AMOUNT} lower is
-            also shown — a bank-deducted transfer fee never recorded in the ERP — and linking it
-            also creates a pending "Bank Charges" payment for the fee, for a director to approve
+            same direction means they're likely the same transaction that failed to auto-match;
+            two erp_only exceptions of opposite directions are the legs of an internal or
+            inter-bank movement that never reached a bank statement. For a DEBIT
+            bank_only/erp_only pair, a candidate up to ₦{FEE_LINK_MAX_AMOUNT} lower is also
+            shown — a bank-deducted transfer fee never recorded in the ERP — and linking it also
+            creates a pending "Bank Charges" payment for the fee, for a director to approve
             separately. Both exceptions are resolved together either way.
           </p>
 
@@ -195,6 +209,11 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
                               {TYPE_LABELS[c.exception_type]}
                             </span>
                             <span className="text-xs text-gray-400">{c.direction}</span>
+                            {c.bank_account_name && c.bank_account_name !== exception.bank_account_name && (
+                              <span className="px-1.5 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                                {c.bank_account_name}
+                              </span>
+                            )}
                             {fee && (
                               <span className="px-1.5 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-800">
                                 Fee ₦{fee.fee.toLocaleString()} — bank charge
@@ -222,6 +241,18 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
               <strong>₦{selectedFee.fee.toLocaleString()}</strong> — bank_only #{selectedFee.bankExc.id} (₦
               {selectedFee.bankExc.bank_amount}) vs erp_only #{selectedFee.erpExc.id} (₦
               {selectedFee.erpExc.erp_amount}) — for a director to approve separately before it posts.
+            </div>
+          )}
+
+          {selectedPhantomTransfer && (
+            <div className="bg-amber-50 border border-amber-300 rounded-md p-3 text-xs text-amber-900">
+              These two are the legs of a recorded transfer between{' '}
+              <strong>{exception.bank_account_name}</strong> and{' '}
+              <strong>{selectedPhantomTransfer.bank_account_name}</strong> that never appeared in
+              either bank statement. Resolving them will also <strong>post counter entries</strong>{' '}
+              (a reversal of the recorded transaction) so both bank GLs return to matching the real
+              banks. If the money actually moved some other way, re-record the movement correctly
+              afterwards.
             </div>
           )}
 

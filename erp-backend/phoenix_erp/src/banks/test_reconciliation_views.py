@@ -982,6 +982,132 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
 
         self.assertEqual(resp.status_code, 400)
 
+    def _phantom_transfer_fixture(self):
+        """A recorded inter-bank transfer whose two legs both became
+        erp_only exceptions on DIFFERENT bank accounts — the Ajao Adijat
+        production case: one Transaction CRs the sending bank's GL and DRs
+        the receiving bank's GL, but neither bank statement shows the money."""
+        from transactions.models import Transaction, TransactionEntry, TransactionSeries
+
+        other_gl = Account.objects.create(
+            code='1498', name='Second Bank GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        other_bank = Bank.objects.create(bank_name='Second Bank', bank_code='994')
+        other_account = BankAccount.objects.create(
+            bank=other_bank, account_number='0000006', account_name='Second Account',
+            gl_account=other_gl, account_manager=self.director,
+        )
+        other_recon = DailyReconciliation.objects.create(
+            bank_account=other_account, reconciliation_date='2026-07-10',
+            uploaded_by=self.director, statement_file='bank_statements/flex2.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+        from datetime import date as date_cls
+
+        series = TransactionSeries.objects.create(code='TRF', description='Transfers')
+        txn = Transaction.objects.create(
+            series=series, date=date_cls(2026, 7, 10), description='Transfer: Ajao Adijat',
+            owner=self.director, branch=self.branch, created_by=self.director, approved=True,
+        )
+        TransactionEntry.objects.create(
+            transaction=txn, account=self.bank_account.gl_account,
+            side=TransactionEntry.CREDIT, amount=Decimal('3000.00'),
+        )
+        TransactionEntry.objects.create(
+            transaction=txn, account=other_gl,
+            side=TransactionEntry.DEBIT, amount=Decimal('3000.00'),
+        )
+
+        debit_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            loan_payment_id=txn.id, erp_amount=Decimal('3000.00'),
+            erp_narration='Transfer: Ajao Adijat', erp_date='2026-07-10',
+        )
+        credit_exc = ReconciliationException.objects.create(
+            reconciliation=other_recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=txn.id, erp_amount=Decimal('3000.00'),
+            erp_narration='Transfer: Ajao Adijat', erp_date='2026-07-10',
+        )
+        return txn, debit_exc, credit_exc, other_recon
+
+    def test_link_resolve_cross_account_phantom_transfer_reverses_the_transaction(self):
+        txn, debit_exc, credit_exc, other_recon = self._phantom_transfer_fixture()
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': debit_exc.id, 'exception_b_id': credit_exc.id,
+            'resolution_notes': 'Recorded against the wrong banks — money never moved through either',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        debit_exc.refresh_from_db()
+        credit_exc.refresh_from_db()
+        txn.refresh_from_db()
+        self.assertTrue(debit_exc.resolved)
+        self.assertTrue(credit_exc.resolved)
+        self.assertEqual(debit_exc.netted_with_id, credit_exc.id)
+        # The recorded transaction was reversed — counter entries posted so
+        # both bank GLs return to matching the real banks.
+        self.assertTrue(txn.is_reversed)
+        self.assertIsNotNone(txn.reversal_transaction_id)
+        self.assertEqual(resp.data['reversal_references'], [txn.reversal_transaction.reference_number])
+        self.assertIn('Counter entries posted', debit_exc.resolution_notes)
+
+    def test_link_resolve_cross_account_rejected_when_transaction_shape_does_not_match(self):
+        # The debit-side exception claims ₦3,000 but the transaction's
+        # actual GL entry is a different amount — evidence doesn't support
+        # the phantom-transfer story, so nothing may be auto-reversed.
+        txn, debit_exc, credit_exc, other_recon = self._phantom_transfer_fixture()
+        debit_exc.erp_amount = Decimal('9999.00')
+        debit_exc.save(update_fields=['erp_amount'])
+        credit_exc.erp_amount = Decimal('9999.00')
+        credit_exc.save(update_fields=['erp_amount'])
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': debit_exc.id, 'exception_b_id': credit_exc.id,
+            'resolution_notes': 'attempting a shape-mismatched phantom transfer link',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+        txn.refresh_from_db()
+        debit_exc.refresh_from_db()
+        self.assertFalse(txn.is_reversed)
+        self.assertFalse(debit_exc.resolved)
+
+    def test_link_resolve_cross_account_rejected_for_bank_only_pairs(self):
+        # Cross-account is ONLY for the phantom-transfer erp_only pair — a
+        # bank_only line always belongs to exactly one real statement.
+        _txn, _debit_exc, _credit_exc, other_recon = self._phantom_transfer_fixture()
+        bank_a = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_amount=Decimal('7000.00'), bank_narration='A', bank_date='2026-07-10',
+        )
+        bank_b = ReconciliationException.objects.create(
+            reconciliation=other_recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('7000.00'), bank_narration='B', bank_date='2026-07-10',
+        )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': bank_a.id, 'exception_b_id': bank_b.id,
+            'resolution_notes': 'attempting cross-account bank_only netting',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_link_candidates_for_erp_only_include_cross_account_opposite_erp_only(self):
+        _txn, debit_exc, credit_exc, _other_recon = self._phantom_transfer_fixture()
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.get(f'/api/banks/exceptions/{debit_exc.id}/link-candidates/')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        candidate_ids = {row['id'] for row in resp.data['results']}
+        self.assertIn(credit_exc.id, candidate_ids)
+        row = next(r for r in resp.data['results'] if r['id'] == credit_exc.id)
+        self.assertEqual(row['bank_account_name'], 'Second Bank - 0000006')
+
     def test_link_resolve_accepts_opposite_direction_erp_only_pair(self):
         # The internal-movement case found in production: a petty-cash
         # relink posts two opposite legs of the same amount against the

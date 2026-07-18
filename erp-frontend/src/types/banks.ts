@@ -414,6 +414,10 @@ export interface ReconciliationException {
   officer_name: string | null;
   erp_branch: number | null;
   erp_branch_name: string | null;
+  // Which bank account this exception lives on — Link candidates can now
+  // span accounts (phantom inter-bank transfer pairs), so the picker needs
+  // the label to tell two same-amount candidates apart.
+  bank_account_name: string | null;
   // A bank_only exception (bank has cash the ERP doesn't know about) is the
   // single most likely "cash collected but not recorded" signature
   is_high_priority: boolean;

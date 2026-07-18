@@ -1612,17 +1612,22 @@ class LinkCandidatesView(generics.ListAPIView):
         if amount is None or source.exception_type not in ('bank_only', 'erp_only'):
             return ReconciliationException.objects.none()
 
+        # NOT filtered to the source's own bank account here — the
+        # opposite-direction erp_only branch below may span accounts (the
+        # phantom inter-bank transfer case). Every other branch re-applies
+        # the same-account restriction itself.
         qs = ReconciliationException.objects.filter(
             reconciliation__in=DailyReconciliation.objects.for_user(self.request.user),
-            reconciliation__bank_account_id=source.reconciliation.bank_account_id,
             resolved=False,
-        ).exclude(pk=source.pk).select_related('reconciliation')
+        ).exclude(pk=source.pk).select_related('reconciliation', 'reconciliation__bank_account')
 
         from .reconciliation_utils import FEE_LINK_MAX_AMOUNT
 
+        same_account = Q(reconciliation__bank_account_id=source.reconciliation.bank_account_id)
+
         if source.exception_type == 'bank_only':
             opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
-            same_direction_erp_only = Q(exception_type='erp_only', direction=source.direction)
+            same_direction_erp_only = same_account & Q(exception_type='erp_only', direction=source.direction)
             if source.direction == 'DEBIT':
                 # Widened from exact match to include the bank-charge-fee
                 # case: erp_only amount up to FEE_LINK_MAX_AMOUNT lower than
@@ -1633,24 +1638,29 @@ class LinkCandidatesView(generics.ListAPIView):
             else:
                 same_direction_erp_only &= Q(erp_amount=amount)
             qs = qs.filter(
-                Q(exception_type='bank_only', direction=opposite, bank_amount=amount)
+                (same_account & Q(exception_type='bank_only', direction=opposite, bank_amount=amount))
                 | same_direction_erp_only
             )
         else:  # erp_only — a same-direction bank_only, or an opposite-direction erp_only
             opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
-            bank_only_same_direction = Q(exception_type='bank_only', direction=source.direction)
+            bank_only_same_direction = same_account & Q(
+                exception_type='bank_only', direction=source.direction,
+            )
             if source.direction == 'DEBIT':
                 bank_only_same_direction &= Q(
                     bank_amount__gte=amount, bank_amount__lte=amount + FEE_LINK_MAX_AMOUNT,
                 )
             else:
                 bank_only_same_direction &= Q(bank_amount=amount)
+            # Opposite-direction erp_only candidates deliberately span ALL
+            # the user's visible bank accounts, not just the source's own:
+            # same-account is the internal-movement case (petty-cash relink
+            # netting to zero on one GL), cross-account is the phantom
+            # inter-bank transfer case (recorded transfer neither of whose
+            # legs reached its bank — link-resolving that pair also posts
+            # counter entries; see LinkResolveExceptionsView).
             qs = qs.filter(
                 bank_only_same_direction
-                # Internal ERP movement netting to zero (e.g. a petty-cash
-                # relink posting both legs against the bank GL) — see
-                # is_valid_exception_pairing for why opposite-direction
-                # erp_only pairs are linkable.
                 | Q(exception_type='erp_only', direction=opposite, erp_amount=amount)
             )
 
@@ -1726,7 +1736,11 @@ class LinkResolveExceptionsView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        if exc_a.reconciliation.bank_account_id != exc_b.reconciliation.bank_account_id:
+        both_erp_only = {exc_a.exception_type, exc_b.exception_type} == {'erp_only'}
+        cross_account = exc_a.reconciliation.bank_account_id != exc_b.reconciliation.bank_account_id
+        if cross_account and not both_erp_only:
+            # Only the phantom-transfer pair below may span accounts — a
+            # bank_only line always belongs to exactly one real statement.
             return Response(
                 {'detail': 'Both exceptions must belong to the same bank account.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1747,22 +1761,56 @@ class LinkResolveExceptionsView(APIView):
             )
 
         now = tz.now()
-        from .reconciliation_utils import recompute_reconciliation_counts
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from django.db import transaction as db_transaction
 
-        for exc, other in ((exc_a, exc_b), (exc_b, exc_a)):
-            exc.resolved = True
-            exc.resolved_by = request.user
-            exc.resolved_at = now
-            exc.resolution_notes = resolution_notes
-            exc.netted_with = other
-            exc.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with'])
+        from .reconciliation_utils import phantom_transfer_transactions, recompute_reconciliation_counts
 
-        for recon in {exc_a.reconciliation, exc_b.reconciliation}:
-            recompute_reconciliation_counts(recon)
+        # A cross-account erp_only pair is a phantom inter-bank transfer:
+        # both legs recorded in the ERP, neither seen by its bank — each
+        # bank GL is misstated by the amount, so resolving the exceptions
+        # alone would freeze both GLs out of step with the real banks
+        # forever. The recorded transaction(s) must also be reversed
+        # (counter entries via the audited Transaction.reverse path), and
+        # that only happens when the pair verifiably has the transfer
+        # shape — see phantom_transfer_transactions for the checks.
+        reversal_refs = []
+        with db_transaction.atomic():
+            if both_erp_only and cross_account:
+                try:
+                    txns_to_reverse = phantom_transfer_transactions(exc_a, exc_b)
+                    for txn in txns_to_reverse:
+                        txn.reverse(request.user, reason=(
+                            f'Phantom inter-bank transfer — neither leg appears in its bank statement '
+                            f'(link-resolved exceptions #{exc_a.id}/#{exc_b.id}). {resolution_notes}'
+                        ))
+                        reversal_refs.append(txn.reversal_transaction.reference_number)
+                except DjangoValidationError as exc:
+                    detail = '; '.join(exc.messages) if hasattr(exc, 'messages') else str(exc)
+                    return Response({'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
+
+            final_notes = resolution_notes
+            if reversal_refs:
+                final_notes = (
+                    f'{resolution_notes} | Counter entries posted: {", ".join(reversal_refs)} '
+                    f'(phantom transfer reversed — neither leg reached its bank).'
+                )
+
+            for exc, other in ((exc_a, exc_b), (exc_b, exc_a)):
+                exc.resolved = True
+                exc.resolved_by = request.user
+                exc.resolved_at = now
+                exc.resolution_notes = final_notes
+                exc.netted_with = other
+                exc.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with'])
+
+            for recon in {exc_a.reconciliation, exc_b.reconciliation}:
+                recompute_reconciliation_counts(recon)
 
         return Response({
             'exception_a': ReconciliationExceptionSerializer(exc_a).data,
             'exception_b': ReconciliationExceptionSerializer(exc_b).data,
+            'reversal_references': reversal_refs,
         })
 
 

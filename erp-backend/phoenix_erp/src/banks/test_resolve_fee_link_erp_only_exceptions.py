@@ -129,6 +129,19 @@ class FetchErpPaymentsFeeLinkExclusionTests(FeeLinkErpOnlyTestsBase):
         )
         self.assertEqual([p['paymentId'] for p in payments], [payment.journal_entry_id])
 
+    def test_reversed_transactions_and_their_reversals_are_excluded(self):
+        # A reversed transaction and its reversal cancel each other on the
+        # GL — neither should ever be offered to Java, or both would come
+        # back as phantom erp_only exceptions on every rerun.
+        payment = self._posted_payment(Decimal('3000.00'), description='Transfer: Ajao Adijat')
+        payment.journal_entry.reverse(self.director, reason='phantom transfer — never hit the bank')
+
+        for direction in ('DEBIT', 'CREDIT'):
+            payments = fetch_erp_payments(
+                self.bank_account, date(2026, 7, 1), date(2026, 7, 30), direction=direction,
+            )
+            self.assertEqual(payments, [], f'direction={direction} should offer nothing')
+
 
 class ResolveFeeLinkErpOnlyExceptionsCommandTests(FeeLinkErpOnlyTestsBase):
 

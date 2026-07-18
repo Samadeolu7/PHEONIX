@@ -68,6 +68,69 @@ def is_valid_exception_pairing(exc_a, exc_b):
     return False
 
 
+def phantom_transfer_transactions(exc_a, exc_b):
+    """
+    For a CROSS-bank-account erp_only+erp_only opposite-direction pair — a
+    recorded inter-bank transfer where NEITHER leg appears in its bank
+    statement (the movement never actually went through these banks) —
+    returns the distinct underlying GL Transaction(s) that must be REVERSED
+    when the pair is link-resolved, or raises ValidationError if the pair
+    doesn't verifiably have that shape.
+
+    Why reversal is mandatory here and not for the same-account pair: a
+    same-account pair's two legs hit the SAME bank GL (one CR, one DR, same
+    amount) and already net to zero, so resolving the exceptions is enough.
+    A cross-account pair leaves EACH bank GL misstated by the amount — the
+    "sending" GL shows money that never left, the "receiving" GL money that
+    never arrived — so closing the exceptions without counter entries would
+    freeze both GLs permanently out of step with the real banks.
+
+    Verification (evidence-based, not assumed): each exception's own
+    transaction must contain a GL entry that exactly mirrors that
+    exception — on that exception's bank account's GL, on the expected side
+    (DEBIT-direction exception = CR entry/money out; CREDIT = DR/money in),
+    for exactly the exception's amount — and must be approved, un-reversed,
+    and not itself a reversal. A transfer recorded as one transaction with
+    both legs passes both checks and is returned once; two separately
+    recorded transactions are each validated and both returned.
+    """
+    from django.core.exceptions import ValidationError
+
+    from transactions.models import Transaction, TransactionEntry
+
+    txns = {}
+    for exc in (exc_a, exc_b):
+        if not exc.loan_payment_id:
+            raise ValidationError(
+                'Both exceptions must reference their recorded ERP transaction to be '
+                'resolved as a phantom transfer.'
+            )
+        txn = Transaction.objects.filter(pk=exc.loan_payment_id).first()
+        if txn is None:
+            raise ValidationError(f'ERP transaction {exc.loan_payment_id} no longer exists.')
+        if txn.is_reversal:
+            raise ValidationError(f'{txn.reference_number} is itself a reversal and cannot be reversed again.')
+        if txn.is_reversed:
+            raise ValidationError(f'{txn.reference_number} has already been reversed.')
+        if not txn.approved:
+            raise ValidationError(f'{txn.reference_number} is not approved — nothing posted to correct.')
+
+        gl_account_id = exc.reconciliation.bank_account.gl_account_id
+        expected_side = TransactionEntry.CREDIT if exc.direction == 'DEBIT' else TransactionEntry.DEBIT
+        mirrors = txn.entries.filter(
+            account_id=gl_account_id, side=expected_side, amount=exc.resolve_amount,
+        ).exists()
+        if not mirrors:
+            raise ValidationError(
+                f'{txn.reference_number} has no {"credit" if expected_side == TransactionEntry.CREDIT else "debit"} '
+                f'entry of ₦{exc.resolve_amount} against {exc.reconciliation.bank_account} — this pair '
+                f'does not verifiably describe that transfer, so it needs manual review instead.'
+            )
+        txns[txn.pk] = txn
+
+    return list(txns.values())
+
+
 # The BankTransfer/MOVEB-series inter-bank transfer pattern found in the
 # missing-money gap analysis: the sending bank deducts a transfer fee that
 # was never recorded in the ERP, so the same real event produces a bank_only
@@ -406,6 +469,17 @@ def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exc
             transaction__date__range=(date_from, date_to),
             transaction__approved=True,
             transaction__is_deleted=False,
+            # A reversed transaction and its reversal cancel each other on
+            # the GL — neither should expect a bank statement line, so
+            # offering either to Java only mints phantom erp_only
+            # exceptions (confirmed with the phantom-transfer link flow,
+            # whose Transaction.reverse() posts approved counter entries
+            # against both bank GLs that would otherwise resurface as two
+            # brand-new exceptions on the very next rerun). A bank line
+            # already matched to a later-reversed transaction keeps its
+            # match — this only shapes the future candidate pool.
+            transaction__is_reversed=False,
+            transaction__is_reversal=False,
         )
         .exclude(transaction_id__in=exclude_payment_ids)
         .exclude(transaction_id__in=fee_link_txn_ids)

@@ -786,6 +786,11 @@ from .models import DailyReconciliation, ReconciliationException, Reconciliation
 class ReconciliationExceptionSerializer(serializers.ModelSerializer):
     officer_name = serializers.SerializerMethodField()
     erp_branch_name = serializers.SerializerMethodField()
+    # Which bank account this exception lives on — the Link candidate
+    # picker needs it now that opposite-direction erp_only candidates can
+    # span accounts (the phantom inter-bank transfer case); without a label
+    # two same-amount candidates from different banks are indistinguishable.
+    bank_account_name = serializers.SerializerMethodField()
     has_bank_reference = serializers.SerializerMethodField()
     bank_reference = serializers.SerializerMethodField()
     is_perfect_match = serializers.BooleanField(read_only=True)
@@ -809,6 +814,7 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
             'loan_payment_id',
             'erp_amount', 'erp_narration', 'erp_date',
             'officer', 'officer_name', 'erp_branch', 'erp_branch_name',
+            'bank_account_name',
             'is_high_priority', 'has_bank_reference',
             'is_perfect_match', 'requires_director',
             'requires_dual_approval_to_resolve', 'awaiting_second_resolution',
@@ -848,6 +854,9 @@ class ReconciliationExceptionSerializer(serializers.ModelSerializer):
 
     def get_erp_branch_name(self, obj):
         return obj.erp_branch.name if obj.erp_branch else None
+
+    def get_bank_account_name(self, obj):
+        return str(obj.reconciliation.bank_account) if obj.reconciliation_id else None
 
     def get_resolved_by_name(self, obj):
         return obj.resolved_by.get_full_name() if obj.resolved_by else None
