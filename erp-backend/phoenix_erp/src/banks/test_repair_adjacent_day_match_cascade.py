@@ -1,0 +1,191 @@
+"""
+Tests for the repair_adjacent_day_match_cascade management command — repairs
+ReconciliationBankTransaction rows the old (now-fixed) Java
+ExactAmountDateMatcher scoring tie wrongly matched to an adjacent day's ERP
+payment instead of their own day's, for a daily-recurring identical-amount
+fee. See the command's own module docstring for the full bug/fix narrative.
+"""
+from datetime import date
+from decimal import Decimal
+from io import StringIO
+from unittest.mock import MagicMock, patch
+
+from django.contrib.auth import get_user_model
+from django.core.management import call_command
+from django.test import TestCase
+
+from accounts.models import Account
+from banks.models import Bank, BankAccount, DailyReconciliation, ReconciliationBankTransaction
+from branches.models import Branch
+from transactions.models import Transaction, TransactionEntry, TransactionSeries
+from users.models import Tenant
+
+User = get_user_model()
+
+
+class RepairAdjacentDayMatchCascadeTests(TestCase):
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name='Cascade Repair Org', slug='cascade-repair-org')
+        self.branch = Branch.objects.create(name='Branch A', code='CRA')
+        self.director = User.objects.create_user(
+            username='cascade_director', password='test123', tenant=self.tenant, branch=self.branch,
+        )
+        self.gl_account = Account.objects.create(
+            code='1922', name='Cascade Repair GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        bank = Bank.objects.create(bank_name='Cascade Repair Bank', bank_code='987')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000090', account_name='Cascade Repair Account',
+            gl_account=self.gl_account, account_manager=self.director,
+        )
+        self.series = TransactionSeries.objects.create(code='EXP', description='Expense series')
+
+    def _erp_payment(self, txn_date, amount, side=TransactionEntry.CREDIT):
+        txn = Transaction.objects.create(
+            series=self.series, date=txn_date, description='Stamp duty',
+            owner=self.director, branch=self.branch, created_by=self.director,
+        )
+        TransactionEntry.objects.create(
+            transaction=txn, account=self.gl_account, side=side, amount=amount,
+        )
+        return txn
+
+    def _bank_tx(self, value_date, amount, direction='DEBIT', matched=False,
+                 matched_erp_payment_id=None, posting_lag_days=None, bank_ref=None):
+        return ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref=bank_ref or f'REF-{value_date}-{amount}',
+            value_date=value_date, direction=direction, amount=amount, narration='Stamp duty',
+            matched=matched, matched_erp_payment_id=matched_erp_payment_id,
+            match_confidence='HIGH' if matched else '', posting_lag_days=posting_lag_days,
+        )
+
+    def test_detects_and_repairs_a_confirmed_cascade_victim(self):
+        # ERP payment for 07-15's stamp duty wrongly matched to the 07-14
+        # bank line; the true 07-14 bank line sits unmatched.
+        erp = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        wrong_tx = self._bank_tx(
+            date(2026, 7, 14), Decimal('50.00'), matched=True,
+            matched_erp_payment_id=erp.id, posting_lag_days=-1,
+        )
+        true_tx = self._bank_tx(date(2026, 7, 15), Decimal('50.00'))
+        DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date=date(2026, 7, 14),
+            uploaded_by=self.director, statement_file='bank_statements/x.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+        out = StringIO()
+        call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--dry-run', stdout=out)
+        self.assertIn(f'bank_tx id={wrong_tx.id}', out.getvalue())
+        self.assertIn('Confirmed cascade victims', out.getvalue())
+
+        wrong_tx.refresh_from_db()
+        self.assertTrue(wrong_tx.matched)  # dry-run made no changes
+
+        with patch('banks.tasks.http_requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+                'matches': [], 'exceptions': [],
+            }
+            mock_response.raise_for_status = MagicMock()
+            mock_post.return_value = mock_response
+
+            call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=StringIO())
+
+        wrong_tx.refresh_from_db()
+        true_tx.refresh_from_db()
+        self.assertFalse(wrong_tx.matched)
+        self.assertEqual(wrong_tx.unmatched_by_id, self.director.id)
+        self.assertTrue(wrong_tx.unmatched_reason)
+
+    def test_leaves_lag_one_match_alone_when_no_exact_day_candidate_exists(self):
+        # No competing bank line on the ERP payment's real date — plausibly
+        # a genuine one-day posting lag, not the bug.
+        erp = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        tx = self._bank_tx(
+            date(2026, 7, 14), Decimal('50.00'), matched=True,
+            matched_erp_payment_id=erp.id, posting_lag_days=-1,
+        )
+
+        out = StringIO()
+        call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=out)
+
+        tx.refresh_from_db()
+        self.assertTrue(tx.matched)
+        self.assertIn('No exact-day candidate', out.getvalue())
+
+    def test_leaves_ambiguous_multi_candidate_case_alone(self):
+        erp = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        tx = self._bank_tx(
+            date(2026, 7, 14), Decimal('50.00'), matched=True,
+            matched_erp_payment_id=erp.id, posting_lag_days=-1,
+        )
+        self._bank_tx(date(2026, 7, 15), Decimal('50.00'), bank_ref='dup-a')
+        self._bank_tx(date(2026, 7, 15), Decimal('50.00'), bank_ref='dup-b')
+
+        out = StringIO()
+        call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=out)
+
+        tx.refresh_from_db()
+        self.assertTrue(tx.matched)
+        self.assertIn('Ambiguous', out.getvalue())
+
+    def test_leaves_alone_when_erp_amount_does_not_exactly_match(self):
+        # A legitimate reference/tolerance-based match with a near amount —
+        # not the exact-tier tie bug, must not be touched.
+        erp = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        tx = self._bank_tx(
+            date(2026, 7, 14), Decimal('49.80'), matched=True,
+            matched_erp_payment_id=erp.id, posting_lag_days=-1,
+        )
+        self._bank_tx(date(2026, 7, 15), Decimal('49.80'))
+
+        out = StringIO()
+        call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=out)
+
+        tx.refresh_from_db()
+        self.assertTrue(tx.matched)
+        self.assertIn('Amount not exact match', out.getvalue())
+
+    def test_ignores_rows_matched_exactly_on_their_own_day(self):
+        erp = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        tx = self._bank_tx(
+            date(2026, 7, 15), Decimal('50.00'), matched=True,
+            matched_erp_payment_id=erp.id, posting_lag_days=0,
+        )
+
+        out = StringIO()
+        call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=out)
+
+        tx.refresh_from_db()
+        self.assertTrue(tx.matched)
+        self.assertIn('Scanned 0 lag-1 match(es)', out.getvalue())
+
+    def test_bank_account_scope_filter(self):
+        erp = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        tx = self._bank_tx(
+            date(2026, 7, 14), Decimal('50.00'), matched=True,
+            matched_erp_payment_id=erp.id, posting_lag_days=-1,
+        )
+        self._bank_tx(date(2026, 7, 15), Decimal('50.00'))
+
+        other_bank = Bank.objects.create(bank_name='Other Bank', bank_code='555')
+        other_gl_account = Account.objects.create(
+            code='1923', name='Other Bank GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        other_account = BankAccount.objects.create(
+            bank=other_bank, account_number='0000091', account_name='Other Account',
+            gl_account=other_gl_account, account_manager=self.director,
+        )
+
+        out = StringIO()
+        call_command(
+            'repair_adjacent_day_match_cascade', f'--user-id={self.director.id}',
+            f'--bank-account-id={other_account.id}', '--dry-run', stdout=out,
+        )
+        self.assertIn('Scanned 0 lag-1 match(es)', out.getvalue())
+
+        tx.refresh_from_db()
+        self.assertTrue(tx.matched)
