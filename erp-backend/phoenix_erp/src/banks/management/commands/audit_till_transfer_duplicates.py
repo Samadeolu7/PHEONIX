@@ -100,6 +100,7 @@ class Command(BaseCommand):
 
         from django.contrib.auth import get_user_model
         from django.core.exceptions import ValidationError
+        from django.db.models import Q
         from django.utils import timezone
 
         from banks.models import BankTransfer, DailyReconciliation, ReconciliationBankTransaction
@@ -176,6 +177,15 @@ class Command(BaseCommand):
             #      with its own bank-GL leg has (or will get) its own
             #      statement line and cannot be covering someone else's.
             window = (line.value_date - timedelta(days=1), line.value_date + timedelta(days=1))
+            # Whitelist of PAYMENT-type series only. A charge/fee posting
+            # (e.g. LFAPR risk premium: DR receivable / CR income) can pass
+            # every structural check — right amount, no bank leg, client
+            # name matches — while recording money being LEVIED, not money
+            # ARRIVING. If the client's transfer was the payment OF that
+            # fee, the till transfer's bank debit may be the only record of
+            # the cash actually landing, and reversing it would remove a
+            # real deposit from the bank GL. Only records that assert a
+            # payment was received may cover a statement line.
             candidates = (
                 Transaction.objects.filter(
                     entries__amount__lte=transfer.amount,
@@ -183,10 +193,11 @@ class Command(BaseCommand):
                     approved=True, is_deleted=False,
                     is_reversal=False, is_reversed=False,
                 )
+                .filter(
+                    Q(reference_number__startswith='LNPMT')
+                    | Q(reference_number__startswith='SVDEP')
+                )
                 .exclude(pk=je.pk)
-                .exclude(reference_number__startswith='BTRF')
-                .exclude(reference_number__startswith='MOVEB')
-                .exclude(reference_number__startswith='RECL')
                 .distinct()
                 .prefetch_related('entries')
             )

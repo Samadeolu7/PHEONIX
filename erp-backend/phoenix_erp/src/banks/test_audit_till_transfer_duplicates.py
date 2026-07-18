@@ -187,6 +187,32 @@ class AuditTillTransferDuplicatesTests(TestCase):
         self.assertFalse(transfer.journal_entry.is_reversed)
         self.assertIn('REVIEW', out.getvalue())
 
+    def test_fee_charge_transaction_is_never_a_covering_record(self):
+        # A risk-premium/fee posting (DR receivable / CR income) passes
+        # every structural check but records money being LEVIED, not money
+        # arriving — if the client's transfer was the payment OF that fee,
+        # the till transfer's bank debit may be the only record of the cash
+        # landing. Only payment-type series (LNPMT/SVDEP) may cover a line.
+        fee_series = TransactionSeries.objects.create(code='LFAPR', description='Loan fees')
+        transfer = self._fabricated_transfer(Decimal('2000.00'), description='Akinbami')
+        self._claimed_line(transfer.journal_entry, Decimal('2000.00'), 'Transfer from MICHEAL AKINBAMI')
+        fee_txn = Transaction.objects.create(
+            series=fee_series, date=date(2026, 7, 1),
+            description='RISK PREMIUM for loan LN-9 | micheal akinbami',
+            owner=self.director, branch=self.branch, created_by=self.director, approved=True,
+        )
+        TransactionEntry.objects.create(
+            transaction=fee_txn, account=self.misposting_gl,
+            side=TransactionEntry.DEBIT, amount=Decimal('2000.00'),
+        )
+
+        out = StringIO()
+        call_command('audit_till_transfer_duplicates', f'--user-id={self.director.id}', '--apply', stdout=out)
+
+        transfer.journal_entry.refresh_from_db()
+        self.assertFalse(transfer.journal_entry.is_reversed)
+        self.assertIn('REVIEW', out.getvalue())
+
     def test_partial_entry_of_a_larger_payment_does_not_confirm(self):
         # A ₦3,000 payment with a ₦2,000 entry must not cover a ₦2,000
         # transfer — the covering total has to equal the amount exactly.
