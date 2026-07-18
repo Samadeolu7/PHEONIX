@@ -83,22 +83,54 @@ class RepairAdjacentDayMatchCascadeTests(TestCase):
         wrong_tx.refresh_from_db()
         self.assertTrue(wrong_tx.matched)  # dry-run made no changes
 
-        with patch('banks.tasks.http_requests.post') as mock_post:
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
-                'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
-                'matches': [], 'exceptions': [],
-            }
-            mock_response.raise_for_status = MagicMock()
-            mock_post.return_value = mock_response
-
+        # The rerun is queued via .delay(), not called synchronously — Java
+        # is only reachable from the celery_worker container, so the
+        # command must never call the task directly regardless of which
+        # container it happens to run in (a real production failure this
+        # test guards against — see the command's own comment).
+        recon = DailyReconciliation.objects.get(
+            bank_account=self.bank_account, reconciliation_date=date(2026, 7, 14),
+        )
+        with patch('banks.tasks.run_reconciliation_match') as mock_task:
             call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=StringIO())
+            mock_task.delay.assert_called_once_with(recon.id, recon.include_debits)
 
         wrong_tx.refresh_from_db()
         true_tx.refresh_from_db()
+        recon.refresh_from_db()
         self.assertFalse(wrong_tx.matched)
         self.assertEqual(wrong_tx.unmatched_by_id, self.director.id)
         self.assertTrue(wrong_tx.unmatched_reason)
+        self.assertEqual(recon.status, 'processing')
+
+    def test_recovers_and_queues_reruns_for_rows_unmatched_by_a_prior_interrupted_apply(self):
+        # Simulates the real production failure this was built to handle: a
+        # previous --apply already unmatched a row (e.g. from a container
+        # with no route to Bank-Recon) but never got to queue its rerun.
+        # Re-running the command must find it via the unmatched_reason
+        # marker and queue it — even though it no longer matches the
+        # detection query (it's not matched=True any more).
+        from banks.management.commands.repair_adjacent_day_match_cascade import REPAIR_REASON
+
+        recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date=date(2026, 7, 14),
+            uploaded_by=self.director, statement_file='bank_statements/x.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+        already_unmatched = self._bank_tx(
+            date(2026, 7, 14), Decimal('50.00'), matched=False,
+        )
+        already_unmatched.unmatched_reason = REPAIR_REASON
+        already_unmatched.save(update_fields=['unmatched_reason'])
+
+        with patch('banks.tasks.run_reconciliation_match') as mock_task:
+            out = StringIO()
+            call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=out)
+            mock_task.delay.assert_called_once_with(recon.id, recon.include_debits)
+
+        recon.refresh_from_db()
+        self.assertEqual(recon.status, 'processing')
+        self.assertIn('0 unmatched this run, 1 reconciliation date(s) queued', out.getvalue())
 
     def test_leaves_lag_one_match_alone_when_no_exact_day_candidate_exists(self):
         # No competing bank line on the ERP payment's real date — plausibly

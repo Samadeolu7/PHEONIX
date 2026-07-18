@@ -163,20 +163,44 @@ class Command(BaseCommand):
                 self.stdout.write(f'Would unmatch {len(confirmed)} transaction(s) and re-run matching for {len(touched_dates)} reconciliation date(s).')
             return
 
-        if not confirmed:
+        if confirmed:
+            self.stdout.write('Unmatching confirmed cascade victims...')
+            for tx, sibling, erp_date in confirmed:
+                try:
+                    tx.unmatch(acting_user, REPAIR_REASON)
+                    self.stdout.write(f'  unmatched bank_tx id={tx.id}')
+                except ValidationError as exc:
+                    self.stdout.write(self.style.WARNING(f'  skipped bank_tx id={tx.id}: {exc}'))
+
+        touched_dates = self._touched_dates(confirmed)
+
+        # Recovery: a previous --apply may have unmatched rows but failed
+        # before (or without) queuing their rerun — e.g. run from a
+        # container with no route to the Bank-Recon service. Re-discover
+        # those dates by the repair's own marker on unmatched_reason so a
+        # re-run of this command finishes the job rather than silently
+        # doing nothing because `confirmed` is now empty (the rows are
+        # already unmatched, so they no longer match the detection query).
+        pending_qs = ReconciliationBankTransaction.objects.filter(
+            matched=False, unmatched_reason=REPAIR_REASON,
+        )
+        if bank_account_id:
+            pending_qs = pending_qs.filter(bank_account_id=bank_account_id)
+        for tx in pending_qs:
+            touched_dates.add((tx.bank_account_id, tx.value_date))
+
+        if not touched_dates:
             self.stdout.write(self.style.SUCCESS('No confirmed cascade victims to repair.'))
             return
 
-        self.stdout.write('Unmatching confirmed cascade victims...')
-        for tx, sibling, erp_date in confirmed:
-            try:
-                tx.unmatch(acting_user, REPAIR_REASON)
-                self.stdout.write(f'  unmatched bank_tx id={tx.id}')
-            except ValidationError as exc:
-                self.stdout.write(self.style.WARNING(f'  skipped bank_tx id={tx.id}: {exc}'))
-
-        touched_dates = self._touched_dates(confirmed)
-        self.stdout.write(f'\nRe-running matching for {len(touched_dates)} affected reconciliation date(s)...')
+        # Queued via Celery (.delay()), not called synchronously — same
+        # pattern the "Re-run matching" button uses (RerunReconciliationView).
+        # Bank-Recon is only reachable from the celery_worker container
+        # (BANK_RECON_SERVICE_URL/INTERNAL_SERVICE_TOKEN are only set
+        # there — see docker-compose.yml), so this command must never call
+        # the task directly regardless of which container it's run from.
+        self.stdout.write(f'\nQueuing a re-run for {len(touched_dates)} affected reconciliation date(s)...')
+        queued = 0
         for bank_account_id_, recon_date in sorted(touched_dates):
             recon = DailyReconciliation.objects.filter(
                 bank_account_id=bank_account_id_, reconciliation_date=recon_date,
@@ -185,19 +209,19 @@ class Command(BaseCommand):
                 self.stdout.write(f'  no reconciliation exists for bank_account={bank_account_id_} date={recon_date} — skipped')
                 continue
             if recon.status == 'processing':
-                self.stdout.write(f'  recon {recon.id} ({recon_date}) already processing — skipped, re-run manually later')
+                self.stdout.write(f'  recon {recon.id} ({recon_date}) already processing — skipped')
                 continue
             recon.status = 'processing'
             recon.rerun_count = F('rerun_count') + 1
             recon.save(update_fields=['status', 'rerun_count', 'updated_at'])
-            run_reconciliation_match(recon.id, recon.include_debits)
-            recon.refresh_from_db()
-            self.stdout.write(
-                f'  recon {recon.id} ({recon_date}): status={recon.status} '
-                f'matched={recon.matched_count} unmatched_bank={recon.unmatched_bank_count} unmatched_erp={recon.unmatched_erp_count}'
-            )
+            run_reconciliation_match.delay(recon.id, recon.include_debits)
+            self.stdout.write(f'  queued recon {recon.id} ({recon_date})')
+            queued += 1
 
-        self.stdout.write(self.style.SUCCESS(f'\nDone — {len(confirmed)} repaired, {len(touched_dates)} date(s) re-run.'))
+        self.stdout.write(self.style.SUCCESS(
+            f'\nDone — {len(confirmed)} unmatched this run, {queued} reconciliation date(s) queued for re-run. '
+            f'Check each recon\'s status/exception counts once the celery_worker has processed the queue.'
+        ))
 
     @staticmethod
     def _touched_dates(confirmed):
