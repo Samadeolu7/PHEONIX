@@ -176,7 +176,9 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
                         <strong>{preview.would_clean_up_count - excludedIds.size}</strong> of{' '}
                         {preview.would_clean_up_count} unambiguous pair(s) selected — "unambiguous"
                         means exactly one candidate was found, not that it's necessarily correct.
-                        Uncheck any you disagree with; they'll be left untouched for manual review.
+                        Uncheck any you disagree with — the resolved side still gets reopened (it
+                        was closed unilaterally either way) but won't be linked to that candidate;
+                        it goes back into the ordinary unresolved pool for proper review.
                       </div>
                       <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-64 overflow-y-auto">
                         {preview.would_clean_up.map((p) => {
@@ -320,6 +322,12 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
               <div className="bg-green-50 border border-green-200 rounded-md p-3 text-sm text-green-900">
                 Reopened and linked <strong>{result.cleaned_up_count}</strong> pair(s) automatically
                 {manuallyLinkedCount > 0 && <> plus <strong>{manuallyLinkedCount}</strong> linked manually above</>}.
+                {result.unresolved_only_count > 0 && (
+                  <>
+                    {' '}Reopened <strong>{result.unresolved_only_count}</strong> more without linking
+                    them (excluded above) — back in the unresolved pool for proper review.
+                  </>
+                )}
               </div>
               {result.failed_count > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-md p-3 text-sm text-red-900 flex gap-2">
@@ -346,12 +354,19 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
               {preview && preview.would_clean_up_count > 0 && (
                 <button
                   onClick={handleConfirm}
-                  disabled={submitting || !notesReady || preview.would_clean_up_count - excludedIds.size === 0}
+                  disabled={submitting || !notesReady}
                   className="px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50"
+                  title={
+                    excludedIds.size > 0
+                      ? `Links ${preview.would_clean_up_count - excludedIds.size}, reopens ${excludedIds.size} without linking`
+                      : undefined
+                  }
                 >
                   {submitting
                     ? 'Cleaning up…'
-                    : `Clean Up ${preview.would_clean_up_count - excludedIds.size} Pair(s)`}
+                    : excludedIds.size === 0
+                      ? `Clean Up ${preview.would_clean_up_count} Pair(s)`
+                      : `Link ${preview.would_clean_up_count - excludedIds.size} + Reopen ${excludedIds.size}`}
                 </button>
               )}
             </>

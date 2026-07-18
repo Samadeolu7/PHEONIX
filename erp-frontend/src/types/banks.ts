@@ -587,6 +587,11 @@ export interface BulkCleanUpStrandedPairsPreview {
 export interface BulkCleanUpStrandedPairsResult {
   cleaned_up_count: number;
   cleaned_up: (BulkCleanUpStrandedPairResult & { payment_id: number | null })[];
+  /** Excluded pairs: the resolved side is reopened (it was closed
+   * unilaterally regardless of whether the suggested candidate was right)
+   * but not linked to it — back in the ordinary unresolved pool. */
+  unresolved_only_count: number;
+  unresolved_only: { resolved_exception_id: number; resolved_exception: StrandedExceptionCandidate }[];
   failed_count: number;
   failed: { resolved_exception_id: number; unresolved_exception_id: number; detail: string }[];
   ambiguous_count: number;

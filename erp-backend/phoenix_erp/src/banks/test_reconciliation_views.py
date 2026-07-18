@@ -1821,7 +1821,7 @@ class BulkCleanUpStrandedPairsTests(TestCase):
 
         self.assertEqual(resp.status_code, 400)
 
-    def test_excluded_resolved_exception_ids_are_skipped_and_left_untouched(self):
+    def test_excluded_pairs_are_unresolved_but_not_linked_to_the_suggested_candidate(self):
         keep_resolved = self._standalone_resolved(self.recon)
         keep_unresolved = self._unresolved(self.recon)
         skip_resolved = self._standalone_resolved(
@@ -1840,6 +1840,8 @@ class BulkCleanUpStrandedPairsTests(TestCase):
         self.assertEqual(resp.status_code, 201, resp.data)
         self.assertEqual(resp.data['cleaned_up_count'], 1)
         self.assertEqual(resp.data['cleaned_up'][0]['resolved_exception_id'], keep_resolved.id)
+        self.assertEqual(resp.data['unresolved_only_count'], 1)
+        self.assertEqual(resp.data['unresolved_only'][0]['resolved_exception_id'], skip_resolved.id)
 
         keep_resolved.refresh_from_db()
         keep_unresolved.refresh_from_db()
@@ -1847,13 +1849,17 @@ class BulkCleanUpStrandedPairsTests(TestCase):
         self.assertTrue(keep_unresolved.resolved)
         self.assertEqual(keep_resolved.netted_with_id, keep_unresolved.id)
 
-        # Excluded pair: left exactly as it was — still standalone-resolved,
-        # its would-be partner still unresolved, no netted_with either side.
+        # Excluded pair: the resolved side is reopened — it was closed
+        # unilaterally regardless of whether this candidate is right — but
+        # NOT linked to the suggested (disagreed-with) candidate, which
+        # stays exactly as it was: still unresolved, no netted_with.
         skip_resolved.refresh_from_db()
         skip_unresolved.refresh_from_db()
-        self.assertTrue(skip_resolved.resolved)
+        self.assertFalse(skip_resolved.resolved)
+        self.assertIsNotNone(skip_resolved.unresolved_at)
         self.assertIsNone(skip_resolved.netted_with_id)
         self.assertFalse(skip_unresolved.resolved)
+        self.assertIsNone(skip_unresolved.netted_with_id)
 
 
 class BulkCreateOfficerEvidenceThreadsTests(TestCase):

@@ -2214,17 +2214,21 @@ class BulkCleanUpStrandedPairsView(APIView):
     since this reopens exceptions your team already closed, with no
     per-pair confirmation once the real run starts. "Unambiguous" (exactly
     one candidate found) is not the same as "correct" — pass
-    excluded_resolved_exception_ids to skip specific pairs a director
-    disagrees with after reviewing the preview; excluded pairs are left
-    exactly as-is, available for manual review via Unresolve + Link.
+    excluded_resolved_exception_ids for pairs a director disagrees with
+    after reviewing the preview. The resolved side of an excluded pair is
+    still reopened (unresolve()) — the whole reason it's in this list at
+    all is that it was closed unilaterally with no verification, which is
+    true regardless of whether this particular suggested candidate is the
+    right one — it's just NOT linked to the suggested candidate. It goes
+    back into the ordinary unresolved pool for proper manual review.
 
     Director-only (can_user_approve) — same tier as Unresolve/Link/Bulk-Link.
 
     Request body:
       resolution_notes                    (str, required unless dry_run)
       dry_run                             (bool, optional, default false)
-      excluded_resolved_exception_ids     (list[int], optional — skips these
-                                            pairs entirely for this run)
+      excluded_resolved_exception_ids     (list[int], optional — reopens
+                                            these without linking them)
     """
     permission_classes = [permissions.IsAuthenticated]
     permission_module = 'banks'
@@ -2254,14 +2258,16 @@ class BulkCleanUpStrandedPairsView(APIView):
         pairs, ambiguous = find_stranded_resolved_pairs(scoped_qs)
 
         # A pair the automatic matcher calls "unambiguous" isn't necessarily
-        # right — a director reviewing the preview may disagree with a
-        # specific pairing even though it was the only candidate found.
-        # Excluding it here just skips it for this run; it's left exactly
-        # as-is (still standalone-resolved, its would-be partner still
-        # unresolved) for manual review via Unresolve + Link instead.
+        # right — a director reviewing the preview may disagree with the
+        # specific candidate suggested. The resolved side still gets
+        # reopened either way (it was closed unilaterally, with no
+        # verification, independent of whether this candidate is correct)
+        # — excluding it here only skips the LINK step, so it goes back
+        # into the ordinary unresolved pool instead of being paired with a
+        # candidate a director has just said is wrong.
         excluded_ids = {int(i) for i in (request.data.get('excluded_resolved_exception_ids') or [])}
-        if excluded_ids:
-            pairs = [(r, u, fee) for r, u, fee in pairs if r.id not in excluded_ids]
+        excluded_pairs = [(r, u, fee) for r, u, fee in pairs if r.id in excluded_ids]
+        pairs = [(r, u, fee) for r, u, fee in pairs if r.id not in excluded_ids]
 
         ambiguous_detail = [_serialize_ambiguous_exception(r, candidates) for r, candidates in ambiguous]
 
@@ -2301,9 +2307,26 @@ class BulkCleanUpStrandedPairsView(APIView):
                 **result,
             })
 
+        unresolved_only = []
+        for resolved_exc, _unresolved_exc, _fee in excluded_pairs:
+            try:
+                resolved_exc.unresolve(
+                    request.user,
+                    f'Clean Up: reopened, but not linked to the suggested candidate — {resolution_notes}',
+                )
+            except Exception as exc:
+                failed.append({'resolved_exception_id': resolved_exc.id, 'detail': _error_message(exc)})
+                continue
+            unresolved_only.append({
+                'resolved_exception_id': resolved_exc.id,
+                'resolved_exception': _serialize_exception_summary(resolved_exc),
+            })
+
         return Response({
             'cleaned_up_count': len(cleaned_up),
             'cleaned_up': cleaned_up,
+            'unresolved_only_count': len(unresolved_only),
+            'unresolved_only': unresolved_only,
             'failed_count': len(failed),
             'failed': failed,
             'ambiguous_count': len(ambiguous),
