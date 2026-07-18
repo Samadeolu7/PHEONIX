@@ -283,6 +283,61 @@ def find_stranded_resolved_pairs(scoped_qs):
     return pairs, ambiguous
 
 
+def find_unexplained_erp_only_by_officer(scoped_qs):
+    """
+    Groups unresolved erp_only exceptions that have NO plausible bank_only
+    counterpart anywhere on their bank account — same candidate shapes as
+    find_bank_charge_pairs/find_stranded_resolved_pairs (exact resolve_amount
+    match, or DEBIT bank_only up to FEE_LINK_MAX_AMOUNT higher) — by the
+    officer who recorded them, for BulkCreateOfficerEvidenceThreadsView.
+
+    Deliberately excludes anything an ambiguous/exact/fee-tolerant pair would
+    cover: those already have real bank money sitting nearby and just need a
+    human (or Clean Up) to match them, which isn't evidence of a missing
+    payment. What's left after excluding those is the set genuinely worth an
+    evidence request — no bank-side transaction found anywhere close.
+
+    Unattributed exceptions (officer is None) are always excluded — there is
+    no user to address a thread to; those need the attribution backfill
+    work instead (see backfill_exception_officer_attribution).
+
+    Returns a dict keyed by officer_id: {'officer': User, 'exceptions': [...]}.
+    """
+    erp_only_qs = scoped_qs.filter(
+        exception_type='erp_only', resolved=False, officer__isnull=False,
+    ).select_related('officer', 'officer__branch', 'reconciliation')
+
+    bank_account_ids = set(erp_only_qs.values_list('reconciliation__bank_account_id', flat=True))
+    bank_onlys_by_account = {
+        bank_account_id: list(scoped_qs.filter(
+            reconciliation__bank_account_id=bank_account_id,
+            exception_type='bank_only', resolved=False,
+        ))
+        for bank_account_id in bank_account_ids
+    }
+
+    result = {}
+    for erp_exc in erp_only_qs:
+        bank_onlys = bank_onlys_by_account.get(erp_exc.reconciliation.bank_account_id, [])
+        has_candidate = False
+        for bank_exc in bank_onlys:
+            if bank_exc.direction != erp_exc.direction:
+                continue
+            if bank_exc.resolve_amount == erp_exc.resolve_amount:
+                has_candidate = True
+                break
+            if erp_exc.direction == 'DEBIT':
+                fee = bank_charge_fee(bank_exc, erp_exc)
+                if fee is not None and fee <= FEE_LINK_MAX_AMOUNT:
+                    has_candidate = True
+                    break
+        if not has_candidate:
+            bucket = result.setdefault(erp_exc.officer_id, {'officer': erp_exc.officer, 'exceptions': []})
+            bucket['exceptions'].append(erp_exc)
+
+    return result
+
+
 def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exclude_payment_ids=()):
     """
     Returns ERP-recorded payments for a bank account within [date_from,

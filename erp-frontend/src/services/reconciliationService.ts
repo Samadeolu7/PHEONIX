@@ -8,6 +8,8 @@ import type {
   BulkCleanUpStrandedPairsRequest,
   BulkCleanUpStrandedPairsPreview,
   BulkCleanUpStrandedPairsResult,
+  BulkCreateOfficerEvidenceThreadsPreview,
+  BulkCreateOfficerEvidenceThreadsResult,
   BulkLinkResolveBankChargeRequest,
   BulkLinkResolveBankChargePreview,
   BulkLinkResolveBankChargeResult,
@@ -256,6 +258,23 @@ export const reconciliationService = {
     data: Omit<BulkCleanUpStrandedPairsRequest, 'dry_run'>
   ): Promise<BulkCleanUpStrandedPairsResult> {
     return api.post(`${BASE_URL}/exceptions/bulk-clean-up-stranded-pairs/`, { ...data, dry_run: false });
+  },
+
+  /**
+   * For every officer with unresolved erp_only exceptions that have NO
+   * plausible bank_only counterpart anywhere on their bank account (as
+   * opposed to ambiguous/exact/fee-tolerant pairs, which already have real
+   * bank money nearby and are Clean Up's job, not an evidence request),
+   * creates one Discussions thread addressed to that officer listing every
+   * such item and asking them to attach evidence. Run this AFTER Clean Up
+   * has closed out everything it safely can.
+   */
+  async bulkCreateOfficerEvidenceThreadsPreview(): Promise<BulkCreateOfficerEvidenceThreadsPreview> {
+    return api.post(`${BASE_URL}/exceptions/bulk-create-officer-evidence-threads/`, { dry_run: true });
+  },
+
+  async bulkCreateOfficerEvidenceThreads(): Promise<BulkCreateOfficerEvidenceThreadsResult> {
+    return api.post(`${BASE_URL}/exceptions/bulk-create-officer-evidence-threads/`, { dry_run: false });
   },
 
   /**

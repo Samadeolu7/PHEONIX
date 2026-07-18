@@ -2255,6 +2255,8 @@ class BulkCleanUpStrandedPairsView(APIView):
                     {
                         'resolved_exception_id': r.id, 'unresolved_exception_id': u.id,
                         'fee_amount': str(fee) if fee is not None else None,
+                        'resolved_exception': _serialize_exception_summary(r),
+                        'unresolved_exception': _serialize_exception_summary(u, fee),
                     }
                     for r, u, fee in pairs
                 ],
@@ -2266,6 +2268,8 @@ class BulkCleanUpStrandedPairsView(APIView):
         cleaned_up = []
         failed = []
         for resolved_exc, unresolved_exc, fee in pairs:
+            resolved_summary = _serialize_exception_summary(resolved_exc)
+            unresolved_summary = _serialize_exception_summary(unresolved_exc, fee)
             try:
                 result = _clean_up_stranded_pair(request, resolved_exc, unresolved_exc, fee, resolution_notes)
             except Exception as exc:
@@ -2276,6 +2280,7 @@ class BulkCleanUpStrandedPairsView(APIView):
                 continue
             cleaned_up.append({
                 'resolved_exception_id': resolved_exc.id, 'unresolved_exception_id': unresolved_exc.id,
+                'resolved_exception': resolved_summary, 'unresolved_exception': unresolved_summary,
                 **result,
             })
 
@@ -2287,6 +2292,211 @@ class BulkCleanUpStrandedPairsView(APIView):
             'ambiguous_count': len(ambiguous),
             'ambiguous_exception_ids': [r.id for r, _candidates in ambiguous],
             'ambiguous': ambiguous_detail,
+        }, status=status.HTTP_201_CREATED)
+
+
+def _build_evidence_request_messages(exceptions):
+    """
+    Splits the evidence-request text across as many chunks as needed to
+    respect ThreadMessage.body's max_length=1000 — an officer with dozens of
+    outstanding items would otherwise overflow a single message. Returns a
+    list of message body strings in the order they should be posted.
+    """
+    from .reconciliation_utils import _LOAN_NUMBER_RE
+
+    BODY_LIMIT = 1000
+    SAFETY_MARGIN = 20  # room for the "(continued)" prefix on overflow chunks
+
+    intro = (
+        "We're reviewing outstanding loan repayment records against bank statements. "
+        f"The following {len(exceptions)} repayment(s) recorded on your officer account "
+        "don't currently match any bank transaction we can find. Could you help us "
+        "locate evidence (bank slip, transfer receipt, or client confirmation) for "
+        "each? Please reply to this thread and attach whatever you have.\n"
+    )
+    lines = []
+    for i, exc in enumerate(exceptions, start=1):
+        loan_match = _LOAN_NUMBER_RE.search(exc.erp_narration or '')
+        loan_ref = f"Loan {loan_match.group(1).strip()} — " if loan_match else ''
+        narration = (exc.erp_narration or 'no narration')[:80]
+        lines.append(f"{i}. {loan_ref}₦{exc.erp_amount} on {exc.erp_date} — {narration}")
+
+    total = sum((exc.erp_amount or Decimal('0')) for exc in exceptions)
+    outro = f"\nTotal: ₦{total} across {len(exceptions)} item(s)."
+
+    chunks = []
+    current = intro
+    for line in lines:
+        candidate = current + line if current == intro else current + "\n" + line
+        if len(candidate) > BODY_LIMIT - SAFETY_MARGIN:
+            chunks.append(current)
+            current = "(continued) " + line
+        else:
+            current = candidate
+
+    if len(current) + len(outro) <= BODY_LIMIT:
+        chunks.append(current + outro)
+    else:
+        chunks.append(current)
+        chunks.append("(continued)" + outro)
+
+    return chunks
+
+
+def _create_officer_evidence_thread(request, page, officer, exceptions):
+    """
+    Creates one Discussions thread (threads app) addressed to `officer`,
+    listing every exception in `exceptions` and asking them to attach
+    evidence. Mirrors what ThreadViewSet.perform_create does by hand (direct
+    ORM creation bypasses is_threadable/user_can_initiate_thread — those only
+    apply to the DRF-facing create path, not Thread.objects.create() itself)
+    — creates the initiator's own ThreadParticipant too so the director who
+    triggered this can see replies, exactly as the ViewSet does.
+    """
+    from django.db import transaction as db_transaction
+    from threads.models import Thread, ThreadParticipant, ThreadMessage
+
+    tenant = getattr(request.user, 'tenant', None)
+    officer_label = officer.get_full_name() or officer.username
+
+    with db_transaction.atomic():
+        thread = Thread.objects.create(
+            page=page,
+            title=f"Reconciliation evidence review — {officer_label}",
+            initiated_by=request.user,
+            reason='query',
+            owner=request.user,
+            created_by=request.user,
+            tenant=tenant,
+            branch=getattr(officer, 'branch', None),
+        )
+        ThreadParticipant.objects.create(
+            thread=thread, user=request.user, added_by=request.user,
+            can_add_participants=True, tenant=tenant, owner=request.user, created_by=request.user,
+        )
+        ThreadParticipant.objects.create(
+            thread=thread, user=officer, added_by=request.user,
+            can_add_participants=False, tenant=tenant, owner=request.user, created_by=request.user,
+        )
+        for body in _build_evidence_request_messages(exceptions):
+            ThreadMessage.objects.create(
+                thread=thread, author=request.user, body=body,
+                tenant=tenant, owner=request.user, created_by=request.user,
+            )
+
+    return thread
+
+
+class BulkCreateOfficerEvidenceThreadsView(APIView):
+    """
+    POST /api/banks/exceptions/bulk-create-officer-evidence-threads/
+
+    For every officer with unresolved erp_only exceptions that have NO
+    plausible bank_only counterpart anywhere on their bank account
+    (find_unexplained_erp_only_by_officer, banks/reconciliation_utils.py —
+    deliberately excludes anything Clean Up/Link could still auto-resolve,
+    since those already have real bank money sitting nearby and aren't
+    evidence of a missing payment), creates one Discussions thread addressed
+    to that officer, listing every such item and asking them to attach
+    evidence (bank slip, transfer receipt, client confirmation).
+
+    Run this AFTER Clean Up/manual ambiguous review has closed out
+    everything it can — anything still unresolved at that point genuinely
+    has no bank-side match found anywhere, which is what makes it worth a
+    formal evidence request rather than more auto-matching.
+
+    Unattributed exceptions (no officer recorded) are always excluded —
+    there is no user to address a thread to.
+
+    Pass dry_run: true to preview which officers would receive a thread and
+    how many items/how much each covers, without creating anything.
+
+    Director-only (can_user_approve).
+
+    Request body:
+      dry_run  (bool, optional, default false)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may request reconciliation evidence from officers.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .reconciliation_utils import find_unexplained_erp_only_by_officer
+
+        dry_run = bool(request.data.get('dry_run', False))
+
+        scoped_qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user)
+        )
+        by_officer = find_unexplained_erp_only_by_officer(scoped_qs)
+
+        previews = []
+        for officer_id, bucket in by_officer.items():
+            officer = bucket['officer']
+            exceptions = bucket['exceptions']
+            total = sum((exc.erp_amount or Decimal('0')) for exc in exceptions)
+            previews.append({
+                'officer_id': officer_id,
+                'officer_name': officer.get_full_name() or officer.username,
+                'branch_name': getattr(getattr(officer, 'branch', None), 'name', None),
+                'item_count': len(exceptions),
+                'total_amount': str(total),
+                'exception_ids': [exc.id for exc in exceptions],
+            })
+        previews.sort(key=lambda p: Decimal(p['total_amount']), reverse=True)
+
+        if dry_run:
+            return Response({
+                'would_create_count': len(previews),
+                'would_create': previews,
+            })
+
+        from pages.models import ModulePage
+
+        # .for_tenant(), not the bare default manager — ModulePage.objects'
+        # default queryset only filters by tenant via a thread-local that
+        # isn't reliably set in a DRF request context (the same bug class
+        # documented elsewhere in this app for DailyReconciliation.tenant);
+        # an unset thread-local here would silently mix every tenant's copy
+        # of this page together and risk flipping/reading the wrong one.
+        tenant = getattr(request.user, 'tenant', None)
+        page_qs = ModulePage.objects.for_tenant(tenant).filter(
+            module__code='banks', code='bank-reconciliation-exceptions',
+        )
+        page_qs.update(is_threadable=True)
+        page = page_qs.first()
+        if page is None:
+            return Response(
+                {'detail': 'The bank-reconciliation-exceptions page is not seeded yet — '
+                           'run the seed_permissions management command first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        created = []
+        failed = []
+        for officer_id, bucket in by_officer.items():
+            officer = bucket['officer']
+            exceptions = bucket['exceptions']
+            try:
+                thread = _create_officer_evidence_thread(request, page, officer, exceptions)
+            except Exception as exc:
+                failed.append({'officer_id': officer_id, 'detail': _error_message(exc)})
+                continue
+            created.append({
+                'officer_id': officer_id, 'thread_id': thread.id, 'item_count': len(exceptions),
+            })
+
+        return Response({
+            'created_count': len(created),
+            'created': created,
+            'failed_count': len(failed),
+            'failed': failed,
         }, status=status.HTTP_201_CREATED)
 
 

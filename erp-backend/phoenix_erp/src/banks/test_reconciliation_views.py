@@ -1667,6 +1667,14 @@ class BulkCleanUpStrandedPairsTests(TestCase):
         self.assertEqual(by_resolved_id[exact_resolved.id]['unresolved_exception_id'], exact_unresolved.id)
         self.assertIsNone(by_resolved_id[exact_resolved.id]['fee_amount'])
 
+        # Full narration/amount/date detail, not just bare ids, so a
+        # director can review before confirming an "unambiguous" pair.
+        fee_row = by_resolved_id[fee_resolved.id]
+        self.assertEqual(fee_row['resolved_exception']['narration'], 'Transfer: Inter bank transfer')
+        self.assertEqual(fee_row['resolved_exception']['amount'], '140000.00')
+        self.assertEqual(fee_row['unresolved_exception']['narration'], 'inter bank')
+        self.assertEqual(fee_row['unresolved_exception']['fee_amount'], '20.00')
+
         fee_resolved.refresh_from_db()
         self.assertTrue(fee_resolved.resolved)  # untouched by dry_run
 
@@ -1812,6 +1820,180 @@ class BulkCleanUpStrandedPairsTests(TestCase):
         resp = self.client.post(self.URL, {'resolution_notes': 'short'}, format='json')
 
         self.assertEqual(resp.status_code, 400)
+
+
+class BulkCreateOfficerEvidenceThreadsTests(TestCase):
+    """
+    Tests for BulkCreateOfficerEvidenceThreadsView /
+    find_unexplained_erp_only_by_officer — creates one Discussions thread
+    per officer listing their unresolved erp_only exceptions that have NO
+    plausible bank_only counterpart anywhere (as opposed to ambiguous/exact/
+    fee-tolerant pairs, which already have real bank money nearby and are
+    Clean Up's job, not an evidence request).
+    """
+
+    URL = '/api/banks/exceptions/bulk-create-officer-evidence-threads/'
+
+    def setUp(self):
+        from pages.models import Module, ModulePage
+        from threads.models import Thread, ThreadParticipant, ThreadMessage
+        self.Thread = Thread
+        self.ThreadParticipant = ThreadParticipant
+        self.ThreadMessage = ThreadMessage
+
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Evidence Org', slug='evidence-org')
+        self.branch = Branch.objects.create(name='Branch A', code='EVA')
+
+        self.director = User.objects.create_user(
+            username='evidence_director', password='test123',
+            tenant=self.tenant, branch=self.branch, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+        self.branch_manager = User.objects.create_user(
+            username='evidence_bm', password='test123', tenant=self.tenant, branch=self.branch,
+        )
+        self.officer_a = User.objects.create_user(
+            username='officer_a', password='test123', tenant=self.tenant, branch=self.branch,
+            first_name='Officer', last_name='A',
+        )
+        self.officer_b = User.objects.create_user(
+            username='officer_b', password='test123', tenant=self.tenant, branch=self.branch,
+            first_name='Officer', last_name='B',
+        )
+
+        gl_account = Account.objects.create(
+            code='1911', name='Evidence GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        bank = Bank.objects.create(bank_name='Evidence Bank', bank_code='989')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000070', account_name='Evidence Account',
+            gl_account=gl_account, account_manager=self.director,
+        )
+        self.recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/evidence.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+        module = Module.objects.create(
+            code='banks', name='Banks', icon='bank', tenant=self.tenant, owner=self.director, branch=self.branch,
+        )
+        self.page = ModulePage.objects.create(
+            module=module, code='bank-reconciliation-exceptions', title='Reconciliation Exceptions',
+            page_type='list', tenant=self.tenant, owner=self.director, branch=self.branch,
+        )
+
+    def _erp_only(self, officer, **overrides):
+        defaults = dict(
+            reconciliation=self.recon, exception_type='erp_only', direction='DEBIT',
+            erp_amount=Decimal('75000.00'), erp_narration='Loan repayment – LN-9001 | Ref: none',
+            erp_date='2026-07-01', officer=officer, resolved=False,
+        )
+        defaults.update(overrides)
+        return ReconciliationException.objects.create(**defaults)
+
+    def test_dry_run_groups_unexplained_items_by_officer(self):
+        self._erp_only(self.officer_a, erp_amount=Decimal('10000.00'))
+        self._erp_only(self.officer_a, erp_amount=Decimal('20000.00'))
+        self._erp_only(self.officer_b, erp_amount=Decimal('5000.00'))
+        # Has a plausible bank_only candidate — Clean Up's job, must be excluded.
+        self._erp_only(self.officer_b, erp_amount=Decimal('99999.00'))
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('99999.00'), bank_narration='candidate', bank_date='2026-07-01',
+        )
+        # Unattributed — no user to message, must be excluded.
+        self._erp_only(None, erp_amount=Decimal('1000.00'))
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'dry_run': True}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['would_create_count'], 2)
+        by_officer = {row['officer_id']: row for row in resp.data['would_create']}
+        self.assertEqual(by_officer[self.officer_a.id]['item_count'], 2)
+        self.assertEqual(by_officer[self.officer_a.id]['total_amount'], '30000.00')
+        self.assertEqual(by_officer[self.officer_b.id]['item_count'], 1)
+        self.assertEqual(by_officer[self.officer_b.id]['total_amount'], '5000.00')
+        self.assertEqual(self.Thread.objects.count(), 0)  # dry_run creates nothing
+
+    def test_creates_thread_with_participants_and_message(self):
+        exc = self._erp_only(self.officer_a)
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['created_count'], 1)
+
+        thread = self.Thread.objects.get(pk=resp.data['created'][0]['thread_id'])
+        self.assertEqual(thread.initiated_by_id, self.director.id)
+        self.assertEqual(thread.reason, 'query')
+        self.assertIn('Officer A', thread.title)
+
+        participant_user_ids = set(thread.participants.values_list('user_id', flat=True))
+        self.assertEqual(participant_user_ids, {self.director.id, self.officer_a.id})
+
+        messages = list(thread.messages.all())
+        self.assertEqual(len(messages), 1)
+        self.assertIn('LN-9001', messages[0].body)
+        self.assertIn(str(exc.erp_amount), messages[0].body)
+        self.assertEqual(messages[0].author_id, self.director.id)
+
+    def test_message_splits_into_multiple_chunks_when_too_long(self):
+        for i in range(40):
+            self._erp_only(
+                self.officer_a, erp_amount=Decimal('1000.00'),
+                erp_narration=f'Loan repayment – LN-{9000 + i} | Ref: some reasonably long reference text {i}',
+            )
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        thread = self.Thread.objects.get(pk=resp.data['created'][0]['thread_id'])
+        messages = list(thread.messages.all())
+        self.assertGreater(len(messages), 1)
+        for m in messages:
+            self.assertLessEqual(len(m.body), 1000)
+
+    def test_excludes_exceptions_with_a_plausible_bank_candidate(self):
+        self._erp_only(self.officer_a, erp_amount=Decimal('50000.00'))
+        ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('50020.00'), bank_narration='fee candidate', bank_date='2026-07-01',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {'dry_run': True}, format='json')
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['would_create_count'], 0)
+
+    def test_flips_is_threadable_on_the_page(self):
+        self.assertFalse(self.page.is_threadable)
+        self._erp_only(self.officer_a)
+
+        self.client.force_authenticate(user=self.director)
+        self.client.post(self.URL, {}, format='json')
+
+        self.page.refresh_from_db()
+        self.assertTrue(self.page.is_threadable)
+
+    def test_branch_manager_cannot_create_threads(self):
+        self._erp_only(self.officer_a)
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(self.URL, {}, format='json')
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(self.Thread.objects.count(), 0)
+
+    def test_no_action_when_nothing_unexplained(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(self.URL, {}, format='json')
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(resp.data['created_count'], 0)
 
 
 class DualApprovalResolveTests(TestCase):

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Banknote, Sparkles, Users, X } from 'lucide-react';
+import { AlertTriangle, Banknote, MessageSquare, Sparkles, Users, X } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import { BulkLinkBankChargeModal } from '../../components/banks/BulkLinkBankChargeModal';
 import { CleanUpStrandedPairsModal } from '../../components/banks/CleanUpStrandedPairsModal';
+import { CreateOfficerEvidenceThreadsModal } from '../../components/banks/CreateOfficerEvidenceThreadsModal';
 import { useToast } from '../../hooks/useToast';
 import type {
   MissingMoneyBankAccountRow,
@@ -42,6 +43,7 @@ const MissingMoneySummaryPage: React.FC = () => {
 
   const [bulkLinkTarget, setBulkLinkTarget] = useState<{ id: number; name: string } | null>(null);
   const [showCleanUpModal, setShowCleanUpModal] = useState(false);
+  const [showEvidenceModal, setShowEvidenceModal] = useState(false);
 
   useEffect(() => {
     load();
@@ -112,13 +114,22 @@ const MissingMoneySummaryPage: React.FC = () => {
           <AlertTriangle className="w-7 h-7 text-red-600" />
           <h1 className="text-3xl font-bold text-gray-900">Missing Money Summary</h1>
         </div>
-        <button
-          onClick={() => setShowCleanUpModal(true)}
-          className="flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-lg hover:bg-amber-100"
-        >
-          <Sparkles className="w-4 h-4" />
-          Clean Up Stranded Pairs
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowCleanUpModal(true)}
+            className="flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-lg hover:bg-amber-100"
+          >
+            <Sparkles className="w-4 h-4" />
+            Clean Up Stranded Pairs
+          </button>
+          <button
+            onClick={() => setShowEvidenceModal(true)}
+            className="flex items-center gap-1.5 text-sm text-purple-700 bg-purple-50 border border-purple-300 px-3 py-1.5 rounded-lg hover:bg-purple-100"
+          >
+            <MessageSquare className="w-4 h-4" />
+            Request Evidence From Officers
+          </button>
+        </div>
       </div>
       <p className="text-gray-600 mb-6">
         Every unresolved bank_only and erp_only exception, totalled and broken down by who
@@ -345,6 +356,17 @@ const MissingMoneySummaryPage: React.FC = () => {
           onClose={() => setShowCleanUpModal(false)}
           onSuccess={() => {
             success('Stranded pairs cleaned up — reloading summary');
+            load();
+          }}
+          onError={showError}
+        />
+      )}
+
+      {showEvidenceModal && (
+        <CreateOfficerEvidenceThreadsModal
+          onClose={() => setShowEvidenceModal(false)}
+          onSuccess={() => {
+            success('Evidence request threads created');
             load();
           }}
           onError={showError}

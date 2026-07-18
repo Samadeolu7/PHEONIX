@@ -24,6 +24,7 @@ from .views import (
     LinkCandidatesView,
     UnresolveExceptionView,
     BulkCleanUpStrandedPairsView,
+    BulkCreateOfficerEvidenceThreadsView,
     OfficerReconciliationRiskReportView,
     ManualOverridesReportView,
     MissingMoneySummaryView,
@@ -115,6 +116,11 @@ urlpatterns = [
         'exceptions/bulk-clean-up-stranded-pairs/',
         BulkCleanUpStrandedPairsView.as_view(),
         name='reconciliation-exceptions-bulk-clean-up-stranded-pairs',
+    ),
+    path(
+        'exceptions/bulk-create-officer-evidence-threads/',
+        BulkCreateOfficerEvidenceThreadsView.as_view(),
+        name='reconciliation-exceptions-bulk-create-officer-evidence-threads',
     ),
     path(
         'reports/officer-reconciliation-risk/',

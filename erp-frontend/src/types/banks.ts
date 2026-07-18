@@ -548,12 +548,6 @@ export interface BulkCleanUpStrandedPairsRequest {
   dry_run?: boolean;
 }
 
-interface BulkCleanUpStrandedPairResult {
-  resolved_exception_id: number;
-  unresolved_exception_id: number;
-  fee_amount: string | null;
-}
-
 export interface StrandedExceptionCandidate {
   id: number;
   exception_type: 'bank_only' | 'erp_only' | 'amount_diff';
@@ -562,6 +556,14 @@ export interface StrandedExceptionCandidate {
   narration: string;
   date: string | null;
   fee_amount: string | null;
+}
+
+interface BulkCleanUpStrandedPairResult {
+  resolved_exception_id: number;
+  unresolved_exception_id: number;
+  fee_amount: string | null;
+  resolved_exception: StrandedExceptionCandidate;
+  unresolved_exception: StrandedExceptionCandidate;
 }
 
 export interface AmbiguousStrandedException extends StrandedExceptionCandidate {
@@ -585,6 +587,27 @@ export interface BulkCleanUpStrandedPairsResult {
   ambiguous_count: number;
   ambiguous_exception_ids: number[];
   ambiguous: AmbiguousStrandedException[];
+}
+
+export interface OfficerEvidenceThreadPreview {
+  officer_id: number;
+  officer_name: string;
+  branch_name: string | null;
+  item_count: number;
+  total_amount: string;
+  exception_ids: number[];
+}
+
+export interface BulkCreateOfficerEvidenceThreadsPreview {
+  would_create_count: number;
+  would_create: OfficerEvidenceThreadPreview[];
+}
+
+export interface BulkCreateOfficerEvidenceThreadsResult {
+  created_count: number;
+  created: { officer_id: number; thread_id: number; item_count: number }[];
+  failed_count: number;
+  failed: { officer_id: number; detail: string }[];
 }
 
 export interface DailyReconciliation {

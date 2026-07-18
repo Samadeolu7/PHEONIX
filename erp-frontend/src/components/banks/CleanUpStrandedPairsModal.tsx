@@ -163,18 +163,33 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
                         <strong>{preview.would_clean_up_count}</strong> unambiguous pair(s) would be
                         reopened and linked automatically.
                       </div>
-                      <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-40 overflow-y-auto">
+                      <ul className="divide-y divide-gray-200 border border-gray-200 rounded-md max-h-64 overflow-y-auto">
                         {preview.would_clean_up.map((p) => (
-                          <li
-                            key={`${p.resolved_exception_id}-${p.unresolved_exception_id}`}
-                            className="px-3 py-2 text-sm flex justify-between"
-                          >
-                            <span className="text-gray-700">
-                              #{p.resolved_exception_id} ↔ #{p.unresolved_exception_id}
-                            </span>
-                            <span className="font-medium text-amber-700">
-                              {p.fee_amount ? `Fee ${formatNaira(p.fee_amount)}` : 'Exact match'}
-                            </span>
+                          <li key={`${p.resolved_exception_id}-${p.unresolved_exception_id}`} className="px-3 py-2 text-sm">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-500 text-xs">
+                                #{p.resolved_exception_id} (was resolved) ↔ #{p.unresolved_exception_id} (unresolved)
+                              </span>
+                              <span className="font-medium text-amber-700 shrink-0 ml-2">
+                                {p.fee_amount ? `Fee ${formatNaira(p.fee_amount)}` : 'Exact match'}
+                              </span>
+                            </div>
+                            <div className="mt-1 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+                              <div className="min-w-0">
+                                <p className="text-gray-900 truncate">{p.resolved_exception.narration || '—'}</p>
+                                <p className="text-gray-500 text-xs">
+                                  {formatNaira(p.resolved_exception.amount)} on {p.resolved_exception.date || '—'} ·{' '}
+                                  {p.resolved_exception.exception_type} {p.resolved_exception.direction}
+                                </p>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-gray-900 truncate">{p.unresolved_exception.narration || '—'}</p>
+                                <p className="text-gray-500 text-xs">
+                                  {formatNaira(p.unresolved_exception.amount)} on {p.unresolved_exception.date || '—'} ·{' '}
+                                  {p.unresolved_exception.exception_type} {p.unresolved_exception.direction}
+                                </p>
+                              </div>
+                            </div>
                           </li>
                         ))}
                       </ul>
