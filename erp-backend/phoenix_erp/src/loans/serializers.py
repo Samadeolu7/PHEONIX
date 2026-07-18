@@ -304,6 +304,19 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
     restructures = LoanRestructureSerializer(many=True, read_only=True)
     contractual_interest_total = serializers.SerializerMethodField()
     unearned_interest_remaining = serializers.SerializerMethodField()
+    correction_window_expires_at = serializers.SerializerMethodField()
+
+    def get_correction_window_expires_at(self, obj):
+        """Last date a LoanDisbursementCorrection may be REQUESTED for this loan
+        (see LoanDisbursementCorrection.is_within_correction_window, loans/models.py).
+        None if the loan was never disbursed."""
+        if not obj.original_disbursement_date:
+            return None
+        from datetime import timedelta
+        from django.conf import settings
+        return obj.original_disbursement_date + timedelta(
+            days=settings.LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS
+        )
 
     class Meta:
         model = LoanAccount
@@ -325,6 +338,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'status', 'rejection_reason', 'application_date', 'application_notes',
             'approval_date', 'approved_by',
             'disbursement_date', 'first_payment_date', 'maturity_date', 'closed_date',
+            'correction_window_expires_at',
             # Balances
             'outstanding_principal', 'outstanding_interest',
             'outstanding_fees', 'outstanding_penalties', 'total_outstanding',
@@ -357,6 +371,7 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             'product_requires_guarantor', 'product_min_guarantors',
             'total_outstanding', 'total_charges', 'charges_summary',
             'total_repaid', 'interest_method', 'next_due_date', 'last_payment_date',
+            'correction_window_expires_at',
             'interest_suspended', 'interest_suspended_at', 'provision_pct', 'provision_amount',
             'contractual_interest_total',
             'interest_deferral_active', 'unearned_interest_remaining',

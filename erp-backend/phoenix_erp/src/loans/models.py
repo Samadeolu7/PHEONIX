@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models import Sum, Q
 from decimal import Decimal, ROUND_HALF_UP
+from datetime import timedelta
 
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
@@ -3201,6 +3202,30 @@ class LoanDisbursementCorrection(TimeStampedModel, BranchScopedModel, SoftDelete
                     {'correct_client': "The correct client must be different from the loan's current client — "
                                         "that's not a wrong-customer error."}
                 )
+        if self.original_loan_id and not self.pk and not self.is_within_correction_window:
+            raise ValidationError(
+                {'original_loan': (
+                    f"This correction can only be requested within "
+                    f"{settings.LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS} days of the original "
+                    f"disbursement ({self.original_loan.original_disbursement_date}). For an older "
+                    f"loan, use write-off or restructure instead."
+                )}
+            )
+
+    @property
+    def is_within_correction_window(self):
+        """
+        True while the original loan's disbursement is still within
+        LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS of today. Anchored on
+        original_disbursement_date (set once at first disburse() and never
+        touched again — unlike disbursement_date, which restructure()
+        overwrites) so the window can't be reset by an unrelated later event.
+        """
+        anchor = self.original_loan.original_disbursement_date
+        if not anchor:
+            return False
+        deadline = anchor + timedelta(days=settings.LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS)
+        return timezone.localdate() <= deadline
 
     MIN_REASON_LENGTH = 10
 
@@ -3322,6 +3347,15 @@ class LoanDisbursementCorrection(TimeStampedModel, BranchScopedModel, SoftDelete
                 f"Loan {loan.loan_number} already has repayments recorded (₦{loan.total_paid}). "
                 "This automated correction only handles loans with no repayment history yet — "
                 "contact accounting for a manual adjustment."
+            )
+        # Re-check the window at execute time too, not just at request time —
+        # approvals can take days, and the window setting itself could change
+        # in between. Money only actually moves here.
+        if not self.is_within_correction_window:
+            raise ValidationError(
+                f"The {settings.LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS}-day correction window for "
+                f"loan {loan.loan_number} (disbursed {loan.original_disbursement_date}) has passed. "
+                "This request can no longer be executed — reject it and use write-off/restructure instead."
             )
         if not loan.disbursement_journal_entry_id:
             raise ValidationError(f"Loan {loan.loan_number} has no disbursement journal entry to reverse.")

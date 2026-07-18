@@ -1284,6 +1284,13 @@ export default function LoanAccountDetailPage() {
   // Matches LoanDisbursementCorrection._execute()'s status guard (loans/models.py) —
   // only a disbursed/active loan's disbursement can be corrected this way.
   const canCorrectDisbursement = ['active', 'disbursed'].includes(loan.status);
+  // Matches is_within_correction_window there — a correction can only be
+  // REQUESTED within LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS of disbursement;
+  // the backend re-checks this at execute time regardless, this is just so the
+  // button doesn't invite a request that'll be rejected later.
+  const correctionWindowExpired =
+    !!loan.correction_window_expires_at &&
+    loan.correction_window_expires_at < new Date().toISOString().slice(0, 10);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1508,7 +1515,7 @@ export default function LoanAccountDetailPage() {
                   <Loader2 size={14} />
                   Correction Pending
                 </span>
-              ) : (
+              ) : !correctionWindowExpired ? (
                 <button
                   onClick={() => setShowCorrectionModal(true)}
                   title="Reverse this disbursement and re-disburse to the correct customer"
@@ -1517,7 +1524,7 @@ export default function LoanAccountDetailPage() {
                   <AlertCircle size={14} />
                   Correct Disbursement
                 </button>
-              )
+              ) : null
             )}
           </div>
         </div>

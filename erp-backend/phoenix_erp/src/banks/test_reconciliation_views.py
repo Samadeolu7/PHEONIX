@@ -266,7 +266,7 @@ class ReconciliationViewTests(TestCase):
     # views (both go through the tenant-scoped manager) even though it was
     # reconciled successfully — this is exactly what StatementUploadView.post()
     # must never do again.
-    @patch('banks.views.run_reconciliation_match')
+    @patch('banks.reconciliation_utils.run_reconciliation_match')
     def test_uploaded_reconciliation_has_tenant_set_and_is_listable(self, mock_task):
         # A date distinct from self.recon_a/self.recon_b's dates (2026-07-01,
         # 2026-07-02) so this exercises the "brand new reconciliation"
@@ -295,6 +295,190 @@ class ReconciliationViewTests(TestCase):
         list_resp = self.client.get('/api/banks/reconciliations/')
         self.assertEqual(list_resp.status_code, 200)
         self.assertIn(new_id, {row['id'] for row in list_resp.data})
+
+    # ── StatementUploadView: create-vs-rerun-vs-skip branching ─────────────
+    # Characterization tests written ahead of extracting this view's body
+    # into a service function (banks/services.py) — pinning current
+    # behavior for the create/rerun/skip/409 branches and basic validation,
+    # none of which had direct coverage before (only the brand-new-
+    # reconciliation branch was covered, by the tenant regression test
+    # above).
+
+    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    def test_upload_reruns_existing_non_processing_reconciliation_for_same_date(self, mock_task):
+        # self.recon_a is status='completed' for 2026-07-01 — a statement
+        # covering that same date should re-run it, not create a duplicate.
+        csv_content = (
+            b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
+            b"01/07/2026,Loan repayment LN-901,REF901,,7000.00,17000.00\r\n"
+        )
+        upload = SimpleUploadedFile('statement.csv', csv_content, content_type='text/csv')
+
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': self.bank_account.id, 'statement_file': upload},
+            format='multipart',
+        )
+
+        self.assertEqual(resp.status_code, 202, resp.data)
+        self.assertEqual(resp.data['reconciliations'], [])
+        self.assertEqual(len(resp.data['reconciliations_rerun']), 1)
+        self.assertEqual(resp.data['reconciliations_rerun'][0]['id'], self.recon_a.id)
+
+        self.recon_a.refresh_from_db()
+        self.assertEqual(self.recon_a.status, 'processing')
+        self.assertEqual(self.recon_a.rerun_count, 1)
+        self.assertEqual(self.recon_a.uploaded_by_id, self.branch_manager.id)
+        mock_task.delay.assert_called_once_with(self.recon_a.id, False)
+
+    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    def test_upload_skips_date_currently_processing(self, mock_task):
+        self.recon_a.status = 'processing'
+        self.recon_a.save(update_fields=['status'])
+
+        csv_content = (
+            b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
+            b"01/07/2026,Loan repayment LN-902,REF902,,3000.00,20000.00\r\n"
+        )
+        upload = SimpleUploadedFile('statement.csv', csv_content, content_type='text/csv')
+
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': self.bank_account.id, 'statement_file': upload},
+            format='multipart',
+        )
+
+        self.assertEqual(resp.status_code, 409, resp.data)
+        self.assertEqual(resp.data['skipped_dates'], ['2026-07-01'])
+        mock_task.delay.assert_not_called()
+
+        self.recon_a.refresh_from_db()
+        self.assertEqual(self.recon_a.rerun_count, 0)
+
+    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    def test_upload_dedupes_bank_transactions_by_bank_ref(self, mock_task):
+        csv_content = (
+            b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
+            b"06/07/2026,Loan repayment LN-903,REF903,,4000.00,24000.00\r\n"
+        )
+        self.client.force_authenticate(user=self.branch_manager)
+
+        for _ in range(2):
+            upload = SimpleUploadedFile('statement.csv', csv_content, content_type='text/csv')
+            resp = self.client.post(
+                '/api/banks/reconciliations/upload/',
+                {'bank_account_id': self.bank_account.id, 'statement_file': upload},
+                format='multipart',
+            )
+            self.assertEqual(resp.status_code, 202, resp.data)
+            # The mocked task never runs, so the reconciliation this upload
+            # just created/rerun stays 'processing' — flip it to 'completed'
+            # so the next iteration exercises the rerun branch (and hence
+            # the dedup path) instead of the already-processing skip branch.
+            DailyReconciliation.objects.filter(
+                bank_account=self.bank_account, reconciliation_date='2026-07-06',
+            ).update(status='completed')
+
+        self.assertEqual(
+            ReconciliationBankTransaction.objects.filter(
+                bank_account=self.bank_account, bank_ref='REF903',
+            ).count(),
+            1,
+        )
+
+    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    def test_upload_multi_date_statement_creates_one_reconciliation_per_date(self, mock_task):
+        csv_content = (
+            b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
+            b"07/07/2026,Loan repayment LN-904,REF904,,1000.00,25000.00\r\n"
+            b"08/07/2026,Loan repayment LN-905,REF905,,2000.00,27000.00\r\n"
+        )
+        upload = SimpleUploadedFile('statement.csv', csv_content, content_type='text/csv')
+
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': self.bank_account.id, 'statement_file': upload},
+            format='multipart',
+        )
+
+        self.assertEqual(resp.status_code, 202, resp.data)
+        self.assertEqual(len(resp.data['reconciliations']), 2)
+        self.assertEqual(mock_task.delay.call_count, 2)
+
+    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    def test_upload_include_debits_flag_passed_through(self, mock_task):
+        csv_content = (
+            b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
+            b"09/07/2026,Loan repayment LN-906,REF906,,1500.00,28500.00\r\n"
+        )
+        upload = SimpleUploadedFile('statement.csv', csv_content, content_type='text/csv')
+
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': self.bank_account.id, 'statement_file': upload, 'include_debits': 'true'},
+            format='multipart',
+        )
+
+        self.assertEqual(resp.status_code, 202, resp.data)
+        new_id = resp.data['reconciliations'][0]['id']
+        recon = DailyReconciliation.objects.get(pk=new_id)
+        self.assertTrue(recon.include_debits)
+        mock_task.delay.assert_called_once_with(recon.id, True)
+
+    def test_upload_requires_bank_account_id(self):
+        upload = SimpleUploadedFile('statement.csv', b'irrelevant', content_type='text/csv')
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'statement_file': upload},
+            format='multipart',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_upload_requires_statement_file(self):
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': self.bank_account.id},
+            format='multipart',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_upload_404_when_bank_account_not_found(self):
+        upload = SimpleUploadedFile('statement.csv', b'irrelevant', content_type='text/csv')
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': 999999, 'statement_file': upload},
+            format='multipart',
+        )
+        self.assertEqual(resp.status_code, 404)
+
+    def test_upload_400_when_file_unparseable(self):
+        upload = SimpleUploadedFile('statement.csv', b'not,a,statement\n1,2,3\n', content_type='text/csv')
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': self.bank_account.id, 'statement_file': upload},
+            format='multipart',
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_upload_400_when_no_transactions_found(self):
+        # Header row only — a well-formed, empty statement.
+        csv_content = b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
+        upload = SimpleUploadedFile('statement.csv', csv_content, content_type='text/csv')
+        self.client.force_authenticate(user=self.branch_manager)
+        resp = self.client.post(
+            '/api/banks/reconciliations/upload/',
+            {'bank_account_id': self.bank_account.id, 'statement_file': upload},
+            format='multipart',
+        )
+        self.assertEqual(resp.status_code, 400)
 
 
 class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):

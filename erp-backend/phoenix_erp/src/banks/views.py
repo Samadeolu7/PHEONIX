@@ -1100,93 +1100,11 @@ class StatementUploadView(APIView):
         if not parsed_transactions:
             return Response({'detail': 'No transactions found in the uploaded file.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # --- store parsed lines, deduped by (bank_account, bank_ref) ---
-        for t in parsed_transactions:
-            ReconciliationBankTransaction.objects.get_or_create(
-                bank_account=bank_account,
-                bank_ref=t.bank_ref,
-                defaults={
-                    'value_date': t.value_date,
-                    'direction': t.direction,
-                    'amount': Decimal(t.amount),
-                    'narration': t.narration,
-                    'balance_after': Decimal(t.balance_after) if t.balance_after else None,
-                },
-            )
-
-        # --- one DailyReconciliation per distinct date actually present in
-        # the file — the whole point is the caller shouldn't have to know
-        # or care whether this statement covers one day or thirty. A date
-        # that already has a reconciliation is re-run (not skipped) — a
-        # reconciled day is never really "closed": postings lag, and late-
-        # arriving transactions must still be matchable against it. Only a
-        # date whose reconciliation is *currently in flight* is skipped, to
-        # avoid a racing duplicate task. ---
-        dates = sorted({t.value_date for t in parsed_transactions})
-
-        created = []
-        rerun = []
-        skipped_dates = []
-        for d in dates:
-            # .for_user(), not a plain .filter() — OwnerBranchManager's
-            # default queryset relies on a thread-local tenant set by
-            # middleware, which isn't reliably populated in time for a
-            # DRF-authenticated request (see for_user()'s own docstring).
-            # A plain .filter() here would risk not finding an existing
-            # reconciliation and creating a duplicate instead of re-running it.
-            existing = DailyReconciliation.objects.for_user(request.user).filter(
-                bank_account=bank_account, reconciliation_date=d,
-            ).first()
-
-            candidates = list(ReconciliationBankTransaction.objects.filter(
-                bank_account=bank_account,
-                value_date=d,
-                matched=False,
-            ))
-
-            # The same uploaded file is attached to every reconciliation
-            # created from it; its stream must be rewound before each save
-            # or every FileField after the first ends up empty.
-            statement_file.seek(0)
-
-            if existing is None:
-                recon = DailyReconciliation.objects.create(
-                    bank_account=bank_account,
-                    reconciliation_date=d,
-                    uploaded_by=request.user,
-                    statement_file=statement_file,
-                    status='processing',
-                    total_bank_transactions=len(candidates),
-                    include_debits=include_debits,
-                    owner=request.user,
-                    branch=getattr(request.user, 'branch', None),
-                    # Explicit, not left to TimeStampedModel.save()'s
-                    # thread-local fallback — that fallback only fills in
-                    # when the middleware-set thread-local happens to be
-                    # populated in time, which isn't reliable for a
-                    # DRF-authenticated request. An unset tenant here would
-                    # make this row invisible to every tenant-scoped query
-                    # (including the list/detail views) forever.
-                    tenant=getattr(request.user, 'tenant', None),
-                )
-                run_reconciliation_match.delay(recon.id, include_debits)
-                created.append(recon)
-            elif existing.status == 'processing':
-                skipped_dates.append(str(d))
-            else:
-                existing.uploaded_by = request.user
-                existing.statement_file = statement_file
-                existing.status = 'processing'
-                existing.total_bank_transactions = len(candidates)
-                existing.include_debits = include_debits
-                existing.rerun_count = F('rerun_count') + 1
-                existing.save(update_fields=[
-                    'uploaded_by', 'statement_file', 'status',
-                    'total_bank_transactions', 'include_debits', 'rerun_count', 'updated_at',
-                ])
-                run_reconciliation_match.delay(existing.id, include_debits)
-                existing.refresh_from_db()
-                rerun.append(existing)
+        from .reconciliation_utils import ingest_reconciliation_transactions
+        created, rerun, skipped_dates = ingest_reconciliation_transactions(
+            bank_account, statement_file, parsed_transactions,
+            include_debits=include_debits, user=request.user,
+        )
 
         if not created and not rerun:
             return Response(

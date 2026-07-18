@@ -104,6 +104,8 @@ export interface ChargesSummary {
 export interface LoanAccount extends LoanAccountList {
   product_requires_guarantor: boolean;
   product_min_guarantors: number;
+  /** Last date a disbursement correction may be REQUESTED for this loan; null if never disbursed. */
+  correction_window_expires_at: string | null;
   client_bank_name: string | null;
   client_bank_account_name: string | null;
   client_bank_account_number: string | null;

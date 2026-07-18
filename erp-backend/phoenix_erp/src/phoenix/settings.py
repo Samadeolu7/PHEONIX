@@ -500,6 +500,26 @@ RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD = _Decimal(
     os.environ.get('RECONCILIATION_EXCEPTION_DUAL_APPROVAL_THRESHOLD', '3000')
 )
 
+# A wrong-customer disbursement correction (LoanDisbursementCorrection) may
+# only be REQUESTED within this many days of the original loan's disbursement
+# date. Keeps the feature usable for genuine same-week data-entry slips
+# without turning it into a general-purpose "undo any old loan" tool — an
+# old, seasoned loan should go through write-off/restructure instead, not a
+# reversal. Checked both at request time and again at second-approval/
+# execute time (see LoanDisbursementCorrection.clean() and ._execute()).
+LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS = int(
+    os.environ.get('LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS', '7')
+)
+
+# A wrong-customer disbursement correction (LoanDisbursementCorrection) may
+# only be requested within this many days of the loan's ORIGINAL disbursement
+# date. Keeps the feature scoped to genuine same-week data-entry slips rather
+# than becoming a general-purpose "unwind any loan" tool long after
+# repayments and reporting have moved on.
+LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS = int(
+    os.environ.get('LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS', '7')
+)
+
 # ==================================================
 # DRF SPECTACULAR (API DOCUMENTATION)
 # ==================================================
