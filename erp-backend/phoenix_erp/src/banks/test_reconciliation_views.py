@@ -1076,6 +1076,40 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         self.assertFalse(txn.is_reversed)
         self.assertFalse(debit_exc.resolved)
 
+    def test_link_resolve_cross_account_rejected_when_transaction_touches_non_bank_ledgers(self):
+        # A loan repayment's transaction posts to the loan receivable GL as
+        # well as the bank GL — its schedule/balance live outside the GL,
+        # so a bare GL reversal would leave them saying "paid" for money
+        # that never moved. Only pure bank-to-bank transactions may be
+        # auto-reversed; everything else is directed to its own module.
+        from transactions.models import TransactionEntry
+
+        txn, debit_exc, credit_exc, _other_recon = self._phantom_transfer_fixture()
+        loan_receivable = Account.objects.create(
+            code='1300', name='Loan Receivable', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        TransactionEntry.objects.create(
+            transaction=txn, account=loan_receivable,
+            side=TransactionEntry.CREDIT, amount=Decimal('3000.00'),
+        )
+        TransactionEntry.objects.create(
+            transaction=txn, account=loan_receivable,
+            side=TransactionEntry.DEBIT, amount=Decimal('3000.00'),
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/exceptions/link-resolve/', {
+            'exception_a_id': debit_exc.id, 'exception_b_id': credit_exc.id,
+            'resolution_notes': 'attempting to reverse a transaction with loan-ledger legs',
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('non-bank ledgers', resp.data['detail'])
+        txn.refresh_from_db()
+        debit_exc.refresh_from_db()
+        self.assertFalse(txn.is_reversed)
+        self.assertFalse(debit_exc.resolved)
+
     def test_link_resolve_cross_account_rejected_for_bank_only_pairs(self):
         # Cross-account is ONLY for the phantom-transfer erp_only pair — a
         # bank_only line always belongs to exactly one real statement.

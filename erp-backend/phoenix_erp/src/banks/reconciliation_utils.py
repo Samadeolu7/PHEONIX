@@ -128,6 +128,33 @@ def phantom_transfer_transactions(exc_a, exc_b):
             )
         txns[txn.pk] = txn
 
+    # Transaction.reverse() is a pure-GL operation: it restores ledger
+    # balances but knows nothing about domain records. A loan repayment's
+    # schedule installments, a loan's balance, a savings account's
+    # passbook balance all live OUTSIDE the GL and would be left saying
+    # "paid"/"received" for money that never moved — the loans module has
+    # its own LoanCorrection workflow (dual-approval, reversal +
+    # re-disbursement) for exactly that reason. So auto-reversal here is
+    # confined to transactions whose entries touch ONLY bank GL accounts —
+    # the pure inter-bank movement shape, where the journal entry IS the
+    # whole story. Anything else must go through its own module's
+    # correction flow.
+    from .models import BankAccount
+
+    bank_gl_ids = set(
+        BankAccount.objects.filter(gl_account_id__isnull=False).values_list('gl_account_id', flat=True)
+    )
+    for txn in txns.values():
+        non_bank = [e for e in txn.entries.select_related('account') if e.account_id not in bank_gl_ids]
+        if non_bank:
+            names = ', '.join(sorted({e.account.name for e in non_bank}))
+            raise ValidationError(
+                f'{txn.reference_number} also posts to non-bank ledgers ({names}) — e.g. a loan '
+                f'repayment or savings movement. Reversing only the GL here would leave those '
+                f'records out of step with the money; correct it through its own module '
+                f'(e.g. Loan Correction) instead.'
+            )
+
     return list(txns.values())
 
 
