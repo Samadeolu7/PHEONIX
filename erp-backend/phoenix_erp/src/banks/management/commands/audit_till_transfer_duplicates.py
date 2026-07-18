@@ -14,12 +14,20 @@ cleanup chain) also carries it.
 
 Classification is evidence-based, per transfer:
   CONFIRMED_DUPLICATE — the transfer's journal is matched to a bank
-      statement line, and a covering ERP record exists: a same-amount
-      payment transaction within ±7 days whose client name (resolved via
-      the loan number in its description, falling back to the description
-      itself) appears in the statement line's narration. Only this bucket
-      is ever auto-repaired.
-  NO_COVERING_RECORD — matched to a line, but no covering record found.
+      statement line, and a covering ERP record PROVABLY exists. Proof is
+      deliberately strict (a looser first pass over-matched against
+      clients who repay the same round amount daily): the covering
+      transaction must be dated within ±1 day of the LINE's value date,
+      its total money-side (DEBIT) legs must equal the transfer amount
+      exactly, it must post NOTHING to any bank GL (the misposted-payment
+      signature — a payment with its own bank leg has its own statement
+      line and can't be covering someone else's), its client's name
+      (resolved via the loan number in its description, falling back to
+      the description) must appear in the line's narration, and it must
+      not be claimed as covering by any other transfer (a covering record
+      explains at most one line — collisions demote the whole group to
+      review). Only this bucket is ever auto-repaired.
+  NO_COVERING_RECORD — matched to a line, but no covering record proven.
       Could be a genuine till banking OR a sole-record fabrication whose
       client payment was never properly posted. Reported for human review,
       never touched.
@@ -33,13 +41,9 @@ Classification is evidence-based, per transfer:
      journal must have exactly the two cashier/bank legs and be approved,
      un-reversed — anything else is skipped and reported.
   2. Unmatch the claimed statement line (audited unmatch(), reopening it
-     as a bank_only exception), then:
-       - if the covering record itself has a matching leg on this bank's
-         GL, the exception is left OPEN and the date's reconciliation is
-         queued for a rerun — the matcher will pair them properly;
-       - otherwise (the covering record's bank leg lives elsewhere — the
-         misposted/RECL/MOVEB case) the exception is resolved immediately
-         with the covering reference in the notes.
+     as a bank_only exception), then resolve that exception with the
+     covering reference in the notes — the covering record has no bank
+     leg (criterion above), so no direct match can ever exist.
 
 Usage:
     python manage.py audit_till_transfer_duplicates --user-id <id>            (dry-run audit)
@@ -96,14 +100,12 @@ class Command(BaseCommand):
 
         from django.contrib.auth import get_user_model
         from django.core.exceptions import ValidationError
-        from django.db.models import F
         from django.utils import timezone
 
         from banks.models import BankTransfer, DailyReconciliation, ReconciliationBankTransaction
         from banks.reconciliation_utils import (
             _LOAN_NUMBER_RE, get_or_create_bank_only_exception, recompute_reconciliation_counts,
         )
-        from banks.tasks import run_reconciliation_match
         from transactions.models import Transaction, TransactionEntry
 
         User = get_user_model()
@@ -129,6 +131,12 @@ class Command(BaseCommand):
                     pass
             return _name_tokens(txn.description)
 
+        from banks.models import BankAccount
+
+        bank_gl_ids = set(
+            BankAccount.objects.filter(gl_account_id__isnull=False).values_list('gl_account_id', flat=True)
+        )
+
         transfers = (
             BankTransfer.objects.filter(
                 source_type='cashier', destination_type='bank',
@@ -151,10 +159,26 @@ class Command(BaseCommand):
                 continue
 
             narration_upper = (line.narration or '').upper()
-            window = (je.date - timedelta(days=7), je.date + timedelta(days=7))
+            # STRICT covering criteria — a first pass with a ±7-day window
+            # and any-entry amount equality over-matched badly in production
+            # (clients repaying the same round amount daily produce a
+            # same-amount transaction on every nearby date, so almost any
+            # claimed line "confirmed" against some legitimate neighboring
+            # payment that has its own statement line). Proof now requires:
+            #   1. date: the covering transaction's own date within ±1 day
+            #      of the LINE's value date — same real-world event, not a
+            #      neighboring installment;
+            #   2. amount: the covering transaction's total money-side
+            #      (DEBIT) legs equal the transfer amount exactly — not
+            #      just any single entry of a larger payment;
+            #   3. no bank leg: the covering transaction posts NOTHING to
+            #      any bank GL — the misposted-payment signature. A payment
+            #      with its own bank-GL leg has (or will get) its own
+            #      statement line and cannot be covering someone else's.
+            window = (line.value_date - timedelta(days=1), line.value_date + timedelta(days=1))
             candidates = (
                 Transaction.objects.filter(
-                    entries__amount=transfer.amount,
+                    entries__amount__lte=transfer.amount,
                     date__range=window,
                     approved=True, is_deleted=False,
                     is_reversal=False, is_reversed=False,
@@ -164,9 +188,16 @@ class Command(BaseCommand):
                 .exclude(reference_number__startswith='MOVEB')
                 .exclude(reference_number__startswith='RECL')
                 .distinct()
+                .prefetch_related('entries')
             )
             covering = None
             for cand in candidates:
+                entries = list(cand.entries.all())
+                if any(e.account_id in bank_gl_ids for e in entries):
+                    continue
+                debit_total = sum(e.amount for e in entries if e.side == TransactionEntry.DEBIT)
+                if debit_total != transfer.amount:
+                    continue
                 tokens = client_tokens(cand)
                 if tokens and any(tok in narration_upper for tok in tokens):
                     covering = cand
@@ -176,6 +207,21 @@ class Command(BaseCommand):
                 confirmed.append((transfer, line, covering))
             else:
                 no_cover.append((transfer, line))
+
+        # Uniqueness guard: one covering record can explain at most ONE
+        # claimed line. If several transfers matched the same covering
+        # record, none of them is proven — demote the whole group to
+        # review rather than picking a winner.
+        from collections import Counter
+
+        cover_counts = Counter(covering.pk for _t, _l, covering in confirmed)
+        unique_confirmed = []
+        for transfer, line, covering in confirmed:
+            if cover_counts[covering.pk] == 1:
+                unique_confirmed.append((transfer, line, covering))
+            else:
+                no_cover.append((transfer, line))
+        confirmed = unique_confirmed
 
         self.stdout.write(self.style.WARNING('DRY RUN — audit only, no changes.\n') if not apply_changes else '')
         self.stdout.write(f'Cashier→bank transfers examined: {transfers.count()}')
@@ -209,7 +255,6 @@ class Command(BaseCommand):
 
         now = timezone.now()
         self.stdout.write('\nRepairing confirmed duplicates...')
-        rerun_dates = set()
         for transfer, line, covering in confirmed:
             je = transfer.journal_entry
             legs = list(je.entries.all())
@@ -234,28 +279,21 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING(f'  skipped {transfer.transfer_number}: {exc}'))
                 continue
 
-            bank_gl = line.bank_account.gl_account_id
-            covering_has_local_leg = covering.entries.filter(
-                account_id=bank_gl, side=TransactionEntry.DEBIT, amount=line.amount,
-            ).exists()
-
+            # A confirmed covering record never has its own bank-GL leg
+            # (criterion 3), so no direct match can ever exist for this
+            # line — resolve its reopened exception against the covering
+            # reference immediately.
             recon = DailyReconciliation.objects.filter(
                 bank_account=line.bank_account, reconciliation_date=line.value_date,
             ).first()
             if recon is not None:
                 exc_obj = get_or_create_bank_only_exception(recon, line)
-                if covering_has_local_leg:
-                    # The true record can genuinely match this line — leave the
-                    # exception open and let a rerun pair them.
-                    rerun_dates.add((line.bank_account_id, line.value_date))
-                    outcome = 'exception left open, rerun queued (covering record can match directly)'
-                else:
-                    exc_obj.resolved = True
-                    exc_obj.resolved_by = acting_user
-                    exc_obj.resolved_at = now
-                    exc_obj.resolution_notes = RESOLVE_NOTE.format(covering=covering.reference_number)
-                    exc_obj.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes'])
-                    outcome = f'exception resolved against {covering.reference_number}'
+                exc_obj.resolved = True
+                exc_obj.resolved_by = acting_user
+                exc_obj.resolved_at = now
+                exc_obj.resolution_notes = RESOLVE_NOTE.format(covering=covering.reference_number)
+                exc_obj.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes'])
+                outcome = f'exception resolved against {covering.reference_number}'
                 recompute_reconciliation_counts(recon)
             else:
                 outcome = 'no reconciliation exists for the line date — nothing to annotate'
@@ -264,17 +302,5 @@ class Command(BaseCommand):
                 f'  reversed {transfer.transfer_number} -> {je.reversal_transaction.reference_number}; '
                 f'line unmatched; {outcome}'
             )
-
-        for bank_account_id, recon_date in sorted(rerun_dates):
-            recon = DailyReconciliation.objects.filter(
-                bank_account_id=bank_account_id, reconciliation_date=recon_date,
-            ).first()
-            if recon is None or recon.status == 'processing':
-                continue
-            recon.status = 'processing'
-            recon.rerun_count = F('rerun_count') + 1
-            recon.save(update_fields=['status', 'rerun_count', 'updated_at'])
-            run_reconciliation_match.delay(recon.id, recon.include_debits)
-            self.stdout.write(f'  queued rerun for recon {recon.id} ({recon_date})')
 
         self.stdout.write(self.style.SUCCESS('\nDone.'))

@@ -10,7 +10,6 @@ import uuid
 from datetime import date
 from decimal import Decimal
 from io import StringIO
-from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -131,23 +130,86 @@ class AuditTillTransferDuplicatesTests(TestCase):
         self.assertTrue(exc.resolved)
         self.assertIn(covering.reference_number, exc.resolution_notes)
 
-    def test_covering_record_on_this_bank_gl_leaves_exception_open_and_queues_rerun(self):
+    def test_payment_with_its_own_bank_leg_is_never_a_covering_record(self):
+        # A payment posted to this bank's GL has (or will get) its own
+        # statement line — it cannot be covering someone else's line, so
+        # this transfer must land in review, untouched.
         transfer = self._fabricated_transfer(Decimal('5000.00'), description='Zainab')
         line = self._claimed_line(transfer.journal_entry, Decimal('5000.00'), 'Transfer from ZAINAB KAREEM')
         self._covering_payment(Decimal('5000.00'), 'Loan repayment – LN-1 | zainab kareem', on_bank_gl=True)
 
-        with patch('banks.tasks.run_reconciliation_match') as mock_task:
-            call_command('audit_till_transfer_duplicates', f'--user-id={self.director.id}', '--apply', stdout=StringIO())
-            mock_task.delay.assert_called_once_with(self.recon.id, self.recon.include_debits)
+        out = StringIO()
+        call_command('audit_till_transfer_duplicates', f'--user-id={self.director.id}', '--apply', stdout=out)
 
+        transfer.journal_entry.refresh_from_db()
         line.refresh_from_db()
-        self.assertFalse(line.matched)
-        exc = ReconciliationException.objects.get(
-            reconciliation=self.recon, exception_type='bank_only', bank_transaction_id=line.id,
+        self.assertFalse(transfer.journal_entry.is_reversed)
+        self.assertTrue(line.matched)
+        self.assertIn('REVIEW', out.getvalue())
+
+    def test_covering_record_claimed_by_two_transfers_demotes_both_to_review(self):
+        # One payment cannot cover two different deposits — a collision
+        # means neither pairing is proven, so both stay untouched.
+        covering = self._covering_payment(Decimal('4000.00'), 'Loan repayment – LN-2 | zainab kareem')
+        transfer_a = self._fabricated_transfer(Decimal('4000.00'), description='Zainab A')
+        transfer_b = self._fabricated_transfer(Decimal('4000.00'), description='Zainab B')
+        self._claimed_line(transfer_a.journal_entry, Decimal('4000.00'), 'Transfer from ZAINAB KAREEM')
+        self._claimed_line(transfer_b.journal_entry, Decimal('4000.00'), 'ZAINAB KAREEM second deposit')
+
+        out = StringIO()
+        call_command('audit_till_transfer_duplicates', f'--user-id={self.director.id}', '--apply', stdout=out)
+
+        transfer_a.journal_entry.refresh_from_db()
+        transfer_b.journal_entry.refresh_from_db()
+        self.assertFalse(transfer_a.journal_entry.is_reversed)
+        self.assertFalse(transfer_b.journal_entry.is_reversed)
+        self.assertIn('NO_COVERING_RECORD  : 2', out.getvalue())
+
+    def test_covering_record_outside_one_day_window_does_not_confirm(self):
+        # Daily repayers produce same-amount transactions on every nearby
+        # date; only a same-event date (±1 day of the LINE) counts as proof.
+        transfer = self._fabricated_transfer(Decimal('3000.00'), description='Zainab')
+        line = self._claimed_line(transfer.journal_entry, Decimal('3000.00'), 'Transfer from ZAINAB KAREEM')
+        far_payment = Transaction.objects.create(
+            series=self.lnpmt_series, date=date(2026, 7, 6),
+            description='Loan repayment – LN-3 | zainab kareem',
+            owner=self.director, branch=self.branch, created_by=self.director, approved=True,
         )
-        self.assertFalse(exc.resolved)
-        self.recon.refresh_from_db()
-        self.assertEqual(self.recon.status, 'processing')
+        TransactionEntry.objects.create(
+            transaction=far_payment, account=self.misposting_gl,
+            side=TransactionEntry.DEBIT, amount=Decimal('3000.00'),
+        )
+
+        out = StringIO()
+        call_command('audit_till_transfer_duplicates', f'--user-id={self.director.id}', '--apply', stdout=out)
+
+        transfer.journal_entry.refresh_from_db()
+        self.assertFalse(transfer.journal_entry.is_reversed)
+        self.assertIn('REVIEW', out.getvalue())
+
+    def test_partial_entry_of_a_larger_payment_does_not_confirm(self):
+        # A ₦3,000 payment with a ₦2,000 entry must not cover a ₦2,000
+        # transfer — the covering total has to equal the amount exactly.
+        transfer = self._fabricated_transfer(Decimal('2000.00'), description='Zainab')
+        self._claimed_line(transfer.journal_entry, Decimal('2000.00'), 'Transfer from ZAINAB KAREEM')
+        bigger = Transaction.objects.create(
+            series=self.lnpmt_series, date=date(2026, 7, 1),
+            description='Loan repayment – LN-4 | zainab kareem',
+            owner=self.director, branch=self.branch, created_by=self.director, approved=True,
+        )
+        TransactionEntry.objects.create(
+            transaction=bigger, account=self.misposting_gl, side=TransactionEntry.DEBIT, amount=Decimal('2000.00'),
+        )
+        TransactionEntry.objects.create(
+            transaction=bigger, account=self.misposting_gl, side=TransactionEntry.DEBIT, amount=Decimal('1000.00'),
+        )
+
+        out = StringIO()
+        call_command('audit_till_transfer_duplicates', f'--user-id={self.director.id}', '--apply', stdout=out)
+
+        transfer.journal_entry.refresh_from_db()
+        self.assertFalse(transfer.journal_entry.is_reversed)
+        self.assertIn('REVIEW', out.getvalue())
 
     def test_no_covering_record_is_reported_but_never_touched(self):
         transfer = self._fabricated_transfer(Decimal('7000.00'), description='genuine till banking')
