@@ -3038,3 +3038,249 @@ class OfficerReconciliationRiskReportView(APIView):
 
         results.sort(key=lambda r: (-r['unresolved_erp_only_count'], -r['high_priority_count']))
         return Response({'results': results})
+
+
+class PaymentTraceView(APIView):
+    """
+    GET /api/banks/reconciliations/payment-trace/?q=<ref | amount | text>
+
+    The investigation view for "someone came with evidence": search a
+    payment by reference number, exact amount, or free text (transaction
+    description / statement-line narration) and get its FULL linkage story
+    in one response — which statement line(s) claim it (with narration and
+    match confidence), which line(s) USED to claim it before an unmatch
+    (with who/when/why), every exception it appears in with resolution
+    notes and the netted counterpart's details. A director reading the
+    trace can decide which pairing is false and act with the existing
+    audited tools (unmatch / unresolve / link), which automatically
+    reopens the wrongly-consumed counterpart so it can be sought after.
+
+    Two result sections, because evidence can arrive about either side:
+      payments — ERP transactions with at least one leg on a visible
+                 bank account's GL
+      lines    — statement lines, each with the transaction currently
+                 claiming it and its exception trail
+
+    Read-only; branch/tenant scoping via DailyReconciliation.objects
+    .for_user() exactly like every other reconciliation endpoint. The
+    action buttons this feeds are separately permission-gated.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    MAX_RESULTS = 25
+
+    def get(self, request):
+        from transactions.models import Transaction
+
+        q = (request.query_params.get('q') or '').strip()
+        if len(q) < 3:
+            return Response(
+                {'detail': 'Provide at least 3 characters (a reference, an amount, or narration text).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        scoped_recons = DailyReconciliation.objects.for_user(request.user)
+        accounts = {
+            r['bank_account_id']: r['bank_account__gl_account_id']
+            for r in scoped_recons.values('bank_account_id', 'bank_account__gl_account_id')
+        }
+        if not accounts:
+            return Response({'payments': [], 'lines': []})
+        bank_gl_ids = {gl for gl in accounts.values() if gl}
+
+        amount = None
+        try:
+            amount = Decimal(q.replace(',', ''))
+        except Exception:
+            pass
+
+        # ---- payments (ERP side) ----
+        txn_qs = Transaction.objects.filter(
+            entries__account_id__in=bank_gl_ids,
+            approved=True, is_deleted=False,
+        ).distinct()
+        if amount is not None:
+            txn_qs = txn_qs.filter(entries__amount=amount)
+        else:
+            txn_qs = txn_qs.filter(
+                Q(reference_number__icontains=q) | Q(description__icontains=q)
+            )
+        txns = list(
+            txn_qs.select_related('created_by')
+            .prefetch_related('entries__account')
+            .order_by('-date')[:self.MAX_RESULTS]
+        )
+
+        # ---- lines (bank side) ----
+        line_qs = ReconciliationBankTransaction.objects.filter(
+            bank_account_id__in=accounts.keys(),
+        )
+        if amount is not None:
+            line_qs = line_qs.filter(amount=amount)
+        else:
+            line_qs = line_qs.filter(
+                Q(narration__icontains=q) | Q(bank_ref__icontains=q)
+            )
+        lines = list(
+            line_qs.select_related('bank_account', 'unmatched_by')
+            .order_by('-value_date')[:self.MAX_RESULTS]
+        )
+
+        # Lines pointing at the found payments (current match or historical,
+        # pre-unmatch) — matched_erp_payment_id is deliberately preserved by
+        # unmatch(), which is exactly what makes this trace possible.
+        txn_ids = [t.id for t in txns]
+        claim_lines = list(
+            ReconciliationBankTransaction.objects.filter(matched_erp_payment_id__in=txn_ids)
+            .select_related('bank_account', 'unmatched_by')
+        ) if txn_ids else []
+
+        all_lines = {ln.pk: ln for ln in lines}
+        for ln in claim_lines:
+            all_lines.setdefault(ln.pk, ln)
+
+        # One recon lookup for every (account, date) pair we will reference.
+        pairs = {(ln.bank_account_id, ln.value_date) for ln in all_lines.values()}
+        recon_map = {}
+        if pairs:
+            recon_filter = Q()
+            for acct, d in pairs:
+                recon_filter |= Q(bank_account_id=acct, reconciliation_date=d)
+            recon_map = {
+                (r.bank_account_id, r.reconciliation_date): r.id
+                for r in scoped_recons.filter(recon_filter)
+            }
+
+        # Exceptions referencing either side.
+        excs = list(
+            ReconciliationException.objects.filter(
+                Q(loan_payment_id__in=txn_ids)
+                | Q(bank_transaction_id__in=[str(pk) for pk in all_lines])
+            )
+            .filter(reconciliation__in=scoped_recons)
+            .select_related('resolved_by', 'netted_with', 'officer')
+        ) if (txn_ids or all_lines) else []
+
+        # Partner exceptions may reference transactions we have not loaded.
+        partner_txn_ids = {
+            e.netted_with.loan_payment_id for e in excs
+            if e.netted_with_id and e.netted_with.loan_payment_id
+        }
+        partner_txn_map = {
+            t.pk: t for t in Transaction.objects.filter(pk__in=partner_txn_ids)
+        } if partner_txn_ids else {}
+
+        def user_name(u):
+            return (u.get_full_name() or u.username) if u else None
+
+        def exc_summary(e):
+            partner = None
+            if e.netted_with_id:
+                p = e.netted_with
+                p_txn = partner_txn_map.get(p.loan_payment_id)
+                partner = {
+                    'id': p.id,
+                    'exception_type': p.exception_type,
+                    'direction': p.direction,
+                    'amount': str(p.resolve_amount) if p.resolve_amount is not None else None,
+                    'narration': p.bank_narration or p.erp_narration or '',
+                    'transaction_reference': p_txn.reference_number if p_txn else None,
+                    'resolved': p.resolved,
+                }
+            return {
+                'id': e.id,
+                'reconciliation_id': e.reconciliation_id,
+                'exception_type': e.exception_type,
+                'direction': e.direction,
+                'amount': str(e.resolve_amount) if e.resolve_amount is not None else None,
+                'date': str(e.bank_date or e.erp_date or ''),
+                'narration': e.bank_narration or e.erp_narration or '',
+                'officer_name': user_name(e.officer),
+                'resolved': e.resolved,
+                'resolved_by': user_name(e.resolved_by),
+                'resolved_at': e.resolved_at,
+                'resolution_notes': e.resolution_notes or '',
+                'netted_with': partner,
+            }
+
+        def line_summary(ln):
+            return {
+                'id': str(ln.pk),
+                'reconciliation_id': recon_map.get((ln.bank_account_id, ln.value_date)),
+                'bank_account': str(ln.bank_account),
+                'value_date': ln.value_date,
+                'direction': ln.direction,
+                'amount': str(ln.amount),
+                'narration': ln.narration or '',
+                'matched': ln.matched,
+                'match_confidence': ln.match_confidence or '',
+                'matched_erp_payment_id': ln.matched_erp_payment_id,
+                'matched_at': ln.matched_at,
+                'unmatched_by': user_name(ln.unmatched_by),
+                'unmatched_at': ln.unmatched_at,
+                'unmatched_reason': ln.unmatched_reason or '',
+            }
+
+        excs_by_txn = {}
+        excs_by_line = {}
+        for e in excs:
+            if e.loan_payment_id:
+                excs_by_txn.setdefault(e.loan_payment_id, []).append(exc_summary(e))
+            if e.bank_transaction_id:
+                excs_by_line.setdefault(str(e.bank_transaction_id), []).append(exc_summary(e))
+
+        claims_by_txn = {}
+        for ln in claim_lines:
+            claims_by_txn.setdefault(ln.matched_erp_payment_id, []).append(line_summary(ln))
+
+        claiming_txn_ids = {
+            ln.matched_erp_payment_id for ln in lines if ln.matched_erp_payment_id
+        } - set(txn_ids)
+        claiming_txn_map = {
+            t.pk: t for t in Transaction.objects.filter(pk__in=claiming_txn_ids).select_related('created_by')
+        } if claiming_txn_ids else {}
+
+        def txn_summary(t):
+            return {
+                'id': t.id,
+                'reference_number': t.reference_number,
+                'date': t.date,
+                'description': t.description or '',
+                'created_by': user_name(t.created_by),
+                'is_reversed': t.is_reversed,
+                'is_reversal': t.is_reversal,
+            }
+
+        payments = []
+        for t in txns:
+            entry = dict(txn_summary(t))
+            entry['legs'] = [
+                {
+                    'account_code': e.account.code,
+                    'account_name': e.account.name,
+                    'side': e.side,
+                    'amount': str(e.amount),
+                }
+                for e in t.entries.all()
+            ]
+            entry['claimed_by_lines'] = claims_by_txn.get(t.id, [])
+            entry['exceptions'] = excs_by_txn.get(t.id, [])
+            payments.append(entry)
+
+        line_results = []
+        for ln in lines:
+            entry = line_summary(ln)
+            claiming = None
+            if ln.matched_erp_payment_id:
+                ct = claiming_txn_map.get(ln.matched_erp_payment_id)
+                if ct is None:
+                    ct = next((t for t in txns if t.id == ln.matched_erp_payment_id), None)
+                if ct is not None:
+                    claiming = txn_summary(ct)
+            entry['claiming_transaction'] = claiming
+            entry['exceptions'] = excs_by_line.get(str(ln.pk), [])
+            line_results.append(entry)
+
+        return Response({'payments': payments, 'lines': line_results})

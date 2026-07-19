@@ -520,6 +520,7 @@ const ReconciliationDetailPage = lazy(() => import('./pages/banks/Reconciliation
 const OfficerReconciliationRiskPage = lazy(() => import('./pages/banks/OfficerReconciliationRiskPage'));
 const ManualOverridesReportPage = lazy(() => import('./pages/banks/ManualOverridesReportPage'));
 const MissingMoneySummaryPage = lazy(() => import('./pages/banks/MissingMoneySummaryPage'));
+const PaymentTracePage = lazy(() => import('./pages/banks/PaymentTracePage'));
 
 // Budget pages
 const BudgetPeriodList = lazy(() => import('./pages/budgets/BudgetPeriodList'));
@@ -3907,6 +3908,14 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
                                       <MissingMoneySummaryPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/reconciliations/payment-trace"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
+                                      <PaymentTracePage />
                                     </ProtectedRoute>
                                   }
                                 />

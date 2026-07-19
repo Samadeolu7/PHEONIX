@@ -23,6 +23,7 @@ import type {
   MissingMoneySummaryFilters,
   OfficerReconciliationRiskFilters,
   OfficerReconciliationRiskRow,
+  PaymentTraceResponse,
   ReconciliationException,
   ReconciliationFilters,
   ReconciliationBankTransaction,
@@ -336,5 +337,18 @@ export const reconciliationService = {
   async getMissingMoneyByBankAccount(bankAccountId: number): Promise<ReconciliationException[]> {
     const res = await api.get(`${BASE_URL}/reports/missing-money-summary/bank-account/${bankAccountId}/`);
     return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  /**
+   * The investigation search: pass a reference number, an exact amount, or
+   * free-text narration and get back every payment and every statement
+   * line that matches, along with their full linkage/exception story —
+   * including lines that USED to claim a payment before an unmatch. Built
+   * for "someone came with strong evidence" — a director can see exactly
+   * what a payment was wrongly linked to and act with Unmatch/Unresolve/
+   * Link, which frees the true counterpart to be found and paired.
+   */
+  async tracePayment(query: string): Promise<PaymentTraceResponse> {
+    return api.get(`${BASE_URL}/reconciliations/payment-trace/`, { params: { q: query } });
   },
 };

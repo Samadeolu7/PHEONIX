@@ -213,6 +213,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Officer Reconciliation Risk', '/banks/reconciliations/officer-risk-report'),
         leaf('Manual Overrides', '/banks/reconciliations/manual-overrides'),
         leaf('Missing Money Summary', '/banks/reconciliations/missing-money-summary'),
+        leaf('Payment Trace', '/banks/reconciliations/payment-trace'),
         leaf('Cash Reconciliation', '/treasury/cash-reconciliation'),
         leaf('Cashier Accounts', '/treasury/cashier-accounts'),
         leaf('Cash Transfers', '/treasury/cash-transfers'),

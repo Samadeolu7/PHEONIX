@@ -119,6 +119,7 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/banks/reconciliations/officer-risk-report': { module: 'banks', page: 'bank-statement-reconciliation', action: 'view' },
   '/banks/reconciliations/manual-overrides': { module: 'banks', page: 'bank-statement-reconciliation', action: 'view' },
   '/banks/reconciliations/missing-money-summary': { module: 'banks', page: 'bank-statement-reconciliation', action: 'view' },
+  '/banks/reconciliations/payment-trace': { module: 'banks', page: 'bank-statement-reconciliation', action: 'view' },
   '/banks/transfers': { module: 'banks', page: 'bank-transfers', action: 'view' },
   '/banks/transfers/approvals': { module: 'banks', page: 'bank-transfers', action: 'approve' },
   '/banks/transfers/new': { module: 'banks', page: 'bank-transfers', action: 'create' },

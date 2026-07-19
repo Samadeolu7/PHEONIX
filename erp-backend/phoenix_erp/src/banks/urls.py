@@ -30,6 +30,7 @@ from .views import (
     MissingMoneySummaryView,
     MissingMoneyOfficerExceptionsView,
     MissingMoneyBankAccountExceptionsView,
+    PaymentTraceView,
 )
 
 router = DefaultRouter()
@@ -146,5 +147,10 @@ urlpatterns = [
         'reports/missing-money-summary/bank-account/<int:bank_account_id>/',
         MissingMoneyBankAccountExceptionsView.as_view(),
         name='missing-money-bank-account-detail',
+    ),
+    path(
+        'reconciliations/payment-trace/',
+        PaymentTraceView.as_view(),
+        name='reconciliation-payment-trace',
     ),
 ]

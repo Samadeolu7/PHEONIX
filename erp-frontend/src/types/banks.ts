@@ -836,3 +836,86 @@ export interface MissingMoneySummaryFilters {
   date_from?: string;
   date_to?: string;
 }
+
+// ── Payment Trace ────────────────────────────────────────────────────────
+// The investigation view for "someone came with evidence": search a
+// payment or statement line and see its full linkage story — including
+// exceptions and, for a payment, every line that has EVER claimed it
+// (unmatch() preserves matched_erp_payment_id, so a wrongly-undone match
+// still shows up here with who/when/why it was undone).
+
+export interface PaymentTraceLeg {
+  account_code: string;
+  account_name: string;
+  side: 'DR' | 'CR';
+  amount: string;
+}
+
+export interface PaymentTraceExceptionPartner {
+  id: number;
+  exception_type: 'bank_only' | 'erp_only' | 'amount_diff';
+  direction: 'CREDIT' | 'DEBIT';
+  amount: string | null;
+  narration: string;
+  transaction_reference: string | null;
+  resolved: boolean;
+}
+
+export interface PaymentTraceException {
+  id: number;
+  reconciliation_id: number;
+  exception_type: 'bank_only' | 'erp_only' | 'amount_diff';
+  direction: 'CREDIT' | 'DEBIT';
+  amount: string | null;
+  date: string;
+  narration: string;
+  officer_name: string | null;
+  resolved: boolean;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  resolution_notes: string;
+  netted_with: PaymentTraceExceptionPartner | null;
+}
+
+export interface PaymentTraceTransactionSummary {
+  id: number;
+  reference_number: string;
+  date: string;
+  description: string;
+  created_by: string | null;
+  is_reversed: boolean;
+  is_reversal: boolean;
+}
+
+export interface PaymentTraceLine {
+  id: string;
+  reconciliation_id: number | null;
+  bank_account: string;
+  value_date: string;
+  direction: 'CREDIT' | 'DEBIT';
+  amount: string;
+  narration: string;
+  matched: boolean;
+  match_confidence: string;
+  matched_erp_payment_id: number | null;
+  matched_at: string | null;
+  unmatched_by: string | null;
+  unmatched_at: string | null;
+  unmatched_reason: string;
+  claiming_transaction: PaymentTraceTransactionSummary | null;
+  exceptions: PaymentTraceException[];
+}
+
+export interface PaymentTracePayment extends PaymentTraceTransactionSummary {
+  legs: PaymentTraceLeg[];
+  // Every statement line that currently matches, or ever matched (before
+  // being unmatched), this payment — the field that makes "what was this
+  // wrongly linked to" answerable.
+  claimed_by_lines: PaymentTraceLine[];
+  exceptions: PaymentTraceException[];
+}
+
+export interface PaymentTraceResponse {
+  payments: PaymentTracePayment[];
+  lines: PaymentTraceLine[];
+}
