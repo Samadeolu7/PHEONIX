@@ -1,24 +1,28 @@
 """
 banks/management/commands/fix_one_sided_unresolves.py
 =====================================================
-One-time (and safely re-runnable) fix for one-sided unresolve state:
+One-time (and safely re-runnable) fix for one-sided resolve state:
 a bank_only and erp_only exception on the same bank account, same
-direction, same amount where one side was resolved standalone and then
-unresolved (resolved=False, unresolved_at set) while the other side
-is still sitting resolved (resolved=True, netted_with=None,
-pending_bank_payment=None).
+direction, same amount where one side was resolved standalone (the
+plain per-row Resolve action — netted_with=None, pending_bank_payment=None)
+while its real counterpart on the same bank account is still sitting
+unresolved.
 
-This happens when a director unresolves one side of a pair without
-the two-sided logic (added in ReconciliationException.unresolve()),
-leaving the counterpart still resolved and unable to be linked.
+This is the exact production pattern that motivated the two-sided
+unresolve fix and BulkCleanUpStrandedPairsView: a director resolved
+an erp_only exception with a generic note like "Inter bank" instead
+of being Linked to the bank_only line it actually belonged to,
+permanently consuming the one valid match and stranding the other
+side.
 
 This command:
-  1. Finds every still-resolved standalone exception (netted_with=None,
-     pending_bank_payment=None) that has an unreolved counterpart on the
-     same bank account (same direction, same resolve_amount, opposite
-     exception_type, resolved=False, unresolved_at set).
-  2. Unresolves the still-resolved counterpart with a system-generated
-     reason, matching the two-sided unresolve behavior.
+  1. Finds every standalone-resolved exception (resolved=True,
+     netted_with=None, pending_bank_payment=None) that has exactly
+     one unresolved counterpart on the same bank account (same
+     direction, same resolve_amount, opposite exception_type,
+     resolved=False).
+  2. Unresolves the resolved side with a system-generated reason,
+     freeing both sides to be properly linked via Link/Bulk-Link.
   3. Recomputes DailyReconciliation counts for every affected
      reconciliation.
 
@@ -32,7 +36,6 @@ from __future__ import annotations
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
-from django.db import transaction as db_transaction
 from django.utils import timezone
 
 OPPOSITE_TYPE = {'bank_only': 'erp_only', 'erp_only': 'bank_only'}
@@ -40,8 +43,8 @@ OPPOSITE_TYPE = {'bank_only': 'erp_only', 'erp_only': 'bank_only'}
 
 class Command(BaseCommand):
     help = (
-        "Fixes one-sided unresolve state where one side of a bank_only/erp_only "
-        "pair was unreolved but the counterpart is still resolved standalone."
+        "Fixes one-sided resolve state where a bank_only/erp_only exception "
+        "was resolved standalone while its real counterpart is still unresolved."
     )
 
     def add_arguments(self, parser):
@@ -60,17 +63,27 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR('No superuser found — cannot assign unresolved_by.'))
             return
 
-        # All unresolved standalone exceptions (the "good" side that was
-        # already reopened). Group by bank account for efficient pairing.
-        unreolved_qs = ReconciliationException.objects.filter(
+        # All unresolved bank_only/erp_only exceptions (the "stranded" side).
+        # Index by (bank_account_id, direction, resolve_amount, exception_type)
+        # for O(1) lookup.
+        unresolved_qs = ReconciliationException.objects.filter(
             exception_type__in=('bank_only', 'erp_only'),
             resolved=False,
-            unresolved_at__isnull=False,
             netted_with__isnull=True,
-            pending_bank_payment__isnull=True,
         ).select_related('reconciliation')
 
-        # All still-resolved standalone exceptions (the "stranded" side).
+        unresolved_index: dict[tuple, list] = {}
+        for exc in unresolved_qs:
+            key = (
+                exc.reconciliation.bank_account_id,
+                exc.direction,
+                exc.resolve_amount,
+                exc.exception_type,
+            )
+            unresolved_index.setdefault(key, []).append(exc)
+
+        # All standalone-resolved exceptions — the "one-sided" side that
+        # needs to be unreolved so both sides return to the pool.
         resolved_qs = ReconciliationException.objects.filter(
             exception_type__in=('bank_only', 'erp_only'),
             resolved=True,
@@ -78,48 +91,40 @@ class Command(BaseCommand):
             pending_bank_payment__isnull=True,
         ).select_related('reconciliation')
 
-        # Index resolved exceptions by (bank_account_id, direction, resolve_amount, exception_type)
-        resolved_index: dict[tuple, list] = {}
-        for exc in resolved_qs:
-            key = (
-                exc.reconciliation.bank_account_id,
-                exc.direction,
-                exc.resolve_amount,
-                exc.exception_type,
-            )
-            resolved_index.setdefault(key, []).append(exc)
-
         fix_count = 0
         touched_recon_ids: set[int] = set()
         now = timezone.now()
-        reason = 'Auto-fix: one-sided unresolve — counterpart was still resolved standalone'
+        reason = 'Auto-fix: one-sided resolve — counterpart was still unresolved, reopening to allow proper linking'
 
-        for unreolved_exc in unreolved_qs:
-            counterpart_type = OPPOSITE_TYPE.get(unreolved_exc.exception_type)
-            if not counterpart_type or unreolved_exc.resolve_amount is None:
+        for resolved_exc in resolved_qs:
+            counterpart_type = OPPOSITE_TYPE.get(resolved_exc.exception_type)
+            if not counterpart_type or resolved_exc.resolve_amount is None:
                 continue
 
             key = (
-                unreolved_exc.reconciliation.bank_account_id,
-                unreolved_exc.direction,
-                unreolved_exc.resolve_amount,
+                resolved_exc.reconciliation.bank_account_id,
+                resolved_exc.direction,
+                resolved_exc.resolve_amount,
                 counterpart_type,
             )
-            candidates = resolved_index.get(key, [])
+            candidates = unresolved_index.get(key, [])
             if len(candidates) != 1:
+                # 0 = no counterpart (legitimately standalone) or
+                # >1 = ambiguous, leave for manual cleanup
                 continue
 
-            resolved_exc = candidates[0]
+            unresolved_exc = candidates[0]
             fix_count += 1
-            touched_recon_ids.add(unreolved_exc.reconciliation_id)
             touched_recon_ids.add(resolved_exc.reconciliation_id)
+            touched_recon_ids.add(unresolved_exc.reconciliation_id)
 
             self.stdout.write(
                 f'  {"[DRY RUN] " if dry_run else ""}'
-                f'unreolving resolved exception id={resolved_exc.pk} '
+                f'unreolving resolved id={resolved_exc.pk} '
                 f'({resolved_exc.exception_type} {resolved_exc.resolve_amount}) '
                 f'on recon {resolved_exc.reconciliation_id} — '
-                f'counterpart of unreolved id={unreolved_exc.pk}'
+                f'counterpart: unresolved id={unresolved_exc.pk} '
+                f'({unresolved_exc.exception_type})'
             )
 
             if not dry_run:
@@ -131,13 +136,13 @@ class Command(BaseCommand):
                     'resolved', 'unresolved_by', 'unresolved_at', 'unresolved_reason',
                 ])
                 # Remove from index so it's not matched again
-                resolved_index[key] = [c for c in candidates if c.pk != resolved_exc.pk]
+                unresolved_index[key] = [c for c in candidates if c.pk != unresolved_exc.pk]
 
         if fix_count == 0:
-            self.stdout.write(self.style.SUCCESS('No one-sided unresolves found.'))
+            self.stdout.write(self.style.SUCCESS('No one-sided resolves found.'))
         else:
             action = 'Would fix' if dry_run else 'Fixed'
-            self.stdout.write(f'\n{action} {fix_count} one-sided unresolve(s).')
+            self.stdout.write(f'\n{action} {fix_count} one-sided resolve(s).')
 
         # --- recompute counts for every touched reconciliation ---
         if not touched_recon_ids:
