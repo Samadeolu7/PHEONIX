@@ -864,9 +864,9 @@ export interface PaymentTraceExceptionPartner {
 export interface PaymentTraceException {
   id: number;
   reconciliation_id: number;
-  exception_type: 'bank_only' | 'erp_only' | 'amount_diff';
-  direction: 'CREDIT' | 'DEBIT';
-  amount: string | null;
+  exception_type: string;
+  direction: string;
+  amount: string;
   date: string;
   narration: string;
   officer_name: string | null;
@@ -874,7 +874,16 @@ export interface PaymentTraceException {
   resolved_by: string | null;
   resolved_at: string | null;
   resolution_notes: string;
-  netted_with: PaymentTraceExceptionPartner | null;
+  netted_with: {
+    id: number;
+    exception_type: string;
+    direction: string;
+    amount: string;
+    narration: string;
+    transaction_reference: string;
+    resolved: boolean;
+  } | null;
+}
 }
 
 export interface PaymentTraceTransactionSummary {
@@ -889,21 +898,24 @@ export interface PaymentTraceTransactionSummary {
 
 export interface PaymentTraceLine {
   id: string;
-  reconciliation_id: number | null;
+  reconciliation_id: number;
   bank_account: string;
   value_date: string;
-  direction: 'CREDIT' | 'DEBIT';
+  direction: string;
   amount: string;
   narration: string;
+
   matched: boolean;
   match_confidence: string;
   matched_erp_payment_id: number | null;
   matched_at: string | null;
+
   unmatched_by: string | null;
   unmatched_at: string | null;
   unmatched_reason: string;
-  claiming_transaction: PaymentTraceTransactionSummary | null;
-  exceptions: PaymentTraceException[];
+
+  claiming_transaction?: PaymentTraceTransactionSummary;
+  exceptions?: PaymentTraceException[];
 }
 
 export interface PaymentTracePayment extends PaymentTraceTransactionSummary {
