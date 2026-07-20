@@ -724,3 +724,76 @@ def get_or_create_bank_only_exception(recon, tx):
         exc_obj.resolved = False
         exc_obj.save(update_fields=['resolved'])
     return exc_obj
+
+
+def get_or_create_erp_only_exception(recon, tx):
+    """
+    Ensure an ``erp_only`` ReconciliationException exists for ``tx``'s
+    matched ERP payment against ``recon`` — natural-key dedup on
+    (reconciliation, exception_type, loan_payment_id).
+
+    If the found row was previously resolved, it is reopened.  If it was
+    link-resolved (``netted_with`` set), the link is broken on both sides
+    so neither exception is stuck in an unresolved-but-linked state.
+
+    If no erp_only exception exists (e.g. the ERP payment's date had no
+    DailyReconciliation when ``_persist_outcome`` ran), one is created
+    using Transaction details.
+
+    Used by ``ReconciliationBankTransaction.unmatch()`` so the ERP payment
+    reappears as a link candidate immediately.
+    """
+    from .models import ReconciliationException
+    from transactions.models import Transaction, TransactionEntry
+
+    if tx.matched_erp_payment_id is None:
+        return None
+
+    exc_obj, created = ReconciliationException.objects.get_or_create(
+        reconciliation=recon,
+        exception_type='erp_only',
+        loan_payment_id=tx.matched_erp_payment_id,
+        defaults={
+            'direction': tx.direction,
+            'bank_transaction_id': tx.id,
+            'bank_amount': tx.amount,
+            'bank_narration': tx.narration,
+            'bank_date': tx.value_date,
+            'loan_payment_id': tx.matched_erp_payment_id,
+            'is_high_priority': True,
+        },
+    )
+
+    save_fields = []
+
+    if created:
+        txn = Transaction.objects.filter(
+            id=tx.matched_erp_payment_id,
+            is_deleted=False,
+        ).select_related('created_by', 'created_by__branch').first()
+        if txn:
+            entry = TransactionEntry.objects.filter(transaction=txn).first()
+            exc_obj.erp_amount = entry.amount if entry else None
+            exc_obj.erp_narration = (txn.description or '')[:500]
+            exc_obj.erp_date = txn.date
+            exc_obj.officer = txn.created_by
+            exc_obj.erp_branch = getattr(txn.created_by, 'branch', None)
+            save_fields.extend([
+                'erp_amount', 'erp_narration', 'erp_date', 'officer', 'erp_branch',
+            ])
+    elif exc_obj.resolved:
+        exc_obj.resolved = False
+        save_fields.append('resolved')
+
+    if exc_obj.netted_with_id:
+        partner_id = exc_obj.netted_with_id
+        exc_obj.netted_with = None
+        save_fields.append('netted_with')
+        ReconciliationException.objects.filter(
+            pk=partner_id, netted_with=exc_obj,
+        ).update(netted_with=None)
+
+    if save_fields:
+        exc_obj.save(update_fields=save_fields)
+
+    return exc_obj

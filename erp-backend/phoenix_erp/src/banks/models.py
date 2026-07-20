@@ -1356,6 +1356,10 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.status = 'rejected'
         self.rejection_reason = reason
         self.save(update_fields=['status', 'rejection_reason'])
+        # Clear pending_bank_payment on any linked exceptions so they
+        # don't get permanently stuck — the exception can't be resolved
+        # while pending_bank_payment is set, but the payment is dead.
+        self.pending_exception_resolutions.update(pending_bank_payment=None)
 
     @db_transaction.atomic
     def post_payment(self, posted_by, notes='', bypass_validation=False):
@@ -2004,25 +2008,38 @@ class ReconciliationBankTransaction(models.Model):
         self.unmatched_reason = reason
         self.save(update_fields=['matched', 'unmatched_by', 'unmatched_at', 'unmatched_reason'])
 
-        from .reconciliation_utils import get_or_create_bank_only_exception, recompute_reconciliation_counts
+        from .reconciliation_utils import (
+            get_or_create_bank_only_exception,
+            get_or_create_erp_only_exception,
+            recompute_reconciliation_counts,
+        )
 
         recon = DailyReconciliation.objects.filter(
             bank_account=self.bank_account, reconciliation_date=self.value_date,
         ).first()
         if recon is not None:
-            get_or_create_bank_only_exception(recon, self)
+            bank_exc = get_or_create_bank_only_exception(recon, self)
 
-            # Also reopen the erp_only exception for the ERP payment this
-            # line was matched to — _persist_outcome auto-resolves both sides
-            # when a match is found, so unmatch must reopen both.
-            if self.matched_erp_payment_id:
+            # If the bank_only exception was link-resolved, break the link
+            # on both sides so neither side is stuck in an
+            # unresolved-but-linked state.
+            if bank_exc and bank_exc.netted_with_id:
                 from .models import ReconciliationException
+                partner_id = bank_exc.netted_with_id
+                bank_exc.netted_with = None
+                bank_exc.save(update_fields=['netted_with'])
                 ReconciliationException.objects.filter(
-                    reconciliation__bank_account=self.bank_account,
-                    exception_type='erp_only',
-                    loan_payment_id=self.matched_erp_payment_id,
-                    resolved=True,
-                ).update(resolved=False)
+                    pk=partner_id, netted_with=bank_exc,
+                ).update(netted_with=None)
+
+            # Also reopen or create the erp_only exception for the ERP
+            # payment this line was matched to — _persist_outcome
+            # auto-resolves both sides when a match is found, so unmatch
+            # must reopen both.  If no erp_only exception exists (e.g.
+            # the ERP payment's date had no DailyReconciliation), one is
+            # created with Transaction details.
+            if self.matched_erp_payment_id:
+                get_or_create_erp_only_exception(recon, self)
 
             recompute_reconciliation_counts(recon)
 
