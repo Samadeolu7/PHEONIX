@@ -10,9 +10,23 @@ import { PurchaseRequisition } from '../../../types/procurement';
 // Mock the hooks
 vi.mock('../../../hooks/useProcurement', () => ({
   usePurchaseRequisition: vi.fn(),
-  useApproveRequisition: vi.fn(() => ({ isPending: false })),
-  useRejectRequisition: vi.fn(() => ({ isPending: false })),
-  useConvertRequisitionToPO: vi.fn(() => ({ isPending: false })),
+  useSubmitRequisition: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useApproveRequisition: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useRejectRequisition: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useConvertRequisitionToPOWithDetails: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useDeletePurchaseRequisition: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useCompareQuotes: vi.fn(() => ({ data: null, isLoading: false })),
+  useConvertQuoteToPO: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useVerifyRequisitionInvoice: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  procurementKeys: {
+    requisitions: () => [],
+    requisitionsDetail: (id) => ['procurement', 'requisitions', 'detail', id],
+    purchaseOrders: () => [],
+  },
+  quotesKeys: {
+    quotes: () => [],
+    quotesComparison: (id) => ['procurement', 'quotes', 'comparison', id],
+  },
 }));
 
 vi.mock('../../../hooks/useToast', () => ({

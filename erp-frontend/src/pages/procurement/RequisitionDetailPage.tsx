@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -26,8 +26,10 @@ import {
   Trash2,
 } from 'lucide-react';
 
+import { useQueryClient } from '@tanstack/react-query';
 import {
   usePurchaseRequisition,
+  useSubmitRequisition,
   useApproveRequisition,
   useRejectRequisition,
   useConvertRequisitionToPOWithDetails,
@@ -35,10 +37,11 @@ import {
   useCompareQuotes,
   useConvertQuoteToPO,
   useVerifyRequisitionInvoice,
+  procurementKeys,
+  quotesKeys,
 } from '../../hooks/useProcurement';
 import { useToast } from '../../hooks/useToast';
 import { useAuth } from '../../contexts/AuthContext';
-import { api } from '../../services/api';
 import {
   PurchaseRequisition,
   RequisitionStatus,
@@ -56,7 +59,6 @@ import ConvertToPOModal from '../../components/procurement/ConvertToPOModal';
 import QuoteRequestForm from '../../components/procurement/QuoteRequestForm';
 import QuoteComparison from '../../components/procurement/QuoteComparison';
 import ConvertQuoteToPOModal from '../../components/procurement/ConvertQuoteToPOModal';
-import procurementWorkflowService from '../../services/procurementWorkflowService';
 
 const DECIMAL_INPUT_REGEX = /^\d{0,16}(?:\.\d{0,2})?$/;
 const isValidDecimalInput = (value: string) => value === '' || DECIMAL_INPUT_REGEX.test(value);
@@ -93,6 +95,7 @@ const RequisitionDetailPage: React.FC = () => {
   const [selectedQuoteForConversion, setSelectedQuoteForConversion] = useState<any>(null);
 
   // React Query hooks
+  const queryClient = useQueryClient();
   const { data: requisition, isLoading, error } = usePurchaseRequisition(parseInt(id || '0'), !!id);
 
   // Quote comparison hook - only fetch if requisition is approved
@@ -102,6 +105,7 @@ const RequisitionDetailPage: React.FC = () => {
   );
 
   // Mutations
+  const submitRequisitionMutation = useSubmitRequisition();
   const approveRequisitionMutation = useApproveRequisition();
   const rejectRequisitionMutation = useRejectRequisition();
   const convertToPOMutation = useConvertRequisitionToPOWithDetails();
@@ -110,6 +114,7 @@ const RequisitionDetailPage: React.FC = () => {
   const verifyInvoiceMutation = useVerifyRequisitionInvoice();
 
   const processing =
+    submitRequisitionMutation.isPending ||
     approveRequisitionMutation.isPending ||
     rejectRequisitionMutation.isPending ||
     convertToPOMutation.isPending ||
@@ -118,9 +123,11 @@ const RequisitionDetailPage: React.FC = () => {
     verifyInvoiceMutation.isPending;
 
   // Quote handlers
-  const handleQuoteSelected = (quote: any) => {
-    // Refresh quotes data to show updated status
-    window.location.reload();
+  const handleQuoteSelected = (_quote: any) => {
+    queryClient.invalidateQueries({ queryKey: quotesKeys.quotes() });
+    if (requisition?.id) {
+      queryClient.invalidateQueries({ queryKey: quotesKeys.quotesComparison(requisition.id) });
+    }
   };
 
   const handleConvertQuoteToPO = (quote: any) => {
@@ -153,8 +160,8 @@ const RequisitionDetailPage: React.FC = () => {
       if (response.id) {
         navigate(`/procurement/orders/${response.id}/view`);
       } else {
-        // Refresh the page to show updated status
-        window.location.reload();
+        queryClient.invalidateQueries({ queryKey: procurementKeys.requisitions() });
+        queryClient.invalidateQueries({ queryKey: procurementKeys.purchaseOrders() });
       }
     } catch (err: unknown) {
       console.error('Failed to convert quote to PO:', err);
@@ -185,57 +192,12 @@ const RequisitionDetailPage: React.FC = () => {
     return quotes.quotes.map(q => q.supplier);
   };
 
-  // Integrate workflow service with approval actions
-  useEffect(() => {
-    if (requisition) {
-      // Trigger workflow events based on status changes
-      const handleStatusChange = (oldStatus: string, newStatus: string) => {
-        procurementWorkflowService.triggerStatusChange(
-          'requisition',
-          requisition.id!,
-          oldStatus,
-          newStatus,
-          undefined, // user_id would come from auth context
-          {
-            requester_id: requisition.requester_id,
-            department_id: requisition.department_id,
-            total_estimated_cost: requisition.total_estimated_cost,
-            priority: requisition.priority,
-          }
-        );
-      };
-
-      // This would be called when status actually changes
-      // For now, we'll set up the workflow service to handle future changes
-    }
-  }, [requisition]);
-
   const handleSubmitRequisition = async () => {
     if (!requisition?.id) return;
 
     try {
-      // Use the submit endpoint with proper request body format
-      const requestData = {
-        department: requisition.department,
-        request_date: requisition.request_date,
-        required_by_date: requisition.required_by_date,
-        purpose: requisition.purpose,
-        notes: requisition.notes || '',
-        items: (requisition.items || []).map(item => ({
-          item: item.item || 0,
-          description: item.description || '',
-          quantity: item.quantity || '',
-          estimated_unit_price: item.estimated_unit_price || '0',
-          notes: item.notes || '',
-        })),
-      };
-
-      await api.post(`/procurement/purchase-requisitions/${requisition.id}/submit/`, requestData);
-
+      await submitRequisitionMutation.mutateAsync(requisition.id);
       toast.success('Requisition submitted successfully!');
-
-      // Refresh the page data
-      window.location.reload();
     } catch (err: unknown) {
       console.error('Failed to submit requisition:', err);
       toast.error(
@@ -290,26 +252,22 @@ const RequisitionDetailPage: React.FC = () => {
 
     try {
       if (approvalAction === 'approve') {
-        // Approve endpoint only needs the ID - don't send body to avoid validation
-        await api.post(`/procurement/purchase-requisitions/${requisition.id}/approve/`, {});
+        await approveRequisitionMutation.mutateAsync({ id: requisition.id, data: {} });
         toast.success('Requisition approved successfully!');
       } else {
-        // Reject endpoint needs the rejection reason
         if (!approvalComments.trim()) {
           toast.error('Rejection reason is required');
           return;
         }
-        await api.post(`/procurement/purchase-requisitions/${requisition.id}/reject/`, {
-          reason: approvalComments,
+        await rejectRequisitionMutation.mutateAsync({
+          id: requisition.id,
+          data: { reason: approvalComments },
         });
         toast.success('Requisition rejected successfully');
       }
 
       setShowApprovalModal(false);
       setApprovalComments('');
-
-      // Refresh the page data
-      window.location.reload();
     } catch (err: unknown) {
       console.error('Failed to process approval:', err);
       toast.error(
@@ -338,8 +296,8 @@ const RequisitionDetailPage: React.FC = () => {
       if (response.id) {
         navigate(`/procurement/orders/${response.id}/view`);
       } else {
-        // Refresh the page to show updated status
-        window.location.reload();
+        queryClient.invalidateQueries({ queryKey: procurementKeys.requisitions() });
+        queryClient.invalidateQueries({ queryKey: procurementKeys.purchaseOrders() });
       }
     } catch (err: unknown) {
       console.error('Failed to convert requisition:', err);
@@ -2002,8 +1960,12 @@ const RequisitionDetailPage: React.FC = () => {
         requisition={requisition}
         suppliersWithQuotes={getSuppliersWithQuotes()}
         onSuccess={() => {
-          // Refresh the page to show new quotes
-          window.location.reload();
+          if (requisition?.id) {
+            queryClient.invalidateQueries({ queryKey: quotesKeys.quotes() });
+            queryClient.invalidateQueries({
+              queryKey: quotesKeys.quotesComparison(requisition.id),
+            });
+          }
         }}
       />
 

@@ -12,6 +12,10 @@ jest.mock('../../../hooks/useProcurement', () => ({
     isLoading: false,
     error: null,
   }),
+  useSubmitRequisition: () => ({
+    mutateAsync: jest.fn(),
+    isPending: false,
+  }),
   useApproveRequisition: () => ({
     mutateAsync: jest.fn(),
     isPending: false,
@@ -35,6 +39,31 @@ jest.mock('../../../hooks/useProcurement', () => ({
     }),
     isPending: false,
   }),
+  useDeletePurchaseRequisition: () => ({
+    mutateAsync: jest.fn(),
+    isPending: false,
+  }),
+  useCompareQuotes: () => ({
+    data: null,
+    isLoading: false,
+  }),
+  useConvertQuoteToPO: () => ({
+    mutateAsync: jest.fn(),
+    isPending: false,
+  }),
+  useVerifyRequisitionInvoice: () => ({
+    mutateAsync: jest.fn(),
+    isPending: false,
+  }),
+  procurementKeys: {
+    requisitions: () => [],
+    requisitionsDetail: (id) => ['procurement', 'requisitions', 'detail', id],
+    purchaseOrders: () => [],
+  },
+  quotesKeys: {
+    quotes: () => [],
+    quotesComparison: (id) => ['procurement', 'quotes', 'comparison', id],
+  },
   useSuppliers: () => ({
     data: {
       results: [{ id: 1, name: 'Test Supplier', supplier_code: 'SUP001' }],
@@ -55,13 +84,6 @@ jest.mock('../../../hooks/useToast', () => ({
     success: jest.fn(),
     error: jest.fn(),
   }),
-}));
-
-// Mock the workflow service
-jest.mock('../../../services/procurementWorkflowService', () => ({
-  default: {
-    triggerStatusChange: jest.fn(),
-  },
 }));
 
 // Mock react-router-dom

@@ -839,7 +839,7 @@ export const useUpdatePurchaseReturnStatus = () => {
 // ============= QUOTES HOOKS =============
 
 // Quotes Query Keys
-const quotesKeys = {
+export const quotesKeys = {
   quotes: () => [...procurementKeys.all, 'quotes'] as const,
   quotesList: (params?: any) => [...quotesKeys.quotes(), 'list', params] as const,
   quotesDetails: () => [...quotesKeys.quotes(), 'detail'] as const,

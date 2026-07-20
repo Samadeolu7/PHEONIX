@@ -41,6 +41,10 @@ vi.mock('../../../hooks/useProcurement', () => ({
     isLoading: false,
     error: null,
   }),
+  useSubmitRequisition: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
   useApproveRequisition: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
@@ -53,10 +57,35 @@ vi.mock('../../../hooks/useProcurement', () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useDeletePurchaseRequisition: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
+  useCompareQuotes: () => ({
+    data: null,
+    isLoading: false,
+  }),
+  useConvertQuoteToPO: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
+  useVerifyRequisitionInvoice: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
   useCreateQuotesFromRequisition: () => ({
     mutateAsync: vi.fn().mockResolvedValue([]),
     isPending: false,
   }),
+  procurementKeys: {
+    requisitions: () => [],
+    requisitionsDetail: (id) => ['procurement', 'requisitions', 'detail', id],
+    purchaseOrders: () => [],
+  },
+  quotesKeys: {
+    quotes: () => [],
+    quotesComparison: (id) => ['procurement', 'quotes', 'comparison', id],
+  },
 }));
 
 vi.mock('../../../hooks/useSuppliers', () => ({
@@ -81,19 +110,6 @@ vi.mock('../../../hooks/useToast', () => ({
     success: vi.fn(),
     error: vi.fn(),
   }),
-}));
-
-vi.mock('../../../services/procurementWorkflowService', () => ({
-  default: {
-    triggerStatusChange: vi.fn(),
-  },
-}));
-
-vi.mock('../../../services/api', () => ({
-  api: {
-    patch: vi.fn(),
-    post: vi.fn(),
-  },
 }));
 
 // Mock the components that might not be available
