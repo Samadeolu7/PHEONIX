@@ -742,16 +742,55 @@ class BankTransferViewSet(ScopedModelViewSet):
         eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers')
         return eff.can_edit
 
+    def _get_transfer_scope(self):
+        """Return the effective scope for bank transfers from PermissionResolver.
+
+        Scope controls which transfers a user sees:
+        - ``global``            → all transfers across all branches
+        - ``own_branch``        → all transfers in the user's branch (branch
+          filtering is handled upstream by ``for_user()``)
+        - ``assigned_clients``  → only transfers the user initiated or where
+          they are the destination cashier
+        - ``own_records``       → only transfers the user initiated
+        """
+        from permissions.services import PermissionResolver, SCOPE_GLOBAL, SCOPE_OWN_BRANCH
+        user = self.request.user
+        if self._is_elevated_user(user):
+            return SCOPE_GLOBAL
+        eff = PermissionResolver.resolve(user, module='banks', page='bank-transfers')
+        return eff.scope
+
     def get_queryset(self):
         """Filter transfers by various criteria"""
         queryset = super().get_queryset()
 
-        # Regular users see their own initiated transfers, plus any cashier-to-
-        # cashier transfer pending their approval as the destination cashier
-        # (they're neither the initiator nor a transfer manager, so without this
-        # they'd never be able to discover a transfer sent to them).
-        # Managers/directors see all.
-        if not self._is_transfer_manager():
+        # Scope-based filtering: transfer managers see data per their scope,
+        # non-managers see only their own initiated + destination transfers.
+        scope = self._get_transfer_scope()
+
+        if scope == 'global':
+            # Elevated users / global scope — see everything (branch override
+            # via X-Branch-ID is handled by _apply_director_branch_override).
+            pass
+        elif scope == 'own_branch':
+            # Branch-scoped — for_user() already filtered to this branch.
+            # If the user is NOT a transfer manager, further narrow to own.
+            if not self._is_transfer_manager():
+                queryset = queryset.filter(
+                    Q(initiated_by=self.request.user) |
+                    Q(destination_cashier_account__cashier=self.request.user)
+                )
+        elif scope == 'assigned_clients':
+            # Credit-officer style — only transfers linked to this user.
+            queryset = queryset.filter(
+                Q(initiated_by=self.request.user) |
+                Q(destination_cashier_account__cashier=self.request.user)
+            )
+        elif scope == 'own_records':
+            # Strictest — only transfers the user initiated.
+            queryset = queryset.filter(initiated_by=self.request.user)
+        else:
+            # Unknown scope — fall back to own-transfers-only.
             queryset = queryset.filter(
                 Q(initiated_by=self.request.user) |
                 Q(destination_cashier_account__cashier=self.request.user)

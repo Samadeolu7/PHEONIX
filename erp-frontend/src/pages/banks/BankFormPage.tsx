@@ -1,63 +1,62 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Building2, CreditCard, ExternalLink, AlertCircle } from 'lucide-react';
-import bankService from '../../services/bankService';
-import type { BankAccount } from '../../types/banks';
+import { useBank, useCreateBank, useUpdateBank, useBankAccounts } from '../../hooks/useBanks';
+
+const EMPTY_FORM = {
+  bank_name: '',
+  bank_code: '',
+  branch_name: '',
+  address: '',
+  phone: '',
+  email: '',
+  account_manager_name: '',
+  account_manager_phone: '',
+  account_manager_email: '',
+  is_active: true,
+  notes: '',
+};
+
+type FormData = typeof EMPTY_FORM;
+
+function toFormData(d: { [key: string]: unknown }): FormData {
+  return {
+    bank_name: (d.bank_name as string) ?? '',
+    bank_code: (d.bank_code as string) ?? '',
+    branch_name: (d.branch_name as string) ?? '',
+    address: (d.address as string) ?? '',
+    phone: (d.phone as string) ?? '',
+    email: (d.email as string) ?? '',
+    account_manager_name: (d.account_manager_name as string) ?? '',
+    account_manager_phone: (d.account_manager_phone as string) ?? '',
+    account_manager_email: (d.account_manager_email as string) ?? '',
+    is_active: (d.is_active as boolean) ?? true,
+    notes: (d.notes as string) ?? '',
+  };
+}
 
 const BankFormPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isEdit = !!id;
+  const numericId = isEdit ? Number(id) : 0;
 
-  const [formData, setFormData] = useState({
-    bank_name: '',
-    bank_code: '',
-    branch_name: '',
-    address: '',
-    phone: '',
-    email: '',
-    account_manager_name: '',
-    account_manager_phone: '',
-    account_manager_email: '',
-    is_active: true,
-    notes: '',
-  });
+  const { data: bankData, isLoading: bankLoading } = useBank(numericId, isEdit);
+  const { data: accounts = [] } = useBankAccounts({ bank: numericId, is_active: undefined });
+  const createBank = useCreateBank();
+  const updateBank = useUpdateBank();
 
-  const [accounts, setAccounts] = useState<BankAccount[]>([]);
-  const [loading, setLoading] = useState(isEdit);
-  const [submitting, setSubmitting] = useState(false);
+  const [formData, setFormData] = useState<FormData>(EMPTY_FORM);
+  const formInited = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!id) return;
-    try {
-      setLoading(true);
-      const [bank, accts] = await Promise.all([
-        bankService.getBank(Number(id)),
-        bankService.listBankAccounts({ bank: Number(id) }).catch(() => []),
-      ]);
-      setFormData({
-        bank_name: bank.bank_name ?? '',
-        bank_code: bank.bank_code ?? '',
-        branch_name: bank.branch_name ?? '',
-        address: bank.address ?? '',
-        phone: bank.phone ?? '',
-        email: bank.email ?? '',
-        account_manager_name: bank.account_manager_name ?? '',
-        account_manager_phone: bank.account_manager_phone ?? '',
-        account_manager_email: bank.account_manager_email ?? '',
-        is_active: bank.is_active ?? true,
-        notes: bank.notes ?? '',
-      });
-      setAccounts(Array.isArray(accts) ? accts : (accts as any)?.results ?? []);
-    } catch {
-      setError('Failed to load bank details.');
-    } finally {
-      setLoading(false);
+  /* eslint-disable react-hooks/set-state-in-effect -- legitimate: initialize form from async query data once */
+  useEffect(() => {
+    if (bankData && !formInited.current) {
+      formInited.current = true;
+      setFormData(toFormData(bankData));
     }
-  }, [id]);
-
-  useEffect(() => { load(); }, [load]);
+  }, [bankData]);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -75,25 +74,29 @@ const BankFormPage: React.FC = () => {
       setError('Bank name is required.');
       return;
     }
-    setSubmitting(true);
     setError(null);
     try {
       if (isEdit) {
-        await bankService.updateBank(Number(id), formData);
+        await updateBank.mutateAsync({ id: numericId, data: formData });
       } else {
-        await bankService.createBank(formData);
+        await createBank.mutateAsync(formData);
       }
       navigate('/banks');
-    } catch (err: any) {
-      const data = err?.response?.data ?? err?.data ?? {};
-      const msg = Object.values(data).flat().join(' ') || err?.message || 'Save failed.';
+    } catch (err: unknown) {
+      const e = err as {
+        message?: string;
+        response?: { data?: Record<string, unknown> };
+        data?: Record<string, unknown>;
+      };
+      const data = e?.response?.data ?? e?.data ?? {};
+      const msg = Object.values(data).flat().join(' ') || e?.message || 'Save failed.';
       setError(msg);
-    } finally {
-      setSubmitting(false);
     }
   };
 
-  if (loading) {
+  const isSubmitting = createBank.isPending || updateBank.isPending;
+
+  if (bankLoading) {
     return (
       <div className="flex min-h-64 items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
@@ -115,9 +118,7 @@ const BankFormPage: React.FC = () => {
         </button>
         <div className="flex items-center gap-2">
           <Building2 className="h-6 w-6 text-blue-600" />
-          <h1 className="text-2xl font-bold text-gray-900">
-            {isEdit ? 'Edit Bank' : 'Add Bank'}
-          </h1>
+          <h1 className="text-2xl font-bold text-gray-900">{isEdit ? 'Edit Bank' : 'Add Bank'}</h1>
         </div>
       </div>
 
@@ -292,11 +293,11 @@ const BankFormPage: React.FC = () => {
           </button>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={isSubmitting}
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
             <Save className="h-4 w-4" />
-            {submitting ? 'Saving…' : 'Save Bank'}
+            {isSubmitting ? 'Saving\u2026' : 'Save Bank'}
           </button>
         </div>
       </form>

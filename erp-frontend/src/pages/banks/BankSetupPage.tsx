@@ -6,13 +6,17 @@
  *   2. Account details   — number, name, type, currency
  *   3. GL ledger link    — auto-create (default) or link to an existing unlinked GL account
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Save, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
-import bankService from '../../services/bankService';
+import {
+  useBanks,
+  useBankAccount,
+  useCreateBankAccount,
+  useUpdateBankAccount,
+} from '../../hooks/useBanks';
 import { accountService } from '../../services/accountService';
 import { userManagementService, type User } from '../../services/userManagementService';
-import type { Bank } from '../../types/banks';
 import type { Account } from '../../types/accounts';
 
 const BankSetupPage: React.FC = () => {
@@ -21,23 +25,25 @@ const BankSetupPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const isEdit = !!id;
 
+  // ── React Query hooks ──────────────────────────────────────────
+  const { data: banks = [] } = useBanks({ is_active: true });
+  const { data: existingAccount, isLoading: accountLoading } = useBankAccount(Number(id), isEdit);
+  const createAccount = useCreateBankAccount();
+  const updateAccount = useUpdateBankAccount();
+
   // ── loading state ──────────────────────────────────────────────
-  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ── reference data ─────────────────────────────────────────────
-  const [banks, setBanks] = useState<Bank[]>([]);
+  // ── reference data (non-bank services, no hooks yet) ───────────
   const [glAccounts, setGlAccounts] = useState<Account[]>([]);
   const [users, setUsers] = useState<User[]>([]);
 
   // ── Section 1: Bank Institution ───────────────────────────────
-  // In create mode: pick existing bank or enter new
-  // In edit mode:   bank is fixed (read-only), shown for info only
   const [bankMode, setBankMode] = useState<'existing' | 'new'>('existing');
   const [selectedBankId, setSelectedBankId] = useState('');
   const [newBank, setNewBank] = useState({ name: '', code: '', branch: '' });
-  const [editBankLabel, setEditBankLabel] = useState(''); // display only in edit mode
+  const [editBankLabel, setEditBankLabel] = useState('');
 
   // ── Section 2: Account Details ────────────────────────────────
   const [acct, setAcct] = useState({
@@ -57,67 +63,61 @@ const BankSetupPage: React.FC = () => {
   // ── Advanced (hidden by default) ──────────────────────────────
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // ── Load reference data & existing record ─────────────────────
-  const loadReferenceData = useCallback(async () => {
-    try {
-      const [banksRes, glRes, usersRes] = await Promise.all([
-        bankService.listBanks({ is_active: true }),
-        accountService.getAccounts({ account_type: 'ASSET', is_active: true }),
-        userManagementService.getUsers(),
-      ]);
-      setBanks(banksRes);
-      // Only child-level ASSET accounts can be linked to a bank account
-      setGlAccounts((glRes as Account[]).filter(a => a.account_level?.toLowerCase() === 'child'));
-      setUsers(usersRes.filter(u => u.is_active));
-
-      // Pre-select bank from ?bank= query param (e.g. navigating from BankFormPage)
-      const preselectedBankId = searchParams.get('bank');
-      if (preselectedBankId) {
-        setSelectedBankId(preselectedBankId);
-        setBankMode('existing');
-      }
-    } catch {
-      setError('Failed to load reference data. Please refresh the page.');
-    }
-  }, [searchParams]);
-
-  const loadExistingAccount = useCallback(async () => {
-    try {
-      const data = await bankService.getBankAccount(Number(id));
-      setEditBankLabel(
-        [data.bank_display_name, data.bank_branch].filter(Boolean).join(' – ')
-      );
-      setAcct({
-        account_number: data.account_number ?? '',
-        account_name: data.account_name ?? '',
-        account_type: (data.account_type as any) ?? 'current',
-        currency: data.currency ?? 'NGN',
-        is_cashier_collection_account: data.is_cashier_collection_account ?? false,
-        notes: data.notes ?? '',
-        account_manager: data.account_manager ? String(data.account_manager) : '',
-      });
-      if (data.gl_account) {
-        setGlMode('existing');
-        setGlAccountId(String(data.gl_account));
-      }
-    } catch {
-      setError('Failed to load account details.');
-    }
-  }, [id]);
-
+  // ── Load non-bank reference data ──────────────────────────────
   useEffect(() => {
     (async () => {
-      await loadReferenceData();
-      if (isEdit) await loadExistingAccount();
-      setLoading(false);
+      try {
+        const [glRes, usersRes] = await Promise.all([
+          accountService.getAccounts({ account_type: 'ASSET', is_active: true }),
+          userManagementService.getUsers(),
+        ]);
+        setGlAccounts((glRes as Account[]).filter(a => a.account_level?.toLowerCase() === 'child'));
+        setUsers(usersRes.filter(u => u.is_active));
+
+        const preselectedBankId = searchParams.get('bank');
+        if (preselectedBankId) {
+          setSelectedBankId(preselectedBankId);
+          setBankMode('existing');
+        }
+      } catch {
+        setError('Failed to load reference data. Please refresh the page.');
+      }
     })();
-  }, [loadReferenceData, loadExistingAccount, isEdit]);
+  }, [searchParams]);
+
+  // ── Populate form from existing account ───────────────────────
+  useEffect(() => {
+    if (existingAccount) {
+      setEditBankLabel(
+        [existingAccount.bank_display_name, existingAccount.bank_branch].filter(Boolean).join(' – ')
+      );
+      setAcct({
+        account_number: existingAccount.account_number ?? '',
+        account_name: existingAccount.account_name ?? '',
+        account_type:
+          (existingAccount.account_type as
+            | 'current'
+            | 'savings'
+            | 'fixed_deposit'
+            | 'domiciliary') ?? 'current',
+        currency: existingAccount.currency ?? 'NGN',
+        is_cashier_collection_account: existingAccount.is_cashier_collection_account ?? false,
+        notes: existingAccount.notes ?? '',
+        account_manager: existingAccount.account_manager
+          ? String(existingAccount.account_manager)
+          : '',
+      });
+      if (existingAccount.gl_account) {
+        setGlMode('existing');
+        setGlAccountId(String(existingAccount.gl_account));
+      }
+    }
+  }, [existingAccount]);
 
   // ── Submit ─────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Basic validation
     if (!isEdit) {
       if (bankMode === 'existing' && !selectedBankId) {
         setError('Please select a bank or choose "New bank".');
@@ -152,8 +152,6 @@ const BankSetupPage: React.FC = () => {
         is_cashier_collection_account: acct.is_cashier_collection_account,
         notes: acct.notes,
       };
-      // Omit when unset so the backend's own default (the creating user) still
-      // applies on create; on edit, an explicit selection always overrides it.
       if (acct.account_manager) {
         payload.account_manager = Number(acct.account_manager);
       }
@@ -171,16 +169,22 @@ const BankSetupPage: React.FC = () => {
       if (glMode === 'existing' && glAccountId) {
         payload.gl_account = Number(glAccountId);
       }
-      // If glMode === 'auto', omit gl_account → backend auto-creates under 1100
 
       if (isEdit) {
-        await bankService.updateBankAccount(Number(id), payload as any);
+        await updateAccount.mutateAsync({
+          id: Number(id),
+          data: payload as Parameters<typeof updateAccount.mutateAsync>[0]['data'],
+        });
       } else {
-        await bankService.createBankAccount(payload as any);
+        await createAccount.mutateAsync(payload as Parameters<typeof createAccount.mutateAsync>[0]);
       }
       navigate('/banks/accounts');
-    } catch (err: any) {
-      const data = err?.response?.data ?? err?.data ?? {};
+    } catch (err: unknown) {
+      const data =
+        (err as { response?: { data?: Record<string, unknown> }; data?: Record<string, unknown> })
+          ?.response?.data ??
+        (err as { data?: Record<string, unknown> })?.data ??
+        {};
       const msgs = Object.entries(data)
         .flatMap(([k, v]) =>
           (Array.isArray(v) ? v : [v]).map(m =>
@@ -194,12 +198,12 @@ const BankSetupPage: React.FC = () => {
     }
   };
 
-  // ── Helpers ───────────────────────────────────────────────────
   const setAcctField = (field: keyof typeof acct, value: unknown) =>
     setAcct(prev => ({ ...prev, [field]: value }));
 
-  // ── Render ────────────────────────────────────────────────────
-  if (loading) {
+  const isLoading = accountLoading;
+
+  if (isLoading) {
     return (
       <div className="flex min-h-64 items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
@@ -232,7 +236,6 @@ const BankSetupPage: React.FC = () => {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
-
         {/* ── Section 1: Bank Institution ── */}
         <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-4">
           <h2 className="font-semibold text-gray-800">Bank Institution</h2>
@@ -240,7 +243,9 @@ const BankSetupPage: React.FC = () => {
           {isEdit ? (
             <div className="rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-700">
               <span className="font-medium">{editBankLabel || 'Unknown bank'}</span>
-              <p className="text-xs text-gray-500 mt-0.5">Bank cannot be changed after account creation.</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Bank cannot be changed after account creation.
+              </p>
             </div>
           ) : (
             <>
@@ -276,7 +281,8 @@ const BankSetupPage: React.FC = () => {
                     <option value="">— Select a bank —</option>
                     {banks.map(b => (
                       <option key={b.id} value={b.id}>
-                        {b.bank_name}{b.branch_name ? ` – ${b.branch_name}` : ''}
+                        {b.bank_name}
+                        {b.branch_name ? ` – ${b.branch_name}` : ''}
                       </option>
                     ))}
                   </select>
@@ -297,7 +303,9 @@ const BankSetupPage: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Bank code</label>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Bank code
+                    </label>
                     <input
                       type="text"
                       title="Bank code"
@@ -308,7 +316,9 @@ const BankSetupPage: React.FC = () => {
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Branch name</label>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Branch name
+                    </label>
                     <input
                       type="text"
                       title="Branch name"
@@ -435,14 +445,19 @@ const BankSetupPage: React.FC = () => {
                 type="radio"
                 name="glMode"
                 checked={glMode === 'auto'}
-                onChange={() => { setGlMode('auto'); setGlAccountId(''); }}
+                onChange={() => {
+                  setGlMode('auto');
+                  setGlAccountId('');
+                }}
                 className="mt-0.5 h-4 w-4 border-gray-300 text-blue-600"
               />
               <div>
-                <p className="text-sm font-medium text-gray-800">Auto-create GL account <span className="text-blue-600">(recommended)</span></p>
+                <p className="text-sm font-medium text-gray-800">
+                  Auto-create GL account <span className="text-blue-600">(recommended)</span>
+                </p>
                 <p className="text-xs text-gray-500">
-                  A new GL account named after this bank account will be created automatically
-                  under <strong>1100 – Cash and Cash Equivalents</strong>.
+                  A new GL account named after this bank account will be created automatically under{' '}
+                  <strong>1100 – Cash and Cash Equivalents</strong>.
                 </p>
               </div>
             </label>
@@ -458,7 +473,8 @@ const BankSetupPage: React.FC = () => {
               <div className="flex-1">
                 <p className="text-sm font-medium text-gray-800">Link to an existing GL account</p>
                 <p className="text-xs text-gray-500 mb-2">
-                  Only unlinked ASSET child accounts are shown. Each GL account can only be linked to one bank account.
+                  Only unlinked ASSET child accounts are shown. Each GL account can only be linked
+                  to one bank account.
                 </p>
                 {glMode === 'existing' && (
                   <select

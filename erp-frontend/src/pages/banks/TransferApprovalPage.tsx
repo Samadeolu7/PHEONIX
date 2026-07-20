@@ -1,12 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { CheckCircle, XCircle, Clock, AlertCircle } from 'lucide-react';
-import bankService from '../../services/bankService';
+import {
+  usePendingBankTransferApprovals,
+  useApproveBankTransfer,
+  useSecondApproveBankTransfer,
+  useRejectBankTransfer,
+} from '../../hooks/useBanks';
 import type { BankTransfer } from '../../types/banks';
 
 const TransferApprovalPage: React.FC = () => {
-  const [transfers, setTransfers] = useState<BankTransfer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: transfers = [], isLoading, error: queryError } = usePendingBankTransferApprovals();
+  const approveMutation = useApproveBankTransfer();
+  const secondApproveMutation = useSecondApproveBankTransfer();
+  const rejectMutation = useRejectBankTransfer();
+
   const [selectedTransfer, setSelectedTransfer] = useState<BankTransfer | null>(null);
   const [actionModal, setActionModal] = useState<{
     show: boolean;
@@ -18,44 +25,36 @@ const TransferApprovalPage: React.FC = () => {
     notes: '',
   });
 
-  useEffect(() => {
-    loadPendingApprovals();
-  }, []);
-
-  const loadPendingApprovals = async () => {
-    try {
-      setLoading(true);
-      const data = await bankService.getPendingApprovals();
-      setTransfers(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load pending approvals');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const isMutating =
+    approveMutation.isPending || secondApproveMutation.isPending || rejectMutation.isPending;
 
   const handleAction = async () => {
     if (!selectedTransfer || !actionModal.type) return;
 
     try {
       if (actionModal.type === 'approve') {
-        await bankService.approveTransfer(selectedTransfer.id, actionModal.notes);
+        await approveMutation.mutateAsync({
+          id: selectedTransfer.id,
+          notes: actionModal.notes || undefined,
+        });
       } else if (actionModal.type === 'second_approve') {
-        await bankService.secondApproveTransfer(selectedTransfer.id, actionModal.notes);
+        await secondApproveMutation.mutateAsync({
+          id: selectedTransfer.id,
+          notes: actionModal.notes || undefined,
+        });
       } else if (actionModal.type === 'reject') {
         if (!actionModal.notes) {
           alert('Please provide a rejection reason');
           return;
         }
-        await bankService.rejectTransfer(selectedTransfer.id, actionModal.notes);
+        await rejectMutation.mutateAsync({ id: selectedTransfer.id, reason: actionModal.notes });
       }
 
-      // Reload
       setActionModal({ show: false, type: null, notes: '' });
       setSelectedTransfer(null);
-      loadPendingApprovals();
-    } catch (err: any) {
-      alert(err.message || 'Failed to perform action');
+    } catch (err: unknown) {
+      const e = err as { message?: string };
+      alert(e.message || 'Failed to perform action');
     }
   };
 
@@ -68,13 +67,13 @@ const TransferApprovalPage: React.FC = () => {
   };
 
   const getStatusBadge = (status: string) => {
-    const styles = {
+    const styles: Record<string, string> = {
       pending: 'bg-yellow-100 text-yellow-800',
       approved: 'bg-blue-100 text-blue-800',
       completed: 'bg-green-100 text-green-800',
       rejected: 'bg-red-100 text-red-800',
     };
-    return styles[status as keyof typeof styles] || 'bg-gray-100 text-gray-800';
+    return styles[status] || 'bg-gray-100 text-gray-800';
   };
 
   const needsSecondApproval = (transfer: BankTransfer) => {
@@ -125,21 +124,21 @@ const TransferApprovalPage: React.FC = () => {
       </div>
 
       {/* Loading */}
-      {loading && (
+      {isLoading && (
         <div className="flex justify-center items-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
         </div>
       )}
 
       {/* Error */}
-      {error && (
+      {queryError && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-          {error}
+          {(queryError as Error).message || 'Failed to load pending approvals'}
         </div>
       )}
 
       {/* Transfers Table */}
-      {!loading && (
+      {!isLoading && (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -198,14 +197,6 @@ const TransferApprovalPage: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-center">
                     <div className="flex gap-2 justify-center">
-                      {/* Gated solely by the server-computed can_approve/can_second_approve
-                          fields (mirror BankTransferViewSet's actual permission branches) —
-                          no rank-based fallback. Bank-to-bank approval is governed by the
-                          Permission Setup page (RolePermissionPolicy on banks:bank-transfers).
-                          Cashier-to-cashier and cashier-to-bank both accept EITHER the relevant
-                          object-identity owner (destination cashier / account_manager) OR a
-                          director via that same grant. Bank-to-cashier is a branch-manager-tier
-                          role check, not grantable from Permission Setup. */}
                       {transfer.can_approve && transfer.status === 'pending' && (
                         <>
                           <button
@@ -305,13 +296,14 @@ const TransferApprovalPage: React.FC = () => {
                 </button>
                 <button
                   onClick={handleAction}
-                  className={`flex-1 px-4 py-2 rounded-lg text-white ${
+                  disabled={isMutating}
+                  className={`flex-1 px-4 py-2 rounded-lg text-white disabled:opacity-50 ${
                     actionModal.type === 'reject'
                       ? 'bg-red-600 hover:bg-red-700'
                       : 'bg-green-600 hover:bg-green-700'
                   }`}
                 >
-                  Confirm
+                  {isMutating ? 'Processing...' : 'Confirm'}
                 </button>
               </div>
             </div>

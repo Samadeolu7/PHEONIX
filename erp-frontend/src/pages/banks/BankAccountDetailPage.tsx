@@ -1,30 +1,45 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Edit,
   TrendingUp,
   TrendingDown,
-  Clock,
   Lock,
   Unlock,
-  Calendar,
   DollarSign,
   FileText,
   AlertCircle,
 } from 'lucide-react';
-import bankService from '../../services/bankService';
-import { useSuspendBankAccount, useActivateBankAccount } from '../../hooks/useBanks';
-import type { BankAccount, BankAccountSummary, LedgerEntry } from '../../types/banks';
+import {
+  useBankAccount,
+  useBankAccountSummary,
+  useBankAccountLedger,
+  useSuspendBankAccount,
+  useActivateBankAccount,
+} from '../../hooks/useBanks';
 
 const BankAccountDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [account, setAccount] = useState<BankAccount | null>(null);
-  const [summary, setSummary] = useState<BankAccountSummary | null>(null);
-  const [ledger, setLedger] = useState<LedgerEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const numericId = Number(id);
+  const isValid = id && !isNaN(numericId);
+
+  const {
+    data: account,
+    isLoading: accountLoading,
+    error: accountError,
+  } = useBankAccount(numericId, isValid);
+  const { data: summary } = useBankAccountSummary(numericId, isValid);
+  const { data: ledger = [], isLoading: ledgerLoading } = useBankAccountLedger(
+    numericId,
+    { limit: 50 },
+    isValid
+  );
+
+  const suspendMutation = useSuspendBankAccount();
+  const activateMutation = useActivateBankAccount();
+
   const [activeTab, setActiveTab] = useState<'overview' | 'ledger' | 'transfers'>('overview');
 
   // Suspend modal state
@@ -35,55 +50,6 @@ const BankAccountDetailPage: React.FC = () => {
   // Activate confirmation modal state
   const [showActivateModal, setShowActivateModal] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-
-  const suspendMutation = useSuspendBankAccount();
-  const activateMutation = useActivateBankAccount();
-
-  useEffect(() => {
-    // Validate that id is a valid number
-    if (!id || isNaN(Number(id))) {
-      setError('Invalid account ID');
-      setLoading(false);
-      return;
-    }
-
-    if (id) {
-      loadAccount();
-      loadSummary();
-      loadLedger();
-    }
-  }, [id]);
-
-  const loadAccount = async () => {
-    try {
-      const data = await bankService.getBankAccount(Number(id));
-      setAccount(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load account');
-    }
-  };
-
-  const loadSummary = async () => {
-    try {
-      const data = await bankService.getBankAccountSummary(Number(id));
-      setSummary(data);
-    } catch (err: any) {
-      console.error('Failed to load summary:', err);
-    }
-  };
-
-  const loadLedger = async () => {
-    try {
-      setLoading(true);
-      const data = await bankService.getBankAccountLedger(Number(id), { limit: 50 });
-      // API returns object with entries array, not direct array
-      setLedger(data.entries || []);
-    } catch (err: any) {
-      console.error('Failed to load ledger:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleSuspend = () => {
     setSuspendReason('');
@@ -101,7 +67,6 @@ const BankAccountDetailPage: React.FC = () => {
     try {
       await suspendMutation.mutateAsync({ id: account.id, reason: suspendReason.trim() });
       setShowSuspendModal(false);
-      loadAccount();
     } catch (err: unknown) {
       const e = err as { message?: string };
       setActionError(e?.message ?? 'Failed to suspend account');
@@ -119,7 +84,6 @@ const BankAccountDetailPage: React.FC = () => {
     try {
       await activateMutation.mutateAsync(account.id);
       setShowActivateModal(false);
-      loadAccount();
     } catch (err: unknown) {
       const e = err as { message?: string };
       setActionError(e?.message ?? 'Failed to activate account');
@@ -127,7 +91,17 @@ const BankAccountDetailPage: React.FC = () => {
     }
   };
 
-  if (loading && !account) {
+  if (!isValid) {
+    return (
+      <div className="p-6 max-w-7xl mx-auto">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+          Invalid account ID
+        </div>
+      </div>
+    );
+  }
+
+  if (accountLoading) {
     return (
       <div className="flex justify-center items-center h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -135,11 +109,11 @@ const BankAccountDetailPage: React.FC = () => {
     );
   }
 
-  if (error || !account) {
+  if (accountError || !account) {
     return (
       <div className="p-6 max-w-7xl mx-auto">
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-          {error || 'Account not found'}
+          {(accountError as Error)?.message || 'Account not found'}
         </div>
       </div>
     );
@@ -259,36 +233,19 @@ const BankAccountDetailPage: React.FC = () => {
         <div className="bg-white rounded-lg shadow mb-6">
           <div className="border-b border-gray-200">
             <nav className="flex -mb-px">
-              <button
-                onClick={() => setActiveTab('overview')}
-                className={`px-6 py-3 text-sm font-medium border-b-2 ${
-                  activeTab === 'overview'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                Overview
-              </button>
-              <button
-                onClick={() => setActiveTab('ledger')}
-                className={`px-6 py-3 text-sm font-medium border-b-2 ${
-                  activeTab === 'ledger'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                Ledger
-              </button>
-              <button
-                onClick={() => setActiveTab('transfers')}
-                className={`px-6 py-3 text-sm font-medium border-b-2 ${
-                  activeTab === 'transfers'
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                }`}
-              >
-                Transfers
-              </button>
+              {(['overview', 'ledger', 'transfers'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-6 py-3 text-sm font-medium border-b-2 capitalize ${
+                    activeTab === tab
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
             </nav>
           </div>
 
@@ -386,69 +343,69 @@ const BankAccountDetailPage: React.FC = () => {
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">Transaction Ledger</h3>
-                  <button
-                    onClick={loadLedger}
-                    className="text-sm text-blue-600 hover:text-blue-700"
-                  >
-                    Refresh
-                  </button>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Date
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Reference
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Description
-                        </th>
-                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                          Debit
-                        </th>
-                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                          Credit
-                        </th>
-                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                          Balance
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {ledger.map(entry => (
-                        <tr key={entry.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                            {new Date(entry.date).toLocaleDateString()}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
-                            {entry.reference_number}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">{entry.description}</td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-green-600 font-medium">
-                            {entry.debit !== '0.00' &&
-                              `₦${parseFloat(entry.debit).toLocaleString()}`}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-red-600 font-medium">
-                            {entry.credit !== '0.00' &&
-                              `₦${parseFloat(entry.credit).toLocaleString()}`}
-                          </td>
-                          <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-gray-900">
-                            ₦{parseFloat(entry.balance).toLocaleString()}
-                          </td>
+                {ledgerLoading ? (
+                  <div className="flex justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                            Date
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                            Reference
+                          </th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                            Description
+                          </th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                            Debit
+                          </th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                            Credit
+                          </th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                            Balance
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {ledger.length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                      <FileText className="w-12 h-12 mx-auto mb-2 text-gray-400" />
-                      <p>No transactions yet</p>
-                    </div>
-                  )}
-                </div>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {ledger.map(entry => (
+                          <tr key={entry.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                              {new Date(entry.date).toLocaleDateString()}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                              {entry.reference_number}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{entry.description}</td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-green-600 font-medium">
+                              {entry.debit !== '0.00' &&
+                                `₦${parseFloat(entry.debit).toLocaleString()}`}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-red-600 font-medium">
+                              {entry.credit !== '0.00' &&
+                                `₦${parseFloat(entry.credit).toLocaleString()}`}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-gray-900">
+                              ₦{parseFloat(entry.balance).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {ledger.length === 0 && (
+                      <div className="text-center py-8 text-gray-500">
+                        <FileText className="w-12 h-12 mx-auto mb-2 text-gray-400" />
+                        <p>No transactions yet</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

@@ -1,14 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Plus, Search, X, CreditCard, Building2, DollarSign } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import bankService from '../../services/bankService';
-import type { BankAccount } from '../../types/banks';
+import { useQuery } from '@tanstack/react-query';
+import { bankService } from '../../services/bankService';
+import { useDebounce } from '../../hooks/useDebounce';
 
 const BankAccountListPage: React.FC = () => {
   const navigate = useNavigate();
-  const [accounts, setAccounts] = useState<BankAccount[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState({
     is_active: true,
@@ -16,37 +14,25 @@ const BankAccountListPage: React.FC = () => {
     bank: undefined as number | undefined,
   });
 
-  useEffect(() => {
-    loadAccounts();
-  }, [filters]);
+  const debouncedSearch = useDebounce(searchTerm, 300);
 
-  const loadAccounts = async () => {
-    try {
-      setLoading(true);
-      const data = await bankService.listBankAccounts({
+  const {
+    data: accounts = [],
+    isLoading,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['bank-accounts', { ...filters, search: debouncedSearch || undefined }],
+    queryFn: () =>
+      bankService.listBankAccounts({
         is_active: filters.is_active ? true : undefined,
         is_cashier_collection_account: filters.is_cashier_collection_account,
         bank: filters.bank,
-        search: searchTerm || undefined,
-      });
-      // Handle both array and paginated response formats
-      const accountsList = Array.isArray(data) ? data : data.results || [];
-      setAccounts(accountsList);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load bank accounts');
-    } finally {
-      setLoading(false);
-    }
-  };
+        search: debouncedSearch || undefined,
+      }),
+    staleTime: 60_000,
+  });
 
-  const filteredAccounts = accounts.filter(
-    account =>
-      account.account_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      account.account_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      account.bank_name?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const totalBalance = filteredAccounts.reduce(
+  const totalBalance = accounts.reduce(
     (sum, acc) => sum + parseFloat(acc.current_balance || '0'),
     0
   );
@@ -57,7 +43,9 @@ const BankAccountListPage: React.FC = () => {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Bank Accounts</h1>
-          <p className="text-gray-600 mt-1">Track and manage your organization's bank accounts</p>
+          <p className="text-gray-600 mt-1">
+            Track and manage your organization&apos;s bank accounts
+          </p>
         </div>
         <button
           onClick={() => navigate('/banks/accounts/new')}
@@ -74,7 +62,7 @@ const BankAccountListPage: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600">Total Accounts</p>
-              <p className="text-2xl font-bold text-gray-900">{filteredAccounts.length}</p>
+              <p className="text-2xl font-bold text-gray-900">{accounts.length}</p>
             </div>
             <CreditCard className="w-10 h-10 text-blue-600" />
           </div>
@@ -93,7 +81,7 @@ const BankAccountListPage: React.FC = () => {
             <div>
               <p className="text-sm text-gray-600">Active Accounts</p>
               <p className="text-2xl font-bold text-gray-900">
-                {filteredAccounts.filter(a => a.is_active).length}
+                {accounts.filter(a => a.is_active).length}
               </p>
             </div>
             <Building2 className="w-10 h-10 text-purple-600" />
@@ -151,21 +139,21 @@ const BankAccountListPage: React.FC = () => {
       </div>
 
       {/* Loading */}
-      {loading && (
+      {isLoading && (
         <div className="flex justify-center items-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
         </div>
       )}
 
       {/* Error */}
-      {error && (
+      {queryError && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-          {error}
+          {(queryError as Error).message || 'Failed to load bank accounts'}
         </div>
       )}
 
       {/* Accounts Table */}
-      {!loading && (
+      {!isLoading && (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -191,7 +179,7 @@ const BankAccountListPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredAccounts.map(account => (
+              {accounts.map(account => (
                 <tr
                   key={account.id}
                   onClick={() => navigate(`/banks/accounts/${account.id}`)}
@@ -261,7 +249,7 @@ const BankAccountListPage: React.FC = () => {
           </table>
 
           {/* Empty State */}
-          {filteredAccounts.length === 0 && (
+          {accounts.length === 0 && (
             <div className="text-center py-12">
               <CreditCard className="w-16 h-16 text-gray-400 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">No bank accounts found</h3>

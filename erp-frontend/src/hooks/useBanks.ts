@@ -336,3 +336,16 @@ export const useRejectBankTransfer = () => {
     },
   });
 };
+
+export const useSecondApproveBankTransfer = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, notes }: { id: number; notes?: string }) =>
+      bankService.secondApproveTransfer(id, notes),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: bankKeys.transfer(id) });
+      queryClient.invalidateQueries({ queryKey: bankKeys.transfers() });
+      queryClient.invalidateQueries({ queryKey: bankKeys.pendingApprovals() });
+    },
+  });
+};

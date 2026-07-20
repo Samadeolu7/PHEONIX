@@ -1,58 +1,34 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Plus, Edit, Trash2, Building2, Search, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import bankService from '../../services/bankService';
-import type { Bank } from '../../types/banks';
+import { useBanks, useDeleteBank, useCreateBank } from '../../hooks/useBanks';
+import { useDebounce } from '../../hooks/useDebounce';
 
 const BankListPage: React.FC = () => {
   const navigate = useNavigate();
-  const [banks, setBanks] = useState<Bank[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showActiveOnly, setShowActiveOnly] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  useEffect(() => {
-    loadBanks();
-  }, [showActiveOnly]);
+  const debouncedSearch = useDebounce(searchTerm, 300);
 
-  const loadBanks = async () => {
-    try {
-      setLoading(true);
-      const data = await bankService.listBanks({
-        is_active: showActiveOnly ? true : undefined,
-        search: searchTerm || undefined,
-      });
-      setBanks(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load banks');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const {
+    data: banks = [],
+    isLoading,
+    error: queryError,
+  } = useBanks({
+    is_active: showActiveOnly ? true : undefined,
+    search: debouncedSearch || undefined,
+  });
 
-  const handleSearch = () => {
-    loadBanks();
-  };
+  const deleteMutation = useDeleteBank();
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = (id: number) => {
     if (!confirm('Are you sure you want to delete this bank?')) return;
-
-    try {
-      await bankService.deleteBank(id);
-      loadBanks();
-    } catch (err: any) {
-      alert(err.message || 'Failed to delete bank');
-    }
+    deleteMutation.mutate(id, {
+      onError: (err: Error) => alert(err.message || 'Failed to delete bank'),
+    });
   };
-
-  const filteredBanks = banks.filter(
-    bank =>
-      bank.bank_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      bank.bank_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      bank.branch_name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -82,15 +58,11 @@ const BankListPage: React.FC = () => {
                 placeholder="Search banks..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSearch()}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               {searchTerm && (
                 <button
-                  onClick={() => {
-                    setSearchTerm('');
-                    loadBanks();
-                  }}
+                  onClick={() => setSearchTerm('')}
                   className="absolute right-3 top-1/2 -translate-y-1/2"
                 >
                   <X className="w-5 h-5 text-gray-400 hover:text-gray-600" />
@@ -107,33 +79,27 @@ const BankListPage: React.FC = () => {
             />
             Active only
           </label>
-          <button
-            onClick={handleSearch}
-            className="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200"
-          >
-            Search
-          </button>
         </div>
       </div>
 
       {/* Loading */}
-      {loading && (
+      {isLoading && (
         <div className="flex justify-center items-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
         </div>
       )}
 
       {/* Error */}
-      {error && (
+      {queryError && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-          {error}
+          {(queryError as Error).message || 'Failed to load banks'}
         </div>
       )}
 
       {/* Banks Grid */}
-      {!loading && (
+      {!isLoading && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredBanks.map(bank => (
+          {banks.map(bank => (
             <div
               key={bank.id}
               className="bg-white rounded-lg shadow hover:shadow-lg transition-shadow cursor-pointer"
@@ -206,7 +172,8 @@ const BankListPage: React.FC = () => {
                       e.stopPropagation();
                       handleDelete(bank.id);
                     }}
-                    className="flex items-center justify-center gap-1 px-3 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm"
+                    disabled={deleteMutation.isPending}
+                    className="flex items-center justify-center gap-1 px-3 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm disabled:opacity-50"
                   >
                     <Trash2 className="w-4 h-4" />
                     Delete
@@ -219,7 +186,7 @@ const BankListPage: React.FC = () => {
       )}
 
       {/* Empty State */}
-      {!loading && filteredBanks.length === 0 && (
+      {!isLoading && banks.length === 0 && (
         <div className="text-center py-12">
           <Building2 className="w-16 h-16 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No banks found</h3>
@@ -242,10 +209,7 @@ const BankListPage: React.FC = () => {
       {showCreateModal && (
         <CreateBankModal
           onClose={() => setShowCreateModal(false)}
-          onSuccess={() => {
-            setShowCreateModal(false);
-            loadBanks();
-          }}
+          onSuccess={() => setShowCreateModal(false)}
         />
       )}
     </div>
@@ -257,6 +221,7 @@ const CreateBankModal: React.FC<{
   onClose: () => void;
   onSuccess: () => void;
 }> = ({ onClose, onSuccess }) => {
+  const createBank = useCreateBank();
   const [formData, setFormData] = useState({
     bank_name: '',
     bank_code: '',
@@ -270,28 +235,23 @@ const CreateBankModal: React.FC<{
     notes: '',
     is_active: true,
   });
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitting(true);
     setError(null);
 
     try {
-      await bankService.createBank(formData);
-      // Show success notification
+      await createBank.mutateAsync(formData);
       alert(
         `Bank "${formData.bank_name}" created successfully! Next step: Create a bank account at this bank to link it with your GL account and assign an approver.`
       );
       onSuccess();
     } catch (err: unknown) {
-      // Extract a meaningful message from DRF validation errors
       const e = err as { message?: string; details?: Record<string, unknown> };
       const details = e.details;
       let msg = e.message || '';
       if (details && typeof details === 'object') {
-        // Collect all field-level and non-field error messages
         const fieldErrors = Object.entries(details)
           .flatMap(([field, errs]) => {
             const list = Array.isArray(errs) ? errs : [errs];
@@ -303,8 +263,6 @@ const CreateBankModal: React.FC<{
         if (fieldErrors) msg = fieldErrors;
       }
       setError(msg || 'Failed to create bank');
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -319,8 +277,8 @@ const CreateBankModal: React.FC<{
             </button>
           </div>
           <p className="text-sm text-gray-600">
-            Register the bank institution details. After creating the bank, you'll be able to add
-            your organization's specific accounts at this bank.
+            Register the bank institution details. After creating the bank, you&apos;ll be able to
+            add your organization&apos;s specific accounts at this bank.
           </p>
         </div>
 
@@ -333,9 +291,10 @@ const CreateBankModal: React.FC<{
 
           <div className="bg-blue-50 border border-blue-200 px-4 py-3 rounded-lg">
             <p className="text-sm text-blue-800">
-              <strong>Note:</strong> This form creates the bank institution record (e.g., "First
-              Bank Nigeria"). To add your organization's specific account at this bank (with GL
-              account and approver), use the "Bank Accounts" page after creating this bank.
+              <strong>Note:</strong> This form creates the bank institution record (e.g.,
+              &quot;First Bank Nigeria&quot;). To add your organization&apos;s specific account at
+              this bank (with GL account and approver), use the &quot;Bank Accounts&quot; page after
+              creating this bank.
             </p>
           </div>
 
@@ -468,10 +427,10 @@ const CreateBankModal: React.FC<{
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={createBank.isPending}
               className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitting ? 'Creating...' : 'Create Bank'}
+              {createBank.isPending ? 'Creating...' : 'Create Bank'}
             </button>
           </div>
         </form>
