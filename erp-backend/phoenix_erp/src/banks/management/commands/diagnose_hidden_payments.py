@@ -41,7 +41,11 @@ class Command(BaseCommand):
         self.stdout.write(self.style.HTTP_INFO('--- Category 1: Unmatched bank txs with NO exception ---'))
         count1 = 0
         for recon in recon_qs:
-            unmatched = recon.bank_transactions.filter(matched=False)
+            unmatched = ReconciliationBankTransaction.objects.filter(
+                bank_account=recon.bank_account,
+                value_date=recon.reconciliation_date,
+                matched=False,
+            )
             for tx in unmatched:
                 exc = ReconciliationException.objects.filter(
                     reconciliation=recon,
@@ -62,7 +66,11 @@ class Command(BaseCommand):
         self.stdout.write(self.style.HTTP_INFO('--- Category 2: Unmatched bank txs but bank_only exc STILL RESOLVED ---'))
         count2 = 0
         for recon in recon_qs:
-            unmatched = recon.bank_transactions.filter(matched=False)
+            unmatched = ReconciliationBankTransaction.objects.filter(
+                bank_account=recon.bank_account,
+                value_date=recon.reconciliation_date,
+                matched=False,
+            )
             for tx in unmatched:
                 exc = ReconciliationException.objects.filter(
                     reconciliation=recon,
@@ -84,7 +92,12 @@ class Command(BaseCommand):
         self.stdout.write(self.style.HTTP_INFO('--- Category 3: Unmatched bank txs but erp_only counterpart STILL RESOLVED ---'))
         count3 = 0
         for recon in recon_qs:
-            unmatched = recon.bank_transactions.filter(matched=False, matched_erp_payment_id__isnull=False)
+            unmatched = ReconciliationBankTransaction.objects.filter(
+                bank_account=recon.bank_account,
+                value_date=recon.reconciliation_date,
+                matched=False,
+                matched_erp_payment_id__isnull=False,
+            )
             for tx in unmatched:
                 erp_exc = ReconciliationException.objects.filter(
                     reconciliation__bank_account=recon.bank_account,
@@ -106,7 +119,12 @@ class Command(BaseCommand):
         self.stdout.write(self.style.HTTP_INFO('--- Category 4: Bank txs matched to erp but NO erp_only exception exists ---'))
         count4 = 0
         for recon in recon_qs:
-            unmatched = recon.bank_transactions.filter(matched=False, matched_erp_payment_id__isnull=False)
+            unmatched = ReconciliationBankTransaction.objects.filter(
+                bank_account=recon.bank_account,
+                value_date=recon.reconciliation_date,
+                matched=False,
+                matched_erp_payment_id__isnull=False,
+            )
             for tx in unmatched:
                 erp_exc = ReconciliationException.objects.filter(
                     reconciliation__bank_account=recon.bank_account,
