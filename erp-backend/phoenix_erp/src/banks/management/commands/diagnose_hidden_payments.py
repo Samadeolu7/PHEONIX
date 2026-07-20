@@ -156,17 +156,17 @@ class Command(BaseCommand):
             self.stdout.write('  (none found)')
         self.stdout.write(f'  Total: {count5}\n')
 
-        # ── 6. Exceptions with linked_to pointing to resolved exception ──
-        self.stdout.write(self.style.HTTP_INFO('--- Category 6: Unresolved exceptions whose linked_to is RESOLVED ---'))
+        # ── 6. Unresolved exceptions whose netted_with partner is RESOLVED ──
+        self.stdout.write(self.style.HTTP_INFO('--- Category 6: Unresolved exceptions whose netted_with is RESOLVED ---'))
         count6 = 0
         for recon in recon_qs:
-            linked = recon.exceptions.filter(resolved=False, linked_to_id__isnull=False)
+            linked = recon.exceptions.filter(resolved=False, netted_with__isnull=False)
             for exc in linked:
-                if exc.linked_to and exc.linked_to.resolved:
+                if exc.netted_with and exc.netted_with.resolved:
                     count6 += 1
                     self.stdout.write(
                         f'  exc id={exc.pk} ({exc.exception_type}, {exc.resolve_amount}) — '
-                        f'linked_to exc id={exc.linked_to_id} which is RESOLVED'
+                        f'netted_with exc id={exc.netted_with_id} which is RESOLVED'
                     )
         if count6 == 0:
             self.stdout.write('  (none found)')
