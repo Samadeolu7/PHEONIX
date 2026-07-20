@@ -494,6 +494,11 @@ export interface UnresolveExceptionRequest {
   reason: string;
 }
 
+export interface UnresolveExceptionResponse {
+  exception: ReconciliationException;
+  counterpart: ReconciliationException | null;
+}
+
 export interface LinkResolveExceptionsRequest {
   exception_a_id: number;
   exception_b_id: number;

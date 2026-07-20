@@ -2163,12 +2163,17 @@ class UnresolveExceptionView(APIView):
 
         reason = request.data.get('reason', '')
         try:
-            exc.unresolve(request.user, reason)
+            additional = exc.unresolve(request.user, reason)
         except Exception as exc_err:
             return Response({'detail': _error_message(exc_err)}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = ReconciliationExceptionSerializer(exc)
-        return Response(serializer.data)
+        data = {'exception': serializer.data}
+        if additional:
+            data['counterpart'] = ReconciliationExceptionSerializer(additional[0]).data
+        else:
+            data['counterpart'] = None
+        return Response(data)
 
 
 def _clean_up_stranded_pair(request, resolved_exc, unresolved_exc, fee, resolution_notes):

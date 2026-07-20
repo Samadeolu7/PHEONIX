@@ -34,6 +34,7 @@ import type {
   SecondResolveExceptionRequest,
   UnmatchTransactionRequest,
   UnresolveExceptionRequest,
+  UnresolveExceptionResponse,
   UploadReconciliationRequest,
   UploadReconciliationResponse,
 } from '../types/banks';
@@ -160,7 +161,7 @@ export const reconciliationService = {
   async unresolveException(
     exceptionId: number,
     data: UnresolveExceptionRequest
-  ): Promise<ReconciliationException> {
+  ): Promise<UnresolveExceptionResponse> {
     return api.post(`${BASE_URL}/exceptions/${exceptionId}/unresolve/`, data);
   },
 

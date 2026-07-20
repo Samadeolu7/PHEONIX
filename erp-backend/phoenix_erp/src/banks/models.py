@@ -2389,6 +2389,13 @@ class ReconciliationException(TimeStampedModel):
         resolved_at/resolution_notes stay as history of the original
         resolution rather than being cleared).
 
+        Two-sided: if a stranded counterpart exists on the same bank
+        account (same direction, same amount, opposite exception_type,
+        also resolved standalone with netted_with and pending_bank_payment
+        both None), it is unreopened too so both sides return to the
+        exception pool together — preventing the one-side-open,
+        other-side-still-resolved inconsistency.
+
         Deliberately narrower than unmatch(): refuses to touch an exception
         that was resolved via Link/Bulk-Link (netted_with set) or has a
         pending/posted BankPayment attached (pending_bank_payment set) —
@@ -2396,6 +2403,11 @@ class ReconciliationException(TimeStampedModel):
         a payment that may already be approved) that this single-exception
         action can't safely unwind. Those need their own remediation, not a
         blind flip back to unresolved.
+
+        Returns a list of additionally-unreresolved exceptions (the
+        stranded counterpart, if any). The caller (self) is always
+        unreopened by the time this returns; the list covers only
+        secondary effects.
         """
         from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
 
@@ -2414,14 +2426,57 @@ class ReconciliationException(TimeStampedModel):
                 'resolve that payment first before unresolving the exception.'
             )
 
+        now = timezone.now()
         self.resolved = False
         self.unresolved_by = user
-        self.unresolved_at = timezone.now()
+        self.unresolved_at = now
         self.unresolved_reason = reason
         self.save(update_fields=['resolved', 'unresolved_by', 'unresolved_at', 'unresolved_reason'])
 
         from .reconciliation_utils import recompute_reconciliation_counts
-        recompute_reconciliation_counts(self.reconciliation)
+
+        affected_reconciliations = {self.reconciliation_id}
+
+        # Two-sided unresolve: find a stranded counterpart that was also
+        # resolved standalone (bank_only ↔ erp_only, same account, same
+        # direction, same amount) and reopen it too.
+        OPPOSITE_TYPE = {'bank_only': 'erp_only', 'erp_only': 'bank_only'}
+        counterpart_type = OPPOSITE_TYPE.get(self.exception_type)
+        counterpart = None
+        if counterpart_type and self.resolve_amount is not None:
+            qs = ReconciliationException.objects.filter(
+                reconciliation__bank_account_id=self.reconciliation.bank_account_id,
+                exception_type=counterpart_type,
+                direction=self.direction,
+                resolved=True,
+                netted_with__isnull=True,
+                pending_bank_payment__isnull=True,
+            ).exclude(pk=self.pk)
+
+            # Match on resolve_amount — bank_only uses bank_amount,
+            # erp_only uses erp_amount, so compare via resolve_amount
+            # which picks whichever is present.
+            candidates = [
+                exc for exc in qs
+                if exc.resolve_amount == self.resolve_amount
+            ]
+            if len(candidates) == 1:
+                counterpart = candidates[0]
+                counterpart.resolved = False
+                counterpart.unresolved_by = user
+                counterpart.unresolved_at = now
+                counterpart.unresolved_reason = reason
+                counterpart.save(update_fields=[
+                    'resolved', 'unresolved_by', 'unresolved_at', 'unresolved_reason',
+                ])
+                affected_reconciliations.add(counterpart.reconciliation_id)
+
+        for recon_id in affected_reconciliations:
+            recompute_reconciliation_counts(
+                DailyReconciliation.objects.get(pk=recon_id)
+            )
+
+        return [counterpart] if counterpart else []
 
 
 # ── Bank Feed Transactions (Java App 3 write-back) ─────────────────────────

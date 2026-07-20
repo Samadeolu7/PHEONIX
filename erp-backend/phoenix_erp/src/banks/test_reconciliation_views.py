@@ -1648,6 +1648,10 @@ class UnresolveExceptionViewTests(TestCase):
         # Original resolution history is preserved, not cleared.
         self.assertEqual(exc.resolved_by_id, self.director.id)
         self.assertEqual(exc.resolution_notes, 'Inter bank')
+        # Response shape: { exception, counterpart }
+        self.assertIn('exception', resp.data)
+        self.assertIn('counterpart', resp.data)
+        self.assertIsNone(resp.data['counterpart'])
 
     def test_unresolve_recomputes_reconciliation_counts(self):
         exc = self._resolved_exception()
@@ -1780,6 +1784,142 @@ class UnresolveExceptionViewTests(TestCase):
         self.assertTrue(bank_exc.resolved)
         self.assertTrue(erp_exc.resolved)
         self.assertEqual(bank_exc.netted_with_id, erp_exc.id)
+
+    def test_unresolve_also_unresolves_stranded_counterpart(self):
+        """Two-sided unresolve: erp_only resolved standalone, bank_only also
+        resolved standalone on the same account/direction/amount — unresolving
+        one should reopen both."""
+        erp_exc = self._resolved_exception()
+        bank_exc = self._resolved_exception(
+            exception_type='bank_only', erp_amount=None,
+            bank_amount=Decimal('140000.00'), bank_narration='inter bank',
+            bank_date='2026-07-14',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{erp_exc.id}/unresolve/',
+            {'reason': 'both sides were resolved standalone, reopening to link properly'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        erp_exc.refresh_from_db()
+        bank_exc.refresh_from_db()
+
+        # Both should now be unresolved
+        self.assertFalse(erp_exc.resolved)
+        self.assertFalse(bank_exc.resolved)
+
+        # Counterpart should be in the response
+        self.assertIsNotNone(resp.data['counterpart'])
+        self.assertEqual(resp.data['counterpart']['id'], bank_exc.id)
+
+    def test_unresolve_no_counterpart_returns_null(self):
+        """Single standalone exception with no counterpart — counterpart in
+        response should be null."""
+        erp_exc = self._resolved_exception()
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{erp_exc.id}/unresolve/',
+            {'reason': 'no counterpart exists, just reopening this one'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertIsNone(resp.data['counterpart'])
+
+    def test_unresolve_skips_ambiguous_counterparts(self):
+        """If there are multiple viable counterparts, don't auto-unresolve
+        any — too ambiguous to guess."""
+        erp_exc = self._resolved_exception()
+        # Two bank_only exceptions with the same amount — ambiguous
+        bank_a = self._resolved_exception(
+            exception_type='bank_only', erp_amount=None,
+            bank_amount=Decimal('140000.00'), bank_narration='candidate A',
+            bank_date='2026-07-14',
+        )
+        bank_b = self._resolved_exception(
+            exception_type='bank_only', erp_amount=None,
+            bank_amount=Decimal('140000.00'), bank_narration='candidate B',
+            bank_date='2026-07-15',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{erp_exc.id}/unresolve/',
+            {'reason': 'ambiguous counterpart situation'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        erp_exc.refresh_from_db()
+        bank_a.refresh_from_db()
+        bank_b.refresh_from_db()
+
+        # Only erp_exc should be reopened — counterparts too ambiguous
+        self.assertFalse(erp_exc.resolved)
+        self.assertTrue(bank_a.resolved)
+        self.assertTrue(bank_b.resolved)
+        self.assertIsNone(resp.data['counterpart'])
+
+    def test_unresolve_skips_counterpart_with_different_direction(self):
+        """Counterpart must match direction — opposite direction should not
+        be auto-unreolved."""
+        erp_exc = self._resolved_exception(direction='DEBIT')
+        bank_exc = self._resolved_exception(
+            exception_type='bank_only', erp_amount=None,
+            bank_amount=Decimal('140000.00'), bank_narration='opposite direction',
+            bank_date='2026-07-14', direction='CREDIT',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{erp_exc.id}/unresolve/',
+            {'reason': 'opposite direction counterpart should not match'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        bank_exc.refresh_from_db()
+        self.assertTrue(bank_exc.resolved)
+        self.assertIsNone(resp.data['counterpart'])
+
+    def test_unresolve_skips_counterpart_on_different_bank_account(self):
+        """Counterpart must be on the same bank account."""
+        erp_exc = self._resolved_exception()
+        other_bank = Bank.objects.create(bank_name='Other Bank', bank_code='993')
+        other_gl = Account.objects.create(
+            code='1902', name='Other GL', account_level=Account.LEVEL_PARENT, branch=self.branch,
+        )
+        other_account = BankAccount.objects.create(
+            bank=other_bank, account_number='0000099', account_name='Other Account',
+            gl_account=other_gl, account_manager=self.director,
+        )
+        other_recon = DailyReconciliation.objects.create(
+            bank_account=other_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/other.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+        bank_exc = ReconciliationException.objects.create(
+            reconciliation=other_recon, exception_type='bank_only', direction='DEBIT',
+            bank_amount=Decimal('140000.00'), bank_narration='different account',
+            bank_date='2026-07-14', resolved=True, resolved_by=self.director,
+            resolved_at=timezone.now(), resolution_notes='other account',
+        )
+
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            f'/api/banks/exceptions/{erp_exc.id}/unresolve/',
+            {'reason': 'different bank account counterpart should not match'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        bank_exc.refresh_from_db()
+        self.assertTrue(bank_exc.resolved)
+        self.assertIsNone(resp.data['counterpart'])
 
 
 class BulkCleanUpStrandedPairsTests(TestCase):

@@ -254,12 +254,19 @@ const ReconciliationDetailPage: React.FC = () => {
     if (reason.trim().length < MIN_REASON_LENGTH) return;
     setUnresolvingId(exception.id);
     try {
-      const updated = await reconciliationService.unresolveException(exception.id, { reason });
+      const { exception: updated, counterpart } = await reconciliationService.unresolveException(exception.id, { reason });
       setRecon({
         ...recon,
-        exceptions: recon.exceptions?.map((e) => (e.id === exception.id ? updated : e)),
+        exceptions: recon.exceptions?.map((e) => {
+          if (e.id === updated.id) return updated;
+          if (counterpart && e.id === counterpart.id) return counterpart;
+          return e;
+        }),
       });
-      success('Exception reopened — it can now be resolved or linked properly');
+      const msg = counterpart
+        ? 'Both exceptions reopened — they can now be resolved or linked properly'
+        : 'Exception reopened — it can now be resolved or linked properly';
+      success(msg);
     } catch (err: any) {
       showError(err.message || 'Failed to unresolve exception');
     } finally {
