@@ -1316,6 +1316,75 @@ class RerunReconciliationView(APIView):
         return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
 
+class BulkRerunReconciliationView(APIView):
+    """
+    POST /api/banks/reconciliations/bulk-rerun/
+
+    Re-trigger matching for ALL reconciliations that are not currently
+    processing — picks up newly approved/posted ERP payments (expenses,
+    disbursements, bank charges) across all days and bank accounts so
+    they can be auto-matched and linked.
+
+    Request body:
+      include_debits  (bool, optional) — also match DEBIT-direction ERP
+                        payments (default: false, only CREDIT)
+      bank_account_id (int, optional) — limit to a single bank account
+      date_from       (str, optional) — YYYY-MM-DD, only re-run from this date
+      date_to         (str, optional) — YYYY-MM-DD, only re-run up to this date
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        include_debits = str(request.data.get('include_debits', '')).strip().lower() in ('1', 'true', 'yes', 'on')
+        bank_account_id = request.data.get('bank_account_id')
+        date_from = request.data.get('date_from')
+        date_to = request.data.get('date_to')
+
+        qs = DailyReconciliation.objects.for_user(request.user).exclude(status='processing')
+
+        if bank_account_id:
+            qs = qs.filter(bank_account_id=bank_account_id)
+        if date_from:
+            qs = qs.filter(reconciliation_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(reconciliation_date__lte=date_to)
+
+        queued = []
+        skipped = []
+
+        for recon in qs.select_related('bank_account').order_by('reconciliation_date'):
+            if recon.status == 'processing':
+                skipped.append({
+                    'id': recon.id,
+                    'bank_account': recon.bank_account_id,
+                    'date': str(recon.reconciliation_date),
+                    'reason': 'already processing',
+                })
+                continue
+
+            recon.status = 'processing'
+            recon.include_debits = include_debits
+            recon.rerun_count = F('rerun_count') + 1
+            recon.save(update_fields=['status', 'include_debits', 'rerun_count', 'updated_at'])
+            run_reconciliation_match.delay(recon.id, include_debits)
+            recon.refresh_from_db()
+
+            queued.append({
+                'id': recon.id,
+                'bank_account': recon.bank_account_id,
+                'date': str(recon.reconciliation_date),
+                'rerun_count': recon.rerun_count,
+            })
+
+        return Response({
+            'queued': len(queued),
+            'skipped': len(skipped),
+            'details': queued + skipped,
+        }, status=status.HTTP_202_ACCEPTED)
+
+
 class ResolveExceptionView(APIView):
     """
     PATCH /api/banks/reconciliations/<recon_pk>/exceptions/<exc_pk>/resolve/

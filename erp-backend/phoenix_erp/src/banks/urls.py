@@ -15,6 +15,7 @@ from .views import (
     MatchedTransactionsView,
     UnmatchTransactionView,
     RerunReconciliationView,
+    BulkRerunReconciliationView,
     ResolveExceptionView,
     SecondResolveExceptionView,
     ResolveExceptionToExpenseView,
@@ -47,6 +48,11 @@ urlpatterns = [
         'reconciliations/upload/',
         StatementUploadView.as_view(),
         name='reconciliation-upload',
+    ),
+    path(
+        'reconciliations/bulk-rerun/',
+        BulkRerunReconciliationView.as_view(),
+        name='reconciliation-bulk-rerun',
     ),
     path(
         'reconciliations/',

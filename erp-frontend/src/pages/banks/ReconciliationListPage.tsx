@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, FileSearch, CheckCircle2, XCircle, Clock, AlertTriangle, ShieldAlert, ClipboardList } from 'lucide-react';
+import { Plus, FileSearch, CheckCircle2, XCircle, Clock, AlertTriangle, ShieldAlert, ClipboardList, RefreshCw, X } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import { branchService, Branch } from '../../services/branchService';
-import type { DailyReconciliation } from '../../types/banks';
+import type { DailyReconciliation, BulkRerunReconciliationResponse } from '../../types/banks';
 
 const STATUS_STYLES: Record<DailyReconciliation['status'], string> = {
   processing: 'bg-amber-100 text-amber-800',
@@ -25,6 +25,9 @@ const ReconciliationListPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | DailyReconciliation['status']>('all');
   const [branchFilter, setBranchFilter] = useState<number | 'all'>('all');
+  const [bulkRerunning, setBulkRerunning] = useState(false);
+  const [bulkRerunResult, setBulkRerunResult] = useState<BulkRerunReconciliationResponse | null>(null);
+  const [showBulkRerunConfirm, setShowBulkRerunConfirm] = useState(false);
 
   useEffect(() => {
     // Only a director sees more than their own single branch here — the
@@ -52,6 +55,25 @@ const ReconciliationListPage: React.FC = () => {
     }
   };
 
+  const handleBulkRerun = async () => {
+    setBulkRerunning(true);
+    setBulkRerunResult(null);
+    setShowBulkRerunConfirm(false);
+    try {
+      const result = await reconciliationService.bulkRerunReconciliations({
+        include_debits: true,
+      });
+      setBulkRerunResult(result);
+      if (result.queued > 0) {
+        loadReconciliations();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to re-run reconciliations');
+    } finally {
+      setBulkRerunning(false);
+    }
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
@@ -71,6 +93,14 @@ const ReconciliationListPage: React.FC = () => {
       </div>
 
       <div className="flex flex-wrap gap-2 mb-6">
+        <button
+          onClick={() => setShowBulkRerunConfirm(true)}
+          disabled={bulkRerunning}
+          className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 text-blue-500 ${bulkRerunning ? 'animate-spin' : ''}`} />
+          {bulkRerunning ? 'Re-running all…' : 'Re-run All'}
+        </button>
         <button
           onClick={() => navigate('/banks/reconciliations/missing-money-summary')}
           className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50"
@@ -241,6 +271,68 @@ const ReconciliationListPage: React.FC = () => {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Bulk Re-run Result Banner */}
+      {bulkRerunResult && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg mb-4 flex items-start justify-between">
+          <div>
+            <p className="font-medium">
+              Re-run queued: {bulkRerunResult.queued} reconciliation{bulkRerunResult.queued !== 1 ? 's' : ''}
+              {bulkRerunResult.skipped > 0 && `, ${bulkRerunResult.skipped} skipped (already processing)`}
+            </p>
+            <p className="text-sm mt-1">
+              Matching is running in the background. Newly approved expenses and payments will be auto-linked.
+            </p>
+          </div>
+          <button onClick={() => setBulkRerunResult(null)} className="text-blue-400 hover:text-blue-600 ml-4">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Bulk Re-run Confirmation Modal */}
+      {showBulkRerunConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h2 className="text-lg font-semibold text-gray-900">Re-run All Matching</h2>
+              <button onClick={() => setShowBulkRerunConfirm(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-sm text-gray-600">
+                This will re-trigger matching for every reconciliation across all bank accounts and dates.
+                Any newly approved expenses, disbursements, or bank charges will be picked up and auto-linked.
+              </p>
+              <p className="text-sm text-gray-600">
+                Reconciliations currently being processed will be skipped. This may take a few minutes
+                depending on the number of days.
+              </p>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked readOnly className="rounded border-gray-300 text-blue-600" />
+                Include debits (expenses, disbursements, bank charges)
+              </label>
+            </div>
+            <div className="flex justify-end gap-3 p-4 border-t">
+              <button
+                onClick={() => setShowBulkRerunConfirm(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkRerun}
+                disabled={bulkRerunning}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${bulkRerunning ? 'animate-spin' : ''}`} />
+                {bulkRerunning ? 'Starting…' : 'Start Re-run'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

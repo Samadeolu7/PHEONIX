@@ -13,6 +13,8 @@ import type {
   BulkLinkResolveBankChargeRequest,
   BulkLinkResolveBankChargePreview,
   BulkLinkResolveBankChargeResult,
+  BulkRerunReconciliationRequest,
+  BulkRerunReconciliationResponse,
   DailyReconciliation,
   LinkResolveBankChargeRequest,
   LinkResolveBankChargeResponse,
@@ -82,6 +84,15 @@ export const reconciliationService = {
    */
   async rerunReconciliation(id: number, data?: RerunReconciliationRequest): Promise<DailyReconciliation> {
     return api.post(`${BASE_URL}/reconciliations/${id}/rerun/`, data ?? {});
+  },
+
+  /**
+   * Re-trigger matching for ALL non-processing reconciliations — picks up
+   * newly approved/posted ERP payments (expenses, disbursements, bank
+   * charges) across all days and bank accounts so they can be auto-matched.
+   */
+  async bulkRerunReconciliations(data?: BulkRerunReconciliationRequest): Promise<BulkRerunReconciliationResponse> {
+    return api.post(`${BASE_URL}/reconciliations/bulk-rerun/`, data ?? {});
   },
 
   /**

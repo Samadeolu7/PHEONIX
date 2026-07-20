@@ -685,6 +685,27 @@ export interface RerunReconciliationRequest {
   include_debits?: boolean;
 }
 
+export interface BulkRerunReconciliationRequest {
+  include_debits?: boolean;
+  bank_account_id?: number;
+  date_from?: string;
+  date_to?: string;
+}
+
+export interface BulkRerunReconciliationDetail {
+  id: number;
+  bank_account: number;
+  date: string;
+  rerun_count?: number;
+  reason?: string;
+}
+
+export interface BulkRerunReconciliationResponse {
+  queued: number;
+  skipped: number;
+  details: BulkRerunReconciliationDetail[];
+}
+
 export interface ReconciliationFilters {
   bank_account?: number;
   status?: 'processing' | 'completed' | 'failed';
