@@ -884,7 +884,6 @@ export interface PaymentTraceException {
     resolved: boolean;
   } | null;
 }
-}
 
 export interface PaymentTraceTransactionSummary {
   id: number;
