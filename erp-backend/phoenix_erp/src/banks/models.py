@@ -2011,6 +2011,19 @@ class ReconciliationBankTransaction(models.Model):
         ).first()
         if recon is not None:
             get_or_create_bank_only_exception(recon, self)
+
+            # Also reopen the erp_only exception for the ERP payment this
+            # line was matched to — _persist_outcome auto-resolves both sides
+            # when a match is found, so unmatch must reopen both.
+            if self.matched_erp_payment_id:
+                from .models import ReconciliationException
+                ReconciliationException.objects.filter(
+                    reconciliation__bank_account=self.bank_account,
+                    exception_type='erp_only',
+                    loan_payment_id=self.matched_erp_payment_id,
+                    resolved=True,
+                ).update(resolved=False)
+
             recompute_reconciliation_counts(recon)
 
 

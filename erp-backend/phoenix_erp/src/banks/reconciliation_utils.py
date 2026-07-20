@@ -697,6 +697,10 @@ def get_or_create_bank_only_exception(recon, tx):
     deliberately not filtered by resolved so an already-resolved row is found
     and reused rather than duplicated.
 
+    If the found row was previously auto-resolved (e.g. by a later rerun that
+    matched this bank line), it is reopened so the exception reappears in the
+    exception pool and becomes a valid link candidate again.
+
     Used by the unmatch action (ReconciliationBankTransaction.unmatch()) so a
     line that's manually unmatched reappears as an outstanding exception
     immediately, rather than waiting for the next scheduled rerun.
@@ -716,4 +720,7 @@ def get_or_create_bank_only_exception(recon, tx):
             'is_high_priority': True,
         },
     )
+    if not _created and exc_obj.resolved:
+        exc_obj.resolved = False
+        exc_obj.save(update_fields=['resolved'])
     return exc_obj
