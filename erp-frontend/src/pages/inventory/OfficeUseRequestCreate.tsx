@@ -1,25 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { ArrowLeft, Plus, Trash2, Package, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../../hooks/useToast';
 import { useCreateOfficeUseRequest } from '../../hooks/useLedger';
+import { useExpenseAccounts } from '../../hooks/useAccountsSimple';
+import { useInventoryLocationsList, useInventoryItems } from '../../hooks/useInventory';
 import { CreateOfficeUseRequest, CreateOfficeUseRequestItem } from '../../types/ledger';
-import { accountService } from '../../services/accountService';
-import { inventoryService } from '../../services/inventoryService';
-
-interface Account {
-  id: number;
-  code: string;
-  name: string;
-  account_type: string;
-}
-
-interface InventoryItem {
-  id: number;
-  name: string;
-  sku: string;
-  unit_of_measure: string;
-}
 
 interface ItemRow extends CreateOfficeUseRequestItem {
   _key: string;
@@ -43,55 +29,33 @@ const OfficeUseRequestCreate: React.FC = () => {
     { _key: crypto.randomUUID(), item: 0, quantity: '1', notes: '' },
   ]);
   const [submitting, setSubmitting] = useState(false);
-
-  // Lookup data
-  const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
-  const [locations, setLocations] = useState<{ id: number; name: string }[]>([]);
-  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [itemSearch, setItemSearch] = useState('');
-  const [loadingItems, setLoadingItems] = useState(false);
 
-  // Load expense accounts and locations
-  useEffect(() => {
-    accountService
-      .getAccounts({ account_type: 'EXPENSE' })
-      .then((res: any) => {
-        const list = Array.isArray(res) ? res : res.results || [];
-        setExpenseAccounts(
-          list.map((a: any) => ({
-            id: a.id,
-            code: a.code,
-            name: a.name,
-            account_type: a.account_type || a.type,
-          }))
-        );
-      })
-      .catch(() => {});
+  // Lookup data via React Query
+  const { data: expenseAccountsRaw } = useExpenseAccounts();
+  const expenseAccounts = (
+    Array.isArray(expenseAccountsRaw) ? expenseAccountsRaw : (expenseAccountsRaw?.results ?? [])
+  ).map((a: any) => ({
+    id: a.id,
+    code: a.code,
+    name: a.name,
+    account_type: a.account_type || a.type,
+  }));
+  const { data: locationsRaw } = useInventoryLocationsList();
+  const locations = Array.isArray(locationsRaw)
+    ? locationsRaw
+    : ((locationsRaw as any)?.results ?? []);
 
-    inventoryService
-      .getAllLocations({ is_active: true })
-      .then((res: any) => setLocations(res))
-      .catch(() => {});
-  }, []);
-
-  // Load inventory items on search change
-  useEffect(() => {
-    setLoadingItems(true);
-    inventoryService
-      .getAllItems({ search: itemSearch || undefined })
-      .then((list: any[]) => {
-        setInventoryItems(
-          list.map((i: any) => ({
-            id: i.id,
-            name: i.name,
-            sku: i.sku,
-            unit_of_measure: i.unit_of_measure,
-          }))
-        );
-      })
-      .catch(() => {})
-      .finally(() => setLoadingItems(false));
-  }, [itemSearch]);
+  // Inventory items with debounced search
+  const { data: itemsData, isLoading: loadingItems } = useInventoryItems({
+    search: itemSearch || undefined,
+  });
+  const inventoryItems = (itemsData?.results ?? []).map((i: any) => ({
+    id: i.id,
+    name: i.name,
+    sku: i.sku,
+    unit_of_measure: i.unit_of_measure,
+  }));
 
   // Item row helpers
   const addItem = () => {
@@ -415,7 +379,7 @@ const OfficeUseRequestCreate: React.FC = () => {
                   Post a journal entry: <strong>Dr</strong> selected expense account /{' '}
                   <strong>Cr</strong> inventory asset account(s)
                 </li>
-                <li>Record the requester's name in the journal for full traceability</li>
+                <li>Record the requester&apos;s name in the journal for full traceability</li>
               </ul>
             </div>
           </div>

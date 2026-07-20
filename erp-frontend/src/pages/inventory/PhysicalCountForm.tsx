@@ -1,14 +1,4 @@
-/**
- * PHYSICAL COUNT FORM PAGE
- *
- * Create/edit physical inventory counts with:
- * - Count metadata (date, location, counted by)
- * - Bulk add count lines with item lookup
- * - Variance display and editing
- * - Workflow action buttons (submit, approve, reject, post)
- */
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Save,
@@ -20,25 +10,29 @@ import {
   XCircle,
   DollarSign,
   AlertCircle,
-  Search,
   TrendingUp,
   TrendingDown,
 } from 'lucide-react';
-import physicalCountService from '../../services/physicalCountService';
+import {
+  usePhysicalCount,
+  useCreatePhysicalCount,
+  useUpdatePhysicalCount,
+  useAddCountLines,
+  useSubmitPhysicalCount,
+  useApprovePhysicalCount,
+  useRejectPhysicalCount,
+  usePostAdjustments,
+} from '../../hooks/usePhysicalCount';
+import { useInventoryLocationsList } from '../../hooks/useInventory';
+import { useInventoryItems } from '../../hooks/useInventory';
 import type {
-  PhysicalCount,
   PhysicalCountLine,
   PhysicalCountFormData,
   PhysicalCountLineCreate,
   VarianceReason,
 } from '../../types/physicalCount';
-import type { InventoryItem, Location } from '../../types/inventory';
-import { formatCurrency, formatDate } from '../../utils/formatters';
+import { formatCurrency } from '../../utils/formatters';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
-
-// ================================================================
-// VARIANCE REASON OPTIONS
-// ================================================================
 
 const varianceReasonOptions: { value: VarianceReason; label: string }[] = [
   { value: 'damaged', label: 'Damaged' },
@@ -51,254 +45,141 @@ const varianceReasonOptions: { value: VarianceReason; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
-// ================================================================
-// MAIN COMPONENT
-// ================================================================
-
 const PhysicalCountForm: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const isEditMode = !!id;
+  const countId = id ? parseInt(id) : undefined;
+  const isEditMode = !!countId;
 
-  // State
-  const [count, setCount] = useState<PhysicalCount | null>(null);
+  const { data: count, isLoading: loadingCount } = usePhysicalCount(countId ?? 0, isEditMode);
+  const { data: locations = [] } = useInventoryLocationsList();
+  const { data: itemsData } = useInventoryItems({ page: 1, ordering: 'name' });
+  const items = itemsData?.results ?? [];
+
+  const createMutation = useCreatePhysicalCount();
+  const updateMutation = useUpdatePhysicalCount();
+  const addLinesMutation = useAddCountLines();
+  const submitMutation = useSubmitPhysicalCount();
+  const approveMutation = useApprovePhysicalCount();
+  const rejectMutation = useRejectPhysicalCount();
+  const postMutation = usePostAdjustments();
+
   const [formData, setFormData] = useState<PhysicalCountFormData>({
     count_date: new Date().toISOString().split('T')[0],
     location: 0,
     notes: '',
   });
+  const formInitRef = useRef(false);
 
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  useEffect(() => {
+    if (count && !formInitRef.current) {
+      formInitRef.current = true;
+      /* eslint-disable react-hooks/set-state-in-effect */
+      setFormData({
+        count_date: count.count_date,
+        location: count.location,
+        counted_by: count.counted_by,
+        notes: count.notes || '',
+      });
+    }
+  }, [count]);
 
-  // Count lines state
   const [showAddLines, setShowAddLines] = useState(false);
   const [newLines, setNewLines] = useState<PhysicalCountLineCreate[]>([]);
   const [selectedItem, setSelectedItem] = useState<number | null>(null);
-  const [countedQty, setCountedQty] = useState<string>('');
-  const [lineNotes, setLineNotes] = useState<string>('');
+  const [countedQty, setCountedQty] = useState('');
+  const [lineNotes, setLineNotes] = useState('');
   const [lineReason, setLineReason] = useState<VarianceReason | undefined>();
 
-  // ================================================================
-  // DATA LOADING
-  // ================================================================
+  const isMutating =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    addLinesMutation.isPending ||
+    submitMutation.isPending ||
+    approveMutation.isPending ||
+    rejectMutation.isPending ||
+    postMutation.isPending;
 
-  useEffect(() => {
-    if (isEditMode) {
-      loadCount();
-    }
-  }, [id]);
-
-  const loadCount = async () => {
-    if (!id) return;
-
-    try {
-      setLoading(true);
-      const data = await physicalCountService.getPhysicalCount(parseInt(id));
-      setCount(data);
-
-      // Populate form
-      setFormData({
-        count_date: data.count_date,
-        location: data.location,
-        counted_by: data.counted_by,
-        notes: data.notes || '',
+  const handleSaveCount = () => {
+    if (isEditMode && countId) {
+      updateMutation.mutate(
+        { id: countId, data: formData },
+        {
+          onSuccess: () => {},
+          onError: () => {},
+        }
+      );
+    } else {
+      createMutation.mutate(formData, {
+        onSuccess: created => {
+          navigate(`/inventory/physical-counts/${created.id}`);
+        },
       });
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to load count');
-      console.error('Error loading count:', err);
-    } finally {
-      setLoading(false);
     }
   };
-
-  // ================================================================
-  // FORM HANDLERS
-  // ================================================================
-
-  const handleInputChange = (field: keyof PhysicalCountFormData, value: any) => {
-    setFormData({ ...formData, [field]: value });
-  };
-
-  const handleSaveCount = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      if (isEditMode && id) {
-        const updated = await physicalCountService.updatePhysicalCount(parseInt(id), formData);
-        setCount(updated);
-        setSuccess('Count updated successfully');
-      } else {
-        const created = await physicalCountService.createPhysicalCount(formData);
-        setSuccess('Count created successfully');
-        navigate(`/inventory/physical-counts/${created.id}`);
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to save count');
-      console.error('Error saving count:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ================================================================
-  // COUNT LINE HANDLERS
-  // ================================================================
 
   const handleAddLineToList = () => {
-    if (!selectedItem || !countedQty) {
-      setError('Please select an item and enter counted quantity');
-      return;
-    }
-
-    const newLine: PhysicalCountLineCreate = {
-      item_id: selectedItem,
-      counted_quantity: parseFloat(countedQty),
-      notes: lineNotes,
-      variance_reason: lineReason,
-    };
-
-    setNewLines([...newLines, newLine]);
-
-    // Reset form
+    if (!selectedItem || !countedQty) return;
+    setNewLines(prev => [
+      ...prev,
+      {
+        item_id: selectedItem,
+        counted_quantity: parseFloat(countedQty),
+        notes: lineNotes,
+        variance_reason: lineReason,
+      },
+    ]);
     setSelectedItem(null);
     setCountedQty('');
     setLineNotes('');
     setLineReason(undefined);
   };
 
-  const handleRemoveLineFromList = (index: number) => {
-    setNewLines(newLines.filter((_, i) => i !== index));
+  const handleSaveLines = () => {
+    if (!countId || newLines.length === 0) return;
+    addLinesMutation.mutate(
+      { countId, lines: newLines },
+      {
+        onSuccess: () => {
+          setNewLines([]);
+          setShowAddLines(false);
+        },
+      }
+    );
   };
 
-  const handleSaveLines = async () => {
-    if (!id || newLines.length === 0) {
-      setError('No lines to add');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      await physicalCountService.addCountLines(parseInt(id), { lines: newLines });
-
-      setSuccess(`Added ${newLines.length} lines successfully`);
-      setNewLines([]);
-      setShowAddLines(false);
-
-      // Reload count
-      await loadCount();
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to add lines');
-      console.error('Error adding lines:', err);
-    } finally {
-      setLoading(false);
-    }
+  const handleSubmitCount = () => {
+    if (!countId) return;
+    submitMutation.mutate(countId);
   };
 
-  // ================================================================
-  // WORKFLOW HANDLERS
-  // ================================================================
-
-  const handleSubmitCount = async () => {
-    if (!id) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      await physicalCountService.submitCount(parseInt(id));
-      setSuccess('Count submitted for review');
-      await loadCount();
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to submit count');
-      console.error('Error submitting count:', err);
-    } finally {
-      setLoading(false);
-    }
+  const handleApproveCount = () => {
+    if (!countId) return;
+    approveMutation.mutate({ countId });
   };
 
-  const handleApproveCount = async () => {
-    if (!id) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      await physicalCountService.approveCount(parseInt(id));
-      setSuccess('Count approved');
-      await loadCount();
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to approve count');
-      console.error('Error approving count:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRejectCount = async () => {
-    if (!id) return;
-
+  const handleRejectCount = () => {
+    if (!countId) return;
     const notes = prompt('Enter rejection reason:');
     if (!notes) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      await physicalCountService.rejectCount(parseInt(id), { review_notes: notes });
-      setSuccess('Count rejected');
-      await loadCount();
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to reject count');
-      console.error('Error rejecting count:', err);
-    } finally {
-      setLoading(false);
-    }
+    rejectMutation.mutate({ countId, reviewNotes: notes });
   };
 
-  const handlePostAdjustments = async () => {
-    if (!id) return;
-
+  const handlePostAdjustments = () => {
+    if (!countId) return;
     if (
       !confirm(
         'Are you sure you want to post stock adjustments? This will update inventory quantities.'
       )
-    ) {
+    )
       return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      const result = await physicalCountService.postAdjustments(parseInt(id));
-      setSuccess(
-        `Posted ${result.adjustments_posted} adjustments (${formatCurrency(result.total_value)})`
-      );
-      await loadCount();
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to post adjustments');
-      console.error('Error posting adjustments:', err);
-    } finally {
-      setLoading(false);
-    }
+    postMutation.mutate(countId);
   };
-
-  // ================================================================
-  // RENDER HELPERS
-  // ================================================================
 
   const renderVarianceIndicator = (line: PhysicalCountLine) => {
     if (line.variance === 0) {
       return <span className="text-green-600">✓ Match</span>;
     }
-
     const isPositive = line.variance > 0;
     return (
       <div className="flex items-center gap-1">
@@ -326,11 +207,7 @@ const PhysicalCountForm: React.FC = () => {
   const canReject = canUserApprove && count && count.status === 'pending_review';
   const canPost = count && count.status === 'approved';
 
-  // ================================================================
-  // RENDER
-  // ================================================================
-
-  if (loading && !count && isEditMode) {
+  if (loadingCount && isEditMode) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
@@ -341,9 +218,17 @@ const PhysicalCountForm: React.FC = () => {
     );
   }
 
+  const errorMsg =
+    createMutation.error?.message ||
+    updateMutation.error?.message ||
+    addLinesMutation.error?.message ||
+    submitMutation.error?.message ||
+    approveMutation.error?.message ||
+    rejectMutation.error?.message ||
+    postMutation.error?.message;
+
   return (
     <div className="container mx-auto px-4 py-8">
-      {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">
@@ -364,63 +249,49 @@ const PhysicalCountForm: React.FC = () => {
         </button>
       </div>
 
-      {/* Messages */}
-      {error && (
+      {errorMsg && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
           <div className="flex items-center gap-2 text-red-800">
             <AlertCircle className="w-5 h-5" />
-            <p>{error}</p>
+            <p>{errorMsg}</p>
           </div>
         </div>
       )}
 
-      {success && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-          <div className="flex items-center gap-2 text-green-800">
-            <Check className="w-5 h-5" />
-            <p>{success}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Count Form */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Count Information</h2>
-
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Count Date *</label>
             <input
               type="date"
               value={formData.count_date}
-              onChange={e => handleInputChange('count_date', e.target.value)}
+              onChange={e => setFormData(prev => ({ ...prev, count_date: e.target.value }))}
               disabled={!canEdit}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
             />
           </div>
-
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Location *</label>
             <select
               value={formData.location}
-              onChange={e => handleInputChange('location', parseInt(e.target.value))}
+              onChange={e => setFormData(prev => ({ ...prev, location: parseInt(e.target.value) }))}
               disabled={!canEdit}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
             >
               <option value={0}>Select Location</option>
-              {locations.map(loc => (
+              {locations.map((loc: any) => (
                 <option key={loc.id} value={loc.id}>
                   {loc.name}
                 </option>
               ))}
             </select>
           </div>
-
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
             <textarea
               value={formData.notes}
-              onChange={e => handleInputChange('notes', e.target.value)}
+              onChange={e => setFormData(prev => ({ ...prev, notes: e.target.value }))}
               disabled={!canEdit}
               rows={3}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
@@ -428,12 +299,11 @@ const PhysicalCountForm: React.FC = () => {
             />
           </div>
         </div>
-
         {canEdit && (
           <div className="mt-6 flex gap-3">
             <button
               onClick={handleSaveCount}
-              disabled={loading}
+              disabled={isMutating}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
               <Save className="w-5 h-5" />
@@ -443,7 +313,6 @@ const PhysicalCountForm: React.FC = () => {
         )}
       </div>
 
-      {/* Count Lines */}
       {isEditMode && count && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <div className="flex justify-between items-center mb-4">
@@ -459,12 +328,9 @@ const PhysicalCountForm: React.FC = () => {
             )}
           </div>
 
-          {/* Add Lines Form */}
           {showAddLines && canEdit && (
             <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
               <h3 className="font-medium text-gray-900 mb-3">Add Count Lines</h3>
-
-              {/* Line Entry Form */}
               <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Item</label>
@@ -527,7 +393,6 @@ const PhysicalCountForm: React.FC = () => {
                 </div>
               </div>
 
-              {/* Lines to be added */}
               {newLines.length > 0 && (
                 <div className="space-y-2">
                   {newLines.map((line, index) => (
@@ -539,7 +404,7 @@ const PhysicalCountForm: React.FC = () => {
                         Item #{line.item_id} - Qty: {line.counted_quantity}
                       </span>
                       <button
-                        onClick={() => handleRemoveLineFromList(index)}
+                        onClick={() => setNewLines(prev => prev.filter((_, i) => i !== index))}
                         className="text-red-600 hover:text-red-800"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -548,7 +413,7 @@ const PhysicalCountForm: React.FC = () => {
                   ))}
                   <button
                     onClick={handleSaveLines}
-                    disabled={loading}
+                    disabled={addLinesMutation.isPending}
                     className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   >
                     Save {newLines.length} Lines
@@ -558,7 +423,6 @@ const PhysicalCountForm: React.FC = () => {
             </div>
           )}
 
-          {/* Existing Lines Table */}
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
@@ -613,12 +477,11 @@ const PhysicalCountForm: React.FC = () => {
             </table>
           </div>
 
-          {/* Workflow Actions */}
           <div className="mt-6 flex gap-3">
             {canSubmit && (
               <button
                 onClick={handleSubmitCount}
-                disabled={loading}
+                disabled={submitMutation.isPending}
                 className="flex items-center gap-2 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
               >
                 <Send className="w-5 h-5" />
@@ -628,7 +491,7 @@ const PhysicalCountForm: React.FC = () => {
             {canApprove && (
               <button
                 onClick={handleApproveCount}
-                disabled={loading}
+                disabled={approveMutation.isPending}
                 className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
               >
                 <Check className="w-5 h-5" />
@@ -638,7 +501,7 @@ const PhysicalCountForm: React.FC = () => {
             {canReject && (
               <button
                 onClick={handleRejectCount}
-                disabled={loading}
+                disabled={rejectMutation.isPending}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
                 <XCircle className="w-5 h-5" />
@@ -648,7 +511,7 @@ const PhysicalCountForm: React.FC = () => {
             {canPost && (
               <button
                 onClick={handlePostAdjustments}
-                disabled={loading}
+                disabled={postMutation.isPending}
                 className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
               >
                 <DollarSign className="w-5 h-5" />

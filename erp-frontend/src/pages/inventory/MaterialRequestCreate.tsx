@@ -12,13 +12,13 @@ import {
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useToast } from '../../hooks/useToast';
 import { useCreateMaterialRequest } from '../../hooks/useLedger';
+import { useAllInventoryLocations } from '../../hooks/useProcurement';
 import {
   CreateMaterialRequest,
   CreateMaterialRequestItem,
   EligibleInventoryItem,
 } from '../../types/ledger';
 import { clientService } from '../../services/clientService';
-import { procurementService } from '../../services/procurementService';
 import { invoiceService } from '../../services/invoiceService';
 import { materialRequestService } from '../../services/ledgerService';
 
@@ -56,7 +56,6 @@ const MaterialRequestCreate: React.FC = () => {
 
   // Lookup data
   const [clients, setClients] = useState<{ id: number; full_name: string }[]>([]);
-  const [locations, setLocations] = useState<{ id: number; name: string }[]>([]);
   const [clientInvoices, setClientInvoices] = useState<{ id: number; invoice_number: string }[]>(
     []
   );
@@ -72,12 +71,10 @@ const MaterialRequestCreate: React.FC = () => {
       .getClients({ status: 'active' })
       .then((res: any) => setClients(res.results || res))
       .catch(() => {});
-
-    procurementService
-      .getInventoryLocations({ is_active: true })
-      .then((res: any) => setLocations(res.results || res))
-      .catch(() => {});
   }, []);
+
+  const { data: locationsData } = useAllInventoryLocations({ is_active: true });
+  const locations = locationsData?.results ?? [];
 
   // ── Load invoices when client changes ────────────────────────────────────
   useEffect(() => {

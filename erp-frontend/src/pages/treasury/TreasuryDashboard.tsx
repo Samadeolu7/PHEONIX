@@ -3,7 +3,7 @@
  * Daily summary of cash collections, reconciliations, and outstanding items
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -14,8 +14,6 @@ import {
   UsersIcon,
   FileTextIcon,
   BanknoteIcon,
-  BuildingIcon,
-  ArrowRightIcon,
 } from 'lucide-react';
 import {
   useTreasurySummary,
@@ -23,10 +21,8 @@ import {
   useCashiersNeedingReconciliation,
   usePendingCashTransfers,
   useReconciliationsNeedingSignoff,
-  useTodayReconciliations,
 } from '../../hooks/useTreasury';
-import bankService from '../../services/bankService';
-import type { BankAccount, BankTransfer } from '../../types/banks';
+import { useBankTransfers } from '../../hooks/useBanks';
 import { CashCollectionForm } from '../../components/treasury/CashCollectionForm';
 import { CashReconciliationForm } from '../../components/treasury/CashReconciliationForm';
 import { CashTransferForm } from '../../components/treasury/CashTransferForm';
@@ -66,31 +62,9 @@ export const TreasuryDashboard: React.FC = () => {
   const { data: cashiersNeedingRecon = [] } = useCashiersNeedingReconciliation();
   const { data: pendingTransfers = [] } = usePendingCashTransfers();
   const { data: needingSignoff = [] } = useReconciliationsNeedingSignoff();
-  const { data: todayReconciliations = [] } = useTodayReconciliations();
 
-  // Bank accounts state
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-  const [pendingBankTransfers, setPendingBankTransfers] = useState<BankTransfer[]>([]);
-  const [loadingBanks, setLoadingBanks] = useState(true);
-
-  useEffect(() => {
-    const fetchBankData = async () => {
-      try {
-        setLoadingBanks(true);
-        const [accounts, transfers] = await Promise.all([
-          bankService.listBankAccounts({ is_active: true }),
-          bankService.listBankTransfers({ status: 'PENDING_APPROVAL' }),
-        ]);
-        setBankAccounts(accounts.results || []);
-        setPendingBankTransfers(transfers.results || []);
-      } catch (error) {
-        console.error('Failed to fetch bank data:', error);
-      } finally {
-        setLoadingBanks(false);
-      }
-    };
-    fetchBankData();
-  }, []);
+  const { data: pendingBankTransfersData } = useBankTransfers({ status: 'PENDING_APPROVAL' });
+  const pendingBankTransfers = pendingBankTransfersData?.results ?? [];
 
   if (loadingSummary || loadingCashiers) {
     return (
@@ -170,7 +144,7 @@ export const TreasuryDashboard: React.FC = () => {
           onClick={() => navigate('/banks/transfers')}
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today's Collections</CardTitle>
+            <CardTitle className="text-sm font-medium">Today&apos;s Collections</CardTitle>
             <DollarSignIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -313,7 +287,7 @@ export const TreasuryDashboard: React.FC = () => {
                           </div>
                         </div>
                         <div>
-                          <div className="text-muted-foreground">Today's Collections</div>
+                          <div className="text-muted-foreground">Today&apos;s Collections</div>
                           <div className="text-xl font-bold">
                             {parseFloat(cashier.collections_amount_today).toFixed(2)}
                           </div>

@@ -1,14 +1,4 @@
-/**
- * PHYSICAL COUNT LIST PAGE
- *
- * Displays all physical inventory counts with:
- * - Status-based filtering and search
- * - Variance indicators and summary data
- * - Workflow action buttons
- * - Navigation to count details
- */
-
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Calendar,
@@ -24,18 +14,9 @@ import {
   Search,
   Filter,
 } from 'lucide-react';
-import physicalCountService from '../../services/physicalCountService';
-import type {
-  PhysicalCountListItem,
-  PhysicalCountFilters,
-  PhysicalCountStatus,
-} from '../../types/physicalCount';
-import type { Location } from '../../types/inventory';
+import { usePhysicalCounts } from '../../hooks/usePhysicalCount';
+import type { PhysicalCountFilters, PhysicalCountStatus } from '../../types/physicalCount';
 import { formatCurrency, formatDate } from '../../utils/formatters';
-
-// ================================================================
-// STATUS CONFIGURATION
-// ================================================================
 
 const statusConfig: Record<
   PhysicalCountStatus,
@@ -73,66 +54,27 @@ const statusConfig: Record<
   },
 };
 
-// ================================================================
-// MAIN COMPONENT
-// ================================================================
-
 const PhysicalCountList: React.FC = () => {
   const navigate = useNavigate();
 
-  // State
-  const [counts, setCounts] = useState<PhysicalCountListItem[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
-
-  // Filter state
   const [filters, setFilters] = useState<PhysicalCountFilters>({});
   const [searchTerm, setSearchTerm] = useState('');
-
-  // Pagination
+  const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalCount, setTotalCount] = useState(0);
 
-  // ================================================================
-  // DATA LOADING
-  // ================================================================
+  const { data: response, isLoading, error } = usePhysicalCounts(filters, page, 20);
 
-  useEffect(() => {
-    loadCounts();
-  }, [filters, page]);
-
-  const loadCounts = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const response = await physicalCountService.getPhysicalCounts(filters, page, 20);
-
-      setCounts(response.results);
-      setTotalPages(Math.ceil(response.count / 20));
-      setTotalCount(response.count);
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to load physical counts');
-      console.error('Error loading counts:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ================================================================
-  // FILTER HANDLERS
-  // ================================================================
+  const counts = response?.results ?? [];
+  const totalCount = response?.count ?? 0;
+  const totalPages = Math.ceil(totalCount / 20);
 
   const handleSearch = () => {
-    setFilters({ ...filters, search: searchTerm });
+    setFilters(prev => ({ ...prev, search: searchTerm }));
     setPage(1);
   };
 
   const handleFilterChange = (key: keyof PhysicalCountFilters, value: any) => {
-    setFilters({ ...filters, [key]: value });
+    setFilters(prev => ({ ...prev, [key]: value }));
     setPage(1);
   };
 
@@ -142,59 +84,7 @@ const PhysicalCountList: React.FC = () => {
     setPage(1);
   };
 
-  // ================================================================
-  // NAVIGATION HANDLERS
-  // ================================================================
-
-  const handleCreateCount = () => {
-    navigate('/inventory/physical-counts/new');
-  };
-
-  const handleViewCount = (count: PhysicalCountListItem) => {
-    navigate(`/inventory/physical-counts/${count.id}`);
-  };
-
-  // ================================================================
-  // RENDER HELPERS
-  // ================================================================
-
-  const renderStatusBadge = (status: PhysicalCountStatus) => {
-    const config = statusConfig[status];
-    return (
-      <span
-        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium ${config.color}`}
-      >
-        {config.icon}
-        {config.label}
-      </span>
-    );
-  };
-
-  const renderVarianceIndicator = (varianceValue: number) => {
-    if (varianceValue === 0) {
-      return <span className="text-green-600 font-medium">No Variance</span>;
-    }
-
-    const isPositive = varianceValue > 0;
-    return (
-      <div className="flex items-center gap-1">
-        {isPositive ? (
-          <TrendingUp className="w-4 h-4 text-green-600" />
-        ) : (
-          <TrendingDown className="w-4 h-4 text-red-600" />
-        )}
-        <span className={isPositive ? 'text-green-600 font-medium' : 'text-red-600 font-medium'}>
-          {formatCurrency(Math.abs(varianceValue))}
-        </span>
-      </div>
-    );
-  };
-
-  // ================================================================
-  // RENDER
-  // ================================================================
-
-  if (loading && counts.length === 0) {
+  if (isLoading && counts.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
@@ -207,7 +97,6 @@ const PhysicalCountList: React.FC = () => {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Physical Inventory Counts</h1>
@@ -216,7 +105,7 @@ const PhysicalCountList: React.FC = () => {
           </p>
         </div>
         <button
-          onClick={handleCreateCount}
+          onClick={() => navigate('/inventory/physical-counts/new')}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
         >
           <Plus className="w-5 h-5" />
@@ -224,10 +113,8 @@ const PhysicalCountList: React.FC = () => {
         </button>
       </div>
 
-      {/* Search & Filters */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
         <div className="flex gap-4">
-          {/* Search */}
           <div className="flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -236,13 +123,11 @@ const PhysicalCountList: React.FC = () => {
                 placeholder="Search by count number or notes..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                onKeyPress={e => e.key === 'Enter' && handleSearch()}
+                onKeyDown={e => e.key === 'Enter' && handleSearch()}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
           </div>
-
-          {/* Filter Toggle */}
           <button
             onClick={() => setShowFilters(!showFilters)}
             className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
@@ -250,8 +135,6 @@ const PhysicalCountList: React.FC = () => {
             <Filter className="w-5 h-5" />
             Filters
           </button>
-
-          {/* Search Button */}
           <button
             onClick={handleSearch}
             className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -260,10 +143,8 @@ const PhysicalCountList: React.FC = () => {
           </button>
         </div>
 
-        {/* Filter Panel */}
         {showFilters && (
           <div className="mt-4 pt-4 border-t border-gray-200 grid grid-cols-1 md:grid-cols-4 gap-4">
-            {/* Status Filter */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
               <select
@@ -280,8 +161,6 @@ const PhysicalCountList: React.FC = () => {
                 <option value="cancelled">Cancelled</option>
               </select>
             </div>
-
-            {/* Date From */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Date From</label>
               <input
@@ -291,8 +170,6 @@ const PhysicalCountList: React.FC = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               />
             </div>
-
-            {/* Date To */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Date To</label>
               <input
@@ -302,8 +179,6 @@ const PhysicalCountList: React.FC = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               />
             </div>
-
-            {/* Clear Filters */}
             <div className="flex items-end">
               <button
                 onClick={clearFilters}
@@ -316,17 +191,15 @@ const PhysicalCountList: React.FC = () => {
         )}
       </div>
 
-      {/* Error Message */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
           <div className="flex items-center gap-2 text-red-800">
             <AlertCircle className="w-5 h-5" />
-            <p>{error}</p>
+            <p>Failed to load physical counts</p>
           </div>
         </div>
       )}
 
-      {/* Summary Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
           <p className="text-sm text-gray-600">Total Counts</p>
@@ -352,7 +225,6 @@ const PhysicalCountList: React.FC = () => {
         </div>
       </div>
 
-      {/* Counts Table */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
@@ -399,7 +271,7 @@ const PhysicalCountList: React.FC = () => {
                 counts.map(count => (
                   <tr
                     key={count.id}
-                    onClick={() => handleViewCount(count)}
+                    onClick={() => navigate(`/inventory/physical-counts/${count.id}`)}
                     className="hover:bg-gray-50 cursor-pointer transition-colors"
                   >
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -421,7 +293,12 @@ const PhysicalCountList: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {renderStatusBadge(count.status)}
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium ${statusConfig[count.status]?.color ?? ''}`}
+                      >
+                        {statusConfig[count.status]?.icon}
+                        {statusConfig[count.status]?.label}
+                      </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-2 text-gray-600">
@@ -433,13 +310,32 @@ const PhysicalCountList: React.FC = () => {
                       {count.total_lines}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      {renderVarianceIndicator(count.total_variance_value)}
+                      {count.total_variance_value === 0 ? (
+                        <span className="text-green-600 font-medium">No Variance</span>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          {count.total_variance_value > 0 ? (
+                            <TrendingUp className="w-4 h-4 text-green-600" />
+                          ) : (
+                            <TrendingDown className="w-4 h-4 text-red-600" />
+                          )}
+                          <span
+                            className={
+                              count.total_variance_value > 0
+                                ? 'text-green-600 font-medium'
+                                : 'text-red-600 font-medium'
+                            }
+                          >
+                            {formatCurrency(Math.abs(count.total_variance_value))}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <button
                         onClick={e => {
                           e.stopPropagation();
-                          handleViewCount(count);
+                          navigate(`/inventory/physical-counts/${count.id}`);
                         }}
                         className="text-blue-600 hover:text-blue-800 font-medium"
                       >
@@ -453,7 +349,6 @@ const PhysicalCountList: React.FC = () => {
           </table>
         </div>
 
-        {/* Pagination */}
         {totalPages > 1 && (
           <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
             <div className="text-sm text-gray-600">
