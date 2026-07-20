@@ -19,124 +19,105 @@ import { PayrollStatusBadge } from '../../components/hr/PayrollStatusBadge';
 import { PayrollActions } from '../../components/hr/PayrollActions';
 import { PayslipCard } from '../../components/hr/PayslipCard';
 import { hrService } from '../../services/hrService';
-import { payslipService } from '../../services/payslipService';
+import {
+  usePayrollDetail,
+  useDeletePayroll,
+  useCalculatePayroll,
+  useRecalculatePayroll,
+  useApprovePayroll,
+  useProcessPayroll,
+  useMarkPayrollPaid,
+  useGeneratePayslips,
+} from '../../hooks/useHR';
+import { useDownloadPayslipPDF } from '../../hooks/usePayslips';
 import { useToast } from '../../hooks/useToast';
-import { PayrollWithPayslips, PayrollStatus } from '../../types/hr';
+import { PayrollStatus } from '../../types/hr';
 
 const PayrollDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { success, info, error: showError } = useToast();
 
-  const [payroll, setPayroll] = useState<PayrollWithPayslips | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState('');
-  const [downloadingId, setDownloadingId] = useState<number | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const { data: payroll, isLoading: loading } = usePayrollDetail(Number(id));
+  const deleteMutation = useDeletePayroll();
+  const calculateMutation = useCalculatePayroll();
+  const recalculateMutation = useRecalculatePayroll();
+  const approveMutation = useApprovePayroll();
+  const processMutation = useProcessPayroll();
+  const markPaidMutation = useMarkPayrollPaid();
+  const generatePayslipsMutation = useGeneratePayslips();
+  const downloadPayslipPDF = useDownloadPayslipPDF();
 
-  const handleDownloadPayslip = async (payslipId: number, payslipNumber: string) => {
-    if (downloadingId) return;
-    setDownloadingId(payslipId);
-    try {
-      await payslipService.downloadPDF(payslipId, `Payslip-${payslipNumber}.pdf`);
-      success('Payslip downloaded');
-    } catch (err: any) {
-      showError(err?.message || 'Failed to download payslip');
-    } finally {
-      setDownloadingId(null);
-    }
-  };
+  const [loadingBankFile, setLoadingBankFile] = useState(false);
 
   useEffect(() => {
-    if (id) {
-      loadPayroll();
-    }
-  }, [id]);
-
-  const loadPayroll = async () => {
-    try {
-      setLoading(true);
-      const response = await hrService.getPayrollWithPayslips(Number(id));
-      setPayroll(response);
-    } catch (error) {
-      console.error('Error loading payroll:', error);
-      showError('Failed to load payroll details');
+    if (deleteMutation.isSuccess) {
       navigate('/hr/payroll');
-    } finally {
-      setLoading(false);
+    }
+  }, [deleteMutation.isSuccess, navigate]);
+
+  const actionLoading = calculateMutation.isPending
+    ? 'calculate'
+    : recalculateMutation.isPending
+      ? 'recalculate'
+      : approveMutation.isPending
+        ? 'approve'
+        : processMutation.isPending
+          ? 'process'
+          : markPaidMutation.isPending
+            ? 'mark_paid'
+            : generatePayslipsMutation.isPending
+              ? 'generate'
+              : '';
+
+  const handleDownloadPayslip = (payslipId: number, payslipNumber: string) => {
+    if (downloadPayslipPDF.isPending) return;
+    downloadPayslipPDF.mutate({ id: payslipId, filename: `Payslip-${payslipNumber}.pdf` });
+  };
+
+  const handlePayrollAction = (
+    action: 'calculate' | 'recalculate' | 'approve' | 'process' | 'mark_paid'
+  ) => {
+    if (!payroll) return;
+
+    switch (action) {
+      case 'calculate':
+        calculateMutation.mutate(payroll.id);
+        break;
+      case 'recalculate':
+        recalculateMutation.mutate(payroll.id);
+        break;
+      case 'approve':
+        approveMutation.mutate(payroll.id);
+        break;
+      case 'process':
+        processMutation.mutate(payroll.id);
+        break;
+      case 'mark_paid':
+        markPaidMutation.mutate(payroll.id);
+        break;
     }
   };
 
-  const handlePayrollAction = async (action: 'calculate' | 'recalculate' | 'approve' | 'process' | 'mark_paid') => {
+  const handleGeneratePayslips = () => {
     if (!payroll) return;
-
-    try {
-      setActionLoading(action);
-
-      let result;
-      switch (action) {
-        case 'calculate':
-          result = await hrService.calculatePayroll(payroll.id);
-          success('Payroll calculated successfully');
-          break;
-        case 'recalculate':
-          result = await hrService.recalculatePayroll(payroll.id);
-          success('Payroll recalculated successfully — payslips now include up-to-date IOU deductions');
-          break;
-        case 'approve':
-          result = await hrService.approvePayroll(payroll.id);
-          success('Payroll approved successfully');
-          break;
-        case 'process':
-          result = await hrService.processPayroll(payroll.id);
-          success('Payroll processed successfully');
-          break;
-        case 'mark_paid':
-          result = await hrService.markPayrollPaid(payroll.id);
-          success('Payroll marked as paid successfully');
-          break;
-      }
-
-      // Reload the full payroll data to get updated payslips
-      await loadPayroll();
-    } catch (error) {
-      console.error(`Error ${action}ing payroll:`, error);
-      showError(`Failed to ${action} payroll`);
-    } finally {
-      setActionLoading('');
-    }
-  };
-
-  const handleGeneratePayslips = async () => {
-    if (!payroll) return;
-    try {
-      setActionLoading('generate');
-      const res = await hrService.generatePayslips(payroll.id);
-      success(res.message ?? `Generated ${res.generated} payslips`);
-      await loadPayroll();
-    } catch (error) {
-      console.error('Error generating payslips:', error);
-      showError('Failed to generate payslips');
-    } finally {
-      setActionLoading('');
-    }
+    generatePayslipsMutation.mutate(payroll.id);
   };
 
   const handleDownloadBankFile = async () => {
     if (!payroll) return;
     try {
-      setActionLoading('bankfile');
+      setLoadingBankFile(true);
       await hrService.downloadBankFile(payroll.id, payroll.payroll_number);
       success('Bank transfer file downloaded');
-    } catch (error) {
-      console.error('Error downloading bank file:', error);
+    } catch {
       showError('Failed to download bank file');
     } finally {
-      setActionLoading('');
+      setLoadingBankFile(false);
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!payroll) return;
 
     const confirmed = window.confirm(
@@ -145,17 +126,7 @@ const PayrollDetailPage: React.FC = () => {
 
     if (!confirmed) return;
 
-    try {
-      setDeleting(true);
-      await hrService.deletePayroll(payroll.id);
-      success('Payroll deleted successfully');
-      navigate('/hr/payroll');
-    } catch (error) {
-      console.error('Error deleting payroll:', error);
-      showError('Failed to delete payroll');
-    } finally {
-      setDeleting(false);
-    }
+    deleteMutation.mutate(payroll.id);
   };
 
   const formatCurrency = (amount: string | number | null | undefined) => {
@@ -303,7 +274,7 @@ const PayrollDetailPage: React.FC = () => {
               size="md"
             />
 
-            {/* Generate Payslips — available once payroll is calculated or later */}
+            {/* Generate Payslips */}
             {payroll.status &&
               [PayrollStatus.CALCULATED, PayrollStatus.APPROVED, PayrollStatus.PAID].includes(
                 payroll.status
@@ -319,17 +290,17 @@ const PayrollDetailPage: React.FC = () => {
                 </button>
               )}
 
-            {/* Download Bank File — available for approved or paid payroll */}
+            {/* Download Bank File */}
             {payroll.status &&
               [PayrollStatus.APPROVED, PayrollStatus.PAID].includes(payroll.status) && (
                 <button
                   title="Download bank transfer CSV file"
                   onClick={handleDownloadBankFile}
-                  disabled={actionLoading === 'bankfile'}
+                  disabled={loadingBankFile}
                   className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
                 >
                   <Landmark className="h-4 w-4" />
-                  {actionLoading === 'bankfile' ? 'Downloading…' : 'Bank File'}
+                  {loadingBankFile ? 'Downloading…' : 'Bank File'}
                 </button>
               )}
 
@@ -345,10 +316,10 @@ const PayrollDetailPage: React.FC = () => {
                 </Link>
                 <button
                   onClick={handleDelete}
-                  disabled={deleting}
+                  disabled={deleteMutation.isPending}
                   className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center"
                 >
-                  {deleting ? (
+                  {deleteMutation.isPending ? (
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                   ) : (
                     <Trash2 className="h-4 w-4 mr-2" />
@@ -464,7 +435,6 @@ const PayrollDetailPage: React.FC = () => {
                   </span>
                 </div>
 
-                {/* Deductions breakdown */}
                 <div className="flex justify-between">
                   <span className="text-sm font-medium text-gray-500">Total Deductions</span>
                   <span className="text-sm text-red-600">

@@ -1,38 +1,14 @@
 // Attendance List Page - List attendance records with date filters
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import {
-  Plus,
-  Search,
-  Filter,
-  Calendar,
-  Clock,
-  Users,
-  Download,
-  Eye,
-  Edit,
-  Trash2,
-} from 'lucide-react';
+import { Plus, Search, Filter, Calendar, Clock, Users, Eye, Edit, Trash2 } from 'lucide-react';
 import { AttendanceStatusBadge } from '../../components/hr/AttendanceStatusBadge';
-import { hrService } from '../../services/hrService';
-import { useToast } from '../../hooks/useToast';
-import { Attendance, AttendanceFilters, AttendanceStatus } from '../../types/hr';
-import { PaginatedResponse } from '../../types/inventory';
+import { useAttendanceList, useStaffForDropdown, useDeleteAttendance } from '../../hooks/useHR';
+import { AttendanceFilters, AttendanceStatus } from '../../types/hr';
 
 const AttendanceListPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const toast = useToast();
 
-  const [attendance, setAttendance] = useState<PaginatedResponse<Attendance>>({
-    results: [],
-    count: 0,
-    next: null,
-    previous: null,
-  });
-  const [loading, setLoading] = useState(true);
-  const [staff, setStaff] = useState<Array<{ id: number; name: string }>>([]);
-
-  // Filter state
   const [filters, setFilters] = useState<AttendanceFilters>({
     search: searchParams.get('search') || '',
     staff: searchParams.get('staff') || undefined,
@@ -46,34 +22,12 @@ const AttendanceListPage: React.FC = () => {
 
   const [showFilters, setShowFilters] = useState(false);
 
-  // Load attendance records
-  const loadAttendance = async () => {
-    try {
-      setLoading(true);
-      const response = await hrService.getAttendance(filters);
-      setAttendance(response);
-    } catch (error) {
-      console.error('Error loading attendance:', error);
-      toast.error('Failed to load attendance records. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: attendance, isLoading: loading } = useAttendanceList(filters);
+  const { data: staffDropdownData } = useStaffForDropdown();
+  const deleteMutation = useDeleteAttendance();
 
-  // Load staff for dropdown
-  const loadStaff = async () => {
-    try {
-      const staffList = await hrService.getStaffForDropdown();
-      setStaff(staffList);
-    } catch (error) {
-      console.error('Error loading staff:', error);
-    }
-  };
-
-  useEffect(() => {
-    loadAttendance();
-    loadStaff();
-  }, [filters]);
+  const staff = staffDropdownData || [];
+  const attendanceData = attendance || { results: [], count: 0, next: null, previous: null };
 
   // Update URL params when filters change
   useEffect(() => {
@@ -90,7 +44,7 @@ const AttendanceListPage: React.FC = () => {
     setFilters(prev => ({
       ...prev,
       [key]: value,
-      page: 1, // Reset to first page when filtering
+      page: 1,
     }));
   };
 
@@ -98,19 +52,11 @@ const AttendanceListPage: React.FC = () => {
     setFilters(prev => ({ ...prev, page }));
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = (id: number) => {
     if (!window.confirm('Are you sure you want to delete this attendance record?')) {
       return;
     }
-
-    try {
-      await hrService.deleteAttendance(id);
-      toast.success('Attendance record deleted successfully!');
-      loadAttendance();
-    } catch (error) {
-      console.error('Error deleting attendance:', error);
-      toast.error('Failed to delete attendance record. Please try again.');
-    }
+    deleteMutation.mutate(id);
   };
 
   const clearFilters = () => {
@@ -121,7 +67,6 @@ const AttendanceListPage: React.FC = () => {
     });
   };
 
-  // Get today's date for default filter
   const today = new Date().toISOString().split('T')[0];
 
   return (
@@ -151,7 +96,7 @@ const AttendanceListPage: React.FC = () => {
                 <p className="text-sm font-medium text-gray-500">Present Today</p>
                 <p className="text-xl font-semibold text-gray-900">
                   {
-                    attendance.results.filter(
+                    attendanceData.results.filter(
                       a =>
                         a.date === today &&
                         [AttendanceStatus.PRESENT, AttendanceStatus.LATE].includes(a.status!)
@@ -169,7 +114,7 @@ const AttendanceListPage: React.FC = () => {
                 <p className="text-sm font-medium text-gray-500">Absent Today</p>
                 <p className="text-xl font-semibold text-gray-900">
                   {
-                    attendance.results.filter(
+                    attendanceData.results.filter(
                       a => a.date === today && a.status === AttendanceStatus.ABSENT
                     ).length
                   }
@@ -185,7 +130,7 @@ const AttendanceListPage: React.FC = () => {
                 <p className="text-sm font-medium text-gray-500">On Leave</p>
                 <p className="text-xl font-semibold text-gray-900">
                   {
-                    attendance.results.filter(
+                    attendanceData.results.filter(
                       a => a.date === today && a.status === AttendanceStatus.ON_LEAVE
                     ).length
                   }
@@ -201,7 +146,7 @@ const AttendanceListPage: React.FC = () => {
                 <p className="text-sm font-medium text-gray-500">Late Today</p>
                 <p className="text-xl font-semibold text-gray-900">
                   {
-                    attendance.results.filter(
+                    attendanceData.results.filter(
                       a => a.date === today && a.status === AttendanceStatus.LATE
                     ).length
                   }
@@ -215,7 +160,6 @@ const AttendanceListPage: React.FC = () => {
         <div className="bg-white rounded-lg shadow mb-6">
           <div className="p-4 border-b border-gray-200">
             <div className="flex flex-col sm:flex-row gap-4">
-              {/* Search */}
               <div className="flex-1">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
@@ -229,7 +173,6 @@ const AttendanceListPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Quick Date Filters */}
               <div className="flex gap-2">
                 <button
                   onClick={() => handleFilterChange('date', today)}
@@ -252,11 +195,9 @@ const AttendanceListPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Advanced Filters */}
           {showFilters && (
             <div className="p-4 bg-gray-50 border-t border-gray-200">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Staff Filter */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Staff Member
@@ -275,7 +216,6 @@ const AttendanceListPage: React.FC = () => {
                   </select>
                 </div>
 
-                {/* Status Filter */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
                   <select
@@ -294,7 +234,6 @@ const AttendanceListPage: React.FC = () => {
                   </select>
                 </div>
 
-                {/* Date From */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
                   <input
@@ -305,7 +244,6 @@ const AttendanceListPage: React.FC = () => {
                   />
                 </div>
 
-                {/* Date To */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
                   <input
@@ -367,14 +305,14 @@ const AttendanceListPage: React.FC = () => {
                       </div>
                     </td>
                   </tr>
-                ) : attendance.results.length === 0 ? (
+                ) : attendanceData.results.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
                       No attendance records found
                     </td>
                   </tr>
                 ) : (
-                  attendance.results.map(record => (
+                  attendanceData.results.map(record => (
                     <tr key={record.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{record.staff_name}</div>
@@ -432,19 +370,19 @@ const AttendanceListPage: React.FC = () => {
           </div>
 
           {/* Pagination */}
-          {attendance.count > 0 && (
+          {attendanceData.count > 0 && (
             <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
               <div className="flex-1 flex justify-between sm:hidden">
                 <button
                   onClick={() => handlePageChange(filters.page! - 1)}
-                  disabled={!attendance.previous}
+                  disabled={!attendanceData.previous}
                   className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Previous
                 </button>
                 <button
                   onClick={() => handlePageChange(filters.page! + 1)}
-                  disabled={!attendance.next}
+                  disabled={!attendanceData.next}
                   className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Next
@@ -455,23 +393,23 @@ const AttendanceListPage: React.FC = () => {
                   <p className="text-sm text-gray-700">
                     Showing <span className="font-medium">{(filters.page! - 1) * 20 + 1}</span> to{' '}
                     <span className="font-medium">
-                      {Math.min(filters.page! * 20, attendance.count)}
+                      {Math.min(filters.page! * 20, attendanceData.count)}
                     </span>{' '}
-                    of <span className="font-medium">{attendance.count}</span> results
+                    of <span className="font-medium">{attendanceData.count}</span> results
                   </p>
                 </div>
                 <div>
                   <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
                     <button
                       onClick={() => handlePageChange(filters.page! - 1)}
-                      disabled={!attendance.previous}
+                      disabled={!attendanceData.previous}
                       className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Previous
                     </button>
                     <button
                       onClick={() => handlePageChange(filters.page! + 1)}
-                      disabled={!attendance.next}
+                      disabled={!attendanceData.next}
                       className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Next

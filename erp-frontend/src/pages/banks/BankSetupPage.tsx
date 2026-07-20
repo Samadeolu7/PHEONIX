@@ -15,8 +15,9 @@ import {
   useCreateBankAccount,
   useUpdateBankAccount,
 } from '../../hooks/useBanks';
-import { accountService } from '../../services/accountService';
-import { userManagementService, type User } from '../../services/userManagementService';
+import { useAssetChildAccounts } from '../../hooks/useAccountsSimple';
+import { useUsers } from '../../hooks/useUsers';
+import type { User } from '../../services/userManagementService';
 import type { Account } from '../../types/accounts';
 
 const BankSetupPage: React.FC = () => {
@@ -35,9 +36,11 @@ const BankSetupPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // ── reference data (non-bank services, no hooks yet) ───────────
-  const [glAccounts, setGlAccounts] = useState<Account[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+  // ── reference data (React Query hooks) ─────────────────────────
+  const { data: glAccountsRaw = [], error: glError } = useAssetChildAccounts();
+  const glAccounts = glAccountsRaw as Account[];
+  const { data: allUsers = [], error: usersError } = useUsers();
+  const users = allUsers.filter((u: User) => u.is_active);
 
   // ── Section 1: Bank Institution ───────────────────────────────
   const [bankMode, setBankMode] = useState<'existing' | 'new'>('existing');
@@ -63,26 +66,20 @@ const BankSetupPage: React.FC = () => {
   // ── Advanced (hidden by default) ──────────────────────────────
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // ── Load non-bank reference data ──────────────────────────────
+  // ── Propagate reference data errors ───────────────────────────
   useEffect(() => {
-    (async () => {
-      try {
-        const [glRes, usersRes] = await Promise.all([
-          accountService.getAccounts({ account_type: 'ASSET', is_active: true }),
-          userManagementService.getUsers(),
-        ]);
-        setGlAccounts((glRes as Account[]).filter(a => a.account_level?.toLowerCase() === 'child'));
-        setUsers(usersRes.filter(u => u.is_active));
+    if (glError || usersError) {
+      setError('Failed to load reference data. Please refresh the page.');
+    }
+  }, [glError, usersError]);
 
-        const preselectedBankId = searchParams.get('bank');
-        if (preselectedBankId) {
-          setSelectedBankId(preselectedBankId);
-          setBankMode('existing');
-        }
-      } catch {
-        setError('Failed to load reference data. Please refresh the page.');
-      }
-    })();
+  // ── Pre-select bank from query params ──────────────────────────
+  useEffect(() => {
+    const preselectedBankId = searchParams.get('bank');
+    if (preselectedBankId) {
+      setSelectedBankId(preselectedBankId);
+      setBankMode('existing');
+    }
   }, [searchParams]);
 
   // ── Populate form from existing account ───────────────────────

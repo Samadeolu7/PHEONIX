@@ -14,9 +14,8 @@ import {
   useUpdateExpenseCategory,
   useExpenseCategory,
 } from '../../hooks/useExpenseCategories';
-import { accountService } from '../../services/accountService';
+import { useExpenseAccounts, useAccountsByType } from '../../hooks/useAccountsSimple';
 import { CreateExpenseCategory, UpdateExpenseCategory } from '../../types/expenseCategory';
-import { Account } from '../../types/accounts';
 import { useToast } from '../../hooks/useToast';
 
 const ExpenseCategoryFormPage: React.FC = () => {
@@ -39,37 +38,16 @@ const ExpenseCategoryFormPage: React.FC = () => {
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
-  const [assetAccounts, setAssetAccounts] = useState<Account[]>([]);
-  const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
+
+  // React Query hooks for accounts
+  const { data: expenseAccounts = [], isLoading: isLoadingExpenseAccounts } = useExpenseAccounts();
+  const { data: assetAccounts = [], isLoading: isLoadingAssetAccounts } = useAccountsByType('ASSET');
+  const isLoadingAccounts = isLoadingExpenseAccounts || isLoadingAssetAccounts;
 
   // Queries and mutations
   const { data: existingCategory } = useExpenseCategory(Number(id), isEditing);
   const createCategory = useCreateExpenseCategory();
   const updateCategory = useUpdateExpenseCategory();
-
-  // Load accounts on component mount
-  useEffect(() => {
-    const loadAccounts = async () => {
-      try {
-        setIsLoadingAccounts(true);
-        const [expenseAccountsData, assetAccountsData] = await Promise.all([
-          accountService.getAccounts({ account_type: 'EXPENSE' }),
-          accountService.getAccounts({ account_type: 'ASSET' }),
-        ]);
-
-        setExpenseAccounts(expenseAccountsData);
-        setAssetAccounts(assetAccountsData);
-      } catch (error) {
-        console.error('Failed to load accounts:', error);
-        toastError('Failed to load accounts. Please refresh the page.');
-      } finally {
-        setIsLoadingAccounts(false);
-      }
-    };
-
-    loadAccounts();
-  }, []);
 
   // Populate form when editing
   useEffect(() => {

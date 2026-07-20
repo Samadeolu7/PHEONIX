@@ -4,22 +4,20 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Save, ArrowLeft, Calendar, DollarSign, Users, FileText } from 'lucide-react';
 import { PayrollForm } from '../../components/hr/PayrollForm';
 import { PersonnelChangesReport } from '../../components/hr/PersonnelChangesReport';
-import { hrService } from '../../services/hrService';
-import { useToast } from '../../hooks/useToast';
-import { Payroll, CreatePayrollData, UpdatePayrollData, PayrollStatus } from '../../types/hr';
+import { usePayrollDetail, useCreatePayroll, useUpdatePayroll } from '../../hooks/useHR';
+import { CreatePayrollData, UpdatePayrollData, PayrollStatus } from '../../types/hr';
 
 const PayrollFormPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const { success, error: showError } = useToast();
 
   const isEdit = Boolean(id);
-  const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(isEdit);
-  const [payroll, setPayroll] = useState<Payroll | null>(null);
+  const { data: payroll, isLoading: initialLoading } = usePayrollDetail(isEdit ? Number(id) : 0);
+  const createMutation = useCreatePayroll();
+  const updateMutation = useUpdatePayroll();
+
   const [showPersonnelReport, setShowPersonnelReport] = useState(false);
 
-  // Form state
   const [formData, setFormData] = useState<CreatePayrollData>({
     period_start: '',
     period_end: '',
@@ -30,16 +28,22 @@ const PayrollFormPage: React.FC = () => {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Load payroll record for editing
+  // Set default dates for new payroll or populate from loaded data
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (isEdit && id) {
-      loadPayroll();
-    } else {
-      // Set default dates for new payroll
+    if (payroll && isEdit) {
+      setFormData({
+        period_start: payroll.period_start,
+        period_end: payroll.period_end,
+        pay_date: payroll.pay_date,
+        status: payroll.status || PayrollStatus.DRAFT,
+        notes: payroll.notes || '',
+      });
+    } else if (!isEdit && !formData.period_start) {
       const today = new Date();
       const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
       const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-      const payDate = new Date(today.getFullYear(), today.getMonth(), 27); // 27th of current month
+      const payDate = new Date(today.getFullYear(), today.getMonth(), 27);
 
       setFormData({
         period_start: firstDayOfMonth.toISOString().split('T')[0],
@@ -49,32 +53,8 @@ const PayrollFormPage: React.FC = () => {
         notes: '',
       });
     }
-  }, [isEdit, id]);
-
-  const loadPayroll = async () => {
-    try {
-      setInitialLoading(true);
-      const response = await hrService.getPayroll(Number(id));
-      setPayroll(response);
-
-      // Populate form with existing data
-      setFormData({
-        period_start: response.period_start,
-        period_end: response.period_end,
-        pay_date: response.pay_date,
-        status: response.status || PayrollStatus.DRAFT,
-        notes: response.notes || '',
-      });
-    } catch (error) {
-      console.error('Error loading payroll:', error);
-
-      showError(error.response?.data?.error || 'Failed to load payroll record');
-      // showToast('Failed to load payroll record', 'error');
-      navigate('/hr/payroll');
-    } finally {
-      setInitialLoading(false);
-    }
-  };
+  }, [payroll, isEdit, formData.period_start]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -91,7 +71,6 @@ const PayrollFormPage: React.FC = () => {
       newErrors.pay_date = 'Pay date is required';
     }
 
-    // Validate date logic
     if (formData.period_start && formData.period_end) {
       const startDate = new Date(formData.period_start);
       const endDate = new Date(formData.period_end);
@@ -114,55 +93,51 @@ const PayrollFormPage: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleApiErrors = (error: any) => {
+    if (error?.response?.data) {
+      const apiErrors: Record<string, string> = {};
+      Object.entries(error.response.data).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          apiErrors[key] = value[0];
+        } else {
+          apiErrors[key] = String(value);
+        }
+      });
+      setErrors(apiErrors);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
       return;
     }
 
-    try {
-      setLoading(true);
-
-      if (isEdit && id) {
-        const updateData: UpdatePayrollData = { ...formData };
-        await hrService.updatePayroll(Number(id), updateData);
-        success('Payroll updated successfully');
-        // showToast('Payroll updated successfully', 'success');
-        // Small delay to ensure toast is visible before navigation
-        setTimeout(() => navigate('/hr/payroll'), 1500);
-      } else {
-        await hrService.createPayroll(formData);
-        success('Payroll created successfully');
-        // Small delay to ensure toast is visible before navigation
-        setTimeout(() => navigate('/hr/payroll'), 1500);
-      }
-    } catch (error: any) {
-      console.error('Error saving payroll:', error);
-
-      // Handle validation errors from API
-      if (error.response?.data) {
-        const apiErrors: Record<string, string> = {};
-        Object.entries(error.response.data).forEach(([key, value]) => {
-          if (Array.isArray(value)) {
-            apiErrors[key] = value[0];
-          } else {
-            apiErrors[key] = String(value);
-          }
-        });
-        setErrors(apiErrors);
-      }
-
-      showError(isEdit ? 'Failed to update payroll' : 'Failed to create payroll');
-    } finally {
-      setLoading(false);
+    if (isEdit && id) {
+      const updateData: UpdatePayrollData = { ...formData };
+      updateMutation.mutate(
+        { id: Number(id), data: updateData },
+        {
+          onSuccess: () => {
+            setTimeout(() => navigate('/hr/payroll'), 1500);
+          },
+          onError: handleApiErrors,
+        }
+      );
+    } else {
+      createMutation.mutate(formData, {
+        onSuccess: () => {
+          setTimeout(() => navigate('/hr/payroll'), 1500);
+        },
+        onError: handleApiErrors,
+      });
     }
   };
 
   const handleFieldChange = (field: keyof CreatePayrollData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
 
-    // Clear error when field is modified
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
     }
@@ -186,6 +161,8 @@ const PayrollFormPage: React.FC = () => {
       </div>
     );
   }
+
+  const loading = createMutation.isPending || updateMutation.isPending;
 
   return (
     <div className="min-h-screen bg-gray-50">

@@ -3,11 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Upload, X } from 'lucide-react';
 import bankService from '../../services/bankService';
-import { cashierAccountService } from '../../services/treasuryService';
+import { useBankAccounts, bankKeys } from '../../hooks/useBanks';
+import { useActiveCashierAccounts } from '../../hooks/useTreasury';
 import { useAuth } from '../../contexts/AuthContext';
-import { bankKeys } from '../../hooks/useBanks';
-import type { BankAccount, CreateBankTransferRequest } from '../../types/banks';
-import type { CashierAccount } from '../../types/treasury';
+import type { CreateBankTransferRequest } from '../../types/banks';
 
 const DECIMAL_INPUT_REGEX = /^\d{0,16}(?:\.\d{0,2})?$/;
 
@@ -27,16 +26,15 @@ const BankTransferFormPage: React.FC = () => {
     reference_number: '',
     transfer_date: new Date().toISOString().split('T')[0],
   });
-  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-  const [cashierAccounts, setCashierAccounts] = useState<CashierAccount[]>([]);
-  const [destinationAccounts, setDestinationAccounts] = useState<BankAccount[]>([]);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadAccounts();
-  }, []);
+  // React Query hooks
+  const { data: bankAccounts = [] } = useBankAccounts({ is_active: true });
+  const { data: cashierAccounts = [] } = useActiveCashierAccounts();
+
+  const [destinationAccounts, setDestinationAccounts] = useState<typeof bankAccounts>([]);
 
   useEffect(() => {
     setDestinationAccounts(bankAccounts.filter(acc => acc.id !== formData.source_bank_account));
@@ -70,17 +68,6 @@ const BankTransferFormPage: React.FC = () => {
     }
     return sourceBankBranch === undefined || acc.branch === sourceBankBranch;
   });
-
-  const loadAccounts = async () => {
-    const [banksResult, cashiersResult] = await Promise.allSettled([
-      bankService.listBankAccounts({ is_active: true }),
-      cashierAccountService.getActive(),
-    ]);
-    if (banksResult.status === 'fulfilled') setBankAccounts(banksResult.value);
-    else console.error('Failed to load bank accounts:', banksResult.reason);
-    if (cashiersResult.status === 'fulfilled') setCashierAccounts(cashiersResult.value);
-    else console.error('Failed to load cashier accounts:', cashiersResult.reason);
-  };
 
   const handleSourceTypeChange = (st: 'bank' | 'cashier') => {
     setSourceType(st);

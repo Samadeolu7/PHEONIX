@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -12,7 +12,15 @@ import {
   RefreshCw,
   Lock,
 } from 'lucide-react';
-import { reconciliationService } from '../../services/reconciliationService';
+import {
+  useReconciliation,
+  useReconciliationTransactions,
+  useRerunReconciliation,
+  useResolveException,
+  useSecondResolveException,
+  useUnmatchTransaction,
+  useUnresolveException,
+} from '../../hooks/useReconciliation';
 import { ReconciliationWaitState } from '../../components/banks/ReconciliationWaitState';
 import { PostToExpenseModal } from '../../components/banks/PostToExpenseModal';
 import { LinkResolveModal } from '../../components/banks/LinkResolveModal';
@@ -32,9 +40,6 @@ const STATUS_STYLES: Record<DailyReconciliation['status'], string> = {
   failed: 'bg-red-100 text-red-800',
 };
 
-const POLL_INTERVAL_MS = 3000;
-const MAX_POLLS = 60; // ~3 minutes of polling before we consider it stalled
-
 function formatAmount(value: string | null): string {
   if (value === null) return '—';
   return `₦${parseFloat(value).toLocaleString()}`;
@@ -46,118 +51,81 @@ const ReconciliationDetailPage: React.FC = () => {
   const { success, error: showError } = useToast();
   const { user } = useAuth();
   const { hasPageAccess } = usePermission();
-  // Director tier: may resolve ANY exception, including amount mismatches.
   const canApprove = hasPageAccess('banks', 'bank-reconciliation-exceptions', 'approve');
-  // Branch-manager tier: may resolve only "perfect match" exceptions — see
-  // ReconciliationException.is_perfect_match / ResolveExceptionView.patch
-  // (banks/views.py) for the authoritative backend gate this mirrors.
   const canEditPerfectMatch = hasPageAccess('banks', 'bank-reconciliation-exceptions', 'edit');
   const canResolve = canApprove || canEditPerfectMatch;
 
-  const [recon, setRecon] = useState<DailyReconciliation | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [stalled, setStalled] = useState(false);
+  const {
+    data: recon,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useReconciliation(Number(id));
+  const error = queryError
+    ? queryError instanceof Error
+      ? queryError.message
+      : 'Failed to load reconciliation'
+    : null;
+
   const [resolvingId, setResolvingId] = useState<number | null>(null);
-  const [rerunning, setRerunning] = useState(false);
   const [notesDraft, setNotesDraft] = useState<Record<number, string>>({});
   const [secondResolvingId, setSecondResolvingId] = useState<number | null>(null);
   const [secondNotesDraft, setSecondNotesDraft] = useState<Record<number, string>>({});
   const [filter, setFilter] = useState<'all' | 'unresolved' | 'resolved'>('unresolved');
-  const pollCountRef = useRef(0);
 
-  // Matched/unmatched bank transactions — previously the exceptions list was
-  // the only visibility into a reconciliation, so a cleanly-matched transfer
-  // (the common case) was invisible anywhere. Lazy-loaded on first expand
-  // since most visits are about resolving exceptions, not browsing matches.
   const [showTransactions, setShowTransactions] = useState(false);
-  const [transactions, setTransactions] = useState<ReconciliationBankTransaction[] | null>(null);
-  const [transactionsLoading, setTransactionsLoading] = useState(false);
-  const [transactionsFilter, setTransactionsFilter] = useState<'all' | 'matched' | 'unmatched'>('all');
+  const [transactionsFilter, setTransactionsFilter] = useState<'all' | 'matched' | 'unmatched'>(
+    'all'
+  );
+  const matchedParam =
+    transactionsFilter === 'matched'
+      ? true
+      : transactionsFilter === 'unmatched'
+        ? false
+        : undefined;
+  const { data: txData, isLoading: transactionsLoading } = useReconciliationTransactions(
+    recon?.id ?? 0,
+    matchedParam,
+    showTransactions && !!recon?.id
+  );
+  const transactions = txData?.results ?? null;
+
   const [unmatchingId, setUnmatchingId] = useState<string | null>(null);
   const [unmatchReasonDraft, setUnmatchReasonDraft] = useState<Record<string, string>>({});
-  const [postToExpenseException, setPostToExpenseException] = useState<ReconciliationException | null>(null);
-  const [linkResolveException, setLinkResolveException] = useState<ReconciliationException | null>(null);
+  const [postToExpenseException, setPostToExpenseException] =
+    useState<ReconciliationException | null>(null);
+  const [linkResolveException, setLinkResolveException] = useState<ReconciliationException | null>(
+    null
+  );
   const [unresolvingId, setUnresolvingId] = useState<number | null>(null);
   const [unresolveReasonDraft, setUnresolveReasonDraft] = useState<Record<number, string>>({});
 
-  // Defaults to the reconciliation's own persisted include_debits so a
-  // debit-enabled recon doesn't silently revert to credit-only on rerun —
-  // re-synced once per reconciliation loaded (not on every poll refresh, so
-  // it doesn't clobber the user mid-toggle).
   const [rerunIncludeDebits, setRerunIncludeDebits] = useState(false);
   useEffect(() => {
     if (recon) setRerunIncludeDebits(recon.include_debits);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recon?.id]);
 
-  // Returns true once the reconciliation is no longer 'processing' (i.e.
-  // polling should stop), or on a fetch error (nothing more to wait for).
-  const checkStatus = useCallback(async (reconId: number) => {
-    try {
-      const data = await reconciliationService.getReconciliation(reconId);
-      setRecon(data);
-      setError(null);
-      return data.status !== 'processing';
-    } catch (err: any) {
-      setError(err.message || 'Failed to load reconciliation');
-      return true;
-    }
-  }, []);
+  const rerunMutation = useRerunReconciliation();
+  const resolveExceptionMutation = useResolveException();
+  const secondResolveExceptionMutation = useSecondResolveException();
+  const unmatchTransactionMutation = useUnmatchTransaction();
+  const unresolveExceptionMutation = useUnresolveException();
 
-  // Initial load
-  useEffect(() => {
-    if (!id) return;
-    (async () => {
-      setLoading(true);
-      await checkStatus(Number(id));
-      setLoading(false);
-    })();
-  }, [id, checkStatus]);
-
-  // Poll while the reconciliation is still processing — matches the polling
-  // pattern already used in components/WorkflowStatusMonitor.tsx elsewhere
-  // in this app (setInterval in a useEffect, cleaned up on unmount/status
-  // change, capped rather than polling forever).
-  useEffect(() => {
-    if (!id || !recon || recon.status !== 'processing' || stalled) return;
-
-    const interval = setInterval(async () => {
-      pollCountRef.current += 1;
-      if (pollCountRef.current >= MAX_POLLS) {
-        clearInterval(interval);
-        setStalled(true);
-        return;
-      }
-      await checkStatus(Number(id));
-    }, POLL_INTERVAL_MS);
-
-    return () => clearInterval(interval);
-  }, [id, recon?.status, stalled, checkStatus]);
-
-  const handleManualRefresh = async () => {
-    if (!id) return;
-    pollCountRef.current = 0;
-    setStalled(false);
-    await checkStatus(Number(id));
+  const handleManualRefresh = () => {
+    refetch();
   };
 
   const handleResolve = async (exception: ReconciliationException) => {
     if (!recon) return;
     setResolvingId(exception.id);
     try {
-      const updated = await reconciliationService.resolveException(recon.id, exception.id, {
-        resolution_notes: notesDraft[exception.id] || '',
+      await resolveExceptionMutation.mutateAsync({
+        reconciliationId: recon.id,
+        exceptionId: exception.id,
+        data: { resolution_notes: notesDraft[exception.id] || '' },
       });
-      setRecon({
-        ...recon,
-        exceptions: recon.exceptions?.map((e) => (e.id === exception.id ? updated : e)),
-      });
-      success(
-        updated.awaiting_second_resolution
-          ? 'Recorded — a second director must confirm before this closes'
-          : 'Exception resolved'
-      );
+      success('Exception resolved');
     } catch (err: any) {
       showError(err.message || 'Failed to resolve exception');
     } finally {
@@ -169,12 +137,10 @@ const ReconciliationDetailPage: React.FC = () => {
     if (!recon) return;
     setSecondResolvingId(exception.id);
     try {
-      const updated = await reconciliationService.secondResolveException(recon.id, exception.id, {
-        resolution_notes: secondNotesDraft[exception.id] || '',
-      });
-      setRecon({
-        ...recon,
-        exceptions: recon.exceptions?.map((e) => (e.id === exception.id ? updated : e)),
+      await secondResolveExceptionMutation.mutateAsync({
+        reconciliationId: recon.id,
+        exceptionId: exception.id,
+        data: { resolution_notes: secondNotesDraft[exception.id] || '' },
       });
       success('Exception resolved');
     } catch (err: any) {
@@ -184,52 +150,15 @@ const ReconciliationDetailPage: React.FC = () => {
     }
   };
 
-  const handlePostToExpenseSuccess = (updated: ReconciliationException) => {
-    if (!recon) return;
-    setRecon({
-      ...recon,
-      exceptions: recon.exceptions?.map((e) => (e.id === updated.id ? updated : e)),
-    });
+  const handlePostToExpenseSuccess = () => {
+    refetch();
     success('Draft payment created — awaiting approval');
   };
 
-  const handleLinkResolveSuccess = (result: {
-    exception_a: ReconciliationException;
-    exception_b: ReconciliationException;
-  }) => {
-    if (!recon) return;
-    const byId = { [result.exception_a.id]: result.exception_a, [result.exception_b.id]: result.exception_b };
-    const currentIds = new Set((recon.exceptions || []).map((e) => e.id));
-    const otherOnDifferentRecon = !currentIds.has(result.exception_a.id) || !currentIds.has(result.exception_b.id);
-    setRecon({
-      ...recon,
-      exceptions: recon.exceptions?.map((e) => byId[e.id] || e),
-    });
-    success(
-      otherOnDifferentRecon
-        ? 'Exceptions netted and resolved — the linked exception was on a different reconciliation date'
-        : 'Exceptions netted and resolved'
-    );
+  const handleLinkResolveSuccess = () => {
+    refetch();
+    success('Exceptions netted and resolved');
   };
-
-  const loadTransactions = useCallback(async (reconId: number, tFilter: 'all' | 'matched' | 'unmatched') => {
-    setTransactionsLoading(true);
-    try {
-      const matchedParam = tFilter === 'all' ? undefined : tFilter === 'matched';
-      const res = await reconciliationService.getTransactions(reconId, matchedParam);
-      setTransactions(res.results);
-    } catch (err: any) {
-      showError(err.message || 'Failed to load transactions');
-    } finally {
-      setTransactionsLoading(false);
-    }
-  }, [showError]);
-
-  useEffect(() => {
-    if (!showTransactions || !recon) return;
-    loadTransactions(recon.id, transactionsFilter);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showTransactions, transactionsFilter, recon?.id]);
 
   const handleUnmatch = async (tx: ReconciliationBankTransaction) => {
     if (!recon) return;
@@ -237,10 +166,12 @@ const ReconciliationDetailPage: React.FC = () => {
     if (reason.trim().length < MIN_REASON_LENGTH) return;
     setUnmatchingId(tx.id);
     try {
-      await reconciliationService.unmatchTransaction(recon.id, tx.id, { reason });
+      await unmatchTransactionMutation.mutateAsync({
+        reconciliationId: recon.id,
+        transactionId: tx.id,
+        data: { reason },
+      });
       success('Transaction unmatched');
-      await loadTransactions(recon.id, transactionsFilter);
-      await checkStatus(recon.id);
     } catch (err: any) {
       showError(err.message || 'Failed to unmatch transaction');
     } finally {
@@ -254,19 +185,11 @@ const ReconciliationDetailPage: React.FC = () => {
     if (reason.trim().length < MIN_REASON_LENGTH) return;
     setUnresolvingId(exception.id);
     try {
-      const { exception: updated, counterpart } = await reconciliationService.unresolveException(exception.id, { reason });
-      setRecon({
-        ...recon,
-        exceptions: recon.exceptions?.map((e) => {
-          if (e.id === updated.id) return updated;
-          if (counterpart && e.id === counterpart.id) return counterpart;
-          return e;
-        }),
+      await unresolveExceptionMutation.mutateAsync({
+        exceptionId: exception.id,
+        data: { reason },
       });
-      const msg = counterpart
-        ? 'Both exceptions reopened — they can now be resolved or linked properly'
-        : 'Exception reopened — it can now be resolved or linked properly';
-      success(msg);
+      success('Exception reopened');
     } catch (err: any) {
       showError(err.message || 'Failed to unresolve exception');
     } finally {
@@ -276,19 +199,14 @@ const ReconciliationDetailPage: React.FC = () => {
 
   const handleRerun = async () => {
     if (!recon) return;
-    setRerunning(true);
     try {
-      const updated = await reconciliationService.rerunReconciliation(recon.id, {
-        include_debits: rerunIncludeDebits,
+      await rerunMutation.mutateAsync({
+        id: recon.id,
+        data: { include_debits: rerunIncludeDebits },
       });
-      setRecon(updated);
-      pollCountRef.current = 0;
-      setStalled(false);
       success('Re-matching started');
     } catch (err: any) {
       showError(err.message || 'Failed to re-run reconciliation');
-    } finally {
-      setRerunning(false);
     }
   };
 
@@ -312,14 +230,11 @@ const ReconciliationDetailPage: React.FC = () => {
 
   const exceptions = recon.exceptions || [];
   const visibleExceptions = exceptions
-    .filter((e) => {
+    .filter(e => {
       if (filter === 'unresolved') return !e.resolved;
       if (filter === 'resolved') return e.resolved;
       return true;
     })
-    // High-priority "cash the ERP doesn't know about" exceptions surface
-    // first — that's the one a director needs to see at a glance, not
-    // buried among routine timing noise.
     .sort((a, b) => Number(b.is_high_priority) - Number(a.is_high_priority));
 
   return (
@@ -346,22 +261,25 @@ const ReconciliationDetailPage: React.FC = () => {
         </div>
         {recon.status !== 'processing' && (
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-gray-600" title="Also reconcile debits (withdrawals, disbursements, bank charges)">
+            <label
+              className="flex items-center gap-1.5 text-xs text-gray-600"
+              title="Also reconcile debits (withdrawals, disbursements, bank charges)"
+            >
               <input
                 type="checkbox"
                 checked={rerunIncludeDebits}
-                onChange={(e) => setRerunIncludeDebits(e.target.checked)}
+                onChange={e => setRerunIncludeDebits(e.target.checked)}
                 className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span>Include debits</span>
             </label>
             <button
               onClick={handleRerun}
-              disabled={rerunning}
+              disabled={rerunMutation.isPending}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
             >
-              <RefreshCw className={`w-4 h-4 ${rerunning ? 'animate-spin' : ''}`} />
-              {rerunning ? 'Re-running…' : 'Re-run matching'}
+              <RefreshCw className={`w-4 h-4 ${rerunMutation.isPending ? 'animate-spin' : ''}`} />
+              {rerunMutation.isPending ? 'Re-running…' : 'Re-run matching'}
             </button>
           </div>
         )}
@@ -377,25 +295,16 @@ const ReconciliationDetailPage: React.FC = () => {
       </div>
 
       {recon.status === 'processing' ? (
-        stalled ? (
-          <div className="bg-white rounded-lg shadow p-10 text-center">
-            <Clock className="h-10 w-10 text-amber-500 mx-auto mb-3" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Still processing</h3>
-            <p className="text-sm text-gray-600 mb-4 max-w-md mx-auto">
-              This is taking longer than expected. It's safe to leave this page — matching
-              continues in the background. Check back later, or refresh to see the result now.
-            </p>
-            <button
-              onClick={handleManualRefresh}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Refresh
-            </button>
-          </div>
-        ) : (
+        <div className="bg-white rounded-lg shadow p-10 text-center">
           <ReconciliationWaitState />
-        )
+          <button
+            onClick={handleManualRefresh}
+            className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       ) : (
         <>
           {recon.status === 'failed' && recon.error_detail && (
@@ -439,7 +348,7 @@ const ReconciliationDetailPage: React.FC = () => {
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <h2 className="text-lg font-semibold text-gray-900">Exceptions</h2>
               <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-                {(['unresolved', 'resolved', 'all'] as const).map((key) => (
+                {(['unresolved', 'resolved', 'all'] as const).map(key => (
                   <button
                     key={key}
                     onClick={() => setFilter(key)}
@@ -464,7 +373,7 @@ const ReconciliationDetailPage: React.FC = () => {
               </div>
             ) : (
               <ul className="divide-y divide-gray-200">
-                {visibleExceptions.map((exception) => (
+                {visibleExceptions.map(exception => (
                   <li key={exception.id} className="px-6 py-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-start gap-3 min-w-0">
@@ -526,11 +435,15 @@ const ReconciliationDetailPage: React.FC = () => {
                           </p>
                           <p className="text-xs text-gray-500 mt-0.5">
                             {exception.exception_type !== 'erp_only' && (
-                              <>Bank: {formatAmount(exception.bank_amount)} on {exception.bank_date}</>
+                              <>
+                                Bank: {formatAmount(exception.bank_amount)} on {exception.bank_date}
+                              </>
                             )}
                             {exception.exception_type === 'amount_diff' && ' · '}
                             {exception.exception_type !== 'bank_only' && (
-                              <>ERP: {formatAmount(exception.erp_amount)} on {exception.erp_date}</>
+                              <>
+                                ERP: {formatAmount(exception.erp_amount)} on {exception.erp_date}
+                              </>
                             )}
                           </p>
                           {exception.resolved && exception.resolution_notes && (
@@ -541,8 +454,10 @@ const ReconciliationDetailPage: React.FC = () => {
                           {!exception.resolved && exception.unresolved_by_name && (
                             <p className="text-xs text-amber-700 mt-1">
                               Reopened by {exception.unresolved_by_name}
-                              {exception.unresolved_reason && `: "${exception.unresolved_reason}"`} — previously
-                              resolved{exception.resolved_by_name && ` by ${exception.resolved_by_name}`}
+                              {exception.unresolved_reason &&
+                                `: "${exception.unresolved_reason}"`}{' '}
+                              — previously resolved
+                              {exception.resolved_by_name && ` by ${exception.resolved_by_name}`}
                               {exception.resolution_notes && ` ("${exception.resolution_notes}")`}
                             </p>
                           )}
@@ -555,7 +470,8 @@ const ReconciliationDetailPage: React.FC = () => {
                           )}
                           {exception.pending_bank_payment_info && !exception.resolved && (
                             <p className="text-xs text-amber-700 mt-1">
-                              Pending approval — {exception.pending_bank_payment_info.payment_number} (
+                              Pending approval —{' '}
+                              {exception.pending_bank_payment_info.payment_number} (
                               {exception.pending_bank_payment_info.status})
                             </p>
                           )}
@@ -570,11 +486,9 @@ const ReconciliationDetailPage: React.FC = () => {
                       </div>
 
                       {(() => {
-                        // Perfect match: branch manager (canResolve) or director may
-                        // resolve. Any amount mismatch — including bank_only/erp_only,
-                        // which have no counterpart amount at all — needs a director.
-                        // Mirrors ResolveExceptionView.patch (banks/views.py).
-                        const userCanResolveThis = exception.is_perfect_match ? canResolve : canApprove;
+                        const userCanResolveThis = exception.is_perfect_match
+                          ? canResolve
+                          : canApprove;
                         const notesRequired = !exception.is_perfect_match;
                         const notes = notesDraft[exception.id] || '';
                         const canPostToExpense =
@@ -582,14 +496,10 @@ const ReconciliationDetailPage: React.FC = () => {
                           exception.exception_type === 'bank_only' &&
                           exception.direction === 'DEBIT' &&
                           !exception.pending_bank_payment_info;
-                        // bank_only can link against another bank_only (opposite
-                        // direction, netting) or an erp_only (same direction,
-                        // missed auto-match); erp_only can only link against a
-                        // bank_only. amount_diff is never linkable — see
-                        // is_valid_exception_pairing (banks/reconciliation_utils.py).
                         const canLinkResolve =
                           canApprove &&
-                          (exception.exception_type === 'bank_only' || exception.exception_type === 'erp_only');
+                          (exception.exception_type === 'bank_only' ||
+                            exception.exception_type === 'erp_only');
 
                         if (exception.awaiting_second_resolution) {
                           const secondNotes = secondNotesDraft[exception.id] || '';
@@ -601,12 +511,14 @@ const ReconciliationDetailPage: React.FC = () => {
                                 className="flex items-center gap-1 text-xs text-amber-600 shrink-0"
                                 title={
                                   isFirstResolver
-                                    ? "You resolved this first — a different director must confirm"
+                                    ? 'You resolved this first — a different director must confirm'
                                     : 'Only directors may provide the second approval'
                                 }
                               >
                                 <Lock className="w-3.5 h-3.5" />
-                                {isFirstResolver ? 'Awaiting another director' : 'Awaiting 2nd approval'}
+                                {isFirstResolver
+                                  ? 'Awaiting another director'
+                                  : 'Awaiting 2nd approval'}
                               </span>
                             );
                           }
@@ -617,8 +529,11 @@ const ReconciliationDetailPage: React.FC = () => {
                                 type="text"
                                 placeholder={`Confirm notes (min ${MIN_REASON_LENGTH} chars)`}
                                 value={secondNotes}
-                                onChange={(e) =>
-                                  setSecondNotesDraft({ ...secondNotesDraft, [exception.id]: e.target.value })
+                                onChange={e =>
+                                  setSecondNotesDraft({
+                                    ...secondNotesDraft,
+                                    [exception.id]: e.target.value,
+                                  })
                                 }
                                 className="w-40 px-2 py-1 text-sm border border-amber-300 rounded-md focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                               />
@@ -635,7 +550,9 @@ const ReconciliationDetailPage: React.FC = () => {
                                 }
                                 className="px-3 py-1.5 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 disabled:opacity-50 whitespace-nowrap"
                               >
-                                {secondResolvingId === exception.id ? 'Confirming…' : 'Confirm (2nd director)'}
+                                {secondResolvingId === exception.id
+                                  ? 'Confirming…'
+                                  : 'Confirm (2nd director)'}
                               </button>
                             </div>
                           );
@@ -643,10 +560,8 @@ const ReconciliationDetailPage: React.FC = () => {
 
                         if (exception.resolved) {
                           if (!canApprove) return null;
-                          // Mirrors ReconciliationException.unresolve()'s guards
-                          // (banks/models.py) — netted/paid exceptions need their
-                          // own remediation, not a blind flip back to unresolved.
-                          const unresolveBlocked = !!exception.netted_with_info || !!exception.pending_bank_payment_info;
+                          const unresolveBlocked =
+                            !!exception.netted_with_info || !!exception.pending_bank_payment_info;
                           if (unresolveBlocked) return null;
 
                           const unresolveReason = unresolveReasonDraft[exception.id] || '';
@@ -656,8 +571,11 @@ const ReconciliationDetailPage: React.FC = () => {
                                 type="text"
                                 placeholder={`Reason to reopen (min ${MIN_REASON_LENGTH} chars)`}
                                 value={unresolveReason}
-                                onChange={(e) =>
-                                  setUnresolveReasonDraft({ ...unresolveReasonDraft, [exception.id]: e.target.value })
+                                onChange={e =>
+                                  setUnresolveReasonDraft({
+                                    ...unresolveReasonDraft,
+                                    [exception.id]: e.target.value,
+                                  })
                                 }
                                 className="w-48 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                               />
@@ -718,7 +636,7 @@ const ReconciliationDetailPage: React.FC = () => {
                                       : 'Resolution notes (optional)'
                                   }
                                   value={notes}
-                                  onChange={(e) =>
+                                  onChange={e =>
                                     setNotesDraft({ ...notesDraft, [exception.id]: e.target.value })
                                   }
                                   className="w-40 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -750,13 +668,10 @@ const ReconciliationDetailPage: React.FC = () => {
             )}
           </div>
 
-          {/* Matched / Unmatched Transactions — previously the exceptions
-              list above was the only visibility into a reconciliation, so a
-              cleanly-matched transfer (the common case) was invisible
-              anywhere in the product. Lazy-loaded on expand. */}
+          {/* Matched / Unmatched Transactions */}
           <div className="bg-white rounded-lg shadow overflow-hidden mt-6">
             <button
-              onClick={() => setShowTransactions((v) => !v)}
+              onClick={() => setShowTransactions(v => !v)}
               className="w-full flex items-center justify-between px-6 py-4 text-left"
             >
               <h2 className="text-lg font-semibold text-gray-900">
@@ -769,12 +684,14 @@ const ReconciliationDetailPage: React.FC = () => {
               <>
                 <div className="flex items-center justify-between px-6 py-3 border-t border-b border-gray-200 bg-gray-50">
                   <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-                    {(['all', 'matched', 'unmatched'] as const).map((key) => (
+                    {(['all', 'matched', 'unmatched'] as const).map(key => (
                       <button
                         key={key}
                         onClick={() => setTransactionsFilter(key)}
                         className={`px-3 py-1 text-sm rounded-md capitalize ${
-                          transactionsFilter === key ? 'bg-white shadow text-gray-900' : 'text-gray-600'
+                          transactionsFilter === key
+                            ? 'bg-white shadow text-gray-900'
+                            : 'text-gray-600'
                         }`}
                       >
                         {key}
@@ -793,7 +710,7 @@ const ReconciliationDetailPage: React.FC = () => {
                   </div>
                 ) : (
                   <ul className="divide-y divide-gray-200">
-                    {transactions.map((tx) => (
+                    {transactions.map(tx => (
                       <li key={tx.id} className="px-6 py-4">
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-start gap-3 min-w-0">
@@ -806,7 +723,9 @@ const ReconciliationDetailPage: React.FC = () => {
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span
                                   className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                                    tx.matched ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                    tx.matched
+                                      ? 'bg-green-100 text-green-800'
+                                      : 'bg-red-100 text-red-800'
                                   }`}
                                 >
                                   {tx.matched
@@ -820,7 +739,9 @@ const ReconciliationDetailPage: React.FC = () => {
                                   </span>
                                 )}
                               </div>
-                              <p className="text-sm text-gray-900 mt-1 truncate">{tx.narration || '—'}</p>
+                              <p className="text-sm text-gray-900 mt-1 truncate">
+                                {tx.narration || '—'}
+                              </p>
                               <p className="text-xs text-gray-500 mt-0.5">
                                 Bank: {formatAmount(tx.amount)} on {tx.value_date}
                                 {tx.matched && tx.erp_narration && (
@@ -833,7 +754,8 @@ const ReconciliationDetailPage: React.FC = () => {
                               </p>
                               {!tx.matched && tx.unmatched_reason && (
                                 <p className="text-xs text-gray-500 mt-1 italic">
-                                  Unmatched by {tx.unmatched_by_name || 'unknown'}: "{tx.unmatched_reason}"
+                                  Unmatched by {tx.unmatched_by_name || 'unknown'}: "
+                                  {tx.unmatched_reason}"
                                 </p>
                               )}
                             </div>
@@ -845,8 +767,11 @@ const ReconciliationDetailPage: React.FC = () => {
                                 type="text"
                                 placeholder={`Reason (min ${MIN_REASON_LENGTH} chars)`}
                                 value={unmatchReasonDraft[tx.id] || ''}
-                                onChange={(e) =>
-                                  setUnmatchReasonDraft({ ...unmatchReasonDraft, [tx.id]: e.target.value })
+                                onChange={e =>
+                                  setUnmatchReasonDraft({
+                                    ...unmatchReasonDraft,
+                                    [tx.id]: e.target.value,
+                                  })
                                 }
                                 className="w-40 px-2 py-1 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               />
@@ -854,10 +779,12 @@ const ReconciliationDetailPage: React.FC = () => {
                                 onClick={() => handleUnmatch(tx)}
                                 disabled={
                                   unmatchingId === tx.id ||
-                                  (unmatchReasonDraft[tx.id] || '').trim().length < MIN_REASON_LENGTH
+                                  (unmatchReasonDraft[tx.id] || '').trim().length <
+                                    MIN_REASON_LENGTH
                                 }
                                 title={
-                                  (unmatchReasonDraft[tx.id] || '').trim().length < MIN_REASON_LENGTH
+                                  (unmatchReasonDraft[tx.id] || '').trim().length <
+                                  MIN_REASON_LENGTH
                                     ? `A reason of at least ${MIN_REASON_LENGTH} characters is required to unmatch a transaction`
                                     : undefined
                                 }

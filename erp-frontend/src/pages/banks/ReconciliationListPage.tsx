@@ -1,8 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, FileSearch, CheckCircle2, XCircle, Clock, AlertTriangle, ShieldAlert, ClipboardList, RefreshCw, X } from 'lucide-react';
-import { reconciliationService } from '../../services/reconciliationService';
-import { branchService, Branch } from '../../services/branchService';
+import {
+  Plus,
+  FileSearch,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  AlertTriangle,
+  ShieldAlert,
+  ClipboardList,
+  RefreshCw,
+  X,
+} from 'lucide-react';
+import {
+  useReconciliations,
+  useReconciliationBranches,
+  useBulkRerunReconciliations,
+} from '../../hooks/useReconciliation';
+import { useToast } from '../../hooks/useToast';
 import type { DailyReconciliation, BulkRerunReconciliationResponse } from '../../types/banks';
 
 const STATUS_STYLES: Record<DailyReconciliation['status'], string> = {
@@ -19,58 +34,45 @@ const STATUS_LABELS: Record<DailyReconciliation['status'], string> = {
 
 const ReconciliationListPage: React.FC = () => {
   const navigate = useNavigate();
-  const [reconciliations, setReconciliations] = useState<DailyReconciliation[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { success: showSuccess, error: showError, info: showInfo } = useToast();
   const [statusFilter, setStatusFilter] = useState<'all' | DailyReconciliation['status']>('all');
   const [branchFilter, setBranchFilter] = useState<number | 'all'>('all');
-  const [bulkRerunning, setBulkRerunning] = useState(false);
-  const [bulkRerunResult, setBulkRerunResult] = useState<BulkRerunReconciliationResponse | null>(null);
+  const [bulkRerunResult, setBulkRerunResult] = useState<BulkRerunReconciliationResponse | null>(
+    null
+  );
   const [showBulkRerunConfirm, setShowBulkRerunConfirm] = useState(false);
 
-  useEffect(() => {
-    // Only a director sees more than their own single branch here — the
-    // backend already scopes DailyReconciliation.objects.for_user()
-    // accordingly, this just decides whether the filter dropdown is useful.
-    branchService.listBranches().then(setBranches).catch(() => setBranches([]));
-  }, []);
-
-  useEffect(() => {
-    loadReconciliations();
-  }, [statusFilter, branchFilter]);
-
-  const loadReconciliations = async () => {
-    try {
-      setLoading(true);
-      const data = await reconciliationService.listReconciliations({
-        ...(statusFilter !== 'all' && { status: statusFilter }),
-        ...(branchFilter !== 'all' && { branch: branchFilter }),
-      });
-      setReconciliations(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load reconciliations');
-    } finally {
-      setLoading(false);
-    }
+  const listFilters = {
+    ...(statusFilter !== 'all' && { status: statusFilter }),
+    ...(branchFilter !== 'all' && { branch: branchFilter }),
   };
+  const {
+    data: reconciliations = [],
+    isLoading: loading,
+    error: queryError,
+  } = useReconciliations(listFilters);
+  const error = queryError
+    ? queryError instanceof Error
+      ? queryError.message
+      : 'Failed to load reconciliations'
+    : null;
+  const { data: branches = [] } = useReconciliationBranches();
+  const bulkRerunMutation = useBulkRerunReconciliations();
 
   const handleBulkRerun = async () => {
-    setBulkRerunning(true);
     setBulkRerunResult(null);
     setShowBulkRerunConfirm(false);
     try {
-      const result = await reconciliationService.bulkRerunReconciliations({
-        include_debits: true,
-      });
+      const result = await bulkRerunMutation.mutateAsync({ include_debits: true });
       setBulkRerunResult(result);
       if (result.queued > 0) {
-        loadReconciliations();
+        showSuccess(`Queued ${result.queued} reconciliation(s) for re-processing`);
+      } else {
+        showInfo(result.message || 'No reconciliations needed re-processing');
       }
-    } catch (err: any) {
-      setError(err.message || 'Failed to re-run reconciliations');
-    } finally {
-      setBulkRerunning(false);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Bulk re-run failed';
+      showError(message);
     }
   };
 
@@ -95,11 +97,13 @@ const ReconciliationListPage: React.FC = () => {
       <div className="flex flex-wrap gap-2 mb-6">
         <button
           onClick={() => setShowBulkRerunConfirm(true)}
-          disabled={bulkRerunning}
+          disabled={bulkRerunMutation.isPending}
           className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50 disabled:opacity-50"
         >
-          <RefreshCw className={`w-4 h-4 text-blue-500 ${bulkRerunning ? 'animate-spin' : ''}`} />
-          {bulkRerunning ? 'Re-running all…' : 'Re-run All'}
+          <RefreshCw
+            className={`w-4 h-4 text-blue-500 ${bulkRerunMutation.isPending ? 'animate-spin' : ''}`}
+          />
+          {bulkRerunMutation.isPending ? 'Re-running all…' : 'Re-run All'}
         </button>
         <button
           onClick={() => navigate('/banks/reconciliations/missing-money-summary')}
@@ -126,7 +130,7 @@ const ReconciliationListPage: React.FC = () => {
 
       <div className="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap items-center gap-3">
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
-          {(['all', 'processing', 'completed', 'failed'] as const).map((key) => (
+          {(['all', 'processing', 'completed', 'failed'] as const).map(key => (
             <button
               key={key}
               onClick={() => setStatusFilter(key)}
@@ -141,11 +145,13 @@ const ReconciliationListPage: React.FC = () => {
         {branches.length > 1 && (
           <select
             value={branchFilter}
-            onChange={(e) => setBranchFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+            onChange={e =>
+              setBranchFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))
+            }
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             <option value="all">All branches</option>
-            {branches.map((b) => (
+            {branches.map(b => (
               <option key={b.id} value={b.id}>
                 {b.name}
               </option>
@@ -200,7 +206,7 @@ const ReconciliationListPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {reconciliations.map((recon) => (
+              {reconciliations.map(recon => (
                 <tr
                   key={recon.id}
                   onClick={() => navigate(`/banks/reconciliations/${recon.id}`)}
@@ -279,14 +285,20 @@ const ReconciliationListPage: React.FC = () => {
         <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg mb-4 flex items-start justify-between">
           <div>
             <p className="font-medium">
-              Re-run queued: {bulkRerunResult.queued} reconciliation{bulkRerunResult.queued !== 1 ? 's' : ''}
-              {bulkRerunResult.skipped > 0 && `, ${bulkRerunResult.skipped} skipped (already processing)`}
+              Re-run queued: {bulkRerunResult.queued} reconciliation
+              {bulkRerunResult.queued !== 1 ? 's' : ''}
+              {bulkRerunResult.skipped > 0 &&
+                `, ${bulkRerunResult.skipped} skipped (already processing)`}
             </p>
             <p className="text-sm mt-1">
-              Matching is running in the background. Newly approved expenses and payments will be auto-linked.
+              Matching is running in the background. Newly approved expenses and payments will be
+              auto-linked.
             </p>
           </div>
-          <button onClick={() => setBulkRerunResult(null)} className="text-blue-400 hover:text-blue-600 ml-4">
+          <button
+            onClick={() => setBulkRerunResult(null)}
+            className="text-blue-400 hover:text-blue-600 ml-4"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -298,21 +310,30 @@ const ReconciliationListPage: React.FC = () => {
           <div className="bg-white rounded-lg max-w-md w-full">
             <div className="flex items-center justify-between p-4 border-b">
               <h2 className="text-lg font-semibold text-gray-900">Re-run All Matching</h2>
-              <button onClick={() => setShowBulkRerunConfirm(false)} className="text-gray-400 hover:text-gray-600">
+              <button
+                onClick={() => setShowBulkRerunConfirm(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
             <div className="p-4 space-y-3">
               <p className="text-sm text-gray-600">
-                This will re-trigger matching for every reconciliation across all bank accounts and dates.
-                Any newly approved expenses, disbursements, or bank charges will be picked up and auto-linked.
+                This will re-trigger matching for every reconciliation across all bank accounts and
+                dates. Any newly approved expenses, disbursements, or bank charges will be picked up
+                and auto-linked.
               </p>
               <p className="text-sm text-gray-600">
-                Reconciliations currently being processed will be skipped. This may take a few minutes
-                depending on the number of days.
+                Reconciliations currently being processed will be skipped. This may take a few
+                minutes depending on the number of days.
               </p>
               <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked readOnly className="rounded border-gray-300 text-blue-600" />
+                <input
+                  type="checkbox"
+                  checked
+                  readOnly
+                  className="rounded border-gray-300 text-blue-600"
+                />
                 Include debits (expenses, disbursements, bank charges)
               </label>
             </div>
@@ -325,11 +346,13 @@ const ReconciliationListPage: React.FC = () => {
               </button>
               <button
                 onClick={handleBulkRerun}
-                disabled={bulkRerunning}
+                disabled={bulkRerunMutation.isPending}
                 className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
-                <RefreshCw className={`w-4 h-4 ${bulkRerunning ? 'animate-spin' : ''}`} />
-                {bulkRerunning ? 'Starting…' : 'Start Re-run'}
+                <RefreshCw
+                  className={`w-4 h-4 ${bulkRerunMutation.isPending ? 'animate-spin' : ''}`}
+                />
+                {bulkRerunMutation.isPending ? 'Starting…' : 'Start Re-run'}
               </button>
             </div>
           </div>

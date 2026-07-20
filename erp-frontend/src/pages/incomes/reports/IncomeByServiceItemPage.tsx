@@ -1,17 +1,8 @@
-// Income by Service Item Report
-// Detailed breakdown per service/fee item with quantity, price, collection metrics
-
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, AlertCircle, Download, Package } from 'lucide-react';
-import {
-  incomeReportsService,
-  IncomeByServiceItemData,
-  IncomeServiceItemRow,
-  IncomeReportParams,
-} from '../../../services/incomeReportsService';
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
+import { IncomeServiceItemRow } from '../../../services/incomeReportsService';
+import { useIncomeByServiceItem } from '../../../hooks/useIncomeReports';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const todayStr = () => {
@@ -22,7 +13,8 @@ const janFirst = () => `${new Date().getFullYear()}-01-01`;
 
 const fmt = (v: number) =>
   v.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtQty = (v: number) => v.toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const fmtQty = (v: number) =>
+  v.toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 const RateBar: React.FC<{ rate: number }> = ({ rate }) => {
   const pct = Math.min(100, Math.max(0, rate));
@@ -38,7 +30,8 @@ const RateBar: React.FC<{ rate: number }> = ({ rate }) => {
 };
 
 const exportCsv = (rows: IncomeServiceItemRow[], dateFrom: string, dateTo: string) => {
-  const header = 'Code,Service Item,Category,Qty Invoiced,Default Price,Invoiced,Collected,Outstanding,Collection Rate\n';
+  const header =
+    'Code,Service Item,Category,Qty Invoiced,Default Price,Invoiced,Collected,Outstanding,Collection Rate\n';
   const body = rows
     .map(r =>
       [
@@ -63,48 +56,45 @@ const exportCsv = (rows: IncomeServiceItemRow[], dateFrom: string, dateTo: strin
   URL.revokeObjectURL(url);
 };
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 const IncomeByServiceItemPage: React.FC = () => {
-  const [dateFrom,    setDateFrom]    = useState(janFirst());
-  const [dateTo,      setDateTo]      = useState(todayStr());
-  const [categoryId,  setCategoryId]  = useState('');
-  const [search,      setSearch]      = useState('');
-  const [data,        setData]        = useState<IncomeByServiceItemData | null>(null);
-  const [loading,     setLoading]     = useState(false);
-  const [error,       setError]       = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState(janFirst());
+  const [dateTo, setDateTo] = useState(todayStr());
+  const [categoryId] = useState('');
+  const [search, setSearch] = useState('');
+  const [appliedFilters, setAppliedFilters] = useState({
+    date_from: janFirst(),
+    date_to: todayStr(),
+  });
 
-  const load = useCallback(async (params: IncomeReportParams) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setData(await incomeReportsService.getByServiceItem(params));
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load({ date_from: dateFrom, date_to: dateTo }); }, []);
+  const { data, isLoading: loading, error: queryError } = useIncomeByServiceItem(appliedFilters);
+  const error =
+    queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
 
   const handleApply = () =>
-    load({ date_from: dateFrom, date_to: dateTo, category_id: categoryId || undefined });
+    setAppliedFilters({
+      date_from: dateFrom,
+      date_to: dateTo,
+      ...(categoryId ? { category_id: categoryId } : {}),
+    });
 
-  const filteredRows = data?.rows.filter(r =>
-    !search ||
-    r.service_item_name.toLowerCase().includes(search.toLowerCase()) ||
-    r.service_item_code.toLowerCase().includes(search.toLowerCase()) ||
-    r.category_name.toLowerCase().includes(search.toLowerCase())
-  ) ?? [];
+  const filteredRows =
+    data?.rows.filter(
+      r =>
+        !search ||
+        r.service_item_name.toLowerCase().includes(search.toLowerCase()) ||
+        r.service_item_code.toLowerCase().includes(search.toLowerCase()) ||
+        r.category_name.toLowerCase().includes(search.toLowerCase())
+    ) ?? [];
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-5">
           <div className="flex items-center gap-3 mb-4">
-            <Link to="/incomes/reports" className="text-gray-400 hover:text-gray-700 transition-colors">
+            <Link
+              to="/incomes/reports"
+              className="text-gray-400 hover:text-gray-700 transition-colors"
+            >
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <div className="flex items-center gap-2">
@@ -121,24 +111,37 @@ const IncomeByServiceItemPage: React.FC = () => {
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-gray-500">From</label>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={e => setDateFrom(e.target.value)}
+                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-gray-500">To</label>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input
+                type="date"
+                value={dateTo}
+                onChange={e => setDateTo(e.target.value)}
+                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
-            <button onClick={handleApply} disabled={loading}
+            <button
+              onClick={handleApply}
+              disabled={loading}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400
-                         text-white text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors">
+                         text-white text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors"
+            >
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
               Apply
             </button>
             {data && data.rows.length > 0 && (
-              <button onClick={() => exportCsv(data.rows, data.date_from, data.date_to)}
+              <button
+                onClick={() => exportCsv(data.rows, data.date_from, data.date_to)}
                 className="flex items-center gap-1.5 border border-gray-300 text-gray-600 hover:bg-gray-50
-                           text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors">
+                           text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors"
+              >
                 <Download className="h-3.5 w-3.5" />
                 Export CSV
               </button>
@@ -162,17 +165,37 @@ const IncomeByServiceItemPage: React.FC = () => {
           </div>
         )}
 
-        {/* KPIs */}
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
-              { label: 'Total Invoiced',  value: `₦${fmt(data.totals.invoiced)}`,    color: 'text-gray-900' },
-              { label: 'Collected',        value: `₦${fmt(data.totals.collected)}`,   color: 'text-green-700' },
-              { label: 'Outstanding',      value: `₦${fmt(data.totals.outstanding)}`, color: 'text-orange-600' },
-              { label: 'Collection Rate',  value: `${data.totals.collection_rate.toFixed(1)}%`, color: 'text-blue-700' },
+              {
+                label: 'Total Invoiced',
+                value: `₦${fmt(data.totals.invoiced)}`,
+                color: 'text-gray-900',
+              },
+              {
+                label: 'Collected',
+                value: `₦${fmt(data.totals.collected)}`,
+                color: 'text-green-700',
+              },
+              {
+                label: 'Outstanding',
+                value: `₦${fmt(data.totals.outstanding)}`,
+                color: 'text-orange-600',
+              },
+              {
+                label: 'Collection Rate',
+                value: `${data.totals.collection_rate.toFixed(1)}%`,
+                color: 'text-blue-700',
+              },
             ].map(kpi => (
-              <div key={kpi.label} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{kpi.label}</p>
+              <div
+                key={kpi.label}
+                className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"
+              >
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+                  {kpi.label}
+                </p>
                 <p className={`mt-1 text-xl font-bold tabular-nums ${kpi.color}`}>{kpi.value}</p>
               </div>
             ))}
@@ -185,7 +208,9 @@ const IncomeByServiceItemPage: React.FC = () => {
 
         {!loading && data && filteredRows.length === 0 && (
           <div className="bg-white border border-gray-200 rounded-xl py-16 text-center text-gray-400 text-sm">
-            {search ? 'No items match your search.' : 'No income data found for the selected period.'}
+            {search
+              ? 'No items match your search.'
+              : 'No income data found for the selected period.'}
           </div>
         )}
 
@@ -200,7 +225,9 @@ const IncomeByServiceItemPage: React.FC = () => {
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Default Price</th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Invoiced (₦)</th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Collected (₦)</th>
-                  <th className="text-right px-5 py-3 font-medium text-gray-600">Outstanding (₦)</th>
+                  <th className="text-right px-5 py-3 font-medium text-gray-600">
+                    Outstanding (₦)
+                  </th>
                   <th className="px-5 py-3 font-medium text-gray-600 min-w-[150px]">Collection</th>
                 </tr>
               </thead>
@@ -210,7 +237,9 @@ const IncomeByServiceItemPage: React.FC = () => {
                     <td className="px-5 py-3">
                       <div>
                         <span className="font-medium text-gray-900">{row.service_item_name}</span>
-                        <span className="ml-2 font-mono text-xs text-gray-400">{row.service_item_code}</span>
+                        <span className="ml-2 font-mono text-xs text-gray-400">
+                          {row.service_item_code}
+                        </span>
                       </div>
                     </td>
                     <td className="px-5 py-3 text-gray-600">{row.category_name}</td>

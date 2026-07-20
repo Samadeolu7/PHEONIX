@@ -1,17 +1,8 @@
-// Income by Period (Trend) Report
-// Bar chart + table showing income trend over time with granularity selector
-
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, AlertCircle, Download, Calendar } from 'lucide-react';
-import {
-  incomeReportsService,
-  IncomeByPeriodData,
-  IncomePeriodRow,
-  PeriodGranularity,
-} from '../../../services/incomeReportsService';
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
+import { IncomePeriodRow, PeriodGranularity } from '../../../services/incomeReportsService';
+import { useIncomeByPeriod } from '../../../hooks/useIncomeReports';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const todayStr = () => {
@@ -43,8 +34,6 @@ const fmtPeriodLabel = (dateStr: string, period: PeriodGranularity): string => {
   }
 };
 
-// ─── Simple bar chart ─────────────────────────────────────────────────────────
-
 interface BarChartProps {
   rows: IncomePeriodRow[];
   period: PeriodGranularity;
@@ -64,26 +53,28 @@ const BarChart: React.FC<BarChartProps> = ({ rows, period }) => {
           style={{ minWidth: Math.max(rows.length * 44, 300) }}
         >
           {rows.map(row => {
-            const invH  = (row.invoiced   / maxVal) * 160;
-            const collH = (row.collected  / maxVal) * 160;
+            const invH = (row.invoiced / maxVal) * 160;
+            const collH = (row.collected / maxVal) * 160;
             return (
-              <div key={row.period_date} className="flex flex-col items-center flex-1 min-w-[36px] group">
-                {/* Tooltip */}
-                <div className="mb-1 opacity-0 group-hover:opacity-100 transition-opacity
+              <div
+                key={row.period_date}
+                className="flex flex-col items-center flex-1 min-w-[36px] group"
+              >
+                <div
+                  className="mb-1 opacity-0 group-hover:opacity-100 transition-opacity
                                 bg-gray-800 text-white text-xs rounded px-2 py-1 whitespace-nowrap pointer-events-none
-                                absolute z-10 -translate-y-2 shadow-lg">
+                                absolute z-10 -translate-y-2 shadow-lg"
+                >
                   <div>Invoiced: ₦{fmt(row.invoiced)}</div>
                   <div>Collected: ₦{fmt(row.collected)}</div>
                   <div>Rate: {row.collection_rate.toFixed(1)}%</div>
                 </div>
                 <div className="relative flex items-end gap-0.5 w-full justify-center">
-                  {/* Invoiced bar */}
                   <div
                     className="bg-blue-400 rounded-t w-4 transition-all"
                     style={{ height: `${invH}px` }}
                     title={`Invoiced: ₦${fmt(row.invoiced)}`}
                   />
-                  {/* Collected bar */}
                   <div
                     className="bg-green-500 rounded-t w-4 transition-all"
                     style={{ height: `${collH}px` }}
@@ -97,7 +88,6 @@ const BarChart: React.FC<BarChartProps> = ({ rows, period }) => {
             );
           })}
         </div>
-        {/* Legend */}
         <div className="flex items-center gap-4 mt-6 text-xs text-gray-600">
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded-sm bg-blue-400 inline-block" />
@@ -113,9 +103,12 @@ const BarChart: React.FC<BarChartProps> = ({ rows, period }) => {
   );
 };
 
-// ─── CSV export ───────────────────────────────────────────────────────────────
-
-const exportCsv = (rows: IncomePeriodRow[], period: PeriodGranularity, dateFrom: string, dateTo: string) => {
+const exportCsv = (
+  rows: IncomePeriodRow[],
+  period: PeriodGranularity,
+  dateFrom: string,
+  dateTo: string
+) => {
   const header = 'Period,Invoiced,Collected,Outstanding,Invoices,Collection Rate\n';
   const body = rows
     .map(r =>
@@ -138,9 +131,12 @@ const exportCsv = (rows: IncomePeriodRow[], period: PeriodGranularity, dateFrom:
   URL.revokeObjectURL(url);
 };
 
-// ─── Preset date ranges ───────────────────────────────────────────────────────
-
-const PRESETS: { label: string; from: () => string; to: () => string; period: PeriodGranularity }[] = [
+const PRESETS: {
+  label: string;
+  from: () => string;
+  to: () => string;
+  period: PeriodGranularity;
+}[] = [
   {
     label: 'This Year',
     from: () => `${new Date().getFullYear()}-01-01`,
@@ -178,56 +174,50 @@ const PRESETS: { label: string; from: () => string; to: () => string; period: Pe
   },
 ];
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 const GRANULARITIES: { value: PeriodGranularity; label: string }[] = [
-  { value: 'daily',     label: 'Daily' },
-  { value: 'weekly',    label: 'Weekly' },
-  { value: 'monthly',   label: 'Monthly' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
   { value: 'quarterly', label: 'Quarterly' },
-  { value: 'yearly',    label: 'Yearly' },
+  { value: 'yearly', label: 'Yearly' },
 ];
 
 const IncomeByPeriodPage: React.FC = () => {
   const [dateFrom, setDateFrom] = useState(`${new Date().getFullYear()}-01-01`);
-  const [dateTo,   setDateTo]   = useState(todayStr());
-  const [period,   setPeriod]   = useState<PeriodGranularity>('monthly');
-  const [data,     setData]     = useState<IncomeByPeriodData | null>(null);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
+  const [dateTo, setDateTo] = useState(todayStr());
+  const [period, setPeriod] = useState<PeriodGranularity>('monthly');
+  const [appliedFilters, setAppliedFilters] = useState({
+    date_from: `${new Date().getFullYear()}-01-01`,
+    date_to: todayStr(),
+    period: 'monthly' as PeriodGranularity,
+  });
 
-  const load = useCallback(async (from: string, to: string, p: PeriodGranularity) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setData(await incomeReportsService.getByPeriod({ date_from: from, date_to: to, period: p }));
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data, isLoading: loading, error: queryError } = useIncomeByPeriod(appliedFilters);
+  const error =
+    queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
 
-  useEffect(() => { load(dateFrom, dateTo, period); }, []);
+  const handleApply = () => {
+    setAppliedFilters({ date_from: dateFrom, date_to: dateTo, period });
+  };
 
-  const handleApply = () => load(dateFrom, dateTo, period);
-
-  const applyPreset = (preset: typeof PRESETS[0]) => {
+  const applyPreset = (preset: (typeof PRESETS)[0]) => {
     const from = preset.from();
-    const to   = preset.to();
+    const to = preset.to();
     setDateFrom(from);
     setDateTo(to);
     setPeriod(preset.period);
-    load(from, to, preset.period);
+    setAppliedFilters({ date_from: from, date_to: to, period: preset.period });
   };
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-5">
           <div className="flex items-center gap-3 mb-4">
-            <Link to="/incomes/reports" className="text-gray-400 hover:text-gray-700 transition-colors">
+            <Link
+              to="/incomes/reports"
+              className="text-gray-400 hover:text-gray-700 transition-colors"
+            >
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <div className="flex items-center gap-2">
@@ -236,12 +226,13 @@ const IncomeByPeriodPage: React.FC = () => {
               </div>
               <div>
                 <h1 className="text-lg font-bold text-gray-900">Income Trend by Period</h1>
-                <p className="text-xs text-gray-500">Revenue over time — invoiced &amp; collected</p>
+                <p className="text-xs text-gray-500">
+                  Revenue over time — invoiced &amp; collected
+                </p>
               </div>
             </div>
           </div>
 
-          {/* Preset buttons */}
           <div className="flex items-center gap-2 mb-3 flex-wrap">
             {PRESETS.map(p => (
               <button
@@ -254,40 +245,57 @@ const IncomeByPeriodPage: React.FC = () => {
             ))}
           </div>
 
-          {/* Filters */}
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-gray-500">From</label>
-              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={e => setDateFrom(e.target.value)}
                 title="Date from"
-                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-gray-500">To</label>
-              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              <input
+                type="date"
+                value={dateTo}
+                onChange={e => setDateTo(e.target.value)}
                 title="Date to"
-                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-gray-500">Granularity</label>
-              <select value={period} onChange={e => setPeriod(e.target.value as PeriodGranularity)}
+              <select
+                value={period}
+                onChange={e => setPeriod(e.target.value as PeriodGranularity)}
                 title="Period granularity"
-                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
                 {GRANULARITIES.map(g => (
-                  <option key={g.value} value={g.value}>{g.label}</option>
+                  <option key={g.value} value={g.value}>
+                    {g.label}
+                  </option>
                 ))}
               </select>
             </div>
-            <button onClick={handleApply} disabled={loading}
+            <button
+              onClick={handleApply}
+              disabled={loading}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400
-                         text-white text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors">
+                         text-white text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors"
+            >
               <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
               Apply
             </button>
             {data && data.rows.length > 0 && (
-              <button onClick={() => exportCsv(data.rows, data.period, data.date_from, data.date_to)}
+              <button
+                onClick={() => exportCsv(data.rows, data.period, data.date_from, data.date_to)}
                 className="flex items-center gap-1.5 border border-gray-300 text-gray-600 hover:bg-gray-50
-                           text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors">
+                           text-sm font-medium px-3.5 py-1.5 rounded-lg transition-colors"
+              >
                 <Download className="h-3.5 w-3.5" />
                 Export CSV
               </button>
@@ -304,17 +312,37 @@ const IncomeByPeriodPage: React.FC = () => {
           </div>
         )}
 
-        {/* KPIs */}
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
-              { label: 'Total Invoiced',  value: `₦${fmt(data.totals.invoiced)}`,    color: 'text-gray-900' },
-              { label: 'Collected',        value: `₦${fmt(data.totals.collected)}`,   color: 'text-green-700' },
-              { label: 'Outstanding',      value: `₦${fmt(data.totals.outstanding)}`, color: 'text-orange-600' },
-              { label: 'Collection Rate',  value: `${data.totals.collection_rate.toFixed(1)}%`, color: 'text-blue-700' },
+              {
+                label: 'Total Invoiced',
+                value: `₦${fmt(data.totals.invoiced)}`,
+                color: 'text-gray-900',
+              },
+              {
+                label: 'Collected',
+                value: `₦${fmt(data.totals.collected)}`,
+                color: 'text-green-700',
+              },
+              {
+                label: 'Outstanding',
+                value: `₦${fmt(data.totals.outstanding)}`,
+                color: 'text-orange-600',
+              },
+              {
+                label: 'Collection Rate',
+                value: `${data.totals.collection_rate.toFixed(1)}%`,
+                color: 'text-blue-700',
+              },
             ].map(kpi => (
-              <div key={kpi.label} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{kpi.label}</p>
+              <div
+                key={kpi.label}
+                className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"
+              >
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+                  {kpi.label}
+                </p>
                 <p className={`mt-1 text-xl font-bold tabular-nums ${kpi.color}`}>{kpi.value}</p>
               </div>
             ))}
@@ -331,12 +359,10 @@ const IncomeByPeriodPage: React.FC = () => {
           </div>
         )}
 
-        {/* Bar chart */}
         {!loading && data && data.rows.length > 0 && (
           <BarChart rows={data.rows} period={data.period} />
         )}
 
-        {/* Data table */}
         {!loading && data && data.rows.length > 0 && (
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
             <table className="w-full text-sm">
@@ -345,7 +371,9 @@ const IncomeByPeriodPage: React.FC = () => {
                   <th className="text-left px-5 py-3 font-medium text-gray-600">Period</th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Invoiced (₦)</th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Collected (₦)</th>
-                  <th className="text-right px-5 py-3 font-medium text-gray-600">Outstanding (₦)</th>
+                  <th className="text-right px-5 py-3 font-medium text-gray-600">
+                    Outstanding (₦)
+                  </th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Invoices</th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Rate</th>
                 </tr>

@@ -1,7 +1,4 @@
-// Income Reports Dashboard
-// Overview page linking to all income report sub-pages with KPI summary cards
-
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   TrendingUp,
@@ -11,16 +8,9 @@ import {
   Users,
   AlertCircle,
   ChevronRight,
-  BarChart2,
   RefreshCw,
 } from 'lucide-react';
-import {
-  incomeReportsService,
-  CollectionStatusData,
-  IncomeReportParams,
-} from '../../../services/incomeReportsService';
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
+import { useCollectionStatus } from '../../../hooks/useIncomeReports';
 
 const thisYear = () => new Date().getFullYear();
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -32,8 +22,6 @@ const janFirst = () => `${thisYear()}-01-01`;
 
 const fmt = (v: number) =>
   v.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-// ─── sub-components ──────────────────────────────────────────────────────────
 
 interface KpiCardProps {
   label: string;
@@ -73,49 +61,35 @@ const NavCard: React.FC<NavCardProps> = ({ to, icon, title, description, color }
   </Link>
 );
 
-// ─── status badge colours ─────────────────────────────────────────────────────
 const STATUS_COLORS: Record<string, string> = {
-  paid:      'bg-green-100 text-green-800',
-  partial:   'bg-yellow-100 text-yellow-800',
-  overdue:   'bg-red-100 text-red-800',
-  sent:      'bg-blue-100 text-blue-800',
-  draft:     'bg-gray-100 text-gray-700',
+  paid: 'bg-green-100 text-green-800',
+  partial: 'bg-yellow-100 text-yellow-800',
+  overdue: 'bg-red-100 text-red-800',
+  sent: 'bg-blue-100 text-blue-800',
+  draft: 'bg-gray-100 text-gray-700',
   cancelled: 'bg-gray-100 text-gray-400',
 };
 
-// ─── page ─────────────────────────────────────────────────────────────────────
-
 const IncomeReportsDashboardPage: React.FC = () => {
   const [dateFrom, setDateFrom] = useState(janFirst());
-  const [dateTo,   setDateTo]   = useState(todayStr());
-  const [data,     setData]     = useState<CollectionStatusData | null>(null);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
+  const [dateTo, setDateTo] = useState(todayStr());
+  const [appliedFilters, setAppliedFilters] = useState({
+    date_from: janFirst(),
+    date_to: todayStr(),
+  });
 
-  const load = async (params: IncomeReportParams) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await incomeReportsService.getCollectionStatus(params);
-      setData(res);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
+  const { data, isLoading: loading, error: queryError } = useCollectionStatus(appliedFilters);
+  const error =
+    queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
+
+  const handleApply = () => {
+    setAppliedFilters({ date_from: dateFrom, date_to: dateTo });
   };
-
-  useEffect(() => {
-    load({ date_from: dateFrom, date_to: dateTo });
-  }, []);
-
-  const handleApply = () => load({ date_from: dateFrom, date_to: dateTo });
 
   const s = data?.summary;
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-6">
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -129,7 +103,6 @@ const IncomeReportsDashboardPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Date filters */}
             <div className="flex items-center gap-2 flex-wrap">
               <div className="flex items-center gap-1.5">
                 <label className="text-xs text-gray-500 font-medium">From</label>
@@ -164,7 +137,6 @@ const IncomeReportsDashboardPage: React.FC = () => {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
-        {/* Error */}
         {error && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
             <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -172,7 +144,6 @@ const IncomeReportsDashboardPage: React.FC = () => {
           </div>
         )}
 
-        {/* KPI Summary */}
         <section>
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
             Overview · {dateFrom} → {dateTo}
@@ -204,7 +175,6 @@ const IncomeReportsDashboardPage: React.FC = () => {
           </div>
         </section>
 
-        {/* Status breakdown */}
         {data && data.by_status.length > 0 && (
           <section>
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
@@ -253,7 +223,6 @@ const IncomeReportsDashboardPage: React.FC = () => {
           </section>
         )}
 
-        {/* Navigation cards */}
         <section>
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
             Detailed Reports

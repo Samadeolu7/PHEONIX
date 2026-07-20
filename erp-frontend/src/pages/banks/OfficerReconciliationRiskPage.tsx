@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ArrowUpDown, ShieldAlert, Users } from 'lucide-react';
-import { reconciliationService } from '../../services/reconciliationService';
-import type { OfficerReconciliationRiskRow } from '../../types/banks';
+import { useOfficerRiskReport } from '../../hooks/useReconciliation';
 
 type SortKey =
   | 'officer_name'
@@ -31,33 +30,20 @@ const formatLag = (value: number | null): string => {
 };
 
 const OfficerReconciliationRiskPage: React.FC = () => {
-  const [rows, setRows] = useState<OfficerReconciliationRiskRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sort, setSort] = useState(DEFAULT_SORT);
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo]);
-
-  const load = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await reconciliationService.getOfficerRiskReport({
-        ...(dateFrom && { date_from: dateFrom }),
-        ...(dateTo && { date_to: dateTo }),
-      });
-      setRows(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load the officer risk report');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const {
+    data: rows = [],
+    isLoading: loading,
+    error: queryError,
+  } = useOfficerRiskReport({ date_from: dateFrom || undefined, date_to: dateTo || undefined });
+  const error = queryError
+    ? queryError instanceof Error
+      ? queryError.message
+      : 'Failed to load report'
+    : null;
 
   const toggleSort = (key: SortKey) => {
     setSort((prev) =>

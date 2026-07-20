@@ -1,17 +1,8 @@
-// Income by Category Report
-// Table view grouped by IncomeCategory with collection rate progress bars
-
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, AlertCircle, Download, Tag } from 'lucide-react';
-import {
-  incomeReportsService,
-  IncomeByCategoryData,
-  IncomeCategoryRow,
-  IncomeReportParams,
-} from '../../../services/incomeReportsService';
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
+import { IncomeCategoryRow } from '../../../services/incomeReportsService';
+import { useIncomeByCategory } from '../../../hooks/useIncomeReports';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const todayStr = () => {
@@ -23,27 +14,21 @@ const janFirst = () => `${new Date().getFullYear()}-01-01`;
 const fmt = (v: number) =>
   v.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-// ─── Collection rate bar ──────────────────────────────────────────────────────
-
 const RateBar: React.FC<{ rate: number }> = ({ rate }) => {
   const pct = Math.min(100, Math.max(0, rate));
-  const color =
-    pct >= 90 ? 'bg-green-500' :
-    pct >= 60 ? 'bg-yellow-400' :
-                'bg-red-400';
+  const color = pct >= 90 ? 'bg-green-500' : pct >= 60 ? 'bg-yellow-400' : 'bg-red-400';
   return (
     <div className="flex items-center gap-2 min-w-0">
       <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-        <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
+        <div
+          className={`h-full ${color} rounded-full transition-all`}
+          style={{ width: `${pct}%` }}
+        />
       </div>
-      <span className="text-xs text-gray-600 tabular-nums w-10 text-right">
-        {pct.toFixed(1)}%
-      </span>
+      <span className="text-xs text-gray-600 tabular-nums w-10 text-right">{pct.toFixed(1)}%</span>
     </div>
   );
 };
-
-// ─── CSV export ───────────────────────────────────────────────────────────────
 
 const exportCsv = (rows: IncomeCategoryRow[], dateFrom: string, dateTo: string) => {
   const header = 'Code,Category,Invoiced,Collected,Outstanding,Invoices,Collection Rate\n';
@@ -69,35 +54,22 @@ const exportCsv = (rows: IncomeCategoryRow[], dateFrom: string, dateTo: string) 
   URL.revokeObjectURL(url);
 };
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
 const IncomeByCategoryPage: React.FC = () => {
   const [dateFrom, setDateFrom] = useState(janFirst());
-  const [dateTo,   setDateTo]   = useState(todayStr());
-  const [data,     setData]     = useState<IncomeByCategoryData | null>(null);
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState<string | null>(null);
+  const [dateTo, setDateTo] = useState(todayStr());
+  const [appliedFilters, setAppliedFilters] = useState({
+    date_from: janFirst(),
+    date_to: todayStr(),
+  });
 
-  const load = useCallback(async (params: IncomeReportParams) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await incomeReportsService.getByCategory(params);
-      setData(res);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data, isLoading: loading, error: queryError } = useIncomeByCategory(appliedFilters);
+  const error =
+    queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
 
-  useEffect(() => { load({ date_from: dateFrom, date_to: dateTo }); }, []);
-
-  const handleApply = () => load({ date_from: dateFrom, date_to: dateTo });
+  const handleApply = () => setAppliedFilters({ date_from: dateFrom, date_to: dateTo });
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <div className="bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-6xl mx-auto px-6 py-5">
           <div className="flex items-center gap-3 mb-4">
@@ -118,7 +90,6 @@ const IncomeByCategoryPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Filters */}
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-1.5">
               <label className="text-xs text-gray-500">From</label>
@@ -169,28 +140,45 @@ const IncomeByCategoryPage: React.FC = () => {
           </div>
         )}
 
-        {/* Totals bar */}
         {data && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[
-              { label: 'Total Invoiced',   value: `₦${fmt(data.totals.invoiced)}`,    color: 'text-gray-900' },
-              { label: 'Collected',         value: `₦${fmt(data.totals.collected)}`,   color: 'text-green-700' },
-              { label: 'Outstanding',       value: `₦${fmt(data.totals.outstanding)}`, color: 'text-orange-600' },
-              { label: 'Collection Rate',   value: `${data.totals.collection_rate.toFixed(1)}%`, color: 'text-blue-700' },
+              {
+                label: 'Total Invoiced',
+                value: `₦${fmt(data.totals.invoiced)}`,
+                color: 'text-gray-900',
+              },
+              {
+                label: 'Collected',
+                value: `₦${fmt(data.totals.collected)}`,
+                color: 'text-green-700',
+              },
+              {
+                label: 'Outstanding',
+                value: `₦${fmt(data.totals.outstanding)}`,
+                color: 'text-orange-600',
+              },
+              {
+                label: 'Collection Rate',
+                value: `${data.totals.collection_rate.toFixed(1)}%`,
+                color: 'text-blue-700',
+              },
             ].map(kpi => (
-              <div key={kpi.label} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
-                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{kpi.label}</p>
+              <div
+                key={kpi.label}
+                className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm"
+              >
+                <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">
+                  {kpi.label}
+                </p>
                 <p className={`mt-1 text-xl font-bold tabular-nums ${kpi.color}`}>{kpi.value}</p>
               </div>
             ))}
           </div>
         )}
 
-        {/* Table */}
         {loading && (
-          <div className="flex justify-center py-16 text-gray-400 text-sm">
-            Loading...
-          </div>
+          <div className="flex justify-center py-16 text-gray-400 text-sm">Loading...</div>
         )}
 
         {!loading && data && data.rows.length === 0 && (
@@ -207,9 +195,13 @@ const IncomeByCategoryPage: React.FC = () => {
                   <th className="text-left px-5 py-3 font-medium text-gray-600">Category</th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Invoiced (₦)</th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Collected (₦)</th>
-                  <th className="text-right px-5 py-3 font-medium text-gray-600">Outstanding (₦)</th>
+                  <th className="text-right px-5 py-3 font-medium text-gray-600">
+                    Outstanding (₦)
+                  </th>
                   <th className="text-right px-5 py-3 font-medium text-gray-600">Invoices</th>
-                  <th className="px-5 py-3 font-medium text-gray-600 min-w-[160px]">Collection Rate</th>
+                  <th className="px-5 py-3 font-medium text-gray-600 min-w-[160px]">
+                    Collection Rate
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -239,7 +231,6 @@ const IncomeByCategoryPage: React.FC = () => {
                   </tr>
                 ))}
               </tbody>
-              {/* Totals footer */}
               <tfoot className="bg-gray-50 border-t-2 border-gray-300">
                 <tr>
                   <td className="px-5 py-3 font-bold text-gray-900">Total</td>

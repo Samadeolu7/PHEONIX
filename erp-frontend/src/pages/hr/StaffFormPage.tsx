@@ -41,22 +41,13 @@ const StaffFormPage: React.FC = () => {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [branches, setBranches] = useState<Branch[]>([]);
 
-  // Fetch branches for dropdown
-  useEffect(() => {
-    const fetchBranches = async () => {
-      try {
-        const branchesData = await branchService.getBranches();
-        setBranches(branchesData.results);
-      } catch (error) {
-        console.error('Error fetching branches:', error);
-        toast.error('Failed to fetch branches. Please try again.');
-      }
-    };
-
-    fetchBranches();
-  }, []);
+  // Fetch branches for dropdown (React Query replaces manual useEffect + useState)
+  const { data: branchesResponse } = useQuery({
+    queryKey: ['branches'],
+    queryFn: () => branchService.getBranches(),
+  });
+  const branches: Branch[] = (branchesResponse as any)?.results ?? [];
 
   // Fetch staff data for editing
   const { data: staffData, isLoading: loadingStaff } = useQuery({
@@ -709,7 +700,7 @@ const StaffFormPage: React.FC = () => {
                   {branches.map(branch => (
                     <option key={branch.id} value={branch.id}>
                       {branch.name}
-                     </option>
+                    </option>
                   ))}
                 </select>
                 {errors.branch && (

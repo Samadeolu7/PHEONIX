@@ -3,30 +3,29 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Save, ArrowLeft, Clock, Users, Calendar } from 'lucide-react';
 import { AttendanceForm } from '../../components/hr/AttendanceForm';
-import { hrService } from '../../services/hrService';
-import { useToast } from '../../hooks/useToast';
 import {
-  Attendance,
-  CreateAttendanceData,
-  UpdateAttendanceData,
-  AttendanceStatus,
-} from '../../types/hr';
+  useAttendanceRecord,
+  useStaffForDropdown,
+  useCreateAttendance,
+  useUpdateAttendance,
+} from '../../hooks/useHR';
+import { CreateAttendanceData, UpdateAttendanceData, AttendanceStatus } from '../../types/hr';
 
 const AttendanceFormPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const toast = useToast();
 
   const isEdit = Boolean(id);
-  const [loading, setLoading] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(isEdit);
-  const [attendance, setAttendance] = useState<Attendance | null>(null);
-  const [staff, setStaff] = useState<Array<{ id: number; name: string; department?: string }>>([]);
+  const { data: attendance, isLoading: initialLoading } = useAttendanceRecord(
+    isEdit ? Number(id) : 0
+  );
+  const { data: staffDropdownData } = useStaffForDropdown();
+  const createMutation = useCreateAttendance();
+  const updateMutation = useUpdateAttendance();
 
-  // Form state
   const [formData, setFormData] = useState<CreateAttendanceData>({
     staff: 0,
-    date: new Date().toISOString().split('T')[0], // Today's date
+    date: new Date().toISOString().split('T')[0],
     clock_in: '',
     clock_out: '',
     status: AttendanceStatus.PRESENT,
@@ -38,59 +37,36 @@ const AttendanceFormPage: React.FC = () => {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Load attendance record for editing
+  // Populate form when attendance data loads (edit mode)
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (isEdit && id) {
-      loadAttendance();
-    }
-  }, [isEdit, id]);
-
-  // Load staff list
-  useEffect(() => {
-    loadStaff();
-  }, []);
-
-  const loadAttendance = async () => {
-    try {
-      setInitialLoading(true);
-      const response = await hrService.getAttendanceRecord(Number(id));
-      setAttendance(response);
-
-      // Populate form with existing data
+    if (attendance && isEdit) {
       setFormData({
-        staff: response.staff,
-        date: response.date,
-        clock_in: response.clock_in || '',
-        clock_out: response.clock_out || '',
-        status: response.status || AttendanceStatus.PRESENT,
-        hours_worked: response.hours_worked || '0.00',
-        overtime_hours: response.overtime_hours || '0.00',
-        leave_request: response.leave_request,
-        notes: response.notes || '',
+        staff: attendance.staff,
+        date: attendance.date,
+        clock_in: attendance.clock_in || '',
+        clock_out: attendance.clock_out || '',
+        status: attendance.status || AttendanceStatus.PRESENT,
+        hours_worked: attendance.hours_worked || '0.00',
+        overtime_hours: attendance.overtime_hours || '0.00',
+        leave_request: attendance.leave_request,
+        notes: attendance.notes || '',
       });
-    } catch (error) {
-      console.error('Error loading attendance:', error);
-      toast.error('Failed to load attendance record. Please try again.');
-      navigate('/hr/attendance');
-    } finally {
-      setInitialLoading(false);
     }
-  };
+  }, [attendance, isEdit]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  const loadStaff = async () => {
-    try {
-      const staffList = await hrService.getStaffForDropdown();
-      setStaff(staffList);
-
-      // If creating new record and only one staff member, auto-select
-      if (!isEdit && staffList.length === 1) {
-        setFormData(prev => ({ ...prev, staff: staffList[0].id }));
-      }
-    } catch (error) {
-      console.error('Error loading staff:', error);
-      toast.error('Failed to load staff list. Please try again.');
+  // Auto-select staff if only one and creating new
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (staffDropdownData && !isEdit && staffDropdownData.length === 1 && formData.staff === 0) {
+      setFormData(prev => ({ ...prev, staff: staffDropdownData[0].id }));
     }
-  };
+  }, [staffDropdownData, isEdit, formData.staff]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const staff = staffDropdownData || [];
+  const loading = createMutation.isPending || updateMutation.isPending;
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -103,7 +79,6 @@ const AttendanceFormPage: React.FC = () => {
       newErrors.date = 'Date is required';
     }
 
-    // Validate clock times if provided
     if (formData.clock_in && formData.clock_out) {
       const clockIn = new Date(`2000-01-01T${formData.clock_in}`);
       const clockOut = new Date(`2000-01-01T${formData.clock_out}`);
@@ -113,7 +88,6 @@ const AttendanceFormPage: React.FC = () => {
       }
     }
 
-    // Validate hours worked
     if (formData.hours_worked && parseFloat(formData.hours_worked) < 0) {
       newErrors.hours_worked = 'Hours worked cannot be negative';
     }
@@ -126,61 +100,49 @@ const AttendanceFormPage: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleApiErrors = (error: any) => {
+    if (error?.response?.data) {
+      const apiErrors: Record<string, string> = {};
+      Object.entries(error.response.data).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          apiErrors[key] = value[0];
+        } else {
+          apiErrors[key] = String(value);
+        }
+      });
+      setErrors(apiErrors);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
       return;
     }
 
-    try {
-      setLoading(true);
-
-      if (isEdit && id) {
-        const updateData: UpdateAttendanceData = { ...formData };
-        await hrService.updateAttendance(Number(id), updateData);
-        toast.success('Attendance record updated successfully!');
-      } else {
-        await hrService.createAttendance(formData);
-        toast.success('Attendance record created successfully!');
-      }
-
-      // navigate('/hr/attendance');
-    } catch (error: any) {
-      console.error('Error saving attendance:', error);
-
-      // Handle validation errors from API
-      if (error.response?.data) {
-        const apiErrors: Record<string, string> = {};
-        Object.entries(error.response.data).forEach(([key, value]) => {
-          if (Array.isArray(value)) {
-            apiErrors[key] = value[0];
-          } else {
-            apiErrors[key] = String(value);
-          }
-        });
-        setErrors(apiErrors);
-      }
-
-      toast.error(
-        isEdit
-          ? 'Failed to update attendance record. Please try again.'
-          : 'Failed to create attendance record. Please try again.'
+    if (isEdit && id) {
+      const updateData: UpdateAttendanceData = { ...formData };
+      updateMutation.mutate(
+        { id: Number(id), data: updateData },
+        {
+          onError: handleApiErrors,
+        }
       );
-    } finally {
-      setLoading(false);
+    } else {
+      createMutation.mutate(formData, {
+        onError: handleApiErrors,
+      });
     }
   };
 
   const handleFieldChange = (field: keyof CreateAttendanceData, value: any) => {
     const updatedData = { ...formData, [field]: value };
 
-    // Clear error when field is modified
     if (errors[field]) {
       setErrors(prev => ({ ...prev, [field]: '' }));
     }
 
-    // Auto-calculate hours worked when both clock_in and clock_out are provided
     if (
       (field === 'clock_in' || field === 'clock_out') &&
       updatedData.clock_in &&
@@ -191,15 +153,12 @@ const AttendanceFormPage: React.FC = () => {
 
       if (clockOut > clockIn) {
         const diffMs = clockOut.getTime() - clockIn.getTime();
-        const diffHours = diffMs / (1000 * 60 * 60); // Convert milliseconds to hours
-        const hoursWorked = Math.round(diffHours * 100) / 100; // Round to 2 decimal places
-
-        // Update form data with both the field change AND the calculated hours
+        const diffHours = diffMs / (1000 * 60 * 60);
+        const hoursWorked = Math.round(diffHours * 100) / 100;
         updatedData.hours_worked = hoursWorked.toString();
       }
     }
 
-    // Set the form data once with all updates
     setFormData(updatedData);
   };
 

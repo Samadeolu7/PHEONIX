@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { ShieldAlert, History } from 'lucide-react';
-import { reconciliationService } from '../../services/reconciliationService';
+import { useManualOverridesReport } from '../../hooks/useReconciliation';
 import type { ManualOverrideEvent } from '../../types/banks';
 
 const TYPE_LABELS: Record<ManualOverrideEvent['type'], string> = {
@@ -27,33 +27,16 @@ function formatAmount(value: string | null): string {
  * visible by digging through individual reconciliations one at a time.
  */
 const ManualOverridesReportPage: React.FC = () => {
-  const [events, setEvents] = useState<ManualOverrideEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | ManualOverrideEvent['type']>('all');
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo]);
+  const { data, isLoading: loading, error: queryError } = useManualOverridesReport({
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+  });
 
-  const load = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await reconciliationService.getManualOverridesReport({
-        ...(dateFrom && { date_from: dateFrom }),
-        ...(dateTo && { date_to: dateTo }),
-      });
-      setEvents(data.results);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load the manual overrides report');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const events = data?.results ?? [];
 
   const visibleEvents = events.filter((e) => typeFilter === 'all' || e.type === typeFilter);
 
@@ -120,13 +103,13 @@ const ManualOverridesReportPage: React.FC = () => {
         </div>
       )}
 
-      {error && (
+      {queryError && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">
-          {error}
+          {queryError.message || 'Failed to load the manual overrides report'}
         </div>
       )}
 
-      {!loading && !error && (
+      {!loading && !queryError && (
         <div className="bg-white rounded-lg shadow overflow-hidden">
           {visibleEvents.length === 0 ? (
             <div className="text-center py-12">

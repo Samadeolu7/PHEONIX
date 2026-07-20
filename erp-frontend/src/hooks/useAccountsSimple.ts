@@ -4,7 +4,7 @@ import { Account } from '../types/accounts';
 
 export const useAccountsByType = (account_type: 'ASSET' | 'INCOME' | 'EXPENSE') => {
   return useQuery({
-    queryKey: ['accounts', type],
+    queryKey: ['accounts', account_type],
     queryFn: () => accountService.getAccounts({ account_type, is_active: true }),
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
@@ -30,6 +30,16 @@ export const useIncomeAccounts = () => {
     queryKey: ['accounts', 'INCOME'],
     queryFn: () => accountService.getAccounts({ account_type: 'INCOME', is_active: true }),
     staleTime: 5 * 60 * 1000,
+  });
+};
+
+export const useAssetChildAccounts = () => {
+  return useQuery({
+    queryKey: ['accounts', 'ASSET', 'child'],
+    queryFn: () => accountService.getAccounts({ account_type: 'ASSET', is_active: true }),
+    staleTime: 5 * 60 * 1000,
+    select: (accounts: Account[]) =>
+      accounts.filter(a => a.account_level?.toLowerCase() === 'child'),
   });
 };
 

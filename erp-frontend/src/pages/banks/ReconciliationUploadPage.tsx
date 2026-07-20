@@ -1,10 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Loader2, Upload, FileText, X } from 'lucide-react';
-import bankService from '../../services/bankService';
+import { useBankAccounts } from '../../hooks/useBanks';
 import { reconciliationService } from '../../services/reconciliationService';
 import { useToast } from '../../hooks/useToast';
-import type { BankAccount } from '../../types/banks';
 
 const ACCEPTED_EXTENSIONS = ['.csv', '.txt', '.xlsx', '.qif'];
 
@@ -13,8 +12,9 @@ const ReconciliationUploadPage: React.FC = () => {
   const { error: showError, success: showSuccess, info: showInfo } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [accounts, setAccounts] = useState<BankAccount[]>([]);
-  const [loadingAccounts, setLoadingAccounts] = useState(true);
+  // React Query hook for bank accounts (active, not suspended)
+  const { data: allAccounts = [], isLoading: loadingAccounts } = useBankAccounts();
+  const accounts = allAccounts.filter(a => a.is_active && !a.is_suspended);
 
   const [bankAccountId, setBankAccountId] = useState<number | ''>('');
   const [file, setFile] = useState<File | null>(null);
@@ -22,20 +22,6 @@ const ReconciliationUploadPage: React.FC = () => {
 
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await bankService.listBankAccounts();
-        setAccounts(data.filter((a) => a.is_active && !a.is_suspended));
-      } catch (err: any) {
-        showError(err.message || 'Failed to load bank accounts');
-      } finally {
-        setLoadingAccounts(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];

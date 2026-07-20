@@ -3,7 +3,11 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Calendar, ArrowLeft, AlertTriangle } from 'lucide-react';
-import { hrService } from '../../services/hrService';
+import {
+  usePayrollScheduleDetail,
+  useCreatePayrollSchedule,
+  useUpdatePayrollSchedule,
+} from '../../hooks/useHR';
 import { PayrollFrequency, CreatePayrollScheduleData } from '../../types/hr';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -18,32 +22,30 @@ const PayrollScheduleFormPage: React.FC = () => {
   const qc = useQueryClient();
   const isEditing = Boolean(id);
 
+  const { data: schedule, isLoading: loadingData } = usePayrollScheduleDetail(
+    isEditing ? Number(id) : 0
+  );
+  const createMutation = useCreatePayrollSchedule();
+  const updateMutation = useUpdatePayrollSchedule();
+
   const [name, setName] = useState('');
   const [frequency, setFrequency] = useState<PayrollFrequency>('MONTHLY');
   const [dayOfMonth, setDayOfMonth] = useState<number>(28);
   const [dayOfWeek, setDayOfWeek] = useState<number>(4); // Friday default
-  const [loading, setLoading] = useState(false);
-  const [loadingData, setLoadingData] = useState(isEditing);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Load existing schedule when editing
+  // Populate form when schedule data loads (edit mode)
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (!id) return;
-    setLoadingData(true);
-    hrService
-      .getPayrollSchedule(Number(id))
-      .then(s => {
-        setName(s.name);
-        setFrequency(s.frequency);
-        if (s.day_of_month != null) setDayOfMonth(s.day_of_month);
-        if (s.day_of_week != null) setDayOfWeek(s.day_of_week);
-      })
-      .catch(() => {
-        setSubmitError('Failed to load schedule data');
-      })
-      .finally(() => setLoadingData(false));
-  }, [id]);
+    if (schedule && isEditing) {
+      setName(schedule.name);
+      setFrequency(schedule.frequency);
+      if (schedule.day_of_month != null) setDayOfMonth(schedule.day_of_month);
+      if (schedule.day_of_week != null) setDayOfWeek(schedule.day_of_week);
+    }
+  }, [schedule, isEditing]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // ─── Validation ──────────────────────────────────────────────────────────────
 
@@ -61,7 +63,7 @@ const PayrollScheduleFormPage: React.FC = () => {
 
   // ─── Submit ──────────────────────────────────────────────────────────────────
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setSubmitError(null);
     if (!validate()) return;
@@ -73,27 +75,37 @@ const PayrollScheduleFormPage: React.FC = () => {
       day_of_week: frequency === 'WEEKLY' ? dayOfWeek : null,
     };
 
-    setLoading(true);
-    try {
-      if (isEditing && id) {
-        await hrService.updatePayrollSchedule(Number(id), payload);
-      } else {
-        await hrService.createPayrollSchedule(payload);
-      }
-      qc.invalidateQueries({ queryKey: ['payroll-schedules'] });
-      navigate('/hr/payroll-schedules');
-    } catch (err: unknown) {
-      const e2 = err as {
-        response?: { data?: { detail?: string; name?: string[] } };
-        message?: string;
-      };
-      const detail =
-        e2?.response?.data?.detail ??
-        e2?.response?.data?.name?.[0] ??
-        (err instanceof Error ? err.message : 'Save failed');
-      setSubmitError(detail);
-    } finally {
-      setLoading(false);
+    if (isEditing && id) {
+      updateMutation.mutate(
+        { id: Number(id), data: payload },
+        {
+          onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['payroll-schedules'] });
+            navigate('/hr/payroll-schedules');
+          },
+          onError: (err: any) => {
+            const detail =
+              err?.response?.data?.detail ??
+              err?.response?.data?.name?.[0] ??
+              (err instanceof Error ? err.message : 'Save failed');
+            setSubmitError(detail);
+          },
+        }
+      );
+    } else {
+      createMutation.mutate(payload, {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: ['payroll-schedules'] });
+          navigate('/hr/payroll-schedules');
+        },
+        onError: (err: any) => {
+          const detail =
+            err?.response?.data?.detail ??
+            err?.response?.data?.name?.[0] ??
+            (err instanceof Error ? err.message : 'Save failed');
+          setSubmitError(detail);
+        },
+      });
     }
   };
 
@@ -106,6 +118,8 @@ const PayrollScheduleFormPage: React.FC = () => {
       </div>
     );
   }
+
+  const loading = createMutation.isPending || updateMutation.isPending;
 
   return (
     <form onSubmit={handleSubmit} className="min-h-screen bg-gray-50">

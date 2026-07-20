@@ -1,6 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { AlertTriangle, Banknote, MessageSquare, Sparkles, Users, X } from 'lucide-react';
-import { reconciliationService } from '../../services/reconciliationService';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  useMissingMoneySummary,
+  useMissingMoneyByOfficer,
+  useMissingMoneyByBankAccount,
+  reconciliationKeys,
+} from '../../hooks/useReconciliation';
 import { BulkLinkBankChargeModal } from '../../components/banks/BulkLinkBankChargeModal';
 import { CleanUpStrandedPairsModal } from '../../components/banks/CleanUpStrandedPairsModal';
 import { CreateOfficerEvidenceThreadsModal } from '../../components/banks/CreateOfficerEvidenceThreadsModal';
@@ -8,7 +14,6 @@ import { useToast } from '../../hooks/useToast';
 import type {
   MissingMoneyBankAccountRow,
   MissingMoneyOfficerRow,
-  MissingMoneySummary,
   ReconciliationException,
 } from '../../types/banks';
 
@@ -30,44 +35,54 @@ type DrilldownTarget =
  */
 const MissingMoneySummaryPage: React.FC = () => {
   const { success, error: showError } = useToast();
-  const [summary, setSummary] = useState<MissingMoneySummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
+  const {
+    data: summary,
+    isLoading: loading,
+    error: queryError,
+  } = useMissingMoneySummary({
+    date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
+  });
+  const error = queryError
+    ? queryError instanceof Error
+      ? queryError.message
+      : 'Failed to load report'
+    : null;
+
   const [drilldown, setDrilldown] = useState<DrilldownTarget | null>(null);
-  const [drilldownRows, setDrilldownRows] = useState<ReconciliationException[] | null>(null);
-  const [drilldownLoading, setDrilldownLoading] = useState(false);
-  const [drilldownError, setDrilldownError] = useState<string | null>(null);
+
+  const officerDrilldown = useMissingMoneyByOfficer(
+    drilldown?.kind === 'officer' ? drilldown.id : 'unattributed',
+    !!drilldown && drilldown.kind === 'officer'
+  );
+  const bankAccountDrilldown = useMissingMoneyByBankAccount(
+    drilldown?.kind === 'bank_account' ? drilldown.id : 0,
+    !!drilldown && drilldown.kind === 'bank_account'
+  );
+  const activeDrilldown = drilldown?.kind === 'officer' ? officerDrilldown : bankAccountDrilldown;
+  const drilldownRows = activeDrilldown.data;
+  const drilldownLoading = activeDrilldown.isLoading;
+  const drilldownQueryError = activeDrilldown.error;
+  const drilldownError = drilldownQueryError
+    ? drilldownQueryError instanceof Error
+      ? drilldownQueryError.message
+      : 'Failed to load drilldown'
+    : null;
 
   const [bulkLinkTarget, setBulkLinkTarget] = useState<{ id: number; name: string } | null>(null);
   const [showCleanUpModal, setShowCleanUpModal] = useState(false);
   const [showEvidenceModal, setShowEvidenceModal] = useState(false);
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo]);
-
-  const load = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await reconciliationService.getMissingMoneySummary({
-        ...(dateFrom && { date_from: dateFrom }),
-        ...(dateTo && { date_to: dateTo }),
-      });
-      setSummary(data);
-    } catch (err: any) {
-      setError(err.message || 'Failed to load the missing money summary');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const openOfficerDrilldown = (row: MissingMoneyOfficerRow) => {
-    setDrilldown({ kind: 'officer', id: row.officer_id ?? 'unattributed', label: row.officer_name });
+    setDrilldown({
+      kind: 'officer',
+      id: row.officer_id ?? 'unattributed',
+      label: row.officer_name,
+    });
   };
 
   const openBankAccountDrilldown = (row: MissingMoneyBankAccountRow) => {
@@ -78,32 +93,9 @@ const MissingMoneySummaryPage: React.FC = () => {
     });
   };
 
-  useEffect(() => {
-    if (!drilldown) {
-      setDrilldownRows(null);
-      return;
-    }
-    let cancelled = false;
-    setDrilldownLoading(true);
-    setDrilldownError(null);
-    const promise =
-      drilldown.kind === 'officer'
-        ? reconciliationService.getMissingMoneyByOfficer(drilldown.id as number | 'unattributed')
-        : reconciliationService.getMissingMoneyByBankAccount(drilldown.id as number);
-    promise
-      .then((rows) => {
-        if (!cancelled) setDrilldownRows(rows);
-      })
-      .catch((err: any) => {
-        if (!cancelled) setDrilldownError(err.message || 'Failed to load the detail list');
-      })
-      .finally(() => {
-        if (!cancelled) setDrilldownLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [drilldown]);
+  const invalidateMissingMoney = () => {
+    queryClient.invalidateQueries({ queryKey: reconciliationKeys.missingMoney() });
+  };
 
   const totals = summary?.totals;
 
@@ -132,10 +124,10 @@ const MissingMoneySummaryPage: React.FC = () => {
         </div>
       </div>
       <p className="text-gray-600 mb-6">
-        Every unresolved bank_only and erp_only exception, totalled and broken down by who
-        recorded it (erp_only) or which bank account it's on (bank_only). Click a row to see
-        the underlying list. amount_diff is excluded — it already has a matched counterpart
-        with a captured discrepancy, not genuinely missing money.
+        Every unresolved bank_only and erp_only exception, totalled and broken down by who recorded
+        it (erp_only) or which bank account it&apos;s on (bank_only). Click a row to see the
+        underlying list. amount_diff is excluded — it already has a matched counterpart with a
+        captured discrepancy, not genuinely missing money.
       </p>
 
       <div className="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap items-end gap-4">
@@ -144,7 +136,7 @@ const MissingMoneySummaryPage: React.FC = () => {
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={e => setDateFrom(e.target.value)}
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
@@ -153,7 +145,7 @@ const MissingMoneySummaryPage: React.FC = () => {
           <input
             type="date"
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={e => setDateTo(e.target.value)}
             className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
         </div>
@@ -187,17 +179,23 @@ const MissingMoneySummaryPage: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
             <div className="bg-white rounded-lg shadow p-4">
               <p className="text-sm text-gray-600">ERP recorded, never hit the bank</p>
-              <p className="text-2xl font-bold text-amber-600">{formatAmount(totals.erp_only.amount)}</p>
+              <p className="text-2xl font-bold text-amber-600">
+                {formatAmount(totals.erp_only.amount)}
+              </p>
               <p className="text-xs text-gray-500 mt-1">{totals.erp_only.count} exception(s)</p>
             </div>
             <div className="bg-white rounded-lg shadow p-4">
               <p className="text-sm text-gray-600">In the bank, no ERP record</p>
-              <p className="text-2xl font-bold text-red-600">{formatAmount(totals.bank_only.amount)}</p>
+              <p className="text-2xl font-bold text-red-600">
+                {formatAmount(totals.bank_only.amount)}
+              </p>
               <p className="text-xs text-gray-500 mt-1">{totals.bank_only.count} exception(s)</p>
             </div>
             <div className="bg-white rounded-lg shadow p-4">
               <p className="text-sm text-gray-600">Grand total</p>
-              <p className="text-2xl font-bold text-gray-900">{formatAmount(totals.grand_total_amount)}</p>
+              <p className="text-2xl font-bold text-gray-900">
+                {formatAmount(totals.grand_total_amount)}
+              </p>
             </div>
           </div>
 
@@ -207,11 +205,11 @@ const MissingMoneySummaryPage: React.FC = () => {
                 <Users className="w-4 h-4 text-gray-500" />
                 <h2 className="text-sm font-semibold text-gray-900">By Officer (ERP-only)</h2>
               </div>
-              {summary.by_officer.length === 0 ? (
+              {summary!.by_officer.length === 0 ? (
                 <p className="text-sm text-gray-500 px-4 py-6 text-center">Nothing outstanding.</p>
               ) : (
                 <ul className="divide-y divide-gray-200 max-h-96 overflow-y-auto">
-                  {summary.by_officer.map((row) => (
+                  {summary!.by_officer.map(row => (
                     <li key={row.officer_id ?? 'unattributed'}>
                       <button
                         onClick={() => openOfficerDrilldown(row)}
@@ -244,12 +242,15 @@ const MissingMoneySummaryPage: React.FC = () => {
                 <Banknote className="w-4 h-4 text-gray-500" />
                 <h2 className="text-sm font-semibold text-gray-900">By Bank Account (bank-only)</h2>
               </div>
-              {summary.by_bank_account.length === 0 ? (
+              {summary!.by_bank_account.length === 0 ? (
                 <p className="text-sm text-gray-500 px-4 py-6 text-center">Nothing outstanding.</p>
               ) : (
                 <ul className="divide-y divide-gray-200 max-h-96 overflow-y-auto">
-                  {summary.by_bank_account.map((row) => (
-                    <li key={row.bank_account_id} className="flex items-center gap-2 px-4 py-3 hover:bg-gray-50">
+                  {summary!.by_bank_account.map(row => (
+                    <li
+                      key={row.bank_account_id}
+                      className="flex items-center gap-2 px-4 py-3 hover:bg-gray-50"
+                    >
                       <button
                         onClick={() => openBankAccountDrilldown(row)}
                         className="flex-1 min-w-0 flex items-center justify-between text-left"
@@ -290,7 +291,10 @@ const MissingMoneySummaryPage: React.FC = () => {
           <div className="bg-white rounded-lg max-w-2xl w-full max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between p-4 border-b sticky top-0 bg-white">
               <h2 className="text-lg font-semibold text-gray-900">{drilldown.label}</h2>
-              <button onClick={() => setDrilldown(null)} className="text-gray-400 hover:text-gray-600">
+              <button
+                onClick={() => setDrilldown(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -305,12 +309,14 @@ const MissingMoneySummaryPage: React.FC = () => {
                   {drilldownError}
                 </div>
               )}
-              {!drilldownLoading && !drilldownError && drilldownRows && (
-                drilldownRows.length === 0 ? (
+              {!drilldownLoading &&
+                !drilldownError &&
+                drilldownRows &&
+                (drilldownRows.length === 0 ? (
                   <p className="text-sm text-gray-500 text-center py-6">No outstanding items.</p>
                 ) : (
                   <ul className="divide-y divide-gray-200">
-                    {drilldownRows.map((exc) => (
+                    {drilldownRows.map((exc: ReconciliationException) => (
                       <li key={exc.id} className="py-3">
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
@@ -331,8 +337,7 @@ const MissingMoneySummaryPage: React.FC = () => {
                       </li>
                     ))}
                   </ul>
-                )
-              )}
+                ))}
             </div>
           </div>
         </div>
@@ -345,7 +350,7 @@ const MissingMoneySummaryPage: React.FC = () => {
           onClose={() => setBulkLinkTarget(null)}
           onSuccess={() => {
             success('Bank charges bulk-linked — reloading summary');
-            load();
+            invalidateMissingMoney();
           }}
           onError={showError}
         />
@@ -356,7 +361,7 @@ const MissingMoneySummaryPage: React.FC = () => {
           onClose={() => setShowCleanUpModal(false)}
           onSuccess={() => {
             success('Stranded pairs cleaned up — reloading summary');
-            load();
+            invalidateMissingMoney();
           }}
           onError={showError}
         />
@@ -367,7 +372,7 @@ const MissingMoneySummaryPage: React.FC = () => {
           onClose={() => setShowEvidenceModal(false)}
           onSuccess={() => {
             success('Evidence request threads created');
-            load();
+            invalidateMissingMoney();
           }}
           onError={showError}
         />

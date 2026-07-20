@@ -1,5 +1,5 @@
 // Attendance Detail Page - View attendance details with edit/delete actions
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -13,40 +13,17 @@ import {
   CheckCircle,
 } from 'lucide-react';
 import { AttendanceStatusBadge } from '../../components/hr/AttendanceStatusBadge';
-import { hrService } from '../../services/hrService';
-import { useToast } from '../../hooks/useToast';
-import { Attendance, AttendanceStatus } from '../../types/hr';
+import { useAttendanceRecord, useDeleteAttendance } from '../../hooks/useHR';
+import { AttendanceStatus } from '../../types/hr';
 
 const AttendanceDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { success: toastSuccess, error: toastError } = useToast();
 
-  const [attendance, setAttendance] = useState<Attendance | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState(false);
+  const { data: attendance, isLoading: loading } = useAttendanceRecord(Number(id));
+  const deleteMutation = useDeleteAttendance();
 
-  useEffect(() => {
-    if (id) {
-      loadAttendance();
-    }
-  }, [id]);
-
-  const loadAttendance = async () => {
-    try {
-      setLoading(true);
-      const response = await hrService.getAttendanceRecord(Number(id));
-      setAttendance(response);
-    } catch (error) {
-      console.error('Error loading attendance:', error);
-      toastError('Failed to load attendance record');
-      navigate('/hr/attendance');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!attendance) return;
 
     const confirmed = window.confirm(
@@ -55,18 +32,14 @@ const AttendanceDetailPage: React.FC = () => {
 
     if (!confirmed) return;
 
-    try {
-      setDeleting(true);
-      await hrService.deleteAttendance(attendance.id);
-      toastSuccess('Attendance record deleted successfully');
-      navigate('/hr/attendance');
-    } catch (error) {
-      console.error('Error deleting attendance:', error);
-      toastError('Failed to delete attendance record');
-    } finally {
-      setDeleting(false);
-    }
+    deleteMutation.mutate(attendance.id);
   };
+
+  useEffect(() => {
+    if (deleteMutation.isSuccess) {
+      navigate('/hr/attendance');
+    }
+  }, [deleteMutation.isSuccess, navigate]);
 
   if (loading) {
     return (
@@ -148,10 +121,10 @@ const AttendanceDetailPage: React.FC = () => {
             </Link>
             <button
               onClick={handleDelete}
-              disabled={deleting}
+              disabled={deleteMutation.isPending}
               className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center"
             >
-              {deleting ? (
+              {deleteMutation.isPending ? (
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
               ) : (
                 <Trash2 className="h-4 w-4 mr-2" />

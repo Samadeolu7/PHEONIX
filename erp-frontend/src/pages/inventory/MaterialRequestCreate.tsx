@@ -18,8 +18,8 @@ import {
   CreateMaterialRequestItem,
   EligibleInventoryItem,
 } from '../../types/ledger';
-import { clientService } from '../../services/clientService';
-import { invoiceService } from '../../services/invoiceService';
+import { useClients } from '../../hooks/useClients';
+import { useClientInvoices } from '../../hooks/useClientInvoices';
 import { materialRequestService } from '../../services/ledgerService';
 
 interface ItemRow extends CreateMaterialRequestItem {
@@ -54,40 +54,18 @@ const MaterialRequestCreate: React.FC = () => {
   ]);
   const [submitting, setSubmitting] = useState(false);
 
-  // Lookup data
-  const [clients, setClients] = useState<{ id: number; full_name: string }[]>([]);
-  const [clientInvoices, setClientInvoices] = useState<{ id: number; invoice_number: string }[]>(
-    []
-  );
+  // Lookup data (React Query)
+  const { data: clients = [] } = useClients({ status: 'active' });
+  const parsedClientId = clientId ? parseInt(clientId) : undefined;
+  const { data: clientInvoices = [] } = useClientInvoices(parsedClientId, { status: 'paid' });
 
   // Eligible items (loaded when invoice changes)
   const [eligibleItems, setEligibleItems] = useState<EligibleInventoryItem[]>([]);
   const [loadingEligible, setLoadingEligible] = useState(false);
   const [itemSearch, setItemSearch] = useState('');
 
-  // ── Load clients & locations ──────────────────────────────────────────────
-  useEffect(() => {
-    clientService
-      .getClients({ status: 'active' })
-      .then((res: any) => setClients(res.results || res))
-      .catch(() => {});
-  }, []);
-
   const { data: locationsData } = useAllInventoryLocations({ is_active: true });
   const locations = locationsData?.results ?? [];
-
-  // ── Load invoices when client changes ────────────────────────────────────
-  useEffect(() => {
-    if (!clientId) {
-      setClientInvoices([]);
-      setServiceInvoiceId('');
-      return;
-    }
-    invoiceService
-      .getInvoices({ client_id: parseInt(clientId), status: 'paid' })
-      .then((res: any) => setClientInvoices(res.results || res))
-      .catch(() => {});
-  }, [clientId]);
 
   // ── Load eligible items when invoice changes ─────────────────────────────
   const loadEligibleItems = useCallback(
