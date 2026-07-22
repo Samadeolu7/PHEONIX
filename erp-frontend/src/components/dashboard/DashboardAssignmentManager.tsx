@@ -1,5 +1,5 @@
 // Dashboard Assignment Manager - Main admin interface for managing dashboard assignments
-import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useCallback, lazy, Suspense } from 'react';
 import {
   Users,
   Settings,
@@ -23,9 +23,9 @@ import { UserRole } from '../../types/roles';
 import {
   DashboardAssignment,
   DashboardAssignmentManagerProps,
-  DashboardAssignmentState,
 } from '../../types/dashboardAssignment';
 import { dashboardAssignmentService } from '../../services/dashboardAssignmentService';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 const RoleAssignmentPanel = lazy(() => import('./RoleAssignmentPanel'));
 const DashboardVersionManager = lazy(() => import('./DashboardVersionManager'));
 const DashboardAnalyticsDashboard = lazy(() => import('./DashboardAnalyticsDashboard'));
@@ -35,24 +35,7 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
   className = '',
   onAssignmentChange,
 }) => {
-  const [state, setState] = useState<DashboardAssignmentState>({
-    assignments: [],
-    versions: {},
-    analytics: [],
-    rollbackHistory: [],
-    assignmentHistory: [],
-    selectedRole: null,
-    selectedTemplate: null,
-    selectedVersion: null,
-    isLoading: false,
-    error: null,
-    filters: {},
-    pagination: {
-      page: 1,
-      pageSize: 10,
-      total: 0,
-    },
-  });
+  const queryClient = useQueryClient();
 
   const [activeTab, setActiveTab] = useState<'assignments' | 'versions' | 'analytics' | 'history'>(
     'assignments'
@@ -60,84 +43,75 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
   const [showRolePanel, setShowRolePanel] = useState(false);
   const [showVersionManager, setShowVersionManager] = useState(false);
   const [selectedAssignment, setSelectedAssignment] = useState<DashboardAssignment | null>(null);
+  const [filters, setFilters] = useState<{ roles?: string[]; templates?: string[]; isActive?: boolean }>({});
+  const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
 
-  // Load initial data
-  useEffect(() => {
-    loadAssignments();
-  }, []);
+  const { data: assignments = [], isLoading, error: queryError } = useQuery({
+    queryKey: ['dashboard', 'assignments'],
+    queryFn: async () => {
+      return dashboardAssignmentService.getAllAssignments();
+    },
+  });
 
-  const loadAssignments = useCallback(async () => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
+  const { data: assignmentHistory = [] } = useQuery({
+    queryKey: ['dashboard', 'assignments', 'history'],
+    queryFn: async () => {
+      return dashboardAssignmentService.getAssignmentHistory();
+    },
+  });
 
-    try {
-      const assignments = await dashboardAssignmentService.getAllAssignments();
-      const history = await dashboardAssignmentService.getAssignmentHistory();
+  const activateMutation = useMutation({
+    mutationFn: (assignmentId: string) => dashboardAssignmentService.activateAssignment(assignmentId, 'current-admin'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'assignments'] });
+    },
+  });
 
-      setState(prev => ({
-        ...prev,
-        assignments,
-        assignmentHistory: history,
-        pagination: {
-          ...prev.pagination,
-          total: assignments.length,
-        },
-        isLoading: false,
-      }));
-    } catch (error) {
-      setState(prev => ({
-        ...prev,
-        error: error instanceof Error ? error.message : 'Failed to load assignments',
-        isLoading: false,
-      }));
-    }
-  }, []);
+  const deactivateMutation = useMutation({
+    mutationFn: (assignmentId: string) => dashboardAssignmentService.deactivateAssignment(assignmentId, 'current-admin'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'assignments'] });
+    },
+  });
+
+  const setDefaultMutation = useMutation({
+    mutationFn: (assignmentId: string) => dashboardAssignmentService.setDefaultAssignment(assignmentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'assignments'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ roleId, templateId }: { roleId: string; templateId: string }) =>
+      dashboardAssignmentService.unassignDashboardFromRole(roleId, templateId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'assignments'] });
+    },
+  });
 
   const handleActivateAssignment = useCallback(
     async (assignmentId: string) => {
-      try {
-        await dashboardAssignmentService.activateAssignment(assignmentId, 'current-admin');
-        await loadAssignments();
-        onAssignmentChange?.(state.assignments.find(a => a.id === assignmentId)!);
-      } catch (error) {
-        setState(prev => ({
-          ...prev,
-          error: error instanceof Error ? error.message : 'Failed to activate assignment',
-        }));
-      }
+      await activateMutation.mutateAsync(assignmentId);
+      onAssignmentChange?.(assignments.find(a => a.id === assignmentId)!);
     },
-    [state.assignments, onAssignmentChange, loadAssignments]
+    [activateMutation, assignments, onAssignmentChange]
   );
 
   const handleDeactivateAssignment = useCallback(
     async (assignmentId: string) => {
-      try {
-        await dashboardAssignmentService.deactivateAssignment(assignmentId, 'current-admin');
-        await loadAssignments();
-        onAssignmentChange?.(state.assignments.find(a => a.id === assignmentId)!);
-      } catch (error) {
-        setState(prev => ({
-          ...prev,
-          error: error instanceof Error ? error.message : 'Failed to deactivate assignment',
-        }));
-      }
+      await deactivateMutation.mutateAsync(assignmentId);
+      onAssignmentChange?.(assignments.find(a => a.id === assignmentId)!);
     },
-    [state.assignments, onAssignmentChange, loadAssignments]
+    [deactivateMutation, assignments, onAssignmentChange]
   );
 
   const handleSetDefaultAssignment = useCallback(
     async (assignmentId: string) => {
-      try {
-        await dashboardAssignmentService.setDefaultAssignment(assignmentId);
-        await loadAssignments();
-        onAssignmentChange?.(state.assignments.find(a => a.id === assignmentId)!);
-      } catch (error) {
-        setState(prev => ({
-          ...prev,
-          error: error instanceof Error ? error.message : 'Failed to set default assignment',
-        }));
-      }
+      await setDefaultMutation.mutateAsync(assignmentId);
+      onAssignmentChange?.(assignments.find(a => a.id === assignmentId)!);
     },
-    [state.assignments, onAssignmentChange, loadAssignments]
+    [setDefaultMutation, assignments, onAssignmentChange]
   );
 
   const handleDeleteAssignment = useCallback(
@@ -145,31 +119,19 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
       if (!confirm(`Are you sure you want to delete the assignment for ${assignment.roleId}?`)) {
         return;
       }
-
-      try {
-        await dashboardAssignmentService.unassignDashboardFromRole(
-          assignment.roleId,
-          assignment.templateId
-        );
-        await loadAssignments();
-      } catch (error) {
-        setState(prev => ({
-          ...prev,
-          error: error instanceof Error ? error.message : 'Failed to delete assignment',
-        }));
-      }
+      await deleteMutation.mutateAsync({ roleId: assignment.roleId, templateId: assignment.templateId });
     },
-    [loadAssignments]
+    [deleteMutation]
   );
 
-  const filteredAssignments = state.assignments.filter(assignment => {
-    if (state.filters.roles && !state.filters.roles.includes(assignment.roleId)) {
+  const filteredAssignments = assignments.filter(assignment => {
+    if (filters.roles && !filters.roles.includes(assignment.roleId)) {
       return false;
     }
-    if (state.filters.templates && !state.filters.templates.includes(assignment.templateId)) {
+    if (filters.templates && !filters.templates.includes(assignment.templateId)) {
       return false;
     }
-    if (state.filters.isActive !== undefined && assignment.isActive !== state.filters.isActive) {
+    if (filters.isActive !== undefined && assignment.isActive !== filters.isActive) {
       return false;
     }
     return true;
@@ -177,20 +139,22 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
 
   const roleStats = React.useMemo(() => {
     const stats = {
-      total: state.assignments.length,
-      active: state.assignments.filter(a => a.isActive).length,
-      inactive: state.assignments.filter(a => !a.isActive).length,
+      total: assignments.length,
+      active: assignments.filter(a => a.isActive).length,
+      inactive: assignments.filter(a => !a.isActive).length,
       byRole: {} as Record<UserRole, number>,
     };
 
-    state.assignments.forEach(assignment => {
+    assignments.forEach(assignment => {
       stats.byRole[assignment.roleId] = (stats.byRole[assignment.roleId] || 0) + 1;
     });
 
     return stats;
-  }, [state.assignments]);
+  }, [assignments]);
 
-  if (state.isLoading) {
+  const error = queryError?.message || null;
+
+  if (isLoading) {
     return (
       <div className={cn('flex items-center justify-center h-64', className)}>
         <div className="flex items-center space-x-2 text-gray-600">
@@ -300,15 +264,9 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
       </div>
 
       {/* Error Display */}
-      {state.error && (
+      {error && (
         <div className="mx-6 mt-4 p-4 bg-red-50 border border-red-200 rounded-md">
-          <p className="text-sm text-red-600">{state.error}</p>
-          <button
-            onClick={() => setState(prev => ({ ...prev, error: null }))}
-            className="text-sm text-red-600 underline mt-1"
-          >
-            Dismiss
-          </button>
+          <p className="text-sm text-red-600">{error}</p>
         </div>
       )}
 
@@ -323,14 +281,11 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
                 <span className="text-sm font-medium text-gray-700">Filters:</span>
               </div>
               <select
-                value={state.filters.isActive?.toString() || ''}
+                value={filters.isActive?.toString() || ''}
                 onChange={e =>
-                  setState(prev => ({
+                  setFilters(prev => ({
                     ...prev,
-                    filters: {
-                      ...prev.filters,
-                      isActive: e.target.value === '' ? undefined : e.target.value === 'true',
-                    },
+                    isActive: e.target.value === '' ? undefined : e.target.value === 'true',
                   }))
                 }
                 className="px-3 py-1 border border-gray-300 rounded-md text-sm"
@@ -340,7 +295,7 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
                 <option value="false">Inactive Only</option>
               </select>
               <button
-                onClick={() => setState(prev => ({ ...prev, filters: {} }))}
+                onClick={() => setFilters({})}
                 className="text-sm text-blue-600 hover:text-blue-700"
               >
                 Clear Filters
@@ -507,25 +462,25 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
 
         {activeTab === 'versions' && (
           <DashboardVersionManager
-            templateId={state.selectedTemplate || 'director-template'}
+            templateId={selectedTemplate || 'director-template'}
             onVersionChange={version => {
-              setState(prev => ({ ...prev, selectedVersion: version.version }));
+              // UI-only state
             }}
           />
         )}
 
         {activeTab === 'analytics' && (
           <DashboardAnalyticsDashboard
-            templateId={state.selectedTemplate}
-            roleId={state.selectedRole}
+            templateId={selectedTemplate || undefined}
+            roleId={selectedRole || undefined}
           />
         )}
 
         {activeTab === 'history' && (
           <AssignmentHistoryPanel
-            history={state.assignmentHistory}
-            templateId={state.selectedTemplate}
-            roleId={state.selectedRole}
+            history={assignmentHistory}
+            templateId={selectedTemplate || undefined}
+            roleId={selectedRole || undefined}
           />
         )}
       </div>
@@ -535,9 +490,9 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <RoleAssignmentPanel
-              roleId={state.selectedRole || 'Director'}
+              roleId={selectedRole || 'Director'}
               onAssignmentUpdate={() => {
-                loadAssignments();
+                queryClient.invalidateQueries({ queryKey: ['dashboard', 'assignments'] });
                 setShowRolePanel(false);
               }}
             />
@@ -558,9 +513,9 @@ export const DashboardAssignmentManager: React.FC<DashboardAssignmentManagerProp
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <DashboardVersionManager
-              templateId={state.selectedTemplate || 'director-template'}
+              templateId={selectedTemplate || 'director-template'}
               onVersionChange={version => {
-                setState(prev => ({ ...prev, selectedVersion: version.version }));
+                // UI-only state
               }}
             />
             <div className="p-4 border-t border-gray-200">

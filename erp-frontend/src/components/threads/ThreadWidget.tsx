@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, RefreshCw, ExternalLink } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -6,8 +7,6 @@ import { threadService } from '../../services/threadService';
 import { useThreadContext } from '../../contexts/ThreadContext';
 import { resolveThreadRecordUrl } from '../../config/routeToPageMap';
 import type { ThreadWidgetSummary } from '../../types/threads';
-
-const BADGE_POLL_MS = 30000;
 
 function timeAgo(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime();
@@ -22,28 +21,17 @@ function timeAgo(isoString: string): string {
 export const ThreadWidget: React.FC = () => {
   const navigate = useNavigate();
   const { openPanel, setGlobalUnreadCount } = useThreadContext();
-  const [summary, setSummary] = useState<ThreadWidgetSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
 
-  const fetchSummary = useCallback(async () => {
-    try {
-      setError(false);
-      const data = await threadService.widgetSummary();
-      setSummary(data);
-      setGlobalUnreadCount(data.unread_count);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [setGlobalUnreadCount]);
+  const { data: summary, isLoading: loading, isError: error, refetch } = useQuery<ThreadWidgetSummary>({
+    queryKey: ['threads', 'widgetSummary'],
+    queryFn: threadService.widgetSummary,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
 
   useEffect(() => {
-    fetchSummary();
-    const timer = setInterval(fetchSummary, BADGE_POLL_MS);
-    return () => clearInterval(timer);
-  }, [fetchSummary]);
+    if (summary) setGlobalUnreadCount(summary.unread_count);
+  }, [summary, setGlobalUnreadCount]);
 
   const handleThreadClick = (thread: ThreadWidgetSummary['recent_threads'][number]) => {
     // page_url alone is the catalog's static list-page URL — resolve the
@@ -78,7 +66,7 @@ export const ThreadWidget: React.FC = () => {
         </div>
         <div className="flex items-center gap-1">
           <button
-            onClick={fetchSummary}
+            onClick={() => refetch()}
             title="Refresh"
             className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
           >
@@ -104,7 +92,7 @@ export const ThreadWidget: React.FC = () => {
       {!loading && error && (
         <div className="flex flex-col items-center justify-center h-20 gap-2">
           <p className="text-xs text-gray-500">Failed to load discussions</p>
-          <button onClick={fetchSummary} className="text-xs text-[#0a1857] hover:underline">
+          <button onClick={() => refetch()} className="text-xs text-[#0a1857] hover:underline">
             Retry
           </button>
         </div>

@@ -395,18 +395,28 @@ class PendingApprovalsPermissionTests(TestCase):
 
     def test_can_approve_without_can_view_still_allowed(self):
         with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
-            mock_resolve.return_value = SimpleNamespace(can_view=False, can_approve=True, can_edit=False)
+            # scope is required by _get_transfer_scope() (get_queryset(),
+            # reached once the permission check above passes) — SCOPE_GLOBAL
+            # keeps these tests focused on the can_view/can_approve gating
+            # they're actually regression-testing, not scope filtering.
+            mock_resolve.return_value = SimpleNamespace(
+                can_view=False, can_approve=True, can_edit=False, scope='global',
+            )
             response = self._call()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_can_view_without_can_approve_still_allowed(self):
         with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
-            mock_resolve.return_value = SimpleNamespace(can_view=True, can_approve=False, can_edit=False)
+            mock_resolve.return_value = SimpleNamespace(
+                can_view=True, can_approve=False, can_edit=False, scope='global',
+            )
             response = self._call()
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_neither_flag_denied(self):
         with patch('permissions.services.PermissionResolver.resolve') as mock_resolve:
-            mock_resolve.return_value = SimpleNamespace(can_view=False, can_approve=False, can_edit=False)
+            mock_resolve.return_value = SimpleNamespace(
+                can_view=False, can_approve=False, can_edit=False, scope='global',
+            )
             response = self._call()
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

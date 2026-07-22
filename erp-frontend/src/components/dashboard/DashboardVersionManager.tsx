@@ -1,5 +1,5 @@
 // Dashboard Version Manager - Manage dashboard template versions and rollbacks
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   GitBranch,
   Plus,
@@ -28,6 +28,7 @@ import {
 import { DashboardTemplate } from '../../types/dashboardTemplates';
 import { dashboardVersionService } from '../../services/dashboardAssignmentService';
 import { VersionHistoryPanel } from './VersionHistoryPanel';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 interface VersionFormData {
   changelog: string;
@@ -41,11 +42,8 @@ export const DashboardVersionManager: React.FC<DashboardVersionManagerProps> = (
   className = '',
   onVersionChange,
 }) => {
-  const [versions, setVersions] = useState<DashboardVersion[]>([]);
-  const [rollbackHistory, setRollbackHistory] = useState<DashboardRollbackPoint[]>([]);
+  const queryClient = useQueryClient();
   const [selectedVersion, setSelectedVersion] = useState<DashboardVersion | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'versions' | 'rollbacks' | 'create'>('versions');
 
   // Form states
@@ -59,147 +57,126 @@ export const DashboardVersionManager: React.FC<DashboardVersionManagerProps> = (
   const [rollbackReason, setRollbackReason] = useState('');
   const [showRollbackConfirm, setShowRollbackConfirm] = useState<DashboardVersion | null>(null);
 
-  // Load data on mount and when templateId changes
-  useEffect(() => {
-    loadVersions();
-    loadRollbackHistory();
-  }, [templateId]);
-
-  const loadVersions = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
+  const { data: versions = [], isLoading, error: queryError } = useQuery({
+    queryKey: ['dashboard', 'versions', templateId],
+    queryFn: async () => {
       const versionList = await dashboardVersionService.getVersions(templateId);
-      setVersions(versionList.sort((a, b) => b.version - a.version));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load versions');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [templateId]);
+      return versionList.sort((a, b) => b.version - a.version);
+    },
+  });
 
-  const loadRollbackHistory = useCallback(async () => {
-    try {
-      const history = await dashboardVersionService.getRollbackHistory(templateId);
-      setRollbackHistory(history);
-    } catch (err) {
-      console.error('Failed to load rollback history:', err);
-    }
-  }, [templateId]);
+  const { data: rollbackHistory = [] } = useQuery({
+    queryKey: ['dashboard', 'versions', 'rollbacks', templateId],
+    queryFn: async () => {
+      return dashboardVersionService.getRollbackHistory(templateId);
+    },
+  });
+
+  const createVersionMutation = useMutation({
+    mutationFn: async () => {
+      const latestVersion = await dashboardVersionService.getLatestVersion(templateId);
+      if (!latestVersion) {
+        throw new Error('No base template found');
+      }
+
+      const newTemplate: DashboardTemplate = {
+        ...latestVersion.template,
+      };
+
+      const newVersion = await dashboardVersionService.createVersion(
+        templateId,
+        newTemplate,
+        'current-admin',
+        formData.changelog
+      );
+
+      if (newVersion.metadata) {
+        newVersion.metadata.description = formData.description;
+        newVersion.metadata.tags = formData.tags;
+        newVersion.metadata.breaking_changes = formData.breaking_changes;
+      }
+
+      return newVersion;
+    },
+    onSuccess: (newVersion) => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'versions', templateId] });
+      setShowCreateForm(false);
+      setFormData({ changelog: '', description: '', tags: [], breaking_changes: false });
+      onVersionChange?.(newVersion);
+    },
+  });
+
+  const publishMutation = useMutation({
+    mutationFn: (version: DashboardVersion) =>
+      dashboardVersionService.publishVersion(templateId, version.version, 'current-admin'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'versions', templateId] });
+    },
+  });
+
+  const unpublishMutation = useMutation({
+    mutationFn: (version: DashboardVersion) =>
+      dashboardVersionService.unpublishVersion(templateId, version.version, 'current-admin'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'versions', templateId] });
+    },
+  });
+
+  const rollbackMutation = useMutation({
+    mutationFn: (targetVersion: DashboardVersion) =>
+      dashboardVersionService.rollbackToVersion(
+        templateId,
+        targetVersion.version,
+        'current-admin',
+        rollbackReason
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'versions', templateId] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'versions', 'rollbacks', templateId] });
+      setShowRollbackConfirm(null);
+      setRollbackReason('');
+    },
+  });
 
   const handleCreateVersion = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      setIsLoading(true);
-      setError(null);
-
       try {
-        // In a real implementation, this would get the template data from the form
-        // For now, we'll use a mock template based on the existing template
-        const latestVersion = await dashboardVersionService.getLatestVersion(templateId);
-        if (!latestVersion) {
-          throw new Error('No base template found');
-        }
-
-        const newTemplate: DashboardTemplate = {
-          ...latestVersion.template,
-          // In a real implementation, template modifications would be applied here
-        };
-
-        const newVersion = await dashboardVersionService.createVersion(
-          templateId,
-          newTemplate,
-          'current-admin', // In real app, this would be the current user ID
-          formData.changelog
-        );
-
-        // Update metadata
-        if (newVersion.metadata) {
-          newVersion.metadata.description = formData.description;
-          newVersion.metadata.tags = formData.tags;
-          newVersion.metadata.breaking_changes = formData.breaking_changes;
-        }
-
-        await loadVersions();
-        setShowCreateForm(false);
-        setFormData({
-          changelog: '',
-          description: '',
-          tags: [],
-          breaking_changes: false,
-        });
-
-        onVersionChange?.(newVersion);
+        await createVersionMutation.mutateAsync();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to create version');
-      } finally {
-        setIsLoading(false);
+        // Error handled by mutation error state
       }
     },
-    [templateId, formData, onVersionChange, loadVersions]
+    [createVersionMutation]
   );
 
   const handlePublishVersion = useCallback(
     async (version: DashboardVersion) => {
-      try {
-        await dashboardVersionService.publishVersion(templateId, version.version, 'current-admin');
-        await loadVersions();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to publish version');
-      }
+      await publishMutation.mutateAsync(version);
     },
-    [templateId, loadVersions]
+    [publishMutation]
   );
 
   const handleUnpublishVersion = useCallback(
     async (version: DashboardVersion) => {
-      try {
-        await dashboardVersionService.unpublishVersion(
-          templateId,
-          version.version,
-          'current-admin'
-        );
-        await loadVersions();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to unpublish version');
-      }
+      await unpublishMutation.mutateAsync(version);
     },
-    [templateId, loadVersions]
+    [unpublishMutation]
   );
 
   const handleRollback = useCallback(
     async (targetVersion: DashboardVersion) => {
       if (!rollbackReason.trim()) {
-        setError('Rollback reason is required');
         return;
       }
-
-      setIsLoading(true);
-      setError(null);
-
       try {
-        const rollbackPoint = await dashboardVersionService.rollbackToVersion(
-          templateId,
-          targetVersion.version,
-          'current-admin',
-          rollbackReason
-        );
-
-        await loadVersions();
-        await loadRollbackHistory();
-        setShowRollbackConfirm(null);
-        setRollbackReason('');
-
-        // Show success message
+        await rollbackMutation.mutateAsync(targetVersion);
         alert(`Successfully rolled back to version ${targetVersion.version}`);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to rollback version');
-      } finally {
-        setIsLoading(false);
+        // Error handled by mutation error state
       }
     },
-    [templateId, rollbackReason, loadVersions, loadRollbackHistory]
+    [rollbackMutation, rollbackReason]
   );
 
   const handleTagAdd = useCallback(
@@ -221,6 +198,7 @@ export const DashboardVersionManager: React.FC<DashboardVersionManagerProps> = (
     }));
   }, []);
 
+  const error = queryError?.message || createVersionMutation.error?.message || null;
   const latestVersion = versions.length > 0 ? versions[0] : null;
   const publishedVersions = versions.filter(v => v.isPublished);
 
@@ -321,7 +299,7 @@ export const DashboardVersionManager: React.FC<DashboardVersionManagerProps> = (
             <AlertTriangle className="h-5 w-5 text-red-400" />
             <p className="ml-3 text-sm text-red-600">{error}</p>
           </div>
-          <button onClick={() => setError(null)} className="text-sm text-red-600 underline mt-1">
+          <button onClick={() => queryClient.invalidateQueries({ queryKey: ['dashboard', 'versions', templateId] })} className="text-sm text-red-600 underline mt-1">
             Dismiss
           </button>
         </div>
@@ -599,15 +577,15 @@ export const DashboardVersionManager: React.FC<DashboardVersionManagerProps> = (
               </button>
               <button
                 type="submit"
-                disabled={isLoading || !formData.changelog.trim()}
+                disabled={createVersionMutation.isPending || !formData.changelog.trim()}
                 className={cn(
                   'flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-                  isLoading || !formData.changelog.trim()
+                  createVersionMutation.isPending || !formData.changelog.trim()
                     ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 )}
               >
-                {isLoading ? (
+                {createVersionMutation.isPending ? (
                   <>
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                     <span>Creating...</span>
@@ -665,10 +643,10 @@ export const DashboardVersionManager: React.FC<DashboardVersionManagerProps> = (
                 </button>
                 <button
                   onClick={() => handleRollback(showRollbackConfirm)}
-                  disabled={!rollbackReason.trim() || isLoading}
+                  disabled={!rollbackReason.trim() || rollbackMutation.isPending}
                   className={cn(
                     'flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-                    !rollbackReason.trim() || isLoading
+                    !rollbackReason.trim() || rollbackMutation.isPending
                       ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                       : 'bg-orange-600 text-white hover:bg-orange-700'
                   )}

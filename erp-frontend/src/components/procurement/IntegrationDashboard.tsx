@@ -1,5 +1,4 @@
-// src/components/procurement/IntegrationDashboard.tsx
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import {
   Database,
   TrendingUp,
@@ -13,6 +12,7 @@ import {
   BarChart3,
   RefreshCw,
 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useProcurementIntegration } from '../../hooks/useProcurementIntegration';
 import { procurementService } from '../../services/procurementService';
 import {
@@ -27,65 +27,48 @@ interface IntegrationDashboardProps {
 }
 
 export const IntegrationDashboard: React.FC<IntegrationDashboardProps> = ({ onRefresh }) => {
-  const [pendingGRNs, setPendingGRNs] = useState<PendingIntegration[]>([]);
-  const [pendingReturns, setPendingReturns] = useState<PendingIntegration[]>([]);
-  const [analytics, setAnalytics] = useState<ProcurementAnalytics | null>(null);
-  const [inventoryReport, setInventoryReport] = useState<InventoryImpactReport | null>(null);
-  const [accountingReport, setAccountingReport] = useState<AccountingImpactReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
+  const queryClient = useQueryClient();
   const { getPendingIntegrations } = useProcurementIntegration();
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
+  const { data: grnPending = [], isLoading: loadingGRNs } = useQuery<PendingIntegration[]>({
+    queryKey: ['pending-integrations', 'grn'],
+    queryFn: () => getPendingIntegrations({ type: 'grn' }),
+  });
 
-  const loadDashboardData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+  const { data: returnPending = [], isLoading: loadingReturns } = useQuery<PendingIntegration[]>({
+    queryKey: ['pending-integrations', 'return'],
+    queryFn: () => getPendingIntegrations({ type: 'return' }),
+  });
 
-      // Load pending integrations
-      const [grnPending, returnPending] = await Promise.all([
-        getPendingIntegrations({ type: 'grn' }),
-        getPendingIntegrations({ type: 'return' }),
-      ]);
+  const endDate = new Date().toISOString().split('T')[0];
+  const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      setPendingGRNs(grnPending);
-      setPendingReturns(returnPending);
+  const { data: analytics, isLoading: loadingAnalytics } = useQuery<ProcurementAnalytics>({
+    queryKey: ['procurement-analytics', startDate, endDate],
+    queryFn: () => procurementService.getProcurementAnalytics({ date_from: startDate, date_to: endDate }),
+  });
 
-      // Load analytics and reports
-      const endDate = new Date().toISOString().split('T')[0];
-      const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const { data: inventoryReport, isLoading: loadingInventory } = useQuery<InventoryImpactReport>({
+    queryKey: ['inventory-impact-report', startDate, endDate],
+    queryFn: () => procurementService.getInventoryImpactReport({ date_from: startDate, date_to: endDate }),
+  });
 
-      const [analyticsData, inventoryData, accountingData] = await Promise.all([
-        procurementService.getProcurementAnalytics({
-          date_from: startDate,
-          date_to: endDate,
-        }),
-        procurementService.getInventoryImpactReport({
-          date_from: startDate,
-          date_to: endDate,
-        }),
-        procurementService.getAccountingImpactReport({
-          date_from: startDate,
-          date_to: endDate,
-        }),
-      ]);
+  const { data: accountingReport, isLoading: loadingAccounting } = useQuery<AccountingImpactReport>({
+    queryKey: ['accounting-impact-report', startDate, endDate],
+    queryFn: () => procurementService.getAccountingImpactReport({ date_from: startDate, date_to: endDate }),
+  });
 
-      setAnalytics(analyticsData);
-      setInventoryReport(inventoryData);
-      setAccountingReport(accountingData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load dashboard data');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loading = loadingGRNs || loadingReturns || loadingAnalytics || loadingInventory || loadingAccounting;
+  const error = null;
+
+  const pendingGRNs = grnPending;
+  const pendingReturns = returnPending;
 
   const handleRefresh = () => {
-    loadDashboardData();
+    queryClient.invalidateQueries({ queryKey: ['pending-integrations'] });
+    queryClient.invalidateQueries({ queryKey: ['procurement-analytics'] });
+    queryClient.invalidateQueries({ queryKey: ['inventory-impact-report'] });
+    queryClient.invalidateQueries({ queryKey: ['accounting-impact-report'] });
     onRefresh?.();
   };
 

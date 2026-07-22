@@ -1,24 +1,17 @@
 import { GitBranch, Plus } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { automationService } from '../../services/automationService';
 import { WorkflowTemplate } from '@/types/automation.types';
 
 const WorkflowManagement: React.FC = () => {
   const navigate = useNavigate();
-  const [workflows, setWorkflows] = useState<WorkflowTemplate[]>([]);
-  const loadWorkflows = async () => {
-    try {
-      const response = await fetch('/api/automations/workflows/');
-      const data = await response.json();
-      setWorkflows(data);
-    } catch (error: unknown) {
-      console.error('Failed to load workflows:', error);
-    }
-  };
 
-  useEffect(() => {
-    loadWorkflows();
-  }, []);
+  const { data: workflows = [], isLoading } = useQuery<WorkflowTemplate[]>({
+    queryKey: ['automation-workflows'],
+    queryFn: () => automationService.getWorkflows(),
+  });
 
   return (
     <div>
@@ -34,7 +27,13 @@ const WorkflowManagement: React.FC = () => {
       </div>
 
       <div className="grid gap-4">
-        {workflows.map(workflow => (
+        {isLoading && (
+          <div className="text-center py-12 text-gray-500">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+          </div>
+        )}
+
+        {!isLoading && workflows.map(workflow => (
           <div key={workflow.id} className="bg-white rounded-lg border p-6">
             <div className="flex justify-between items-start">
               <div className="flex-1">
@@ -71,7 +70,7 @@ const WorkflowManagement: React.FC = () => {
           </div>
         ))}
 
-        {workflows.length === 0 && (
+        {!isLoading && workflows.length === 0 && (
           <div className="text-center py-12 text-gray-500">
             <GitBranch className="w-12 h-12 mx-auto mb-3 text-gray-300" />
             <p>No workflows yet. Create your first workflow.</p>

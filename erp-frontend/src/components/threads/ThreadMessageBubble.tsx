@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { Paperclip, ChevronDown, ChevronUp, Pencil, Trash2, Check, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { threadService } from '../../services/threadService';
@@ -15,37 +16,34 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
   const [showReaders, setShowReaders] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState(message.body);
-  const [editError, setEditError] = useState('');
-  const [saving, setSaving] = useState(false);
+
+  const editMutation = useMutation({
+    mutationFn: ({ messageId, body }: { messageId: number; body: string }) =>
+      threadService.editMessage(messageId, body),
+    onSuccess: (updated) => {
+      onUpdated(updated);
+      setEditing(false);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (messageId: number) => threadService.deleteMessage(messageId),
+    onSuccess: () => onDeleted(message.id),
+  });
 
   const time = new Date(message.created_at).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
   });
 
-  const handleSaveEdit = async () => {
+  const handleSaveEdit = () => {
     if (!editBody.trim()) return;
-    setSaving(true);
-    setEditError('');
-    try {
-      const updated = await threadService.editMessage(message.id, editBody.trim());
-      onUpdated(updated);
-      setEditing(false);
-    } catch {
-      setEditError('Failed to save edit.');
-    } finally {
-      setSaving(false);
-    }
+    editMutation.mutate({ messageId: message.id, body: editBody.trim() });
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!window.confirm('Delete this message?')) return;
-    try {
-      await threadService.deleteMessage(message.id);
-      onDeleted(message.id);
-    } catch {
-      // silent — message stays visible
-    }
+    deleteMutation.mutate(message.id);
   };
 
   if (message.is_system_message) {
@@ -112,11 +110,11 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
               className="w-full border border-[#0a1857] rounded-lg px-2 py-1 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#0a1857]"
               autoFocus
             />
-            {editError && <p className="text-xs text-red-600">{editError}</p>}
+            {editMutation.isError && <p className="text-xs text-red-600">Failed to save edit.</p>}
             <div className="flex gap-1">
               <button
                 onClick={handleSaveEdit}
-                disabled={saving || !editBody.trim()}
+                disabled={editMutation.isPending || !editBody.trim()}
                 className="flex items-center gap-1 px-2 py-1 bg-[#0a1857] text-white text-xs rounded hover:bg-[#0d1f6b] disabled:opacity-50"
               >
                 <Check className="w-3 h-3" /> Save

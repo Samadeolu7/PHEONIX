@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   X,
   Minus,
@@ -59,158 +60,148 @@ export const ThreadPanel: React.FC = () => {
     setActiveThread,
   } = useThreadContext();
   const { user } = useAuth();
-
-  // Page thread config (is_threadable, can_initiate, etc.)
-  const [pageConfig, setPageConfig] = useState<PageThreadConfig | null>(null);
-
-  // Threads list for this page+record
-  const [threads, setThreads] = useState<Thread[]>([]);
+  const queryClient = useQueryClient();
   const [selectedThreadId, setSelectedThreadId] = useState<number | null>(null);
-  const selectedThread = threads.find(t => t.id === selectedThreadId) ?? activeThread ?? null;
-
-  // Messages for selected thread
-  const [messages, setMessages] = useState<ThreadMessageItem[]>([]);
-  const [loadingMsgs, setLoadingMsgs] = useState(false);
-
-  // Participant management
+  const [creating, setCreating] = useState(false);
   const [showParticipantManager, setShowParticipantManager] = useState(false);
   const [participantSearch, setParticipantSearch] = useState('');
   const [participantSuggestions, setParticipantSuggestions] = useState<
     { id: number; username: string; full_name: string }[]
   >([]);
   const [participantError, setParticipantError] = useState('');
-
-  // Create thread flow
-  const [creating, setCreating] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createReason, setCreateReason] = useState<ThreadReason | ''>('');
-  const [createParticipants, setCreateParticipants] = useState<{ id: number; full_name: string }[]>(
-    []
-  );
+  const [createParticipants, setCreateParticipants] = useState<{ id: number; full_name: string }[]>([]);
   const [createSearch, setCreateSearch] = useState('');
-  const [createSearchResults, setCreateSearchResults] = useState<
-    { id: number; username: string; full_name: string }[]
-  >([]);
+  const [createSearchResults, setCreateSearchResults] = useState<{ id: number; username: string; full_name: string }[]>([]);
   const [createError, setCreateError] = useState('');
-
-  // Message input
   const { draft, setDraft, clearDraft } = useThreadDraft(selectedThreadId);
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState('');
   const [actionError, setActionError] = useState('');
   const [attachFile, setAttachFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Poll ref — keeps running even when minimised so the badge stays fresh
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastMsgIdRef = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // ── Load page config + threads when target changes ─────────────────────────
+  const threadKeys = {
+    pageConfig: (pageId: number) => ['threads', 'pageConfig', pageId] as const,
+    list: (params: Record<string, any>) => ['threads', 'list', params] as const,
+    messages: (threadId: number) => ['threads', 'messages', threadId] as const,
+    searchUsers: (q: string) => ['threads', 'searchUsers', q] as const,
+  };
+
+  const { data: pageConfig } = useQuery({
+    queryKey: threadKeys.pageConfig(activeTarget?.pageId ?? 0),
+    queryFn: () => threadService.pageConfig(activeTarget!.pageId),
+    enabled: !!activeTarget,
+    staleTime: 60_000,
+  });
+
+  const listParams = activeTarget
+    ? { page_id: activeTarget.pageId, ...(activeTarget.objectId ? { object_id: activeTarget.objectId } : {}) }
+    : {};
+  const { data: threads = [] } = useQuery({
+    queryKey: threadKeys.list(listParams),
+    queryFn: () => threadService.list(listParams),
+    enabled: !!activeTarget,
+    refetchInterval: panelState !== 'hidden' ? THREAD_LIST_POLL_MS : false,
+    staleTime: 5_000,
+  });
+
+  const selectedThread = threads.find(t => t.id === selectedThreadId) ?? activeThread ?? null;
+
+  const { data: messages = [], isLoading: loadingMsgs } = useQuery({
+    queryKey: threadKeys.messages(selectedThreadId ?? 0),
+    queryFn: async () => {
+      const msgs = await threadService.listMessages(selectedThreadId!);
+      threadService.markRead(selectedThreadId!).catch(() => {});
+      lastMsgIdRef.current = msgs.length ? msgs[msgs.length - 1].id : 0;
+      return msgs;
+    },
+    enabled: !!selectedThreadId,
+    staleTime: 2_000,
+    refetchInterval: panelState !== 'hidden' && selectedThreadId ? POLL_INTERVAL_MS : false,
+  });
+
+  const { data: participantSearchResults = [] } = useQuery({
+    queryKey: threadKeys.searchUsers(participantSearch),
+    queryFn: () => threadService.searchUsers(participantSearch || undefined),
+    enabled: showParticipantManager,
+    staleTime: 10_000,
+  });
+
+  const { data: createSearchResults: createSearchData = [] } = useQuery({
+    queryKey: threadKeys.searchUsers(createSearch),
+    queryFn: () => threadService.searchUsers(createSearch || undefined),
+    enabled: creating,
+    staleTime: 10_000,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: threadService.create,
+    onSuccess: (thread) => {
+      queryClient.setQueryData<Thread[]>(threadKeys.list(listParams), (old) => [thread, ...(old ?? [])]);
+      setSelectedThreadId(thread.id);
+      setCreating(false);
+      setCreateTitle('');
+      setCreateReason('');
+      setCreateParticipants([]);
+      setCreateSearch('');
+    },
+    onError: (e: any) => setCreateError(e?.response?.data?.detail ?? e?.message ?? 'Failed to create thread.'),
+  });
+
+  const closeMutation = useMutation({
+    mutationFn: threadService.close,
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Thread[]>(threadKeys.list(listParams), (old) => (old ?? []).map(t => t.id === updated.id ? updated : t));
+    },
+    onError: (e: any) => setActionError(e?.response?.data?.detail ?? 'Failed to close thread.'),
+  });
+
+  const reopenMutation = useMutation({
+    mutationFn: threadService.reopen,
+    onSuccess: (updated) => {
+      queryClient.setQueryData<Thread[]>(threadKeys.list(listParams), (old) => (old ?? []).map(t => t.id === updated.id ? updated : t));
+    },
+    onError: (e: any) => setActionError(e?.response?.data?.detail ?? 'Failed to reopen thread.'),
+  });
+
+  const postMessageMutation = useMutation({
+    mutationFn: ({ threadId, body, attachment }: { threadId: number; body: string; attachment?: File }) =>
+      threadService.postMessage(threadId, body, attachment),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['threads', 'messages'] });
+      clearDraft();
+      setAttachFile(null);
+    },
+    onError: () => {},
+  });
+
+  const addParticipantMutation = useMutation({
+    mutationFn: ({ threadId, userId }: { threadId: number; userId: number }) =>
+      threadService.addParticipant(threadId, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['threads', 'list'] });
+      setParticipantSearch('');
+      setParticipantSuggestions([]);
+    },
+    onError: () => setParticipantError('Failed to add participant.'),
+  });
+
+  const removeParticipantMutation = useMutation({
+    mutationFn: (participantId: number) => threadService.removeParticipant(participantId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['threads', 'list'] });
+    },
+    onError: () => setParticipantError('Failed to remove participant.'),
+  });
+
+  // ── Reset UI state when target changes ────────────────────────────────────
   useEffect(() => {
     if (!activeTarget) return;
-    setPageConfig(null);
-    setThreads([]);
     setSelectedThreadId(null);
-    setMessages([]);
     setCreating(false);
-
-    threadService
-      .pageConfig(activeTarget.pageId)
-      .then(setPageConfig)
-      .catch(() => {});
-
-    threadService
-      .list({
-        page_id: activeTarget.pageId,
-        ...(activeTarget.objectId ? { object_id: activeTarget.objectId } : {}),
-      })
-      .then(list => {
-        setThreads(list);
-        // Only auto-jump into a specific thread when one was explicitly
-        // requested (e.g. clicked from a notification/widget). Otherwise
-        // land on the discussion list — every thread on a shared page used
-        // to look the same (generic page title, no name), so silently
-        // auto-selecting "the first open one" just meant landing in an
-        // unlabelled conversation with no way to tell if it was the right
-        // one. Naming threads (see the create form) only helps if picking
-        // one is a deliberate step.
-        if (activeTarget.threadId) {
-          const target = list.find(t => t.id === activeTarget.threadId);
-          if (target) setSelectedThreadId(target.id);
-        }
-      })
-      .catch(() => {});
   }, [activeTarget]);
-
-  // ── Keep the thread list itself fresh while the panel stays open ─────────
-  // Messages within an already-selected thread already poll (see below) —
-  // but a thread someone ELSE started while this page was already open had
-  // no way to surface at all until the whole panel target changed (closing
-  // and reopening, or navigating away and back). This merges in anything
-  // new without disturbing the currently selected thread.
-  useEffect(() => {
-    if (!activeTarget || panelState === 'hidden') return;
-
-    const timer = setInterval(async () => {
-      try {
-        const list = await threadService.list({
-          page_id: activeTarget.pageId,
-          ...(activeTarget.objectId ? { object_id: activeTarget.objectId } : {}),
-        });
-        setThreads(list);
-      } catch {
-        // silent — next tick retries
-      }
-    }, THREAD_LIST_POLL_MS);
-
-    return () => clearInterval(timer);
-  }, [activeTarget, panelState]);
-
-  // ── Load messages when selected thread changes ─────────────────────────────
-  useEffect(() => {
-    if (!selectedThreadId) return;
-    setLoadingMsgs(true);
-    lastMsgIdRef.current = 0;
-
-    threadService
-      .listMessages(selectedThreadId)
-      .then(msgs => {
-        setMessages(msgs);
-        if (msgs.length) lastMsgIdRef.current = msgs[msgs.length - 1].id;
-        // Mark read
-        threadService.markRead(selectedThreadId).catch(() => {});
-      })
-      .finally(() => setLoadingMsgs(false));
-  }, [selectedThreadId]);
-
-  // ── Polling for new messages — runs even when minimised ──────────────────
-  useEffect(() => {
-    if (panelState === 'hidden' || !selectedThreadId) {
-      if (pollRef.current) clearInterval(pollRef.current);
-      return;
-    }
-
-    pollRef.current = setInterval(async () => {
-      try {
-        const newMsgs = await threadService.listMessages(selectedThreadId, lastMsgIdRef.current);
-        if (newMsgs.length) {
-          setMessages(prev => [...prev, ...newMsgs]);
-          lastMsgIdRef.current = newMsgs[newMsgs.length - 1].id;
-          // Only mark read when the panel is fully open
-          if (panelState === 'open') {
-            threadService.markRead(selectedThreadId).catch(() => {});
-          }
-        }
-      } catch {
-        // silent
-      }
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [panelState, selectedThreadId]);
 
   // ── Scroll to bottom when messages arrive ─────────────────────────────────
   useEffect(() => {
@@ -220,24 +211,8 @@ export const ThreadPanel: React.FC = () => {
   // ── Send message ──────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!selectedThreadId || (!draft.trim() && !attachFile)) return;
-    setSending(true);
-    setSendError('');
-    try {
-      const msg = await threadService.postMessage(
-        selectedThreadId,
-        draft.trim(),
-        attachFile ?? undefined
-      );
-      setMessages(prev => [...prev, msg]);
-      lastMsgIdRef.current = msg.id;
-      clearDraft();
-      setAttachFile(null);
-    } catch (e: any) {
-      setSendError(e?.response?.data?.detail ?? 'Failed to send. Try again.');
-    } finally {
-      setSending(false);
-    }
-  }, [selectedThreadId, draft, attachFile, clearDraft]);
+    postMessageMutation.mutate({ threadId: selectedThreadId, body: draft.trim(), attachment: attachFile ?? undefined });
+  }, [selectedThreadId, draft, attachFile, postMessageMutation]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -246,75 +221,32 @@ export const ThreadPanel: React.FC = () => {
     }
   };
 
-  // ── User search for participant picker ───────────────────────────────────
-  // A blank q lists branch staff (see threadService.searchUsers) — typing
-  // narrows it, but the list shows immediately on open with no typing
-  // required (loaded via the effects below when each picker opens).
-  const searchParticipantUsers = useCallback(async (q: string) => {
-    const results = await threadService.searchUsers(q).catch(() => []);
-    setParticipantSuggestions(results);
-  }, []);
-
-  const searchCreateUsers = useCallback(async (q: string) => {
-    const results = await threadService.searchUsers(q).catch(() => []);
-    setCreateSearchResults(results);
-  }, []);
-
-  useEffect(() => {
-    if (showParticipantManager) searchParticipantUsers('');
-  }, [showParticipantManager, searchParticipantUsers]);
-
-  useEffect(() => {
-    if (creating) searchCreateUsers('');
-  }, [creating, searchCreateUsers]);
-
   // ── Create new thread ─────────────────────────────────────────────────────
   const handleCreateThread = useCallback(async () => {
     if (!activeTarget) return;
     setCreateError('');
-    try {
-      const thread = await threadService.create({
-        page: activeTarget.pageId,
-        title: createTitle.trim() || undefined,
-        content_type: activeTarget.contentTypeId,
-        object_id: activeTarget.objectId,
-        reason: createReason || undefined,
-        participant_ids: createParticipants.map(p => p.id),
-      });
-      setThreads(prev => [thread, ...prev]);
-      setSelectedThreadId(thread.id);
-      setCreating(false);
-      setCreateTitle('');
-      setCreateReason('');
-      setCreateParticipants([]);
-      setCreateSearch('');
-    } catch (e: any) {
-      setCreateError(e?.response?.data?.detail ?? e?.message ?? 'Failed to create thread.');
-    }
-  }, [activeTarget, createTitle, createReason, createParticipants]);
+    createMutation.mutate({
+      page: activeTarget.pageId,
+      title: createTitle.trim() || undefined,
+      content_type: activeTarget.contentTypeId,
+      object_id: activeTarget.objectId,
+      reason: createReason || undefined,
+      participant_ids: createParticipants.map(p => p.id),
+    });
+  }, [activeTarget, createTitle, createReason, createParticipants, createMutation]);
 
   // ── Close / Reopen thread ─────────────────────────────────────────────────
   const handleClose = useCallback(async () => {
     if (!selectedThreadId) return;
     setActionError('');
-    try {
-      const updated = await threadService.close(selectedThreadId);
-      setThreads(prev => prev.map(t => (t.id === updated.id ? updated : t)));
-    } catch (e: any) {
-      setActionError(e?.response?.data?.detail ?? 'Failed to close thread.');
-    }
-  }, [selectedThreadId]);
+    closeMutation.mutate(selectedThreadId);
+  }, [selectedThreadId, closeMutation]);
 
   const handleReopen = useCallback(async () => {
     if (!selectedThreadId) return;
     setActionError('');
-    try {
-      const updated = await threadService.reopen(selectedThreadId);
-      setThreads(prev => prev.map(t => (t.id === updated.id ? updated : t)));
-    } catch (e: any) {
-      setActionError(e?.response?.data?.detail ?? 'Failed to reopen thread.');
-    }
-  }, [selectedThreadId]);
+    reopenMutation.mutate(selectedThreadId);
+  }, [selectedThreadId, reopenMutation]);
 
   // ── Not visible ───────────────────────────────────────────────────────────
   if (panelState === 'hidden') return null;
@@ -514,19 +446,9 @@ export const ThreadPanel: React.FC = () => {
                 <li key={p.id} className="flex items-center justify-between text-xs text-gray-600">
                   <span>{p.user_info.full_name}</span>
                   <button
-                    onClick={async () => {
-                      try {
-                        await threadService.removeParticipant(p.id);
-                        setThreads(prev =>
-                          prev.map(t =>
-                            t.id === selectedThread.id
-                              ? { ...t, participants: (t.participants ?? []).filter(x => x.id !== p.id) }
-                              : t
-                          )
-                        );
-                      } catch {
-                        setParticipantError('Failed to remove participant.');
-                      }
+                    onClick={() => {
+                      setParticipantError('');
+                      removeParticipantMutation.mutate(p.id);
                     }}
                     className="text-red-400 hover:text-red-600"
                     title="Remove participant"
@@ -542,34 +464,19 @@ export const ThreadPanel: React.FC = () => {
                 type="text"
                 placeholder="Search by name or username…"
                 value={participantSearch}
-                onChange={e => {
-                  setParticipantSearch(e.target.value);
-                  searchParticipantUsers(e.target.value);
-                }}
+                onChange={e => setParticipantSearch(e.target.value)}
                 className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
               />
-              {participantSuggestions.length > 0 && (
+              {participantSearchResults.length > 0 && (
                 <ul className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto">
-                  {participantSuggestions.map(u => (
+                  {participantSearchResults.map(u => (
                     <li key={u.id}>
                       <button
                         type="button"
-                        onClick={async () => {
+                        onClick={() => {
+                          if (!selectedThread) return;
                           setParticipantError('');
-                          setParticipantSearch('');
-                          setParticipantSuggestions([]);
-                          try {
-                            const p = await threadService.addParticipant(selectedThread.id, u.id);
-                            setThreads(prev =>
-                              prev.map(t =>
-                                t.id === selectedThread.id
-                                  ? { ...t, participants: [...(t.participants ?? []), p] }
-                                  : t
-                              )
-                            );
-                          } catch {
-                            setParticipantError('Failed to add participant.');
-                          }
+                          addParticipantMutation.mutate({ threadId: selectedThread.id, userId: u.id });
                         }}
                         className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
                       >
@@ -710,15 +617,12 @@ export const ThreadPanel: React.FC = () => {
                     type="text"
                     placeholder="Search by name or username…"
                     value={createSearch}
-                    onChange={e => {
-                      setCreateSearch(e.target.value);
-                      searchCreateUsers(e.target.value);
-                    }}
+                    onChange={e => setCreateSearch(e.target.value)}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
                   />
-                  {createSearchResults.length > 0 && (
+                  {createSearchData.length > 0 && (
                     <ul className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto">
-                      {createSearchResults.map(u => (
+                      {createSearchData.map(u => (
                         <li key={u.id}>
                           <button
                             type="button"
@@ -788,10 +692,8 @@ export const ThreadPanel: React.FC = () => {
                   key={msg.id}
                   message={msg}
                   isOwn={msg.author === user?.id}
-                  onUpdated={updated =>
-                    setMessages(prev => prev.map(m => (m.id === updated.id ? updated : m)))
-                  }
-                  onDeleted={id => setMessages(prev => prev.filter(m => m.id !== id))}
+                  onUpdated={() => queryClient.invalidateQueries({ queryKey: ['threads', 'messages'] })}
+                  onDeleted={() => queryClient.invalidateQueries({ queryKey: ['threads', 'messages'] })}
                 />
               ))}
               <div ref={messagesEndRef} />
@@ -848,7 +750,7 @@ export const ThreadPanel: React.FC = () => {
                     </button>
                     <button
                       onClick={handleSend}
-                      disabled={sending || (!draft.trim() && !attachFile)}
+                      disabled={postMessageMutation.isPending || (!draft.trim() && !attachFile)}
                       title="Send (Enter)"
                       className={cn(
                         'p-2 rounded-xl transition-colors',
@@ -857,7 +759,7 @@ export const ThreadPanel: React.FC = () => {
                           : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                       )}
                     >
-                      {sending ? (
+                      {postMessageMutation.isPending ? (
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       ) : (
                         <Send className="w-4 h-4" />
@@ -865,7 +767,7 @@ export const ThreadPanel: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                {sendError && <p className="text-xs text-red-600 mt-1">{sendError}</p>}
+                {postMessageMutation.isError && <p className="text-xs text-red-600 mt-1">Failed to send. Try again.</p>}
                 <input
                   ref={fileInputRef}
                   type="file"

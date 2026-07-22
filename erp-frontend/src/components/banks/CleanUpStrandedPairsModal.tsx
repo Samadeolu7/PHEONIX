@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { X, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import {
@@ -19,37 +20,38 @@ function formatNaira(value: string | null): string {
   return `₦${parseFloat(value).toLocaleString()}`;
 }
 
-/**
- * Global "Clean Up" scan across every bank account the user can see: finds
- * exceptions that were resolved standalone (the plain per-row Resolve
- * action, before it was properly paired against its real counterpart —
- * see UnresolveExceptionView) and reopens + properly links them. Always
- * previews first (dry_run) — this reopens exceptions the team already
- * closed, with no per-pair confirmation once the real run starts.
- *
- * Ambiguous exceptions (more than one plausible candidate) are never
- * auto-linked — that's exactly the case a wrong guess could misfile real
- * money. Instead each one is listed with its full candidate set so a
- * director can review and manually pick+link the right one, right here,
- * without hunting the exception down elsewhere in the app.
- */
 export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps> = ({
   onClose,
   onSuccess,
   onError,
 }) => {
-  const [preview, setPreview] = useState<BulkCleanUpStrandedPairsPreview | null>(null);
-  const [result, setResult] = useState<BulkCleanUpStrandedPairsResult | null>(null);
-  const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
   const [ambiguousList, setAmbiguousList] = useState<AmbiguousStrandedException[]>([]);
   const [showAmbiguous, setShowAmbiguous] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState<Record<number, number>>({});
   const [linkingId, setLinkingId] = useState<number | null>(null);
   const [manuallyLinkedCount, setManuallyLinkedCount] = useState(0);
   const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
+
+  const { data: preview, isLoading: loading } = useQuery<BulkCleanUpStrandedPairsPreview>({
+    queryKey: ['reconciliation', 'cleanupPreview'],
+    queryFn: async () => {
+      const data = await reconciliationService.bulkCleanUpStrandedPairsPreview();
+      setAmbiguousList(data.ambiguous);
+      return data;
+    },
+    staleTime: 60_000,
+    throwOnError: false,
+  });
+
+  const { data: result, mutate: confirmCleanUp, isPending: submitting } = useMutation({
+    mutationFn: () =>
+      reconciliationService.bulkCleanUpStrandedPairs({
+        resolution_notes: notes,
+        excluded_resolved_exception_ids: Array.from(excludedIds),
+      }),
+    onError: (err: any) => onError(err.message || 'Failed to clean up stranded pairs'),
+  });
 
   const toggleExcluded = (resolvedExceptionId: number) => {
     setExcludedIds((prev) => {
@@ -60,41 +62,9 @@ export const CleanUpStrandedPairsModal: React.FC<CleanUpStrandedPairsModalProps>
     });
   };
 
-  const loadPreview = () => {
-    setLoading(true);
-    return reconciliationService
-      .bulkCleanUpStrandedPairsPreview()
-      .then((data) => {
-        setPreview(data);
-        setAmbiguousList(data.ambiguous);
-      })
-      .catch((err: any) => {
-        onError(err.message || 'Failed to preview the clean-up scan');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  };
-
-  useEffect(() => {
-    loadPreview();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleConfirm = async () => {
+  const handleConfirm = () => {
     if (notes.trim().length < MIN_REASON_LENGTH) return;
-    setSubmitting(true);
-    try {
-      const data = await reconciliationService.bulkCleanUpStrandedPairs({
-        resolution_notes: notes,
-        excluded_resolved_exception_ids: Array.from(excludedIds),
-      });
-      setResult(data);
-    } catch (err: any) {
-      onError(err.message || 'Failed to clean up stranded pairs');
-    } finally {
-      setSubmitting(false);
-    }
+    confirmCleanUp();
   };
 
   const handleManualLink = async (row: AmbiguousStrandedException) => {

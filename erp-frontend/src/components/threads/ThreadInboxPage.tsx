@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, Search, ExternalLink, RefreshCw, Lock, Unlock } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -18,8 +19,6 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'all', label: 'All' },
 ];
 
-const INBOX_POLL_MS = 30000;
-
 function formatDate(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
@@ -37,36 +36,25 @@ export const ThreadInboxPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>('mine');
-  const [threads, setThreads] = useState<Thread[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
 
-  const fetchThreads = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, any> = {};
-      if (activeTab === 'unread') params.unread = true;
-      if (activeTab === 'closed') params.status = 'closed';
-      if (activeTab === 'mine') params.status = 'open';
-      if (activeTab === 'started') { params.status = 'open'; params.initiated_by = 'me'; }
-      // 'all' → no status filter (returns all threads the user can see)
-      if (search) params.search = search;
+  const buildParams = () => {
+    const params: Record<string, any> = {};
+    if (activeTab === 'unread') params.unread = true;
+    if (activeTab === 'closed') params.status = 'closed';
+    if (activeTab === 'mine') params.status = 'open';
+    if (activeTab === 'started') { params.status = 'open'; params.initiated_by = 'me'; }
+    if (search) params.search = search;
+    return params;
+  };
 
-      const data = await threadService.list(params);
-      setThreads(data);
-    } catch {
-      setThreads([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [activeTab, search]);
-
-  useEffect(() => {
-    fetchThreads();
-    const timer = setInterval(fetchThreads, INBOX_POLL_MS);
-    return () => clearInterval(timer);
-  }, [fetchThreads]);
+  const { data: threads = [], isLoading: loading, refetch } = useQuery<Thread[]>({
+    queryKey: ['threads', 'inbox', activeTab, search],
+    queryFn: () => threadService.list(buildParams()),
+    refetchInterval: 30_000,
+    staleTime: 5_000,
+  });
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,7 +98,7 @@ export const ThreadInboxPage: React.FC = () => {
         </div>
         <button
           type="button"
-          onClick={fetchThreads}
+          onClick={() => refetch()}
           title="Refresh"
           className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-500 transition-colors"
         >

@@ -1,5 +1,5 @@
 // Assignment History Panel - Display assignment history and audit trail
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   History,
   Calendar,
@@ -18,6 +18,7 @@ import { cn } from '../../lib/utils';
 import { UserRole } from '../../types/roles';
 import { DashboardAssignmentHistory } from '../../types/dashboardAssignment';
 import { dashboardAssignmentService } from '../../services/dashboardAssignmentService';
+import { useQuery } from '@tanstack/react-query';
 
 interface AssignmentHistoryPanelProps {
   history: DashboardAssignmentHistory[];
@@ -32,61 +33,37 @@ export const AssignmentHistoryPanel: React.FC<AssignmentHistoryPanelProps> = ({
   roleId,
   className = '',
 }) => {
-  const [history, setHistory] = useState<DashboardAssignmentHistory[]>(initialHistory);
-  const [filteredHistory, setFilteredHistory] =
-    useState<DashboardAssignmentHistory[]>(initialHistory);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Filters
   const [actionFilter, setActionFilter] = useState<string>('');
   const [userFilter, setUserFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
-    from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+    from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
     to: new Date(),
   });
 
-  useEffect(() => {
-    if (initialHistory.length === 0) {
-      loadHistory();
-    }
-  }, [templateId, roleId]);
+  const { data: fetchedHistory = [], isLoading, error } = useQuery({
+    queryKey: ['dashboard', 'assignments', 'history', templateId, roleId],
+    queryFn: async () => {
+      return dashboardAssignmentService.getAssignmentHistory(templateId, roleId);
+    },
+    enabled: initialHistory.length === 0,
+  });
 
-  useEffect(() => {
-    applyFilters();
-  }, [history, actionFilter, userFilter, searchTerm, dateRange]);
+  const history = initialHistory.length > 0 ? initialHistory : fetchedHistory;
 
-  const loadHistory = async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const historyData = await dashboardAssignmentService.getAssignmentHistory(templateId, roleId);
-      setHistory(historyData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load history');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const applyFilters = () => {
+  const filteredHistory = useMemo(() => {
     let filtered = [...history];
 
-    // Filter by action
     if (actionFilter) {
       filtered = filtered.filter(item => item.action === actionFilter);
     }
 
-    // Filter by user
     if (userFilter) {
       filtered = filtered.filter(item =>
         item.performedBy.toLowerCase().includes(userFilter.toLowerCase())
       );
     }
 
-    // Filter by search term
     if (searchTerm) {
       filtered = filtered.filter(
         item =>
@@ -96,13 +73,12 @@ export const AssignmentHistoryPanel: React.FC<AssignmentHistoryPanelProps> = ({
       );
     }
 
-    // Filter by date range
     filtered = filtered.filter(
       item => item.performedAt >= dateRange.from && item.performedAt <= dateRange.to
     );
 
-    setFilteredHistory(filtered);
-  };
+    return filtered;
+  }, [history, actionFilter, userFilter, searchTerm, dateRange]);
 
   const handleExportHistory = () => {
     const exportData = {
@@ -189,7 +165,7 @@ export const AssignmentHistoryPanel: React.FC<AssignmentHistoryPanelProps> = ({
           </button>
 
           <button
-            onClick={loadHistory}
+            onClick={() => window.location.reload()}
             className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
           >
             <RefreshCw className="h-4 w-4" />
@@ -294,7 +270,7 @@ export const AssignmentHistoryPanel: React.FC<AssignmentHistoryPanelProps> = ({
       {/* Error Display */}
       {error && (
         <div className="p-4 bg-red-50 border border-red-200 rounded-md">
-          <p className="text-sm text-red-600">{error}</p>
+          <p className="text-sm text-red-600">{error.message}</p>
         </div>
       )}
 

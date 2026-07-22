@@ -9,8 +9,7 @@ import {
   Filter,
   Search,
 } from 'lucide-react';
-import { hrService } from '../../services/hrService';
-import { useToast } from '../../contexts/ToastContext';
+import { useBonusDeductionRequests } from '../../hooks/useBonusDeductionRequests';
 import { BonusDeductionRequest, BonusDeductionRequestStatus } from '../../types/hr';
 
 interface BonusDeductionApprovalListProps {
@@ -22,10 +21,9 @@ export const BonusDeductionApprovalList: React.FC<BonusDeductionApprovalListProp
   requests,
   onRefresh,
 }) => {
-  const { success, error: showError } = useToast();
+  const { approveRequest, rejectRequest, isApproving, isRejecting } = useBonusDeductionRequests();
   const [selectedRequest, setSelectedRequest] = useState<BonusDeductionRequest | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
 
   const [filters, setFilters] = useState({
@@ -43,16 +41,11 @@ export const BonusDeductionApprovalList: React.FC<BonusDeductionApprovalListProp
       return;
     }
 
-    setIsProcessing(true);
-    try {
-      await hrService.approveBonusDeductionRequest(request.id);
-      success('Request approved successfully');
-      onRefresh();
-    } catch (err: any) {
-      showError(err.response?.data?.error || 'Failed to approve request');
-    } finally {
-      setIsProcessing(false);
-    }
+    approveRequest(request.id, {
+      onSuccess: () => {
+        onRefresh();
+      },
+    });
   };
 
   const handleRejectClick = (request: BonusDeductionRequest) => {
@@ -65,22 +58,19 @@ export const BonusDeductionApprovalList: React.FC<BonusDeductionApprovalListProp
     if (!selectedRequest) return;
 
     if (!rejectionReason.trim()) {
-      showError('Please provide a reason for rejection');
       return;
     }
 
-    setIsProcessing(true);
-    try {
-      await hrService.rejectBonusDeductionRequest(selectedRequest.id, rejectionReason);
-      success('Request rejected');
-      setShowRejectModal(false);
-      setSelectedRequest(null);
-      onRefresh();
-    } catch (err: any) {
-      showError(err.response?.data?.error || 'Failed to reject request');
-    } finally {
-      setIsProcessing(false);
-    }
+    rejectRequest(
+      { id: selectedRequest.id, reason: rejectionReason },
+      {
+        onSuccess: () => {
+          setShowRejectModal(false);
+          setSelectedRequest(null);
+          onRefresh();
+        },
+      }
+    );
   };
 
   const getStatusBadge = (request: BonusDeductionRequest) => {
@@ -258,14 +248,14 @@ export const BonusDeductionApprovalList: React.FC<BonusDeductionApprovalListProp
                   <div className="flex gap-2 ml-4">
                     <button
                       onClick={() => handleApprove(request)}
-                      disabled={isProcessing}
+                      disabled={isApproving || isRejecting}
                       className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
                     >
                       Approve
                     </button>
                     <button
                       onClick={() => handleRejectClick(request)}
-                      disabled={isProcessing}
+                      disabled={isApproving || isRejecting}
                       className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 text-sm font-medium"
                     >
                       Reject
@@ -303,11 +293,11 @@ export const BonusDeductionApprovalList: React.FC<BonusDeductionApprovalListProp
                   disabled={isProcessing || !rejectionReason.trim()}
                   className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 font-medium"
                 >
-                  {isProcessing ? 'Rejecting...' : 'Reject Request'}
+                  {isApproving || isRejecting ? 'Rejecting...' : 'Reject Request'}
                 </button>
                 <button
                   onClick={() => setShowRejectModal(false)}
-                  disabled={isProcessing}
+                  disabled={isApproving || isRejecting}
                   className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                 >
                   Cancel

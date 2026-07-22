@@ -1,5 +1,6 @@
 // src/components/receivables/WorkflowStatusIndicator.tsx
-import React, { useEffect, useState } from 'react';
+import React from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Play, Pause, CheckCircle, AlertTriangle, Clock, Settings, RefreshCw } from 'lucide-react';
 import { receivablesWorkflowService } from '../../services/receivablesWorkflowService';
 
@@ -16,56 +17,43 @@ export const WorkflowStatusIndicator: React.FC<WorkflowStatusIndicatorProps> = (
   showDetails = false,
   onWorkflowAction,
 }) => {
-  const [workflowStatus, setWorkflowStatus] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    loadWorkflowStatus();
-  }, [receivableId]);
+  const { data: workflowStatus, isLoading: loading, error: queryError } = useQuery({
+    queryKey: ['receivablesWorkflow', 'status', receivableId],
+    queryFn: () => receivablesWorkflowService.getWorkflowStatus(receivableId),
+    enabled: !!receivableId,
+    staleTime: 30_000,
+  });
 
-  const loadWorkflowStatus = async () => {
-    try {
-      setLoading(true);
-      const status = await receivablesWorkflowService.getWorkflowStatus(receivableId);
-      setWorkflowStatus(status);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load workflow status');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleStartWorkflow = async () => {
-    try {
-      await receivablesWorkflowService.startCollectionWorkflow(receivableId, 1); // Default workflow
-      await loadWorkflowStatus();
+  const startMutation = useMutation({
+    mutationFn: () => receivablesWorkflowService.startCollectionWorkflow(receivableId, 1),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['receivablesWorkflow', 'status', receivableId] });
       onWorkflowAction?.('start');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start workflow');
-    }
-  };
+    },
+    onError: (err: any) => console.error('Failed to start workflow:', err),
+  });
 
-  const handlePauseWorkflow = async (workflowId: number) => {
-    try {
-      await receivablesWorkflowService.pauseCollectionWorkflow(workflowId);
-      await loadWorkflowStatus();
-      onWorkflowAction?.('pause', workflowId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to pause workflow');
-    }
-  };
+  const pauseMutation = useMutation({
+    mutationFn: (workflowId: number) => receivablesWorkflowService.pauseCollectionWorkflow(workflowId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['receivablesWorkflow', 'status', receivableId] });
+      onWorkflowAction?.('pause');
+    },
+    onError: (err: any) => console.error('Failed to pause workflow:', err),
+  });
 
-  const handleResumeWorkflow = async (workflowId: number) => {
-    try {
-      await receivablesWorkflowService.resumeCollectionWorkflow(workflowId);
-      await loadWorkflowStatus();
-      onWorkflowAction?.('resume', workflowId);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resume workflow');
-    }
-  };
+  const resumeMutation = useMutation({
+    mutationFn: (workflowId: number) => receivablesWorkflowService.resumeCollectionWorkflow(workflowId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['receivablesWorkflow', 'status', receivableId] });
+      onWorkflowAction?.('resume');
+    },
+    onError: (err: any) => console.error('Failed to resume workflow:', err),
+  });
+
+  const error = queryError ? 'Failed to load workflow status' : null;
 
   if (loading) {
     return (
@@ -89,7 +77,7 @@ export const WorkflowStatusIndicator: React.FC<WorkflowStatusIndicatorProps> = (
     return (
       <div className={`flex items-center gap-2 ${className}`}>
         <button
-          onClick={handleStartWorkflow}
+          onClick={() => startMutation.mutate()}
           className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
           title="Start collection workflow"
         >
@@ -113,7 +101,7 @@ export const WorkflowStatusIndicator: React.FC<WorkflowStatusIndicatorProps> = (
         {activeRun && (
           <div className="flex items-center gap-1">
             <button
-              onClick={() => handlePauseWorkflow(activeRun.id)}
+              onClick={() => pauseMutation.mutate(activeRun.id)}
               className="p-1 text-yellow-600 hover:text-yellow-700"
               title="Pause workflow"
             >
@@ -166,7 +154,7 @@ export const WorkflowStatusIndicator: React.FC<WorkflowStatusIndicatorProps> = (
 
                 {run.status === 'paused' && (
                   <button
-                    onClick={() => handleResumeWorkflow(run.id)}
+                    onClick={() => resumeMutation.mutate(run.id)}
                     className="p-0.5 text-green-600 hover:text-green-700"
                     title="Resume workflow"
                   >

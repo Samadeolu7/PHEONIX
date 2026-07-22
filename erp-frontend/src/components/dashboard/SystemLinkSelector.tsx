@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, Link2, ChevronDown, ChevronRight, Check } from 'lucide-react';
 import { api } from '../../services/api';
 import styled from 'styled-components';
+import { useQuery } from '@tanstack/react-query';
 
 const SelectorContainer = styled.div`
   display: flex;
@@ -167,58 +168,37 @@ const SystemLinkSelector: React.FC<SystemLinkSelectorProps> = ({
   multiSelect: _multiSelect = false,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [groupedLinks, setGroupedLinks] = useState<any>({});
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [searching, setSearching] = useState(false);
 
-  useEffect(() => {
-    loadLinks();
-  }, []);
-
-  useEffect(() => {
-    if (searchQuery.length >= 2) {
-      performSearch();
-    } else {
-      setSearchResults([]);
-      setSearching(false);
-    }
-  }, [searchQuery]);
-
-  const loadLinks = async () => {
-    try {
+  const { data: groupedLinks = {}, isLoading: loading } = useQuery({
+    queryKey: ['systemLinks'],
+    queryFn: async () => {
       const response = await api.get('/pages/system-links/?grouped=true');
-      const data = response.data?.data || response.data;
-      setGroupedLinks(data);
+      return response.data?.data || response.data;
+    },
+  });
 
-      // Expand first category by default
-      const firstCategory = Object.keys(data)[0];
+  // Expand first category by default
+  useEffect(() => {
+    if (!loading && Object.keys(groupedLinks).length > 0 && expandedCategories.size === 0) {
+      const firstCategory = Object.keys(groupedLinks)[0];
       if (firstCategory) {
         setExpandedCategories(new Set([firstCategory]));
       }
-    } catch (error: unknown) {
-      console.error('Failed to load system links:', error);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [loading, groupedLinks, expandedCategories.size]);
 
-  const performSearch = async () => {
-    setSearching(true);
-    try {
+  const { data: searchResults = [], isLoading: searching } = useQuery({
+    queryKey: ['systemLinks', 'search', searchQuery],
+    queryFn: async () => {
       const response = await api.get(
         `/pages/system-links/search/?q=${encodeURIComponent(searchQuery)}`
       );
       const data = response.data?.data || response.data;
-      setSearchResults(data.results || []);
-    } catch (error: unknown) {
-      console.error('Search failed:', error);
-      setSearchResults([]);
-    } finally {
-      setSearching(false);
-    }
-  };
+      return data.results || [];
+    },
+    enabled: searchQuery.length >= 2,
+  });
 
   const toggleCategory = (category: string) => {
     const newExpanded = new Set(expandedCategories);

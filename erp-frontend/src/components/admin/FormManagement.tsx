@@ -1,57 +1,48 @@
 import { FormSchema } from '../../types/forms';
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { automationService } from '../../services/automationService';
 import { FormBuilder } from '../automation/FormBuilder';
 import { Plus, Edit2, Trash2, FileText } from 'lucide-react';
 
 const FormManagement: React.FC = () => {
-  const [forms, setForms] = useState<FormSchema[]>([]);
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState<FormSchema | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const loadForms = async () => {
-    try {
-      const response = await fetch('/api/automations/forms/');
-      const data = await response.json();
-      setForms(data);
-    } catch (error: unknown) {
-      console.error('Failed to load forms:', error);
-    }
-  };
+  const { data: forms = [], isLoading } = useQuery<FormSchema[]>({
+    queryKey: ['automation-forms'],
+    queryFn: () => automationService.getForms(),
+  });
 
-  useEffect(() => {
-    loadForms();
-  }, []);
-
-  const saveForm = async (form: FormSchema) => {
-    try {
-      const url = form.id ? `/api/automations/forms/${form.id}/` : '/api/automations/forms/';
-
-      const response = await fetch(url, {
-        method: form.id ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      });
-
-      if (response.ok) {
-        alert('Form saved successfully!');
-        loadForms();
-        setEditing(null);
-        setCreating(false);
+  const saveMutation = useMutation({
+    mutationFn: (form: FormSchema) => {
+      if (form.id) {
+        return automationService.updateForm(form.id, form);
       }
-    } catch (error: unknown) {
-      console.error('Failed to save form:', error);
-    }
+      return automationService.createForm(form);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['automation-forms'] });
+      setEditing(null);
+      setCreating(false);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => automationService.deleteForm(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['automation-forms'] });
+    },
+  });
+
+  const saveForm = (form: FormSchema) => {
+    saveMutation.mutate(form);
   };
 
-  const deleteForm = async (id: number) => {
+  const deleteForm = (id: number) => {
     if (!confirm('Delete this form?')) return;
-
-    try {
-      await fetch(`/api/automations/forms/${id}/`, { method: 'DELETE' });
-      loadForms();
-    } catch (error: unknown) {
-      console.error('Failed to delete form:', error);
-    }
+    deleteMutation.mutate(id);
   };
 
   if (creating || editing) {
@@ -72,7 +63,13 @@ const FormManagement: React.FC = () => {
       </div>
 
       <div className="grid gap-4">
-        {forms.map(form => (
+        {isLoading && (
+          <div className="text-center py-12 text-gray-500">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+          </div>
+        )}
+
+        {!isLoading && forms.map(form => (
           <div
             key={form.id}
             className="bg-white rounded-lg border p-6 hover:shadow-md transition-shadow"
@@ -115,7 +112,7 @@ const FormManagement: React.FC = () => {
           </div>
         ))}
 
-        {forms.length === 0 && (
+        {!isLoading && forms.length === 0 && (
           <div className="text-center py-12 text-gray-500">
             <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
             <p>No forms yet. Create your first form to get started.</p>

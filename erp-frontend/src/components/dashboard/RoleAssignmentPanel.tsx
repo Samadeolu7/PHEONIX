@@ -1,5 +1,5 @@
 // Role Assignment Panel - Interface for assigning dashboards to specific roles
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   Users,
   Monitor,
@@ -25,6 +25,7 @@ import {
   dashboardVersionService,
 } from '../../services/dashboardAssignmentService';
 import { dashboardTemplates } from '../../data/dashboardTemplates';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 interface AssignmentFormData {
   roleId: UserRole;
@@ -43,6 +44,7 @@ export const RoleAssignmentPanel: React.FC<RoleAssignmentPanelProps> = ({
   className = '',
   onAssignmentUpdate,
 }) => {
+  const queryClient = useQueryClient();
   const [formData, setFormData] = useState<AssignmentFormData>({
     roleId: initialRoleId,
     templateId: '',
@@ -55,119 +57,68 @@ export const RoleAssignmentPanel: React.FC<RoleAssignmentPanelProps> = ({
     effectiveUntil: undefined,
   });
 
-  const [availableTemplates, setAvailableTemplates] = useState<DashboardTemplate[]>([]);
-  const [availableVersions, setAvailableVersions] = useState<DashboardVersion[]>([]);
-  const [existingAssignments, setExistingAssignments] = useState<DashboardAssignment[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<DashboardTemplate | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState(false);
 
   const roles: UserRole[] = ['Director', 'Principal', 'Administrator', 'Registrar', 'Officer'];
 
-  // Load initial data
-  useEffect(() => {
-    loadData();
-  }, [formData.roleId]);
+  const availableTemplates = Object.values(dashboardTemplates);
 
-  // Load versions when template changes
-  useEffect(() => {
-    if (formData.templateId) {
-      loadVersions(formData.templateId);
-    }
-  }, [formData.templateId]);
-
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // Load available templates
-      const templates = Object.values(dashboardTemplates);
-      setAvailableTemplates(templates);
-
-      // Load existing assignments for the role
-      const assignments = await dashboardAssignmentService.getAssignmentsForRole(formData.roleId);
-      setExistingAssignments(assignments);
-
-      // Set default template if none selected
-      if (!formData.templateId && templates.length > 0) {
-        const roleTemplate = templates.find(t => t.role === formData.roleId);
-        if (roleTemplate) {
-          setFormData(prev => ({
-            ...prev,
-            templateId: roleTemplate.id,
-            description: `Dashboard assignment for ${formData.roleId}`,
-          }));
-        }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [formData.roleId, formData.templateId]);
-
-  const loadVersions = useCallback(
-    async (templateId: string) => {
-      try {
-        const versions = await dashboardVersionService.getVersions(templateId);
-        setAvailableVersions(versions);
-
-        // Set latest version as default
-        if (versions.length > 0) {
-          const latestVersion = Math.max(...versions.map(v => v.version));
-          setFormData(prev => ({ ...prev, templateVersion: latestVersion }));
-        }
-
-        // Set selected template for preview
-        const template = availableTemplates.find(t => t.id === templateId);
-        setSelectedTemplate(template || null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load versions');
-      }
+  const { data: existingAssignments = [], isLoading } = useQuery({
+    queryKey: ['dashboard', 'assignments', 'role', formData.roleId],
+    queryFn: async () => {
+      return dashboardAssignmentService.getAssignmentsForRole(formData.roleId);
     },
-    [availableTemplates]
-  );
+  });
+
+  const { data: availableVersions = [] } = useQuery({
+    queryKey: ['dashboard', 'versions', 'role', formData.templateId],
+    queryFn: async () => {
+      return dashboardVersionService.getVersions(formData.templateId);
+    },
+    enabled: !!formData.templateId,
+  });
+
+  const createAssignmentMutation = useMutation({
+    mutationFn: async () => {
+      const assignment = await dashboardAssignmentService.assignDashboardToRole(
+        formData.roleId,
+        formData.templateId,
+        formData.templateVersion,
+        'current-admin'
+      );
+
+      if (formData.isActive) {
+        await dashboardAssignmentService.activateAssignment(assignment.id, 'current-admin');
+      }
+
+      if (formData.isDefault) {
+        await dashboardAssignmentService.setDefaultAssignment(assignment.id);
+      }
+
+      assignment.metadata = {
+        description: formData.description,
+        tags: formData.tags,
+      };
+
+      return assignment;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard', 'assignments'] });
+      onAssignmentUpdate?.();
+    },
+  });
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      setIsLoading(true);
-      setError(null);
-
       try {
-        // Create the assignment
-        const assignment = await dashboardAssignmentService.assignDashboardToRole(
-          formData.roleId,
-          formData.templateId,
-          formData.templateVersion,
-          'current-admin' // In real app, this would be the current user ID
-        );
-
-        // Update assignment properties
-        if (formData.isActive) {
-          await dashboardAssignmentService.activateAssignment(assignment.id, 'current-admin');
-        }
-
-        if (formData.isDefault) {
-          await dashboardAssignmentService.setDefaultAssignment(assignment.id);
-        }
-
-        // Update metadata (in a real implementation, this would be a separate API call)
-        assignment.metadata = {
-          description: formData.description,
-          tags: formData.tags,
-        };
-
-        onAssignmentUpdate?.();
+        await createAssignmentMutation.mutateAsync();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to create assignment');
-      } finally {
-        setIsLoading(false);
+        // Error handled by mutation error state
       }
     },
-    [formData, onAssignmentUpdate]
+    [createAssignmentMutation]
   );
 
   const handleTagAdd = useCallback(
@@ -189,6 +140,37 @@ export const RoleAssignmentPanel: React.FC<RoleAssignmentPanelProps> = ({
     }));
   }, []);
 
+  // Set default template if none selected
+  React.useEffect(() => {
+    if (!formData.templateId && availableTemplates.length > 0) {
+      const roleTemplate = availableTemplates.find(t => t.role === formData.roleId);
+      if (roleTemplate) {
+        setFormData(prev => ({
+          ...prev,
+          templateId: roleTemplate.id,
+          description: `Dashboard assignment for ${formData.roleId}`,
+        }));
+      }
+    }
+  }, [formData.roleId, formData.templateId, availableTemplates]);
+
+  // Set selected template for preview
+  React.useEffect(() => {
+    if (formData.templateId) {
+      const template = availableTemplates.find(t => t.id === formData.templateId);
+      setSelectedTemplate(template || null);
+    }
+  }, [formData.templateId, availableTemplates]);
+
+  // Set latest version as default when versions change
+  React.useEffect(() => {
+    if (availableVersions.length > 0) {
+      const latestVersion = Math.max(...availableVersions.map(v => v.version));
+      setFormData(prev => ({ ...prev, templateVersion: latestVersion }));
+    }
+  }, [availableVersions]);
+
+  const error = createAssignmentMutation.error?.message || null;
   const existingAssignment = existingAssignments.find(a => a.templateId === formData.templateId);
   const hasConflict = existingAssignment && existingAssignment.isActive && formData.isActive;
 
@@ -542,15 +524,15 @@ export const RoleAssignmentPanel: React.FC<RoleAssignmentPanelProps> = ({
             <div className="flex justify-end space-x-3">
               <button
                 type="submit"
-                disabled={isLoading || !formData.templateId}
+                disabled={createAssignmentMutation.isPending || !formData.templateId}
                 className={cn(
                   'flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-medium transition-colors',
-                  isLoading || !formData.templateId
+                  createAssignmentMutation.isPending || !formData.templateId
                     ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
                     : 'bg-blue-600 text-white hover:bg-blue-700'
                 )}
               >
-                {isLoading ? (
+                {createAssignmentMutation.isPending ? (
                   <>
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                     <span>Creating...</span>

@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import { FEE_LINK_MAX_AMOUNT, MIN_REASON_LENGTH, type ReconciliationException } from '../../types/banks';
@@ -15,9 +16,6 @@ function formatAmount(value: string | null): string {
   return `₦${parseFloat(value).toLocaleString()}`;
 }
 
-// bank_only has only bank_amount, erp_only has only erp_amount — whichever
-// is present is the exception's resolve amount (mirrors the backend's
-// ReconciliationException.resolve_amount property).
 function resolveAmount(exc: ReconciliationException): string | null {
   return exc.bank_amount ?? exc.erp_amount;
 }
@@ -28,12 +26,6 @@ const TYPE_LABELS: Record<ReconciliationException['exception_type'], string> = {
   amount_diff: 'Amount difference',
 };
 
-// Fee = bank_only.bank_amount - erp_only.erp_amount, DEBIT only, for a
-// bank_only/erp_only pair — the bank-deducted-transfer-fee pattern
-// LinkResolveBankChargeView handles. Returns null for anything else
-// (bank_only+bank_only netting candidates, exact-amount matches, CREDIT
-// direction, or a shortfall where erp_only is larger) — those stay on the
-// plain link-resolve path. Mirrors bank_charge_fee (banks/reconciliation_utils.py).
 function bankChargeFee(
   a: ReconciliationException,
   b: ReconciliationException
@@ -49,57 +41,24 @@ function bankChargeFee(
   return { bankExc, erpExc, fee };
 }
 
-/**
- * Manually links this exception against a candidate on the same bank
- * account and resolves both at once — another bank_only exception of the
- * opposite direction (a compensating transfer: money sent to the wrong
- * bank, then clawed back), a bank_only/erp_only pair of the same direction
- * (the bank line and the ERP payment plausibly failed to auto-match), or
- * another erp_only exception of the opposite direction (an internal ERP
- * movement, e.g. a petty-cash relink, whose two legs net to zero with no
- * bank line ever expected). The server computes which candidates are valid
- * for this exception's own type/direction — see LinkCandidatesView
- * (banks/views.py).
- */
 export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
   exception,
   onClose,
   onSuccess,
   onError,
 }) => {
-  const [candidates, setCandidates] = useState<ReconciliationException[] | null>(null);
-  const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    reconciliationService
-      .getLinkCandidates(exception.id)
-      .then((results) => {
-        if (!cancelled) setCandidates(results);
-      })
-      .catch((err: any) => {
-        if (!cancelled) onError(err.message || 'Failed to load candidates');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exception.id]);
+  const { data: candidates, isLoading: loading } = useQuery({
+    queryKey: ['reconciliation', 'linkCandidates', exception.id],
+    queryFn: () => reconciliationService.getLinkCandidates(exception.id),
+    staleTime: 60_000,
+    throwOnError: false,
+  });
 
   const selectedCandidate = candidates?.find((c) => c.id === selectedId) ?? null;
   const selectedFee = selectedCandidate ? bankChargeFee(exception, selectedCandidate) : null;
-  // Cross-account erp_only pair = a phantom inter-bank transfer (recorded
-  // in the ERP, but neither leg reached its bank). Resolving it also posts
-  // counter entries reversing the recorded transaction — each bank GL is
-  // otherwise left permanently misstated by the amount. Surfaced as an
-  // explicit warning so the director knows real GL entries will be posted.
   const selectedPhantomTransfer =
     selectedCandidate &&
     exception.exception_type === 'erp_only' &&
@@ -108,33 +67,35 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
       ? selectedCandidate
       : null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedId || !selectedCandidate || notes.trim().length < MIN_REASON_LENGTH) return;
-    setSubmitting(true);
-    try {
+  const linkMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedId || !selectedCandidate || notes.trim().length < MIN_REASON_LENGTH) return;
       if (selectedFee) {
         const result = await reconciliationService.linkResolveBankCharge({
           bank_only_exception_id: selectedFee.bankExc.id,
           erp_only_exception_id: selectedFee.erpExc.id,
           resolution_notes: notes,
         });
-        onSuccess({ exception_a: result.bank_only_exception, exception_b: result.erp_only_exception });
-        onClose();
-        return;
+        return { exception_a: result.bank_only_exception, exception_b: result.erp_only_exception };
       }
-      const result = await reconciliationService.linkResolveExceptions({
+      return reconciliationService.linkResolveExceptions({
         exception_a_id: exception.id,
         exception_b_id: selectedId,
         resolution_notes: notes,
       });
-      onSuccess(result);
-      onClose();
-    } catch (err: any) {
-      onError(err.message || 'Failed to link exceptions together');
-    } finally {
-      setSubmitting(false);
-    }
+    },
+    onSuccess: (result) => {
+      if (result) {
+        onSuccess(result);
+        onClose();
+      }
+    },
+    onError: (err: any) => onError(err.message || 'Failed to link exceptions together'),
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    linkMutation.mutate();
   };
 
   return (
@@ -280,10 +241,10 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={submitting || !selectedId || notes.trim().length < MIN_REASON_LENGTH}
+              disabled={linkMutation.isPending || !selectedId || notes.trim().length < MIN_REASON_LENGTH}
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50"
             >
-              {submitting ? 'Linking…' : selectedFee ? 'Link as Bank Charge & Resolve Both' : 'Link & Resolve Both'}
+              {linkMutation.isPending ? 'Linking…' : selectedFee ? 'Link as Bank Charge & Resolve Both' : 'Link & Resolve Both'}
             </button>
           </div>
         </form>

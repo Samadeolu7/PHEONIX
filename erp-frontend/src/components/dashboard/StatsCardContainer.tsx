@@ -1,5 +1,5 @@
 // Stats card container with layout management and theming
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { StatsCard, StatsCardData } from './StatsCard';
 import { statsCalculationEngine } from '../../services/statsCalculationEngine';
 import { statsAggregationService } from '../../services/statsAggregationService';
@@ -7,6 +7,7 @@ import { UserRole } from '../../types/roles';
 import { PageId } from '../../types/permissions';
 import { cn } from '../../lib/utils';
 import { RefreshCw, Settings, Grid, List, BarChart3, TrendingUp } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 
 export interface StatsCardContainerProps {
   role: UserRole;
@@ -23,15 +24,6 @@ export interface StatsCardContainerProps {
   className?: string;
   onStatsUpdate?: (stats: StatsCardData[]) => void;
   onError?: (error: string) => void;
-}
-
-export interface StatsContainerState {
-  stats: StatsCardData[];
-  aggregatedStats: StatsCardData[];
-  isLoading: boolean;
-  error: string | null;
-  lastRefresh: Date | null;
-  visibleStats: Set<string>;
 }
 
 const layoutClasses = {
@@ -68,7 +60,7 @@ const themeConfigs = {
   },
   mixed: {
     container: 'bg-white',
-    card: 'mixed', // Will cycle through different themes
+    card: 'mixed',
   },
 };
 
@@ -88,214 +80,144 @@ export const StatsCardContainer: React.FC<StatsCardContainerProps> = ({
   onStatsUpdate,
   onError,
 }) => {
-  const [state, setState] = useState<StatsContainerState>({
-    stats: [],
-    aggregatedStats: [],
-    isLoading: true,
-    error: null,
-    lastRefresh: null,
-    visibleStats: new Set(),
-  });
-
   const [viewMode, setViewMode] = useState<'individual' | 'aggregated' | 'mixed'>('mixed');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [visibleStats, setVisibleStats] = useState<Set<string>>(new Set());
 
-  // Memoized theme configuration
   const themeConfig = useMemo(() => themeConfigs[theme], [theme]);
   const layoutConfig = useMemo(() => layoutClasses[layout], [layout]);
 
-  // Load initial stats
-  const loadStats = useCallback(async () => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
+  const { data: individualStats = [], isLoading: isLoadingIndividual, error: individualError } = useQuery({
+    queryKey: ['stats', 'role', role, modules, permissions],
+    queryFn: async () => {
+      return statsCalculationEngine.calculateStatsForRole(role, modules, permissions);
+    },
+  });
 
-    try {
-      // Load individual module stats
-      const individualStats = await statsCalculationEngine.calculateStatsForRole(
-        role,
-        modules,
-        permissions
-      );
+  const { data: aggregatedStats = [] } = useQuery({
+    queryKey: ['stats', 'aggregated', role, modules, permissions],
+    queryFn: async () => {
+      return statsAggregationService.aggregateStatsForRole(role, modules, permissions);
+    },
+    enabled: showAggregated,
+  });
 
-      // Load aggregated stats if enabled
-      let aggregatedStats: StatsCardData[] = [];
-      if (showAggregated) {
-        aggregatedStats = await statsAggregationService.aggregateStatsForRole(
-          role,
-          modules,
-          permissions
-        );
-      }
+  const isLoading = isLoadingIndividual;
+  const error = individualError?.message || null;
 
-      // Initialize visible stats (all visible by default)
+  // Initialize visible stats when data loads
+  useEffect(() => {
+    const allStatsIds = [...individualStats, ...aggregatedStats].map(stat => stat.id);
+    if (allStatsIds.length > 0 && visibleStats.size === 0) {
+      setVisibleStats(new Set(allStatsIds));
+    }
+  }, [individualStats, aggregatedStats, visibleStats.size]);
+
+  // Notify parent on stats update
+  useEffect(() => {
+    if (onStatsUpdate && (individualStats.length > 0 || aggregatedStats.length > 0)) {
+      onStatsUpdate([...individualStats, ...aggregatedStats]);
+    }
+  }, [individualStats, aggregatedStats, onStatsUpdate]);
+
+  // Enable real-time updates
+  useEffect(() => {
+    if (enableRealTime) {
       const allStatsIds = [...individualStats, ...aggregatedStats].map(stat => stat.id);
-      const visibleStats = new Set(allStatsIds);
-
-      setState(prev => ({
-        ...prev,
-        stats: individualStats,
-        aggregatedStats,
-        isLoading: false,
-        lastRefresh: new Date(),
-        visibleStats,
-      }));
-
-      // Notify parent component
-      if (onStatsUpdate) {
-        onStatsUpdate([...individualStats, ...aggregatedStats]);
-      }
-
-      // Enable real-time updates
-      if (enableRealTime) {
+      if (allStatsIds.length > 0) {
+        const handleRealTimeUpdate = (updatedStats: StatsCardData[]) => {
+          setVisibleStats(prev => new Set(prev));
+          setLastRefresh(new Date());
+          if (onStatsUpdate) {
+            onStatsUpdate(updatedStats);
+          }
+        };
         statsCalculationEngine.enableRealTimeUpdates(allStatsIds, handleRealTimeUpdate);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load stats';
-      setState(prev => ({
-        ...prev,
-        isLoading: false,
-        error: errorMessage,
-      }));
-
-      if (onError) {
-        onError(errorMessage);
+        return () => {
+          statsCalculationEngine.disableRealTimeUpdates();
+        };
       }
     }
-  }, [role, modules, permissions, showAggregated, enableRealTime, onStatsUpdate, onError]);
+  }, [enableRealTime, individualStats, aggregatedStats, onStatsUpdate]);
 
-  // Handle real-time updates
-  const handleRealTimeUpdate = useCallback(
-    (updatedStats: StatsCardData[]) => {
-      setState(prev => {
-        const newStats = [...prev.stats];
-        const newAggregatedStats = [...prev.aggregatedStats];
-
-        updatedStats.forEach(updatedStat => {
-          // Update individual stats
-          const individualIndex = newStats.findIndex(stat => stat.id === updatedStat.id);
-          if (individualIndex >= 0) {
-            newStats[individualIndex] = updatedStat;
-          }
-
-          // Update aggregated stats
-          const aggregatedIndex = newAggregatedStats.findIndex(stat => stat.id === updatedStat.id);
-          if (aggregatedIndex >= 0) {
-            newAggregatedStats[aggregatedIndex] = updatedStat;
-          }
-        });
-
-        return {
-          ...prev,
-          stats: newStats,
-          aggregatedStats: newAggregatedStats,
-          lastRefresh: new Date(),
-        };
-      });
-
-      if (onStatsUpdate) {
-        onStatsUpdate(updatedStats);
-      }
-    },
-    [onStatsUpdate]
-  );
-
-  // Manual refresh
   const handleRefresh = useCallback(async () => {
     if (isRefreshing) return;
-
     setIsRefreshing(true);
-    try {
-      await loadStats();
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [isRefreshing, loadStats]);
+    setLastRefresh(new Date());
+    setIsRefreshing(false);
+  }, [isRefreshing]);
 
-  // Refresh individual stat
   const handleStatRefresh = useCallback(
     async (statId: string) => {
       try {
         const refreshedStats = await statsCalculationEngine.refreshStats([statId]);
         if (refreshedStats.length > 0) {
-          handleRealTimeUpdate(refreshedStats);
+          setLastRefresh(new Date());
         }
-      } catch (error) {
-        console.error('Failed to refresh stat:', statId, error);
+      } catch (err) {
+        console.error('Failed to refresh stat:', statId, err);
       }
     },
-    [handleRealTimeUpdate]
+    []
   );
 
-  // Toggle stat visibility
   const handleVisibilityToggle = useCallback((statId: string, visible: boolean) => {
-    setState(prev => {
-      const newVisibleStats = new Set(prev.visibleStats);
+    setVisibleStats(prev => {
+      const newSet = new Set(prev);
       if (visible) {
-        newVisibleStats.add(statId);
+        newSet.add(statId);
       } else {
-        newVisibleStats.delete(statId);
+        newSet.delete(statId);
       }
-      return {
-        ...prev,
-        visibleStats: newVisibleStats,
-      };
+      return newSet;
     });
   }, []);
 
-  // Get stats to display based on view mode
+  // Notify parent of errors
+  useEffect(() => {
+    if (error && onError) {
+      onError(error);
+    }
+  }, [error, onError]);
+
   const displayStats = useMemo(() => {
     let stats: StatsCardData[] = [];
 
     switch (viewMode) {
       case 'individual':
-        stats = state.stats;
+        stats = individualStats;
         break;
       case 'aggregated':
-        stats = state.aggregatedStats;
+        stats = aggregatedStats;
         break;
       case 'mixed':
       default:
-        // Mix aggregated and individual stats, prioritizing aggregated
         stats = [
-          ...state.aggregatedStats,
-          ...state.stats.filter(
-            stat => !state.aggregatedStats.some(aggStat => aggStat.category === stat.category)
+          ...aggregatedStats,
+          ...individualStats.filter(
+            stat => !aggregatedStats.some(aggStat => aggStat.category === stat.category)
           ),
         ];
         break;
     }
 
-    // Filter by visibility and apply max cards limit
     return stats
-      .filter(stat => state.visibleStats.has(stat.id))
+      .filter(stat => visibleStats.has(stat.id))
       .sort((a, b) => (b.priority || 0) - (a.priority || 0))
       .slice(0, maxCards);
-  }, [state.stats, state.aggregatedStats, state.visibleStats, viewMode, maxCards]);
+  }, [individualStats, aggregatedStats, visibleStats, viewMode, maxCards]);
 
-  // Get card theme for mixed theme mode
   const getCardTheme = useCallback(
     (index: number) => {
       if (theme !== 'mixed') return theme;
-
       const themes: Array<'light' | 'dark' | 'gradient'> = ['light', 'gradient', 'dark'];
       return themes[index % themes.length];
     },
     [theme]
   );
 
-  // Initialize stats on mount
-  useEffect(() => {
-    loadStats();
-
-    // Cleanup real-time updates on unmount
-    return () => {
-      if (enableRealTime) {
-        statsCalculationEngine.disableRealTimeUpdates();
-      }
-    };
-  }, [loadStats, enableRealTime]);
-
-  // Loading state
-  if (state.isLoading) {
+  if (isLoading) {
     return (
       <div className={cn('rounded-lg p-6', themeConfig.container, className)}>
         <div className={cn(layoutConfig.container, layoutConfig.responsive)}>
@@ -316,13 +238,12 @@ export const StatsCardContainer: React.FC<StatsCardContainerProps> = ({
     );
   }
 
-  // Error state
-  if (state.error) {
+  if (error) {
     return (
       <div className={cn('rounded-lg p-6 border border-red-200 bg-red-50', className)}>
         <div className="text-center">
           <div className="text-red-600 mb-2">Failed to load stats</div>
-          <div className="text-sm text-red-500 mb-4">{state.error}</div>
+          <div className="text-sm text-red-500 mb-4">{error}</div>
           <button
             onClick={handleRefresh}
             className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
@@ -341,9 +262,9 @@ export const StatsCardContainer: React.FC<StatsCardContainerProps> = ({
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center space-x-4">
             <h3 className="text-lg font-semibold">Dashboard Stats</h3>
-            {state.lastRefresh && (
+            {lastRefresh && (
               <span className="text-sm text-gray-500">
-                Last updated: {state.lastRefresh.toLocaleTimeString()}
+                Last updated: {lastRefresh.toLocaleTimeString()}
               </span>
             )}
           </div>
@@ -426,7 +347,7 @@ export const StatsCardContainer: React.FC<StatsCardContainerProps> = ({
               refreshInterval={refreshInterval}
               onRefresh={handleStatRefresh}
               onVisibilityToggle={handleVisibilityToggle}
-              isVisible={state.visibleStats.has(stat.id)}
+              isVisible={visibleStats.has(stat.id)}
               className={cn(
                 layout === 'list' && 'w-full',
                 'group hover:shadow-lg transition-shadow duration-200'

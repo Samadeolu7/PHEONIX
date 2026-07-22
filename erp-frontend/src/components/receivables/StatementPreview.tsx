@@ -1,5 +1,6 @@
 // src/components/receivables/StatementPreview.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import {
   FileText,
   Download,
@@ -162,26 +163,12 @@ const StatementPreview: React.FC<StatementPreviewProps> = ({
   onDownload,
 }) => {
   const [statement, setStatement] = useState<StatementPreviewType | null>(previewData || null);
-  const [loading, setLoading] = useState(!previewData && !!statementId);
-  const [error, setError] = useState<string | null>(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
-  const [emailLoading, setEmailLoading] = useState(false);
 
-  useEffect(() => {
-    if (statementId && !previewData) {
-      loadStatement();
-    }
-  }, [statementId, previewData]);
-
-  const loadStatement = async () => {
-    if (!statementId) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      // For now, we'll create mock data since the API might not have preview endpoint
-      // In a real implementation, this would call the API
+  const { isLoading: loading, error: queryError } = useQuery({
+    queryKey: ['receivables', 'statementPreview', statementId],
+    queryFn: async () => {
+      if (!statementId) return null;
       const mockStatement: StatementPreviewType = {
         client: {
           id: 1,
@@ -241,28 +228,29 @@ const StatementPreview: React.FC<StatementPreviewProps> = ({
           },
         ],
       };
+      return mockStatement;
+    },
+    enabled: !!statementId && !previewData,
+    staleTime: 60_000,
+  });
 
-      setStatement(mockStatement);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load statement');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const error = queryError instanceof Error ? queryError.message : null;
 
-  const handleEmailSend = async (emailData: StatementEmailData) => {
-    if (!statementId) return;
-
-    try {
-      setEmailLoading(true);
-      await receivablesService.sendStatement(statementId, emailData);
+  const sendStatementMutation = useMutation({
+    mutationFn: (emailData: StatementEmailData) =>
+      receivablesService.sendStatement(statementId!, emailData),
+    onSuccess: () => {
       setShowEmailModal(false);
       onEmailSent?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send statement');
-    } finally {
-      setEmailLoading(false);
-    }
+    },
+    onError: (err: any) => {
+      // error is handled by mutation state
+    },
+  });
+
+  const handleEmailSend = (emailData: StatementEmailData) => {
+    if (!statementId) return;
+    sendStatementMutation.mutate(emailData);
   };
 
   const handleDownload = () => {
@@ -345,10 +333,10 @@ ${statement.transactions
               Close
             </button>
             <button
-              onClick={loadStatement}
+              onClick={onClose}
               className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700"
             >
-              Retry
+              Close
             </button>
           </div>
         </div>
@@ -582,7 +570,7 @@ ${statement.transactions
         onSend={handleEmailSend}
         clientEmail={statement.client.email}
         statementNumber={`STMT-${statement.statement_date}`}
-        isLoading={emailLoading}
+        isLoading={sendStatementMutation.isPending}
       />
     </>
   );

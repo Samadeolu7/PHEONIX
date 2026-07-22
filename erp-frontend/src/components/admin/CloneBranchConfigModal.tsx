@@ -8,7 +8,8 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import { Branch, CloneConfigResult, branchService } from '../../services/branchService';
+import { Branch, CloneConfigResult } from '../../services/branchService';
+import { useCloneBranchConfig } from '../../hooks/useBranches';
 
 interface Props {
   isOpen: boolean;
@@ -46,6 +47,7 @@ const label = (key: string) => LABEL_MAP[key] ?? key.replace(/_/g, ' ');
 type Step = 'form' | 'cloning' | 'result';
 
 const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) => {
+  const { mutateAsync: cloneConfig, isPending } = useCloneBranchConfig();
   const [step, setStep] = useState<Step>('form');
   const [sourceId, setSourceId] = useState<string>('');
   const [targetId, setTargetId] = useState<string>('');
@@ -92,7 +94,10 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
     setStep('cloning');
     setErrorMsg('');
     try {
-      const res = await branchService.cloneConfig(activeSourceId, activeTargetId);
+      const res = await cloneConfig({
+        sourceBranchId: activeSourceId,
+        targetBranchId: activeTargetId,
+      });
       setResult(res);
       setStep('result');
     } catch (err: any) {

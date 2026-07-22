@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { X, AlertTriangle, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import type {
@@ -16,51 +17,25 @@ function formatNaira(value: string): string {
   return `₦${parseFloat(value).toLocaleString()}`;
 }
 
-/**
- * Creates one Discussions thread per officer for exceptions that have no
- * bank-side match anywhere — not the ambiguous/exact/fee-tolerant pairs
- * Clean Up handles (those already have real bank money nearby), but the
- * genuinely unexplained set worth a formal evidence request. Always
- * previews first — this messages real staff, with no per-thread
- * confirmation once the real run starts.
- *
- * Each officer's row expands to the full item list (amount, date,
- * narration) with a checkbox per item, so a director can drop specific
- * items before sending — e.g. one they already know the answer for. An
- * officer whose every item gets unchecked is skipped entirely rather than
- * sent an empty thread.
- */
 export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceThreadsModalProps> = ({
   onClose,
   onSuccess,
   onError,
 }) => {
-  const [preview, setPreview] = useState<BulkCreateOfficerEvidenceThreadsPreview | null>(null);
-  const [result, setResult] = useState<BulkCreateOfficerEvidenceThreadsResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [expandedOfficerId, setExpandedOfficerId] = useState<number | null>(null);
   const [excludedItemIds, setExcludedItemIds] = useState<Set<number>>(new Set());
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    reconciliationService
-      .bulkCreateOfficerEvidenceThreadsPreview()
-      .then((data) => {
-        if (!cancelled) setPreview(data);
-      })
-      .catch((err: any) => {
-        if (!cancelled) onError(err.message || 'Failed to preview evidence requests');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const { data: preview, isLoading: loading } = useQuery<BulkCreateOfficerEvidenceThreadsPreview>({
+    queryKey: ['reconciliation', 'evidencePreview'],
+    queryFn: () => reconciliationService.bulkCreateOfficerEvidenceThreadsPreview(),
+    staleTime: 60_000,
+    throwOnError: false,
+  });
+
+  const { data: result, mutate: confirmCreate, isPending: submitting } = useMutation({
+    mutationFn: () => reconciliationService.bulkCreateOfficerEvidenceThreads(Array.from(excludedItemIds)),
+    onError: (err: any) => onError(err.message || 'Failed to create evidence request threads'),
+  });
 
   const toggleItem = (itemId: number) => {
     setExcludedItemIds((prev) => {
@@ -71,16 +46,8 @@ export const CreateOfficerEvidenceThreadsModal: React.FC<CreateOfficerEvidenceTh
     });
   };
 
-  const handleConfirm = async () => {
-    setSubmitting(true);
-    try {
-      const data = await reconciliationService.bulkCreateOfficerEvidenceThreads(Array.from(excludedItemIds));
-      setResult(data);
-    } catch (err: any) {
-      onError(err.message || 'Failed to create evidence request threads');
-    } finally {
-      setSubmitting(false);
-    }
+  const handleConfirm = () => {
+    confirmCreate();
   };
 
   const handleDone = () => {

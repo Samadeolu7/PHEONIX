@@ -1,9 +1,9 @@
 // Attendance Calendar Component - Calendar view of attendance
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight, Calendar, Users } from 'lucide-react';
 import { AttendanceStatusBadge } from './AttendanceStatusBadge';
-import { hrService } from '../../services/hrService';
-import { Attendance, AttendanceStatus } from '../../types/hr';
+import { useAttendanceList } from '../../hooks/useHR';
+import { AttendanceStatus } from '../../types/hr';
 
 interface AttendanceCalendarProps {
   staffId?: number;
@@ -17,40 +17,23 @@ export const AttendanceCalendar: React.FC<AttendanceCalendarProps> = ({
   selectedDate,
 }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [attendance, setAttendance] = useState<Attendance[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  // Get first and last day of current month
   const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
   const lastDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
 
-  // Get first day of calendar (might be from previous month)
   const firstDayOfCalendar = new Date(firstDayOfMonth);
   firstDayOfCalendar.setDate(firstDayOfCalendar.getDate() - firstDayOfMonth.getDay());
 
-  // Get last day of calendar (might be from next month)
   const lastDayOfCalendar = new Date(lastDayOfMonth);
   lastDayOfCalendar.setDate(lastDayOfCalendar.getDate() + (6 - lastDayOfMonth.getDay()));
 
-  useEffect(() => {
-    loadAttendanceForMonth();
-  }, [currentDate, staffId]);
+  const { data: response, isLoading: loading } = useAttendanceList({
+    staff: staffId,
+    date_from: firstDayOfCalendar.toISOString().split('T')[0],
+    date_to: lastDayOfCalendar.toISOString().split('T')[0],
+  });
 
-  const loadAttendanceForMonth = async () => {
-    try {
-      setLoading(true);
-      const response = await hrService.getAttendance({
-        staff: staffId,
-        date_from: firstDayOfCalendar.toISOString().split('T')[0],
-        date_to: lastDayOfCalendar.toISOString().split('T')[0],
-      });
-      setAttendance(response.results);
-    } catch (error) {
-      console.error('Error loading attendance:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const attendance = response?.results || [];
 
   const navigateMonth = (direction: 'prev' | 'next') => {
     const newDate = new Date(currentDate);

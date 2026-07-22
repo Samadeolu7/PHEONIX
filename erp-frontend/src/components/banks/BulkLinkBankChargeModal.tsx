@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { X, AlertTriangle } from 'lucide-react';
 import { reconciliationService } from '../../services/reconciliationService';
 import { MIN_REASON_LENGTH, type BulkLinkResolveBankChargePreview, type BulkLinkResolveBankChargeResult } from '../../types/banks';
@@ -15,14 +16,6 @@ function formatNaira(value: string): string {
   return `₦${parseFloat(value).toLocaleString()}`;
 }
 
-/**
- * Auto-pairs and resolves every unambiguous bank_only/erp_only DEBIT
- * bank-charge match on one bank account in a single action — the batch
- * equivalent of using LinkResolveModal's "Link as Bank Charge" one pair at
- * a time. Always previews first (dry_run) since there's no per-pair
- * confirmation once the real run starts; ambiguous/unmatched candidates
- * are never guessed at server-side and still need the ordinary Link picker.
- */
 export const BulkLinkBankChargeModal: React.FC<BulkLinkBankChargeModalProps> = ({
   bankAccountId,
   bankAccountName,
@@ -30,46 +23,27 @@ export const BulkLinkBankChargeModal: React.FC<BulkLinkBankChargeModalProps> = (
   onSuccess,
   onError,
 }) => {
-  const [preview, setPreview] = useState<BulkLinkResolveBankChargePreview | null>(null);
-  const [result, setResult] = useState<BulkLinkResolveBankChargeResult | null>(null);
-  const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    reconciliationService
-      .bulkLinkResolveBankChargePreview({ bank_account_id: bankAccountId })
-      .then((data) => {
-        if (!cancelled) setPreview(data);
-      })
-      .catch((err: any) => {
-        if (!cancelled) onError(err.message || 'Failed to preview bulk bank-charge linking');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bankAccountId]);
+  const { data: preview, isLoading: loading } = useQuery<BulkLinkResolveBankChargePreview>({
+    queryKey: ['reconciliation', 'bulkLinkPreview', bankAccountId],
+    queryFn: () => reconciliationService.bulkLinkResolveBankChargePreview({ bank_account_id: bankAccountId }),
+    staleTime: 60_000,
+    throwOnError: false,
+  });
 
-  const handleConfirm = async () => {
-    if (notes.trim().length < MIN_REASON_LENGTH) return;
-    setSubmitting(true);
-    try {
-      const data = await reconciliationService.bulkLinkResolveBankCharge({
+  const { data: result, mutate: confirmLink, isPending: submitting } = useMutation({
+    mutationFn: () =>
+      reconciliationService.bulkLinkResolveBankCharge({
         bank_account_id: bankAccountId,
         resolution_notes: notes,
-      });
-      setResult(data);
-    } catch (err: any) {
-      onError(err.message || 'Failed to bulk-link bank charges');
-    } finally {
-      setSubmitting(false);
-    }
+      }),
+    onError: (err: any) => onError(err.message || 'Failed to bulk-link bank charges'),
+  });
+
+  const handleConfirm = () => {
+    if (notes.trim().length < MIN_REASON_LENGTH) return;
+    confirmLink();
   };
 
   const handleDone = () => {

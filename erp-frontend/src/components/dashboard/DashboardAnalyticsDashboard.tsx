@@ -1,5 +1,5 @@
 // Dashboard Analytics Dashboard - Analytics and usage metrics for dashboard assignments
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   BarChart3,
   TrendingUp,
@@ -23,15 +23,7 @@ import {
 } from '../../types/dashboardAssignment';
 import { dashboardAnalyticsService } from '../../services/dashboardAssignmentService';
 import { UsageAnalyticsChart } from './UsageAnalyticsChart';
-
-interface AnalyticsState {
-  analytics: DashboardUsageAnalytics[];
-  popularWidgets: Array<{ widgetId: string; interactionCount: number }>;
-  popularActions: Array<{ actionId: string; clickCount: number }>;
-  performanceMetrics: { avgLoadTime: number; errorRate: number; userSatisfaction: number };
-  isLoading: boolean;
-  error: string | null;
-}
+import { useQuery } from '@tanstack/react-query';
 
 interface DateRange {
   from: Date;
@@ -44,18 +36,9 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
   roleId,
   dateRange: initialDateRange,
 }) => {
-  const [state, setState] = useState<AnalyticsState>({
-    analytics: [],
-    popularWidgets: [],
-    popularActions: [],
-    performanceMetrics: { avgLoadTime: 0, errorRate: 0, userSatisfaction: 0 },
-    isLoading: false,
-    error: null,
-  });
-
   const [dateRange, setDateRange] = useState<DateRange>(
     initialDateRange || {
-      from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
+      from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
       to: new Date(),
     }
   );
@@ -65,73 +48,59 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
   );
   const [groupBy, setGroupBy] = useState<'day' | 'week' | 'month'>('day');
 
-  // Load analytics data
-  useEffect(() => {
-    loadAnalytics();
-  }, [templateId, roleId, dateRange]);
-
-  const loadAnalytics = useCallback(async () => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-
-    try {
-      let analytics: DashboardUsageAnalytics[] = [];
-
+  const { data: analytics = [], isLoading: isLoadingAnalytics, error: analyticsError } = useQuery({
+    queryKey: ['dashboard', 'analytics', templateId, roleId, dateRange],
+    queryFn: async () => {
       if (templateId) {
-        analytics = await dashboardAnalyticsService.getDashboardUsageAnalytics(
-          templateId,
-          dateRange
-        );
+        return dashboardAnalyticsService.getDashboardUsageAnalytics(templateId, dateRange);
       } else if (roleId) {
-        analytics = await dashboardAnalyticsService.getRoleUsageAnalytics(roleId, dateRange);
+        return dashboardAnalyticsService.getRoleUsageAnalytics(roleId, dateRange);
       } else {
-        // Load all analytics if no specific filter
-        analytics = await dashboardAnalyticsService.getDashboardUsageAnalytics(
-          'director-template',
-          dateRange
-        );
+        return dashboardAnalyticsService.getDashboardUsageAnalytics('director-template', dateRange);
       }
+    },
+  });
 
-      // Load popular widgets and actions
-      const [popularWidgets, popularActions] = await Promise.all([
-        dashboardAnalyticsService.getPopularWidgets(templateId, roleId),
-        dashboardAnalyticsService.getPopularQuickActions(templateId, roleId),
-      ]);
+  const { data: popularWidgets = [] } = useQuery({
+    queryKey: ['dashboard', 'analytics', 'popularWidgets', templateId, roleId],
+    queryFn: async () => {
+      const result = await dashboardAnalyticsService.getPopularWidgets(templateId, roleId);
+      return result.slice(0, 10);
+    },
+  });
 
-      // Load performance metrics
-      let performanceMetrics = { avgLoadTime: 0, errorRate: 0, userSatisfaction: 0 };
+  const { data: popularActions = [] } = useQuery({
+    queryKey: ['dashboard', 'analytics', 'popularActions', templateId, roleId],
+    queryFn: async () => {
+      const result = await dashboardAnalyticsService.getPopularQuickActions(templateId, roleId);
+      return result.slice(0, 10);
+    },
+  });
+
+  const { data: performanceMetrics = { avgLoadTime: 0, errorRate: 0, userSatisfaction: 0 } } = useQuery({
+    queryKey: ['dashboard', 'analytics', 'performance', templateId],
+    queryFn: async () => {
       if (templateId) {
-        performanceMetrics =
-          await dashboardAnalyticsService.getDashboardPerformanceMetrics(templateId);
+        return dashboardAnalyticsService.getDashboardPerformanceMetrics(templateId);
       }
+      return { avgLoadTime: 0, errorRate: 0, userSatisfaction: 0 };
+    },
+    enabled: !!templateId,
+  });
 
-      setState(prev => ({
-        ...prev,
-        analytics,
-        popularWidgets: popularWidgets.slice(0, 10),
-        popularActions: popularActions.slice(0, 10),
-        performanceMetrics,
-        isLoading: false,
-      }));
-    } catch (err) {
-      setState(prev => ({
-        ...prev,
-        error: err instanceof Error ? err.message : 'Failed to load analytics',
-        isLoading: false,
-      }));
-    }
-  }, [templateId, roleId, dateRange]);
+  const isLoading = isLoadingAnalytics;
+  const error = analyticsError?.message || null;
 
   const handleDateRangeChange = useCallback((newRange: DateRange) => {
     setDateRange(newRange);
   }, []);
 
   const handleExportData = useCallback(() => {
-    // In a real implementation, this would export the analytics data
     const data = {
-      analytics: state.analytics,
-      popularWidgets: state.popularWidgets,
-      popularActions: state.popularActions,
-      performanceMetrics: state.performanceMetrics,
+      analytics,
+      popularWidgets,
+      popularActions,
+      performanceMetrics,
       dateRange,
       exportedAt: new Date().toISOString(),
     };
@@ -145,16 +114,16 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [state, dateRange]);
+  }, [analytics, popularWidgets, popularActions, performanceMetrics, dateRange]);
 
   // Calculate summary metrics
   const summaryMetrics = React.useMemo(() => {
-    const totalViews = state.analytics.reduce((sum, a) => sum + a.viewCount, 0);
-    const totalUsers = new Set(state.analytics.map(a => a.userId)).size;
-    const totalTimeSpent = state.analytics.reduce((sum, a) => sum + a.totalTimeSpent, 0);
+    const totalViews = analytics.reduce((sum, a) => sum + a.viewCount, 0);
+    const totalUsers = new Set(analytics.map(a => a.userId)).size;
+    const totalTimeSpent = analytics.reduce((sum, a) => sum + a.totalTimeSpent, 0);
     const avgSessionTime = totalViews > 0 ? totalTimeSpent / totalViews : 0;
 
-    const totalInteractions = state.analytics.reduce((sum, a) => {
+    const totalInteractions = analytics.reduce((sum, a) => {
       const widgetInteractions = Object.values(a.widgetInteractions).reduce((s, c) => s + c, 0);
       const actionClicks = Object.values(a.quickActionClicks).reduce((s, c) => s + c, 0);
       return sum + widgetInteractions + actionClicks;
@@ -163,29 +132,30 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
     return {
       totalViews,
       totalUsers,
-      avgSessionTime: Math.round(avgSessionTime / 60), // Convert to minutes
+      avgSessionTime: Math.round(avgSessionTime / 60),
       totalInteractions,
       engagementRate: totalViews > 0 ? (totalInteractions / totalViews) * 100 : 0,
     };
-  }, [state.analytics]);
+  }, [analytics]);
 
   // Group analytics data by time period
   const groupedAnalytics = React.useMemo(() => {
     const grouped: Record<string, DashboardUsageAnalytics[]> = {};
 
-    state.analytics.forEach(analytics => {
+    analytics.forEach(item => {
       let key: string;
-      const date = new Date(analytics.lastAccessed);
+      const date = new Date(item.lastAccessed);
 
       switch (groupBy) {
         case 'day':
           key = date.toISOString().split('T')[0];
           break;
-        case 'week':
+        case 'week': {
           const weekStart = new Date(date);
           weekStart.setDate(date.getDate() - date.getDay());
           key = weekStart.toISOString().split('T')[0];
           break;
+        }
         case 'month':
           key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
           break;
@@ -196,13 +166,13 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
       if (!grouped[key]) {
         grouped[key] = [];
       }
-      grouped[key].push(analytics);
+      grouped[key].push(item);
     });
 
     return grouped;
-  }, [state.analytics, groupBy]);
+  }, [analytics, groupBy]);
 
-  if (state.isLoading) {
+  if (isLoading) {
     return (
       <div className={cn('flex items-center justify-center h-64', className)}>
         <div className="flex items-center space-x-2 text-gray-600">
@@ -270,7 +240,7 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
           </button>
 
           <button
-            onClick={loadAnalytics}
+            onClick={() => window.location.reload()}
             className="flex items-center space-x-2 px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
           >
             <RefreshCw className="h-4 w-4" />
@@ -280,11 +250,11 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
       </div>
 
       {/* Error Display */}
-      {state.error && (
+      {error && (
         <div className="p-4 bg-red-50 border border-red-200 rounded-md">
           <div className="flex items-center">
             <AlertCircle className="h-5 w-5 text-red-400" />
-            <p className="ml-3 text-sm text-red-600">{state.error}</p>
+            <p className="ml-3 text-sm text-red-600">{error}</p>
           </div>
         </div>
       )}
@@ -356,15 +326,15 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
               <div>
                 <p className="text-sm font-medium text-gray-700">Avg Load Time</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {state.performanceMetrics.avgLoadTime.toFixed(0)}ms
+                  {performanceMetrics.avgLoadTime.toFixed(0)}ms
                 </p>
               </div>
               <Zap
                 className={cn(
                   'h-8 w-8',
-                  state.performanceMetrics.avgLoadTime < 1000
+                  performanceMetrics.avgLoadTime < 1000
                     ? 'text-green-500'
-                    : state.performanceMetrics.avgLoadTime < 2000
+                    : performanceMetrics.avgLoadTime < 2000
                       ? 'text-yellow-500'
                       : 'text-red-500'
                 )}
@@ -377,15 +347,15 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
               <div>
                 <p className="text-sm font-medium text-gray-700">Error Rate</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {state.performanceMetrics.errorRate.toFixed(1)}%
+                  {performanceMetrics.errorRate.toFixed(1)}%
                 </p>
               </div>
               <AlertCircle
                 className={cn(
                   'h-8 w-8',
-                  state.performanceMetrics.errorRate < 1
+                  performanceMetrics.errorRate < 1
                     ? 'text-green-500'
-                    : state.performanceMetrics.errorRate < 5
+                    : performanceMetrics.errorRate < 5
                       ? 'text-yellow-500'
                       : 'text-red-500'
                 )}
@@ -398,15 +368,15 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
               <div>
                 <p className="text-sm font-medium text-gray-700">User Satisfaction</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  {state.performanceMetrics.userSatisfaction.toFixed(0)}%
+                  {performanceMetrics.userSatisfaction.toFixed(0)}%
                 </p>
               </div>
               <Activity
                 className={cn(
                   'h-8 w-8',
-                  state.performanceMetrics.userSatisfaction > 80
+                  performanceMetrics.userSatisfaction > 80
                     ? 'text-green-500'
-                    : state.performanceMetrics.userSatisfaction > 60
+                    : performanceMetrics.userSatisfaction > 60
                       ? 'text-yellow-500'
                       : 'text-red-500'
                 )}
@@ -444,7 +414,7 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
         </div>
 
         <UsageAnalyticsChart
-          analytics={state.analytics}
+          analytics={analytics}
           chartType={selectedMetric}
           className="h-64"
         />
@@ -456,7 +426,7 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
         <div className="bg-white border border-gray-200 rounded-lg p-6">
           <h4 className="text-lg font-medium text-gray-900 mb-4">Popular Widgets</h4>
           <div className="space-y-3">
-            {state.popularWidgets.slice(0, 8).map((widget, index) => (
+            {popularWidgets.slice(0, 8).map((widget, index) => (
               <div key={widget.widgetId} className="flex items-center justify-between">
                 <div className="flex items-center">
                   <span className="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-600 rounded-full text-xs font-medium mr-3">
@@ -472,7 +442,7 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
                     <div
                       className="bg-blue-600 h-2 rounded-full"
                       style={{
-                        width: `${Math.min(100, (widget.interactionCount / Math.max(...state.popularWidgets.map(w => w.interactionCount))) * 100)}%`,
+                        width: `${Math.min(100, (widget.interactionCount / Math.max(...popularWidgets.map(w => w.interactionCount))) * 100)}%`,
                       }}
                     />
                   </div>
@@ -486,7 +456,7 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
         <div className="bg-white border border-gray-200 rounded-lg p-6">
           <h4 className="text-lg font-medium text-gray-900 mb-4">Popular Quick Actions</h4>
           <div className="space-y-3">
-            {state.popularActions.slice(0, 8).map((action, index) => (
+            {popularActions.slice(0, 8).map((action, index) => (
               <div key={action.actionId} className="flex items-center justify-between">
                 <div className="flex items-center">
                   <span className="flex items-center justify-center w-6 h-6 bg-green-100 text-green-600 rounded-full text-xs font-medium mr-3">
@@ -500,7 +470,7 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
                     <div
                       className="bg-green-600 h-2 rounded-full"
                       style={{
-                        width: `${Math.min(100, (action.clickCount / Math.max(...state.popularActions.map(a => a.clickCount))) * 100)}%`,
+                        width: `${Math.min(100, (action.clickCount / Math.max(...popularActions.map(a => a.clickCount))) * 100)}%`,
                       }}
                     />
                   </div>
@@ -512,7 +482,7 @@ export const DashboardAnalyticsDashboard: React.FC<DashboardAnalyticsDashboardPr
       </div>
 
       {/* No Data State */}
-      {state.analytics.length === 0 && !state.isLoading && (
+      {analytics.length === 0 && !isLoading && (
         <div className="text-center py-12">
           <BarChart3 className="mx-auto h-12 w-12 text-gray-400" />
           <h3 className="mt-2 text-sm font-medium text-gray-900">No analytics data</h3>

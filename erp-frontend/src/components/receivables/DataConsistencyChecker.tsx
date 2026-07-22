@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   CheckCircle,
@@ -14,9 +15,9 @@ import {
 } from 'lucide-react';
 import {
   dataConsistencyService,
-  ConsistencyReport,
-  ConsistencyIssue,
-  ReconciliationAction,
+  type ConsistencyReport,
+  type ConsistencyIssue,
+  type ReconciliationAction,
 } from '../../services/dataConsistencyService';
 
 interface ReconciliationSummary {
@@ -33,15 +34,10 @@ interface ReconciliationSummary {
 }
 
 export const DataConsistencyChecker: React.FC = () => {
-  const [report, setReport] = useState<ConsistencyReport | null>(null);
-  const [isChecking, setIsChecking] = useState(false);
   const [selectedIssue, setSelectedIssue] = useState<ConsistencyIssue | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showSummary, setShowSummary] = useState(true);
-  const [reconciliationSummary, setReconciliationSummary] = useState<ReconciliationSummary | null>(
-    null
-  );
   const [filters, setFilters] = useState({
     severity_filter: '' as '' | 'critical' | 'warning' | 'info',
     date_range: {
@@ -50,62 +46,43 @@ export const DataConsistencyChecker: React.FC = () => {
     },
   });
   const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set());
-  const [isResolvingBulk, setIsResolvingBulk] = useState(false);
+  const queryClient = useQueryClient();
 
-  // Load reconciliation summary on component mount
-  useEffect(() => {
-    const loadReconciliationSummary = async () => {
-      try {
-        const summary = await dataConsistencyService.getReconciliationSummary();
-        setReconciliationSummary(summary);
-      } catch (error) {
-        console.error('Error loading reconciliation summary:', error);
-      }
-    };
+  const { data: reconciliationSummary, isLoading: loadingSummary } = useQuery({
+    queryKey: ['dataConsistency', 'reconciliationSummary'],
+    queryFn: () => dataConsistencyService.getReconciliationSummary(),
+    staleTime: 60_000,
+  });
 
-    loadReconciliationSummary();
-  }, []);
+  const { data: report, isLoading: isChecking, mutate: runConsistencyCheck } = useMutation({
+    mutationFn: (options?: { severity_filter?: string; date_range?: { start_date: string; end_date: string } }) =>
+      dataConsistencyService.runConsistencyCheck({
+        severity_filter: options?.severity_filter || undefined,
+        date_range: options?.date_range?.start_date && options?.date_range?.end_date ? options.date_range : undefined,
+      }),
+    onSuccess: () => setSelectedIssues(new Set()),
+  });
 
-  const runConsistencyCheck = async () => {
-    setIsChecking(true);
-    try {
-      const options = {
-        severity_filter: filters.severity_filter || undefined,
-        date_range:
-          filters.date_range.start_date && filters.date_range.end_date
-            ? filters.date_range
-            : undefined,
-      };
-      const report = await dataConsistencyService.runConsistencyCheck(options);
-      setReport(report);
-      setSelectedIssues(new Set()); // Clear selections after new check
-    } catch (error) {
-      console.error('Error running consistency check:', error);
-    } finally {
-      setIsChecking(false);
-    }
+  const handleRunCheck = () => {
+    runConsistencyCheck({
+      severity_filter: filters.severity_filter || undefined,
+      date_range: filters.date_range.start_date && filters.date_range.end_date ? filters.date_range : undefined,
+    });
   };
 
-  const handleBulkResolve = async () => {
+  const resolveIssuesMutation = useMutation({
+    mutationFn: (actions: ReconciliationAction[]) => dataConsistencyService.resolveIssues(actions),
+    onSuccess: () => handleRunCheck(),
+  });
+
+  const handleBulkResolve = () => {
     if (selectedIssues.size === 0 || !report) return;
-
-    setIsResolvingBulk(true);
-    try {
-      const actions: ReconciliationAction[] = Array.from(selectedIssues).map(issueId => ({
-        issue_id: issueId,
-        action_type: 'auto_fix',
-        notes: 'Bulk resolved via data consistency checker',
-      }));
-
-      await dataConsistencyService.resolveIssues(actions);
-
-      // Refresh the report after resolving
-      await runConsistencyCheck();
-    } catch (error) {
-      console.error('Error resolving bulk issues:', error);
-    } finally {
-      setIsResolvingBulk(false);
-    }
+    const actions: ReconciliationAction[] = Array.from(selectedIssues).map(issueId => ({
+      issue_id: issueId,
+      action_type: 'auto_fix',
+      notes: 'Bulk resolved via data consistency checker',
+    }));
+    resolveIssuesMutation.mutate(actions);
   };
 
   const handleSelectIssue = (issueId: string, selected: boolean) => {
@@ -128,7 +105,6 @@ export const DataConsistencyChecker: React.FC = () => {
 
   const handleExportReport = async () => {
     if (!report) return;
-
     try {
       const blob = await dataConsistencyService.exportReport(report.id, 'csv');
       const url = window.URL.createObjectURL(blob);
@@ -144,23 +120,12 @@ export const DataConsistencyChecker: React.FC = () => {
     }
   };
 
-  const handleResolveIssue = async (issue: ConsistencyIssue) => {
-    try {
-      const actions = [
-        {
-          issue_id: issue.id,
-          action_type: 'auto_fix' as const,
-          notes: 'Resolved via data consistency checker',
-        },
-      ];
-
-      await dataConsistencyService.resolveIssues(actions);
-
-      // Refresh the report after resolving
-      await runConsistencyCheck();
-    } catch (error) {
-      console.error('Error resolving issue:', error);
-    }
+  const handleResolveIssue = (issue: ConsistencyIssue) => {
+    resolveIssuesMutation.mutate([{
+      issue_id: issue.id,
+      action_type: 'auto_fix',
+      notes: 'Resolved via data consistency checker',
+    }]);
   };
 
   return (
@@ -182,7 +147,7 @@ export const DataConsistencyChecker: React.FC = () => {
             Filters
           </button>
           <button
-            onClick={runConsistencyCheck}
+            onClick={handleRunCheck}
             disabled={isChecking}
             className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
@@ -257,7 +222,7 @@ export const DataConsistencyChecker: React.FC = () => {
               Clear Filters
             </button>
             <button
-              onClick={runConsistencyCheck}
+              onClick={handleRunCheck}
               disabled={isChecking}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
@@ -465,11 +430,11 @@ export const DataConsistencyChecker: React.FC = () => {
                 {selectedIssues.size > 0 && (
                   <button
                     onClick={handleBulkResolve}
-                    disabled={isResolvingBulk}
+                    disabled={resolveIssuesMutation.isPending}
                     className="flex items-center px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 disabled:opacity-50"
                   >
-                    <Zap className={`w-4 h-4 mr-1 ${isResolvingBulk ? 'animate-spin' : ''}`} />
-                    {isResolvingBulk ? 'Resolving...' : `Resolve ${selectedIssues.size}`}
+                    <Zap className={`w-4 h-4 mr-1 ${resolveIssuesMutation.isPending ? 'animate-spin' : ''}`} />
+                    {resolveIssuesMutation.isPending ? 'Resolving...' : `Resolve ${selectedIssues.size}`}
                   </button>
                 )}
                 <button
@@ -605,7 +570,7 @@ export const DataConsistencyChecker: React.FC = () => {
             Check for synchronization issues between invoices and receivables records.
           </p>
           <button
-            onClick={runConsistencyCheck}
+            onClick={handleRunCheck}
             className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             Start Check

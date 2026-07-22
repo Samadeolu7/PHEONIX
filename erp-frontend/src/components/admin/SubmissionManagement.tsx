@@ -1,24 +1,14 @@
 import { FormSubmission } from '@/types/automation.types';
-import { useEffect, useState } from 'react';
 import React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { automationService } from '../../services/automationService';
 import { CheckCircle, Clock, XCircle } from 'lucide-react';
 
 const SubmissionManagement: React.FC = () => {
-  const [submissions, setSubmissions] = useState<FormSubmission[]>([]);
-
-  const loadSubmissions = async () => {
-    try {
-      const response = await fetch('/api/automations/submissions/');
-      const data = await response.json();
-      setSubmissions(data);
-    } catch (error: unknown) {
-      console.error('Failed to load submissions:', error);
-    }
-  };
-
-  useEffect(() => {
-    loadSubmissions();
-  }, []);
+  const { data: submissions = [], isLoading } = useQuery<FormSubmission[]>({
+    queryKey: ['automation-submissions'],
+    queryFn: () => automationService.getSubmissions(),
+  });
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -38,6 +28,11 @@ const SubmissionManagement: React.FC = () => {
       <h2 className="text-2xl font-bold mb-6">Form Submissions</h2>
 
       <div className="bg-white rounded-lg shadow overflow-hidden">
+        {isLoading ? (
+          <div className="text-center py-12 text-gray-500">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
+          </div>
+        ) : (
         <table className="w-full">
           <thead className="bg-gray-50 border-b">
             <tr>
@@ -83,6 +78,7 @@ const SubmissionManagement: React.FC = () => {
             ))}
           </tbody>
         </table>
+        )}
       </div>
     </div>
   );

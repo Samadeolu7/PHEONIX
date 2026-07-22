@@ -1,5 +1,6 @@
 // src/components/receivables/AutomatedWorkflows.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Play,
   Pause,
@@ -16,6 +17,8 @@ import {
 } from 'lucide-react';
 import {
   receivablesWorkflowService,
+} from '../../services/receivablesWorkflowService';
+import type {
   CollectionStage,
   EscalationRule,
   WorkflowTrigger,
@@ -28,73 +31,55 @@ interface AutomatedWorkflowsProps {
 
 export const AutomatedWorkflows: React.FC<AutomatedWorkflowsProps> = ({ className = '' }) => {
   const [activeTab, setActiveTab] = useState<'stages' | 'rules' | 'triggers' | 'runs'>('stages');
-  const [collectionStages, setCollectionStages] = useState<CollectionStage[]>([]);
-  const [escalationRules, setEscalationRules] = useState<EscalationRule[]>([]);
-  const [workflowTriggers, setWorkflowTriggers] = useState<WorkflowTrigger[]>([]);
-  const [workflowRuns, setWorkflowRuns] = useState<CollectionWorkflowRun[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    loadData();
-  }, [activeTab]);
+  const { data: collectionStages = [], isLoading: loadingStages, error: stagesError } = useQuery({
+    queryKey: ['receivablesWorkflow', 'stages'],
+    queryFn: () => receivablesWorkflowService.getCollectionStages(),
+    staleTime: 60_000,
+  });
 
-  const loadData = async () => {
-    setLoading(true);
-    setError(null);
+  const { data: escalationRules = [], isLoading: loadingRules, error: rulesError } = useQuery({
+    queryKey: ['receivablesWorkflow', 'rules'],
+    queryFn: () => receivablesWorkflowService.getEscalationRules(),
+    staleTime: 60_000,
+  });
 
-    try {
-      switch (activeTab) {
-        case 'stages':
-          const stages = await receivablesWorkflowService.getCollectionStages();
-          setCollectionStages(stages);
-          break;
-        case 'rules':
-          const rules = await receivablesWorkflowService.getEscalationRules();
-          setEscalationRules(rules);
-          break;
-        case 'triggers':
-          const triggers = await receivablesWorkflowService.getWorkflowTriggers();
-          setWorkflowTriggers(triggers);
-          break;
-        case 'runs':
-          const runs = await receivablesWorkflowService.getCollectionWorkflowRuns();
-          setWorkflowRuns(runs);
-          break;
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const { data: workflowTriggers = [], isLoading: loadingTriggers, error: triggersError } = useQuery({
+    queryKey: ['receivablesWorkflow', 'triggers'],
+    queryFn: () => receivablesWorkflowService.getWorkflowTriggers(),
+    staleTime: 60_000,
+  });
 
-  const handleTriggerAgingWorkflows = async () => {
-    try {
-      setLoading(true);
-      const result = await receivablesWorkflowService.triggerAgingWorkflows();
+  const { data: workflowRuns = [], isLoading: loadingRuns, error: runsError } = useQuery({
+    queryKey: ['receivablesWorkflow', 'runs'],
+    queryFn: () => receivablesWorkflowService.getCollectionWorkflowRuns(),
+    staleTime: 30_000,
+  });
+
+  const loading = loadingStages || loadingRules || loadingTriggers || loadingRuns;
+  const error = (stagesError || rulesError || triggersError || runsError)
+    ? (stagesError || rulesError || triggersError || runsError)?.message || 'Failed to load data'
+    : null;
+
+  const triggerAgingMutation = useMutation({
+    mutationFn: () => receivablesWorkflowService.triggerAgingWorkflows(),
+    onSuccess: (result) => {
       alert(`Triggered ${result.triggered_count} workflows successfully`);
-      loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to trigger workflows');
-    } finally {
-      setLoading(false);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['receivablesWorkflow'] });
+    },
+    onError: (err: any) => alert(err.message || 'Failed to trigger workflows'),
+  });
 
-  const handleProcessOverdue = async () => {
-    try {
-      setLoading(true);
-      const result = await receivablesWorkflowService.processOverdueReceivables();
+  const processOverdueMutation = useMutation({
+    mutationFn: () => receivablesWorkflowService.processOverdueReceivables(),
+    onSuccess: (result) => {
       alert(`Processed ${result.processed_count} overdue receivables`);
-      loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to process overdue receivables');
-    } finally {
-      setLoading(false);
-    }
-  };
+      queryClient.invalidateQueries({ queryKey: ['receivablesWorkflow'] });
+    },
+    onError: (err: any) => alert(err.message || 'Failed to process overdue receivables'),
+  });
 
   const renderCollectionStages = () => (
     <div className="space-y-4">
@@ -246,14 +231,14 @@ export const AutomatedWorkflows: React.FC<AutomatedWorkflowsProps> = ({ classNam
         <h3 className="text-lg font-semibold">Workflow Triggers</h3>
         <div className="flex gap-2">
           <button
-            onClick={handleTriggerAgingWorkflows}
+            onClick={() => triggerAgingMutation.mutate()}
             className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 flex items-center gap-2"
           >
             <RefreshCw className="w-4 h-4" />
             Trigger Aging Workflows
           </button>
           <button
-            onClick={handleProcessOverdue}
+            onClick={() => processOverdueMutation.mutate()}
             className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 flex items-center gap-2"
           >
             <AlertTriangle className="w-4 h-4" />
@@ -310,7 +295,7 @@ export const AutomatedWorkflows: React.FC<AutomatedWorkflowsProps> = ({ classNam
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-semibold">Active Workflow Runs</h3>
         <button
-          onClick={loadData}
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['receivablesWorkflow', 'runs'] })}
           className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-2"
         >
           <RefreshCw className="w-4 h-4" />

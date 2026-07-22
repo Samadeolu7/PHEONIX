@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { DollarSign, X } from 'lucide-react';
 import { useAllStaff } from '../../hooks/useStaff';
 import { useAllSalaryComponents } from '../../hooks/useSalaryComponents';
-import { hrService } from '../../services/hrService';
-import { useToast } from '../../contexts/ToastContext';
+import { useBonusDeductionRequests } from '../../hooks/useBonusDeductionRequests';
+import { CreateBonusDeductionRequestData } from '../../types/hr';
 
 interface BonusDeductionRequestFormProps {
   staffId?: number;
@@ -16,19 +16,18 @@ export const BonusDeductionRequestForm: React.FC<BonusDeductionRequestFormProps>
   onSuccess,
   onCancel,
 }) => {
-  const { success, error: showError } = useToast();
   const { data: staffData = [] } = useAllStaff();
   const { data: salaryComponents = [] } = useAllSalaryComponents();
+  const { createRequest, isCreating } = useBonusDeductionRequests();
 
   const [formData, setFormData] = useState({
     staff: staffId || 0,
     component: 0,
     amount: '',
     reason: '',
-    for_month: new Date().toISOString().slice(0, 7) + '-01', // YYYY-MM-01
+    for_month: new Date().toISOString().slice(0, 7) + '-01',
   });
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const staffList = staffData || [];
@@ -61,32 +60,18 @@ export const BonusDeductionRequestForm: React.FC<BonusDeductionRequestFormProps>
 
     if (!validateForm()) return;
 
-    setIsSubmitting(true);
-    try {
-      await hrService.createBonusDeductionRequest({
-        ...formData,
-        staff: parseInt(formData.staff.toString()),
-        component: parseInt(formData.component.toString()),
-        amount: parseFloat(formData.amount),
-      });
+    const submitData: CreateBonusDeductionRequestData = {
+      ...formData,
+      staff: parseInt(formData.staff.toString()),
+      component: parseInt(formData.component.toString()),
+      amount: parseFloat(formData.amount),
+    };
 
-      success('Bonus/deduction request submitted successfully');
-      onSuccess?.();
-    } catch (err: any) {
-      const details = err?.details || err?.response?.data || {};
-      const fieldErrors = Object.entries(details)
-        .filter(([k]) => k !== 'detail' && k !== 'message' && k !== 'non_field_errors')
-        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`);
-      const nonField = details?.non_field_errors;
-      const nonFieldMsg = Array.isArray(nonField) ? nonField.join(' ') : nonField;
-      const message =
-        fieldErrors.length > 0
-          ? fieldErrors.join(' | ')
-          : nonFieldMsg || err?.message || details?.detail || 'Failed to submit request';
-      showError(message);
-    } finally {
-      setIsSubmitting(false);
-    }
+    createRequest(submitData, {
+      onSuccess: () => {
+        onSuccess?.();
+      },
+    });
   };
 
   const handleChange = (field: string, value: any) => {
@@ -125,7 +110,7 @@ export const BonusDeductionRequestForm: React.FC<BonusDeductionRequestFormProps>
           <select
             value={formData.staff}
             onChange={e => handleChange('staff', e.target.value)}
-            disabled={!!staffId || isSubmitting}
+            disabled={!!staffId || isCreating}
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
               errors.staff ? 'border-red-300' : 'border-gray-300'
             } ${staffId ? 'bg-gray-100' : ''}`}
@@ -146,7 +131,7 @@ export const BonusDeductionRequestForm: React.FC<BonusDeductionRequestFormProps>
           <select
             value={formData.component}
             onChange={e => handleChange('component', e.target.value)}
-            disabled={isSubmitting}
+            disabled={isCreating}
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
               errors.component ? 'border-red-300' : 'border-gray-300'
             }`}
@@ -174,7 +159,7 @@ export const BonusDeductionRequestForm: React.FC<BonusDeductionRequestFormProps>
               min="0"
               value={formData.amount}
               onChange={e => handleChange('amount', e.target.value)}
-              disabled={isSubmitting}
+              disabled={isCreating}
               placeholder="0.00"
               className={`w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                 errors.amount ? 'border-red-300' : 'border-gray-300'
@@ -191,7 +176,7 @@ export const BonusDeductionRequestForm: React.FC<BonusDeductionRequestFormProps>
             type="month"
             value={formData.for_month.slice(0, 7)}
             onChange={e => handleChange('for_month', e.target.value + '-01')}
-            disabled={isSubmitting}
+            disabled={isCreating}
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
               errors.for_month ? 'border-red-300' : 'border-gray-300'
             }`}
@@ -205,7 +190,7 @@ export const BonusDeductionRequestForm: React.FC<BonusDeductionRequestFormProps>
           <textarea
             value={formData.reason}
             onChange={e => handleChange('reason', e.target.value)}
-            disabled={isSubmitting}
+            disabled={isCreating}
             rows={4}
             placeholder="Provide a detailed justification for this request..."
             className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
@@ -237,16 +222,16 @@ export const BonusDeductionRequestForm: React.FC<BonusDeductionRequestFormProps>
         <div className="flex gap-3 pt-4">
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isCreating}
             className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
           >
-            {isSubmitting ? 'Submitting...' : 'Submit Request'}
+            {isCreating ? 'Submitting...' : 'Submit Request'}
           </button>
           {onCancel && (
             <button
               type="button"
               onClick={onCancel}
-              disabled={isSubmitting}
+              disabled={isCreating}
               className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
             >
               Cancel

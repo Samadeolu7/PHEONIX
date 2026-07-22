@@ -1,5 +1,5 @@
 // Version History Panel - Display version history and details
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   GitBranch,
   Calendar,
@@ -15,42 +15,32 @@ import {
 import { cn } from '../../lib/utils';
 import { DashboardVersion, VersionHistoryPanelProps } from '../../types/dashboardAssignment';
 import { dashboardVersionService } from '../../services/dashboardAssignmentService';
+import { useQuery } from '@tanstack/react-query';
 
 export const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
   templateId,
   className = '',
   onVersionSelect,
 }) => {
-  const [versions, setVersions] = useState<DashboardVersion[]>([]);
   const [selectedVersion, setSelectedVersion] = useState<DashboardVersion | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadVersions();
-  }, [templateId]);
-
-  const loadVersions = async () => {
-    setIsLoading(true);
-    setError(null);
-
-    try {
+  const { data: versions = [], isLoading, error } = useQuery({
+    queryKey: ['dashboard', 'versions', templateId],
+    queryFn: async () => {
       const versionList = await dashboardVersionService.getVersions(templateId);
-      setVersions(versionList.sort((a, b) => b.version - a.version));
+      return versionList.sort((a, b) => b.version - a.version);
+    },
+  });
 
-      // Select latest version by default
-      if (versionList.length > 0) {
-        const latest = versionList.reduce((prev, current) =>
-          current.version > prev.version ? current : prev
-        );
-        setSelectedVersion(latest);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load versions');
-    } finally {
-      setIsLoading(false);
+  // Auto-select latest version
+  React.useEffect(() => {
+    if (versions.length > 0 && !selectedVersion) {
+      const latest = versions.reduce((prev, current) =>
+        current.version > prev.version ? current : prev
+      );
+      setSelectedVersion(latest);
     }
-  };
+  }, [versions, selectedVersion]);
 
   const handleVersionSelect = (version: DashboardVersion) => {
     setSelectedVersion(version);
@@ -70,7 +60,7 @@ export const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
       <div className={cn('p-4 bg-red-50 border border-red-200 rounded-md', className)}>
         <div className="flex items-center">
           <AlertTriangle className="h-5 w-5 text-red-400" />
-          <p className="ml-3 text-sm text-red-600">{error}</p>
+          <p className="ml-3 text-sm text-red-600">{error.message}</p>
         </div>
       </div>
     );

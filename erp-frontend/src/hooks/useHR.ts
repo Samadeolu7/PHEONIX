@@ -8,6 +8,7 @@ import {
   CreatePayrollData,
   UpdatePayrollData,
   CreatePayrollScheduleData,
+  PersonnelChangesReport,
 } from '../types/hr';
 
 interface ApiError {
@@ -314,5 +315,15 @@ export const useUpdatePayrollSchedule = () => {
     onError: (err: ApiError) => {
       toast.error(err?.response?.data?.detail || 'Failed to update payroll schedule');
     },
+  });
+};
+
+// ─── Personnel Changes Report ─────────────────────────────────────────────────
+
+export const usePersonnelChangesReport = (periodStart: string, periodEnd: string) => {
+  return useQuery({
+    queryKey: [...HR_ROOT, 'personnelChanges', periodStart, periodEnd],
+    queryFn: () => hrService.getPersonnelChangesReport(periodStart, periodEnd) as Promise<PersonnelChangesReport>,
+    enabled: !!periodStart && !!periodEnd,
   });
 };

@@ -1,5 +1,5 @@
 // PersonnelChangesReport Component - Display consolidated personnel changes for payroll period
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
   Users,
   UserPlus,
@@ -10,8 +10,7 @@ import {
   CheckCircle,
   TrendingUp,
 } from 'lucide-react';
-import { hrService } from '../../services/hrService';
-import { PersonnelChangesReport as PersonnelChangesReportType } from '../../types/hr';
+import { usePersonnelChangesReport } from '../../hooks/useHR';
 import { formatDate, formatNumber } from '../../utils/formatters';
 
 interface PersonnelChangesReportProps {
@@ -25,27 +24,9 @@ export const PersonnelChangesReport: React.FC<PersonnelChangesReportProps> = ({
   periodEnd,
   onClose,
 }) => {
-  const [report, setReport] = useState<PersonnelChangesReportType | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: report, isLoading: loading, error: queryError, refetch } = usePersonnelChangesReport(periodStart, periodEnd);
 
-  useEffect(() => {
-    loadReport();
-  }, [periodStart, periodEnd]);
-
-  const loadReport = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const data = await hrService.getPersonnelChangesReport(periodStart, periodEnd);
-      setReport(data);
-    } catch (err: any) {
-      console.error('Error loading personnel changes report:', err);
-      setError(err.message || 'Failed to load report');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const error = queryError ? (queryError as Error).message || 'Failed to load report' : null;
 
   if (loading) {
     return (
@@ -68,7 +49,7 @@ export const PersonnelChangesReport: React.FC<PersonnelChangesReportProps> = ({
         </div>
         <p className="text-gray-600 mb-4">{error}</p>
         <button
-          onClick={loadReport}
+          onClick={() => refetch()}
           className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
         >
           Retry

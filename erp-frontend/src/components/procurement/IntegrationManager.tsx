@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { procurementService } from '../../services/procurementService';
 import {
   GRNIntegrationStatus,
@@ -20,17 +21,9 @@ export const IntegrationManager: React.FC<IntegrationManagerProps> = ({
   entityId,
   onIntegrationComplete,
 }) => {
-  const [integrationStatus, setIntegrationStatus] = useState<
-    GRNIntegrationStatus | ReturnIntegrationStatus | null
-  >(null);
-  const [pendingIntegrations, setPendingIntegrations] = useState<PendingIntegration[]>([]);
-  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [budgetCodes, setBudgetCodes] = useState<BudgetCode[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [selectedItems, setSelectedItems] = useState<number[]>([]);
 
-  // Form state for posting
   const [postingData, setPostingData] = useState({
     posting_date: new Date().toISOString().split('T')[0],
     cost_center: '',
@@ -38,205 +31,159 @@ export const IntegrationManager: React.FC<IntegrationManagerProps> = ({
     notes: '',
   });
 
-  useEffect(() => {
-    loadInitialData();
-  }, [entityType, entityId]);
+  const { data: integrationStatus, isLoading: loadingStatus } = useQuery<
+    GRNIntegrationStatus | ReturnIntegrationStatus | null
+  >({
+    queryKey: ['integration-status', entityType, entityId],
+    queryFn: () => {
+      if (!entityId) return Promise.resolve(null);
+      return entityType === 'grn'
+        ? procurementService.getGRNIntegrationStatus(entityId)
+        : procurementService.getReturnIntegrationStatus(entityId);
+    },
+    enabled: !!entityId,
+  });
 
-  const loadInitialData = async () => {
-    try {
-      setLoading(true);
+  const { data: pendingData, isLoading: loadingPending } = useQuery<{
+    results: PendingIntegration[];
+  }>({
+    queryKey: ['pending-integrations', entityType],
+    queryFn: () => procurementService.getPendingIntegrations({ type: entityType } as any),
+  });
 
-      // Load integration status if entityId is provided
-      if (entityId) {
-        if (entityType === 'grn') {
-          const status = await procurementService.getGRNIntegrationStatus(entityId);
-          setIntegrationStatus(status);
-        } else {
-          const status = await procurementService.getReturnIntegrationStatus(entityId);
-          setIntegrationStatus(status);
-        }
-      }
+  const pendingIntegrations = pendingData?.results || [];
 
-      // Load pending integrations
-      const pending = await procurementService.getPendingIntegrations({ type: entityType });
-      setPendingIntegrations(pending.results);
+  const { data: costCentersData } = useQuery<{ results: CostCenter[] }>({
+    queryKey: ['cost-centers'],
+    queryFn: () => procurementService.getCostCenters({ is_active: true } as any),
+  });
 
-      // Load cost centers and budget codes
-      const [costCentersResponse, budgetCodesResponse] = await Promise.all([
-        procurementService.getCostCenters({ is_active: true }),
-        procurementService.getBudgetCodes({ is_active: true }),
-      ]);
+  const { data: budgetCodesData } = useQuery<{ results: BudgetCode[] }>({
+    queryKey: ['budget-codes'],
+    queryFn: () => procurementService.getBudgetCodes({ is_active: true } as any),
+  });
 
-      setCostCenters(costCentersResponse.results);
-      setBudgetCodes(budgetCodesResponse.results);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load integration data');
-    } finally {
-      setLoading(false);
-    }
+  const costCenters = costCentersData?.results || [];
+  const budgetCodes = budgetCodesData?.results || [];
+
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ['integration-status'] });
+    queryClient.invalidateQueries({ queryKey: ['pending-integrations'] });
+    onIntegrationComplete?.();
   };
 
-  const handlePostToInventory = async (id: number) => {
-    try {
-      setLoading(true);
-      setError(null);
+  const postToInventoryMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) =>
+      entityType === 'grn'
+        ? procurementService.postGRNToInventoryWithDetails(id, data)
+        : procurementService.postReturnToInventory(id, data),
+    onSuccess: () => invalidateAll(),
+  });
 
-      if (entityType === 'grn') {
-        await procurementService.postGRNToInventoryWithDetails(id, {
-          posting_date: postingData.posting_date,
-          cost_center: postingData.cost_center || undefined,
-          notes: postingData.notes || undefined,
-        });
-      } else {
-        await procurementService.postReturnToInventory(id, {
-          posting_date: postingData.posting_date,
-          cost_center: postingData.cost_center || undefined,
-          notes: postingData.notes || undefined,
-        });
-      }
+  const postToAccountingMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) =>
+      entityType === 'grn'
+        ? procurementService.postGRNToAccountingWithDetails(id, data)
+        : procurementService.postReturnToAccounting(id, data),
+    onSuccess: () => invalidateAll(),
+  });
 
-      await loadInitialData();
-      onIntegrationComplete?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to post to inventory');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const postToBothMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) =>
+      entityType === 'grn'
+        ? procurementService.postGRNToBothSystems(id, data)
+        : procurementService.postReturnToBothSystems(id, data),
+    onSuccess: () => invalidateAll(),
+  });
 
-  const handlePostToAccounting = async (id: number) => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      if (entityType === 'grn') {
-        await procurementService.postGRNToAccountingWithDetails(id, {
-          posting_date: postingData.posting_date,
-          cost_center: postingData.cost_center || undefined,
-          budget_code: postingData.budget_code || undefined,
-          notes: postingData.notes || undefined,
-        });
-      } else {
-        await procurementService.postReturnToAccounting(id, {
-          posting_date: postingData.posting_date,
-          cost_center: postingData.cost_center || undefined,
-          budget_code: postingData.budget_code || undefined,
-          notes: postingData.notes || undefined,
-        });
-      }
-
-      await loadInitialData();
-      onIntegrationComplete?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to post to accounting');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handlePostToBothSystems = async (id: number) => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      if (entityType === 'grn') {
-        await procurementService.postGRNToBothSystems(id, {
-          posting_date: postingData.posting_date,
-          cost_center: postingData.cost_center || undefined,
-          budget_code: postingData.budget_code || undefined,
-          notes: postingData.notes || undefined,
-        });
-      } else {
-        await procurementService.postReturnToBothSystems(id, {
-          posting_date: postingData.posting_date,
-          cost_center: postingData.cost_center || undefined,
-          budget_code: postingData.budget_code || undefined,
-          notes: postingData.notes || undefined,
-        });
-      }
-
-      await loadInitialData();
-      onIntegrationComplete?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to post to both systems');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleBatchProcessing = async () => {
-    if (selectedItems.length === 0) {
-      setError('Please select items to process');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      let result: BatchProcessingResult;
-
-      if (entityType === 'grn') {
-        result = await procurementService.batchPostGRNsToAccounting(selectedItems, {
-          posting_date: postingData.posting_date,
-          cost_center: postingData.cost_center || undefined,
-          budget_code: postingData.budget_code || undefined,
-          notes: postingData.notes || undefined,
-        });
-      } else {
-        result = await procurementService.batchPostReturnsToBothSystems(selectedItems, {
-          posting_date: postingData.posting_date,
-          cost_center: postingData.cost_center || undefined,
-          budget_code: postingData.budget_code || undefined,
-          notes: postingData.notes || undefined,
-        });
-      }
-
-      // Show batch processing results
-      alert(
-        `Batch processing completed:\n${result.successful} successful, ${result.failed} failed`
-      );
-
-      await loadInitialData();
+  const batchMutation = useMutation({
+    mutationFn: ({ ids, data }: { ids: number[]; data: any }) =>
+      entityType === 'grn'
+        ? procurementService.batchPostGRNsToAccounting(ids, data)
+        : procurementService.batchPostReturnsToBothSystems(ids, data),
+    onSuccess: () => {
       setSelectedItems([]);
-      onIntegrationComplete?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Batch processing failed');
-    } finally {
-      setLoading(false);
-    }
+      invalidateAll();
+    },
+  });
+
+  const reverseInventoryMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) =>
+      procurementService.reverseGRNInventoryPosting(id, data),
+    onSuccess: () => invalidateAll(),
+  });
+
+  const reverseAccountingMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) =>
+      procurementService.reverseGRNAccountingPosting(id, data),
+    onSuccess: () => invalidateAll(),
+  });
+
+  const loading = loadingStatus || loadingPending || postToInventoryMutation.isPending || postToAccountingMutation.isPending || postToBothMutation.isPending || batchMutation.isPending;
+  const error = postToInventoryMutation.error?.message || postToAccountingMutation.error?.message || postToBothMutation.error?.message || batchMutation.error?.message || reverseInventoryMutation.error?.message || reverseAccountingMutation.error?.message || null;
+
+  const handlePostToInventory = (id: number) => {
+    postToInventoryMutation.mutate({
+      id,
+      data: {
+        posting_date: postingData.posting_date,
+        cost_center: postingData.cost_center || undefined,
+        notes: postingData.notes || undefined,
+      },
+    });
   };
 
-  const handleReversePosting = async (id: number, system: 'inventory' | 'accounting') => {
+  const handlePostToAccounting = (id: number) => {
+    postToAccountingMutation.mutate({
+      id,
+      data: {
+        posting_date: postingData.posting_date,
+        cost_center: postingData.cost_center || undefined,
+        budget_code: postingData.budget_code || undefined,
+        notes: postingData.notes || undefined,
+      },
+    });
+  };
+
+  const handlePostToBothSystems = (id: number) => {
+    postToBothMutation.mutate({
+      id,
+      data: {
+        posting_date: postingData.posting_date,
+        cost_center: postingData.cost_center || undefined,
+        budget_code: postingData.budget_code || undefined,
+        notes: postingData.notes || undefined,
+      },
+    });
+  };
+
+  const handleBatchProcessing = () => {
+    if (selectedItems.length === 0) return;
+    batchMutation.mutate({
+      ids: selectedItems,
+      data: {
+        posting_date: postingData.posting_date,
+        cost_center: postingData.cost_center || undefined,
+        budget_code: postingData.budget_code || undefined,
+        notes: postingData.notes || undefined,
+      },
+    });
+  };
+
+  const handleReversePosting = (id: number, system: 'inventory' | 'accounting') => {
     const reason = prompt('Please provide a reason for reversal:');
     if (!reason) return;
 
-    try {
-      setLoading(true);
-      setError(null);
+    const data = {
+      reversal_date: new Date().toISOString().split('T')[0],
+      reason,
+      notes: postingData.notes || undefined,
+    };
 
-      if (entityType === 'grn') {
-        if (system === 'inventory') {
-          await procurementService.reverseGRNInventoryPosting(id, {
-            reversal_date: new Date().toISOString().split('T')[0],
-            reason,
-            notes: postingData.notes || undefined,
-          });
-        } else {
-          await procurementService.reverseGRNAccountingPosting(id, {
-            reversal_date: new Date().toISOString().split('T')[0],
-            reason,
-            notes: postingData.notes || undefined,
-          });
-        }
-      }
-
-      await loadInitialData();
-      onIntegrationComplete?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to reverse ${system} posting`);
-    } finally {
-      setLoading(false);
+    if (system === 'inventory') {
+      reverseInventoryMutation.mutate({ id, data });
+    } else {
+      reverseAccountingMutation.mutate({ id, data });
     }
   };
 

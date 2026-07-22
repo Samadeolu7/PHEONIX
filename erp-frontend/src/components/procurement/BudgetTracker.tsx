@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { procurementService } from '../../services/procurementService';
 import {
   BudgetCode,
@@ -24,85 +25,48 @@ export const BudgetTracker: React.FC<BudgetTrackerProps> = ({
   showUtilization = true,
   showValidation = true,
 }) => {
-  const [budgetCodes, setBudgetCodes] = useState<BudgetCode[]>([]);
-  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [selectedBudgetCode, setSelectedBudgetCode] = useState<number | null>(budgetCodeId || null);
-  const [budgetUtilization, setBudgetUtilization] = useState<BudgetUtilization | null>(null);
-  const [validationResult, setValidationResult] = useState<BudgetValidationResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  // Form state for validation
   const [validationForm, setValidationForm] = useState({
     amount: amount || '',
     transaction_date: transactionDate || new Date().toISOString().split('T')[0],
   });
 
-  useEffect(() => {
-    loadBudgetData();
-  }, []);
+  const { data: budgetCodesData, isLoading: loadingBudgetCodes } = useQuery<{ results: BudgetCode[] }>({
+    queryKey: ['budget-codes'],
+    queryFn: () => procurementService.getBudgetCodes({ is_active: true } as any),
+  });
 
-  useEffect(() => {
-    if (selectedBudgetCode && showUtilization) {
-      loadBudgetUtilization();
-    }
-  }, [selectedBudgetCode, showUtilization]);
+  const { data: costCentersData } = useQuery<{ results: CostCenter[] }>({
+    queryKey: ['cost-centers'],
+    queryFn: () => procurementService.getCostCenters({ is_active: true } as any),
+  });
 
-  useEffect(() => {
-    if (
-      selectedBudgetCode &&
-      validationForm.amount &&
-      validationForm.transaction_date &&
-      showValidation
-    ) {
-      validateBudgetAvailability();
-    }
-  }, [selectedBudgetCode, validationForm.amount, validationForm.transaction_date, showValidation]);
+  const budgetCodes = budgetCodesData?.results || [];
+  const costCenters = costCentersData?.results || [];
 
-  const loadBudgetData = async () => {
-    try {
-      setLoading(true);
-      const [budgetCodesResponse, costCentersResponse] = await Promise.all([
-        procurementService.getBudgetCodes({ is_active: true }),
-        procurementService.getCostCenters({ is_active: true }),
-      ]);
+  const { data: budgetUtilization } = useQuery<BudgetUtilization>({
+    queryKey: ['budget-utilization', selectedBudgetCode],
+    queryFn: () => procurementService.getBudgetUtilization(selectedBudgetCode!),
+    enabled: !!selectedBudgetCode && showUtilization,
+  });
 
-      setBudgetCodes(budgetCodesResponse.results);
-      setCostCenters(costCentersResponse.results);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load budget data');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadBudgetUtilization = async () => {
-    if (!selectedBudgetCode) return;
-
-    try {
-      const utilization = await procurementService.getBudgetUtilization(selectedBudgetCode);
-      setBudgetUtilization(utilization);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load budget utilization');
-    }
-  };
-
-  const validateBudgetAvailability = async () => {
-    if (!selectedBudgetCode || !validationForm.amount || !validationForm.transaction_date) return;
-
-    try {
-      const result = await procurementService.validateBudgetAvailability({
-        budget_code_id: selectedBudgetCode,
+  const { data: validationResult } = useQuery<BudgetValidationResult>({
+    queryKey: ['budget-validation', selectedBudgetCode, validationForm.amount, validationForm.transaction_date],
+    queryFn: () => {
+      const result = procurementService.validateBudgetAvailability({
+        budget_code_id: selectedBudgetCode!,
         amount: validationForm.amount,
         transaction_date: validationForm.transaction_date,
       });
+      result.then(r => onValidationResult?.(r));
+      return result;
+    },
+    enabled: !!selectedBudgetCode && !!validationForm.amount && !!validationForm.transaction_date && showValidation,
+  });
 
-      setValidationResult(result);
-      onValidationResult?.(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to validate budget availability');
-    }
-  };
+  const loading = loadingBudgetCodes;
+  const error = null;
 
   const getUtilizationColor = (percentage: number) => {
     if (percentage >= 90) return 'bg-red-500';
