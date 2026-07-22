@@ -537,6 +537,50 @@ def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exc
     return payments
 
 
+def find_same_amount_erp_candidates(tx, window_days=None):
+    """
+    Returns ERP payments with EXACTLY tx.amount, within ±window_days of
+    tx.value_date on tx.bank_account, excluding payments some OTHER
+    currently-matched bank line already claims — i.e. the same candidate
+    pool run_reconciliation_match would offer Java for this line, filtered
+    down to an exact amount match.
+
+    Shared by audit_unattached_statement_lines (report-only) and
+    confirm_unambiguous_ghost_matches (which acts on a len()==1 result) so
+    both tools agree on exactly what counts as a "candidate" — a command
+    that DECIDES to auto-commit a match must search with identical logic
+    to the command that only REPORTS how many candidates exist, or the two
+    could disagree about which lines are actually unambiguous.
+
+    window_days defaults to RECONCILIATION_MATCH_WINDOW_DAYS (the same
+    window run_reconciliation_match itself uses) when not given.
+    """
+    from datetime import timedelta
+
+    from django.conf import settings
+
+    from .models import ReconciliationBankTransaction
+
+    if window_days is None:
+        window_days = getattr(settings, 'RECONCILIATION_MATCH_WINDOW_DAYS', 7)
+
+    window_start = tx.value_date - timedelta(days=window_days)
+    window_end = tx.value_date + timedelta(days=window_days)
+    already_matched_ids = list(
+        ReconciliationBankTransaction.objects.filter(
+            bank_account_id=tx.bank_account_id,
+            matched=True,
+            matched_erp_payment_id__isnull=False,
+        ).values_list('matched_erp_payment_id', flat=True)
+    )
+    direction = 'CREDIT' if tx.direction == 'CREDIT' else 'DEBIT'
+    payments = fetch_erp_payments(
+        tx.bank_account, window_start, window_end,
+        direction=direction, exclude_payment_ids=already_matched_ids,
+    )
+    return [p for p in payments if Decimal(p['amount']) == tx.amount]
+
+
 def recompute_reconciliation_counts(recon):
     """
     Recompute matched_count/unmatched_bank_count/unmatched_erp_count/

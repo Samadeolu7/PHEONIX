@@ -281,15 +281,31 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
 
     # --- persist confirmed matches onto ReconciliationBankTransaction ---
     # Only HIGH confidence is auto-committed — see AUTO_MATCH_MIN_CONFIDENCE.
+    # A match entry with no erpPaymentId at all is ALSO never auto-committed,
+    # regardless of confidence — Java claiming HIGH confidence in a "match"
+    # that names no actual ERP payment is a malformed response, and
+    # committing it would set matched=True with matched_erp_payment_id=NULL:
+    # a row that claims to be matched to literally nothing, invisible to
+    # every tool that looks for unmatched (matched=False) rows. Found in
+    # production and repaired by repair_matched_with_no_erp_payment.
+    def is_auto_committable(m):
+        return (
+            (m.get('confidence') or '').upper() == AUTO_MATCH_MIN_CONFIDENCE
+            and m.get('erpPaymentId') is not None
+        )
+
     all_matches_data = outcome.get('matches', [])
-    matches_data = [
-        m for m in all_matches_data
-        if (m.get('confidence') or '').upper() == AUTO_MATCH_MIN_CONFIDENCE
-    ]
-    low_confidence_matches = [
-        m for m in all_matches_data
-        if (m.get('confidence') or '').upper() != AUTO_MATCH_MIN_CONFIDENCE
-    ]
+    matches_data = [m for m in all_matches_data if is_auto_committable(m)]
+    low_confidence_matches = [m for m in all_matches_data if not is_auto_committable(m)]
+
+    for m in all_matches_data:
+        if (m.get('confidence') or '').upper() == AUTO_MATCH_MIN_CONFIDENCE and m.get('erpPaymentId') is None:
+            logger.warning(
+                "run_reconciliation_match: recon %s — Java reported a %s-confidence "
+                "match for bank tx %s with NO erpPaymentId — malformed response, "
+                "treating as unmatched instead of committing.",
+                recon.id, AUTO_MATCH_MIN_CONFIDENCE, m.get('bankTransactionId'),
+            )
     matched_txs = []
     if matches_data:
         match_by_id = {m['bankTransactionId']: m for m in matches_data}

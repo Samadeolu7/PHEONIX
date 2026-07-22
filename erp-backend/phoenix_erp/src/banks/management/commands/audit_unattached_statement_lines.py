@@ -30,6 +30,14 @@ Two shapes are reported, since they carry different risk:
     some may have a same-amount ERP candidate sitting right next to them
     that nobody has manually linked — this command flags those too.
 
+  MATCHED WITH NOTHING — matched=True but matched_erp_payment_id IS NULL.
+    A different, worse corruption shape than a ghost match: the row claims
+    to be matched, but was never actually tied to any ERP payment at all.
+    Invisible to the two categories above (both require matched=False) and
+    to every other tool in this file, since none of them look at matched=
+    True rows. See repair_matched_with_no_erp_payment for the fix (root
+    cause closed in banks/tasks.py's is_auto_committable).
+
 For every line, this command searches the SAME candidate pool
 run_reconciliation_match would offer Java (fetch_erp_payments, ±window
 days, excluding payments some other line already claims) for an exact
@@ -51,9 +59,7 @@ Usage:
 from __future__ import annotations
 
 from datetime import timedelta
-from decimal import Decimal
 
-from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
@@ -78,12 +84,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from banks.models import ReconciliationBankTransaction, ReconciliationException
-        from banks.reconciliation_utils import fetch_erp_payments
+        from banks.reconciliation_utils import find_same_amount_erp_candidates
 
         bank_account_id = options['bank_account']
         min_age_days = options['min_age_days']
 
-        window_days = getattr(settings, 'RECONCILIATION_MATCH_WINDOW_DAYS', 7)
         cutoff = timezone.now().date() - timedelta(days=min_age_days)
 
         qs = ReconciliationBankTransaction.objects.filter(matched=False, value_date__lte=cutoff)
@@ -91,8 +96,15 @@ class Command(BaseCommand):
             qs = qs.filter(bank_account_id=bank_account_id)
         qs = qs.select_related('bank_account').order_by('value_date')
 
+        matched_with_nothing_qs = ReconciliationBankTransaction.objects.filter(
+            matched=True, matched_erp_payment_id__isnull=True, value_date__lte=cutoff,
+        )
+        if bank_account_id:
+            matched_with_nothing_qs = matched_with_nothing_qs.filter(bank_account_id=bank_account_id)
+        matched_with_nothing = list(matched_with_nothing_qs.select_related('bank_account').order_by('value_date'))
+
         lines = list(qs)
-        if not lines:
+        if not lines and not matched_with_nothing:
             self.stdout.write(self.style.SUCCESS('No unattached statement lines found.'))
             return
 
@@ -102,40 +114,42 @@ class Command(BaseCommand):
         self.stdout.write(
             f'Found {len(lines)} unattached statement line(s): '
             f'{len(ghosts)} ghost match(es) (wrongly auto-matched, then undone), '
-            f'{len(never_matched)} never matched.\n'
+            f'{len(never_matched)} never matched. '
+            f'Plus {len(matched_with_nothing)} matched-with-nothing row(s) (matched=True, no ERP id).\n'
         )
 
-        # Cache candidate ERP payments per (bank_account_id, direction) window
-        # actually used, so a run touching many lines on the same account
-        # doesn't re-fetch the same window repeatedly.
-        erp_cache: dict[tuple[int, str], list[dict]] = {}
+        # Cache candidate ERP payments per bank tx id — this command never
+        # mutates anything, so nothing changes between the two passes over
+        # the same tx (the per-line describe() and the final summary), and
+        # a run touching many lines doesn't re-run the same query twice.
+        candidate_cache: dict = {}
 
         def candidates_for(tx):
-            key = (tx.bank_account_id, tx.direction)
-            if key not in erp_cache:
-                window_start = tx.value_date - timedelta(days=window_days)
-                window_end = tx.value_date + timedelta(days=window_days)
-                already_matched_ids = list(
-                    ReconciliationBankTransaction.objects.filter(
-                        bank_account_id=tx.bank_account_id,
-                        matched=True,
-                        matched_erp_payment_id__isnull=False,
-                    ).values_list('matched_erp_payment_id', flat=True)
-                )
-                direction = 'CREDIT' if tx.direction == 'CREDIT' else 'DEBIT'
-                erp_cache[key] = fetch_erp_payments(
-                    tx.bank_account, window_start, window_end,
-                    direction=direction, exclude_payment_ids=already_matched_ids,
-                )
-            return [p for p in erp_cache[key] if Decimal(p['amount']) == tx.amount]
+            if tx.id not in candidate_cache:
+                candidate_cache[tx.id] = find_same_amount_erp_candidates(tx)
+            return candidate_cache[tx.id]
 
         def describe(tx, label):
             exc = ReconciliationException.objects.filter(
                 exception_type='bank_only', bank_transaction_id=tx.id,
             ).order_by('-id').first()
-            exc_state = 'no bank_only exception found (!)' if exc is None else (
-                'RESOLVED (stale — should be open)' if exc.resolved else 'open'
-            )
+            if exc is None:
+                exc_state = 'no bank_only exception found (!)'
+            elif exc.resolved:
+                # For a GHOST match, unmatch() is supposed to reopen this —
+                # resolved=True here means it's genuinely stuck (a bug, or a
+                # gap this same session's fix_unmatched_stale_resolved_
+                # exceptions targets). For a NEVER-MATCHED line there's no
+                # such expectation — a director may have deliberately
+                # resolved it (e.g. "own account transfer, no ERP entry
+                # expected") without any match ever existing, which is a
+                # perfectly normal end state, not a bug.
+                exc_state = (
+                    'RESOLVED (stale — should be open)' if label == 'GHOST'
+                    else 'resolved (likely a deliberate director resolution, not a bug)'
+                )
+            else:
+                exc_state = 'open'
 
             self.stdout.write(
                 f'[{label}] tx={tx.id} {tx.bank_account} {tx.direction} '
@@ -191,6 +205,19 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('=== NEVER MATCHED ==='))
             for tx in never_matched:
                 describe(tx, 'UNMATCHED')
+
+        if matched_with_nothing:
+            self.stdout.write(self.style.ERROR(
+                f'=== MATCHED WITH NOTHING ({len(matched_with_nothing)}) — matched=True, '
+                f'no ERP payment id attached at all ==='
+            ))
+            for tx in matched_with_nothing:
+                self.stdout.write(
+                    f'[NOTHING] tx={tx.id} {tx.bank_account} {tx.direction} ₦{tx.amount} '
+                    f'on {tx.value_date} (confidence={tx.match_confidence or "?"}, '
+                    f'matched_at={tx.matched_at}) — narration: {tx.narration[:100]!r}'
+                )
+            self.stdout.write('')
 
         strong_leads = sum(1 for tx in lines if len(candidates_for(tx)) == 1)
         untied_ghosts = sum(

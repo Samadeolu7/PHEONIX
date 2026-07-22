@@ -134,6 +134,40 @@ class RunReconciliationMatchTests(TestCase):
 
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
+    def test_high_confidence_match_with_no_erp_payment_id_is_not_committed(self, mock_post, mock_fetch):
+        # Found in production: a "matched=True, matched_erp_payment_id=NULL"
+        # row — matched to literally nothing — came from Java reporting a
+        # HIGH-confidence match entry with no erpPaymentId at all, which
+        # _persist_outcome used to commit blindly. Must never set
+        # matched=True without a real payment id attached.
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 1, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(self.tx.id), 'erpPaymentId': None,
+                 'confidence': 'HIGH', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+
+        with self.assertLogs('banks.tasks', level='WARNING'):
+            run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.tx.refresh_from_db()
+        self.assertFalse(self.tx.matched)
+        self.assertIsNone(self.tx.matched_erp_payment_id)
+        self.assertIsNone(self.tx.matched_at)
+
+        bank_exc = ReconciliationException.objects.get(
+            reconciliation=self.recon, exception_type='bank_only', bank_transaction_id=self.tx.id,
+        )
+        self.assertFalse(bank_exc.resolved)
+        # No erp_only exception should exist — there's no payment id to tie one to.
+        self.assertFalse(
+            ReconciliationException.objects.filter(exception_type='erp_only').exists()
+        )
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
     def test_mixed_confidence_only_high_ones_committed(self, mock_post, mock_fetch):
         low_tx = ReconciliationBankTransaction.objects.create(
             bank_account=self.bank_account, bank_ref='REF2', value_date='2026-07-01',

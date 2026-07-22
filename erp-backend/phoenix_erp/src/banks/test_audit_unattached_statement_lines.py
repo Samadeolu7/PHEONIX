@@ -58,6 +58,21 @@ class AuditUnattachedStatementLinesTests(TestCase):
         self.assertIn('previously matched to ERP payment id=999', output)
         self.assertIn('NO erp_only exception exists for ERP payment 999', output)
 
+    def test_matched_with_nothing_is_reported_even_though_matched_is_true(self):
+        # matched=True but no ERP payment id at all — a different, worse
+        # corruption shape than a ghost match. The command must surface it
+        # even though every other section here filters on matched=False.
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='NOTHING-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('5000.00'), narration='Matched to nothing',
+            matched=True, matched_erp_payment_id=None, match_confidence='HIGH',
+        )
+
+        output = self._run()
+        self.assertIn('MATCHED WITH NOTHING', output)
+        self.assertIn('Matched to nothing', output)
+        self.assertNotIn('No unattached statement lines found', output)
+
     def test_min_age_days_excludes_recent_lines(self):
         from django.utils import timezone
         today = timezone.now().date()
