@@ -31,6 +31,11 @@ import {
   MasterRollResponse,
 } from '../../services/dailyOpsReportService';
 import { BRAND } from '../../constants/brand';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so cron-driven disbursement/collection activity for the
+// selected period surfaces without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -153,8 +158,8 @@ export default function DisbursementMasterRollPage() {
     ? { start: date, end: date }
     : { start: monthStart, end: new Date(new Date(monthStart).getFullYear(), new Date(monthStart).getMonth() + 1, 0).toISOString().slice(0, 10) };
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const res = await dailyOpsReportService.getMasterRoll(filters);
@@ -169,6 +174,8 @@ export default function DisbursementMasterRollPage() {
   }, [mode, date, monthStart]);
 
   useEffect(() => { load(); }, [load]);
+
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
 
   function toggleExpand(loanId: number) {
     setExpanded((prev) => {
@@ -263,7 +270,7 @@ export default function DisbursementMasterRollPage() {
             )}
             <button
               type="button"
-              onClick={load}
+              onClick={() => load()}
               disabled={loading}
               className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >

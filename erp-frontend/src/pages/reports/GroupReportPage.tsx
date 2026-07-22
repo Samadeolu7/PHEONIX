@@ -21,6 +21,11 @@ import { clientService, ClientGroup, Client } from '../../services/clientService
 import { loanService, LoanAccountList } from '../../services/loanService';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
 import api from '../../services/api';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so member savings/loan balances updated by backend
+// cron jobs (interest posting, loan status) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -75,8 +80,8 @@ export default function GroupReportPage() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [groupData, setGroupData] = useState<Record<number, ExpandedGroupData>>({});
 
-  const loadGroups = useCallback(async () => {
-    setLoading(true);
+  const loadGroups = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const res = await clientService.listClientGroups({});
@@ -90,6 +95,8 @@ export default function GroupReportPage() {
   }, []);
 
   useEffect(() => { loadGroups(); }, [loadGroups]);
+
+  useAutoRefresh(() => loadGroups(true), AUTO_REFRESH_MS);
 
   async function loadGroupMembers(groupId: number) {
     if (groupData[groupId] && !groupData[groupId].loading) return;

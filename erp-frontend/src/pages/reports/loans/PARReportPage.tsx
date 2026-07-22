@@ -15,6 +15,11 @@ import {
 } from 'lucide-react';
 import { loanService, LoanAccountList } from '../../../services/loanService';
 import { BRAND } from '../../../constants/brand';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
+
+// Background refresh so loan status changes from the daily loan-status cron
+// (arrears/risk/penalties) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -172,8 +177,8 @@ export default function PARReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [asOf, setAsOf] = useState(todayStr());
 
-  const loadLoans = useCallback(async () => {
-    setLoading(true);
+  const loadLoans = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       // Fetch active and disbursed loans — the full portfolio
@@ -208,6 +213,8 @@ export default function PARReportPage() {
   useEffect(() => {
     loadLoans();
   }, [loadLoans]);
+
+  useAutoRefresh(() => loadLoans(true), AUTO_REFRESH_MS);
 
   const { totalPortfolio, par1, par30, par90, bands } = computePAR(allLoans);
   const atRiskAmount = par1.outstanding; // widest definition

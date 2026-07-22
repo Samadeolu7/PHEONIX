@@ -22,6 +22,11 @@ import {
 } from 'lucide-react';
 import { api } from '../../services/api';
 import { loanService } from '../../services/loanService';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so cron-driven loan status changes (arrears/risk/
+// disbursements) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -122,8 +127,8 @@ export default function OfficerPortfolioPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const [statsRes, parRes] = await Promise.all([
@@ -145,6 +150,8 @@ export default function OfficerPortfolioPage() {
     load();
   }, []);
 
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
+
   const today = new Date().toLocaleDateString('en-NG', {
     day: '2-digit',
     month: 'long',
@@ -163,7 +170,7 @@ export default function OfficerPortfolioPage() {
         </div>
         <button
           type="button"
-          onClick={load}
+          onClick={() => load()}
           disabled={loading}
           className="flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >

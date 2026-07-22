@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { RefreshCw, Play, Power } from 'lucide-react';
 import { useScheduledJobs, useToggleJob, useRunJob } from '../../hooks/useScheduledJobs';
 import { ScheduledJob } from '../../services/scheduledJobsService';
@@ -20,13 +20,28 @@ function statusVariant(status: string | undefined): 'success' | 'error' | 'defau
   return 'default';
 }
 
+// After "Run now" queues an async task, poll for this long so the result
+// (success/failure, traceback) shows up without the operator manually
+// mashing Refresh — mirrors the active-run polling used for reconciliation
+// and automation jobs elsewhere in the app.
+const RUN_NOW_POLL_WINDOW_MS = 30_000;
+const RUN_NOW_POLL_INTERVAL_MS = 3_000;
+
 const ScheduledJobsPage: React.FC = () => {
   const toast = useToast();
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [pollingUntil, setPollingUntil] = useState<number | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const { data: jobs = [], isLoading: loading, refetch } = useScheduledJobs();
+  const { data: jobs = [], isLoading: loading, refetch } = useScheduledJobs({
+    refetchInterval: pollingUntil && Date.now() < pollingUntil ? RUN_NOW_POLL_INTERVAL_MS : false,
+  });
   const toggleJob = useToggleJob();
   const runJob = useRunJob();
+
+  useEffect(() => {
+    return () => clearTimeout(pollTimeoutRef.current);
+  }, []);
 
   const handleToggle = async (job: ScheduledJob) => {
     setBusyId(job.id);
@@ -44,7 +59,11 @@ const ScheduledJobsPage: React.FC = () => {
     setBusyId(job.id);
     try {
       await runJob.mutateAsync(job.id);
-      toast.success(`'${job.name}' queued to run now — check back shortly for the result.`);
+      toast.success(`'${job.name}' queued to run now — watching for the result...`);
+      const until = Date.now() + RUN_NOW_POLL_WINDOW_MS;
+      setPollingUntil(until);
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = setTimeout(() => setPollingUntil(null), RUN_NOW_POLL_WINDOW_MS);
     } catch (err: any) {
       toast.error(err.message || 'Failed to queue job');
     } finally {

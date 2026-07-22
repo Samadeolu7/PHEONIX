@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { Calendar, Loader2, AlertCircle, BarChart2, Download } from 'lucide-react';
 import { api } from '../../services/api';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so the portfolio snapshot doesn't go stale while the
+// page is left open (cron jobs / other users post loans, savings, clients).
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 function fmt(v: string | number | null | undefined) {
   const n = parseFloat(String(v ?? '0'));
@@ -31,8 +36,8 @@ export default function ReportSummaryPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  async function generate() {
-    setLoading(true);
+  async function generate(background = false) {
+    if (!background) setLoading(true);
     setError('');
     try {
       const [loansRes, savingsRes, clientsRes] = await Promise.all([
@@ -81,6 +86,8 @@ export default function ReportSummaryPage() {
       setLoading(false);
     }
   }
+
+  useAutoRefresh(() => generate(true), AUTO_REFRESH_MS, summary !== null);
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">

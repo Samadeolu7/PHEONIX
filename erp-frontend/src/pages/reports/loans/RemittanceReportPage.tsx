@@ -30,6 +30,11 @@ import {
   RemittanceSavingsCollectionRow,
 } from '../../../services/loanService';
 import { BRAND } from '../../../constants/brand';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
+
+// Background refresh so loan status changes from the daily loan-status cron
+// (arrears/risk/penalties) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -139,8 +144,8 @@ export default function RemittanceReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [date, setDate] = useState(todayStr());
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const data = await loanService.getRemittanceReport(date);
@@ -157,6 +162,8 @@ export default function RemittanceReportPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useAutoRefresh(() => loadData(true), AUTO_REFRESH_MS);
 
   const due: RemittanceDueRow[] = report?.due ?? [];
   const loanCollections: RemittanceLoanCollectionRow[] = report?.loan_collections ?? [];

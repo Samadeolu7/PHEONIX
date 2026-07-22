@@ -50,6 +50,11 @@ import {
   formatNaira,
 } from '../../services/dashboardStatsService';
 import { portfolioPerformanceService } from '../../services/portfolioPerformanceService';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so cron-driven loan status changes (arrears/risk/
+// disbursements) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -129,8 +134,8 @@ export default function DirectorPortfolioPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const [statsData, parData, cbnData, defaultersRes, staffData, cashData, productData, trendData] = await Promise.all([
@@ -163,6 +168,8 @@ export default function DirectorPortfolioPage() {
 
   useEffect(() => { load(); }, []);
 
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
+
   const today = new Date().toLocaleDateString('en-NG', { day: '2-digit', month: 'long', year: 'numeric' });
   const cashInflowChartData = cashInflow.map((p) => ({
     date: p.date.slice(5),
@@ -184,7 +191,7 @@ export default function DirectorPortfolioPage() {
         </div>
         <button
           type="button"
-          onClick={load}
+          onClick={() => load()}
           disabled={loading}
           className="flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >

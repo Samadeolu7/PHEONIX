@@ -3,6 +3,11 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, AlertCircle, Download, Tag } from 'lucide-react';
 import { IncomeCategoryRow } from '../../../services/incomeReportsService';
 import { useIncomeByCategory } from '../../../hooks/useIncomeReports';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
+
+// Background refresh so income figures posted by other users / cron jobs
+// surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const todayStr = () => {
@@ -62,9 +67,11 @@ const IncomeByCategoryPage: React.FC = () => {
     date_to: todayStr(),
   });
 
-  const { data, isLoading: loading, error: queryError } = useIncomeByCategory(appliedFilters);
+  const { data, isLoading: loading, error: queryError, refetch } = useIncomeByCategory(appliedFilters);
   const error =
     queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
+
+  useAutoRefresh(() => refetch(), AUTO_REFRESH_MS);
 
   const handleApply = () => setAppliedFilters({ date_from: dateFrom, date_to: dateTo });
 

@@ -2,6 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { Calendar, Download, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 import { api } from '../../services/api';
 import { getSavingsCollectionSheet, type ContributionScheduleItem } from '../../services/savingsService';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so contribution postings recorded by backend cron jobs
+// surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 interface Product { id: number; name: string; code: string; }
 
@@ -33,9 +38,9 @@ export default function DailyContributionReportPage() {
       .finally(() => setLoadingProducts(false));
   }, []);
 
-  async function generate() {
+  async function generate(background = false) {
     if (!productId) return;
-    setLoading(true);
+    if (!background) setLoading(true);
     setError('');
     try {
       const data = await getSavingsCollectionSheet({ date, product: productId as number });
@@ -47,6 +52,8 @@ export default function DailyContributionReportPage() {
       setLoading(false);
     }
   }
+
+  useAutoRefresh(() => generate(true), AUTO_REFRESH_MS, generated);
 
   const selectedProduct = products.find(p => p.id === productId);
   const paid    = items.filter(i => i.status === 'paid');

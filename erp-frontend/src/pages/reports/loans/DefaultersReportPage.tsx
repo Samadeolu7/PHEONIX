@@ -19,6 +19,11 @@ import {
 } from 'lucide-react';
 import { loanService, LoanAccountList } from '../../../services/loanService';
 import { BRAND } from '../../../constants/brand';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
+
+// Background refresh so loan status changes from the daily loan-status cron
+// (arrears/risk/penalties) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -140,8 +145,8 @@ export default function DefaultersReportPage() {
     }
   };
 
-  const loadLoans = useCallback(async () => {
-    setLoading(true);
+  const loadLoans = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const res = await loanService.getDefaulters(asOf);
@@ -160,6 +165,8 @@ export default function DefaultersReportPage() {
   useEffect(() => {
     loadLoans();
   }, [loadLoans]);
+
+  useAutoRefresh(() => loadLoans(true), AUTO_REFRESH_MS);
 
   // Client-side search filter (summary stats use all loaded loans; table uses filtered)
   // Split into tokens so "John Doe" matches "John Michael Doe" (middle name present).

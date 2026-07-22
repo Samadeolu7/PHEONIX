@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, UseQueryOptions } from '@tanstack/react-query';
 import { scheduledJobsService, ScheduledJob } from '../services/scheduledJobsService';
 
 export const scheduledJobsKeys = {
@@ -6,10 +6,13 @@ export const scheduledJobsKeys = {
   list: () => [...scheduledJobsKeys.all, 'list'] as const,
 };
 
-export function useScheduledJobs() {
+export function useScheduledJobs(
+  options?: Omit<UseQueryOptions<ScheduledJob[], Error>, 'queryKey' | 'queryFn'>
+) {
   return useQuery({
     queryKey: scheduledJobsKeys.list(),
     queryFn: () => scheduledJobsService.getJobs(),
+    ...options,
   });
 }
 

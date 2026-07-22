@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Download, RefreshCw, Loader2, AlertCircle, PiggyBank } from 'lucide-react';
 import { api } from '../../services/api';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so account balances updated by backend cron jobs
+// (interest posting) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 interface ThriftAccount {
   id: number;
@@ -24,8 +29,8 @@ export default function ThriftReportPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    if (!background) setLoading(true);
     setError('');
     try {
       const res = await api.get('/savings/accounts/', {
@@ -41,6 +46,8 @@ export default function ThriftReportPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
 
   const filtered = items.filter(i =>
     !search ||

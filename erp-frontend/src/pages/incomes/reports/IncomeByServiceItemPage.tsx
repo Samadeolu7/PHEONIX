@@ -3,6 +3,11 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, AlertCircle, Download, Package } from 'lucide-react';
 import { IncomeServiceItemRow } from '../../../services/incomeReportsService';
 import { useIncomeByServiceItem } from '../../../hooks/useIncomeReports';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
+
+// Background refresh so income figures posted by other users / cron jobs
+// surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const todayStr = () => {
@@ -66,9 +71,11 @@ const IncomeByServiceItemPage: React.FC = () => {
     date_to: todayStr(),
   });
 
-  const { data, isLoading: loading, error: queryError } = useIncomeByServiceItem(appliedFilters);
+  const { data, isLoading: loading, error: queryError, refetch } = useIncomeByServiceItem(appliedFilters);
   const error =
     queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
+
+  useAutoRefresh(() => refetch(), AUTO_REFRESH_MS);
 
   const handleApply = () =>
     setAppliedFilters({

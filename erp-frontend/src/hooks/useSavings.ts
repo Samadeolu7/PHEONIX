@@ -211,16 +211,23 @@ export const useWithdrawals = (
   return useQuery({
     queryKey: savingsKeys.withdrawals(params),
     queryFn: () => getWithdrawals(params),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
     ...options,
   });
 };
 
+// Approval/disbursement queues are worked concurrently by multiple
+// approvers/disbursers, so they poll rather than relying on a manual
+// refresh — stale counts here risk double-processing or missed items.
 export const usePendingMyApproval = (
   options?: Omit<UseQueryOptions<SavingsWithdrawalRequest[], Error>, 'queryKey' | 'queryFn'>
 ) => {
   return useQuery({
     queryKey: savingsKeys.pendingMyApproval(),
     queryFn: () => getPendingMyApproval(),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
     ...options,
   });
 };
@@ -231,6 +238,8 @@ export const usePendingDisburse = (
   return useQuery({
     queryKey: savingsKeys.pendingDisburse(),
     queryFn: () => getPendingDisburse(),
+    staleTime: 15_000,
+    refetchInterval: 30_000,
     ...options,
   });
 };

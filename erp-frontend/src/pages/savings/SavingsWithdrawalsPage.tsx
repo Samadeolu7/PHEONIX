@@ -130,7 +130,7 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
       payload.payment_method = paymentMethod;
       if (paymentMethod === 'cash') payload.cashier_account = cashierAccountId as number;
     }
-    approveMutation.mutate({ id: withdrawal.id, data: payload });
+    approveMutation.mutate({ withdrawalId: withdrawal.id, data: payload });
   };
 
   const pendingStep = withdrawal.approval_steps?.find(s => s.status === 'pending');

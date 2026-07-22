@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import WIDGET_TYPE_MAP from './WidgetLibrary';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../services/api';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 
 interface WidgetConfig {
   type: string;
@@ -18,6 +19,16 @@ interface WidgetRendererProps {
   onDataRequest?: (widgetId: string) => Promise<unknown>;
 }
 
+// Static-only types don't need a backend call — they fully render from config.
+const STATIC_TYPES = ['sidebar', 'quick_links', 'text', 'navigation'];
+
+// Background refresh so KPI/report widgets on role dashboards don't go stale
+// while left open — this is the primary landing page for most users, and the
+// numbers are driven by the same cron jobs (interest, loan status, etc.) as
+// the standalone reports. Only re-fetches this widget's own data, never the
+// dashboard layout, so it can't disturb drag/resize/edit state.
+const WIDGET_AUTO_REFRESH_MS = 3 * 60_000;
+
 const WidgetRenderer: React.FC<WidgetRendererProps> = ({
   widget,
   modulesData = [],
@@ -29,9 +40,43 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
+  const isLiveWidget =
+    !STATIC_TYPES.includes(widget.widget_type) &&
+    !!widget.id &&
+    !isNaN(Number(widget.id));
+
+  // Fetch live data and non-destructively merge — only overwrite keys that
+  // have a genuinely useful value so we never blank out good config data.
+  const fetchLiveData = () => {
+    if (!isLiveWidget) return;
+
+    api
+      .get(`/widgets/${widget.id}/data/`)
+      .then(response => {
+        const liveData = response.data?.data || response.data;
+        if (liveData && !liveData.error) {
+          setData((prev: any) => {
+            const merged = { ...prev };
+            for (const [key, val] of Object.entries(liveData as Record<string, any>)) {
+              // Skip nulls, undefineds and empty arrays — they must not wipe good data
+              if (val === null || val === undefined) continue;
+              if (Array.isArray(val) && val.length === 0) continue;
+              merged[key] = val;
+            }
+            return merged;
+          });
+        }
+      })
+      .catch(() => {
+        // Silently fall back to static config data already displayed
+      });
+  };
+
   useEffect(() => {
     prepareWidgetData();
   }, [widget, modulesData, formsData]);
+
+  useAutoRefresh(fetchLiveData, WIDGET_AUTO_REFRESH_MS, isLiveWidget);
 
   const prepareWidgetData = () => {
     // For navigation widgets, auto-populate from modules
@@ -69,36 +114,7 @@ const WidgetRenderer: React.FC<WidgetRendererProps> = ({
     // Always set config as the initial (static) data so widgets render immediately
     setData(widget.config);
 
-    // For widgets with a real backend integer ID, also fetch live data.
-    // Static-only types don't need a backend call — they fully render from config.
-    const STATIC_TYPES = ['sidebar', 'quick_links', 'text', 'navigation'];
-    if (STATIC_TYPES.includes(widget.widget_type)) return;
-
-    const widgetId = widget.id;
-    if (!widgetId || isNaN(Number(widgetId))) return;
-
-    // Fetch live data and non-destructively merge — only overwrite keys that
-    // have a genuinely useful value so we never blank out good config data.
-    api
-      .get(`/widgets/${widgetId}/data/`)
-      .then(response => {
-        const liveData = response.data?.data || response.data;
-        if (liveData && !liveData.error) {
-          setData((prev: any) => {
-            const merged = { ...prev };
-            for (const [key, val] of Object.entries(liveData as Record<string, any>)) {
-              // Skip nulls, undefineds and empty arrays — they must not wipe good data
-              if (val === null || val === undefined) continue;
-              if (Array.isArray(val) && val.length === 0) continue;
-              merged[key] = val;
-            }
-            return merged;
-          });
-        }
-      })
-      .catch(() => {
-        // Silently fall back to static config data already displayed
-      });
+    fetchLiveData();
   };
 
   const handleLinkClick = (link: any) => {

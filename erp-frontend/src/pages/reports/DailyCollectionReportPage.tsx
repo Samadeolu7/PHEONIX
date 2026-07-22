@@ -24,6 +24,11 @@ import {
   CollectionReportRow,
 } from '../../services/dailyOpsReportService';
 import { BRAND } from '../../constants/brand';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so savings/loan collections posted by backend cron jobs
+// surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 function fmt(amount: string | number | null | undefined): string {
   const n = parseFloat(String(amount ?? '0'));
@@ -59,8 +64,8 @@ export default function DailyCollectionReportPage() {
     ? { start: date, end: date }
     : { start: monthStart, end: new Date(new Date(monthStart).getFullYear(), new Date(monthStart).getMonth() + 1, 0).toISOString().slice(0, 10) };
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const res = await dailyOpsReportService.getCollectionReport(filters);
@@ -75,6 +80,8 @@ export default function DailyCollectionReportPage() {
   }, [mode, date, monthStart]);
 
   useEffect(() => { load(); }, [load]);
+
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
 
   function handlePrint() {
     window.print();

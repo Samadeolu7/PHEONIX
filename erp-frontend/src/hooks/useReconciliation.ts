@@ -46,6 +46,15 @@ export const useReconciliations = (filters?: ReconciliationFilters) => {
     queryKey: reconciliationKeys.list(filters),
     queryFn: () => reconciliationService.listReconciliations(filters),
     staleTime: 30_000,
+    // Poll faster while any row is still processing (recon tasks run async
+    // in the background), otherwise fall back to a slow baseline so the
+    // requeue-stuck-reconciliations beat job's effects still surface without
+    // a manual refresh.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const hasActive = data?.some((r) => r.status === 'processing');
+      return hasActive ? 5_000 : 60_000;
+    },
   });
 };
 
@@ -86,11 +95,18 @@ export const useReconciliationBranches = () => {
 
 // ============= REPORT QUERY HOOKS =============
 
+// These exception/audit reports are mutated by the escalate-aging-
+// reconciliation-exceptions beat job (daily) and by other officers resolving
+// exceptions concurrently, so they poll on a slow baseline rather than
+// waiting for a manual refresh.
+const REPORT_POLL_MS = 5 * 60_000;
+
 export const useOfficerRiskReport = (filters?: OfficerReconciliationRiskFilters) => {
   return useQuery({
     queryKey: reconciliationKeys.officerRisk(filters),
     queryFn: () => reconciliationService.getOfficerRiskReport(filters),
     staleTime: 60_000,
+    refetchInterval: REPORT_POLL_MS,
   });
 };
 
@@ -99,6 +115,7 @@ export const useManualOverridesReport = (filters?: ManualOverridesReportFilters)
     queryKey: reconciliationKeys.manualOverrides(filters),
     queryFn: () => reconciliationService.getManualOverridesReport(filters),
     staleTime: 60_000,
+    refetchInterval: REPORT_POLL_MS,
   });
 };
 
@@ -107,6 +124,7 @@ export const useMissingMoneySummary = (filters?: MissingMoneySummaryFilters) => 
     queryKey: reconciliationKeys.missingMoney(filters),
     queryFn: () => reconciliationService.getMissingMoneySummary(filters),
     staleTime: 60_000,
+    refetchInterval: REPORT_POLL_MS,
   });
 };
 

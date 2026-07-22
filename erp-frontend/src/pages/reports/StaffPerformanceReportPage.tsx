@@ -49,6 +49,11 @@ import {
   PortfolioBreakdownRow,
 } from '../../services/portfolioPerformanceService';
 import { BRAND } from '../../constants/brand';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so cron-driven loan status/collection changes surface
+// without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 function fmt(v: string | number | null | undefined): string {
   const n = parseFloat(String(v ?? '0'));
@@ -133,8 +138,8 @@ export default function StaffPerformanceReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const res = await portfolioPerformanceService.getOfficerTrend(filters, months);
@@ -149,6 +154,8 @@ export default function StaffPerformanceReportPage() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [filters, months]);
+
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
 
   function toggleExpand(staffId: number) {
     setExpanded((prev) => {

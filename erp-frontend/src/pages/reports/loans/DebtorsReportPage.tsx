@@ -15,6 +15,11 @@ import {
 } from 'lucide-react';
 import { loanService, LoanAccountList } from '../../../services/loanService';
 import { BRAND } from '../../../constants/brand';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
+
+// Background refresh so loan status changes from the daily loan-status cron
+// (arrears/risk/penalties) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -98,9 +103,11 @@ export default function DebtorsReportPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const printRef = useRef<HTMLDivElement>(null);
 
-  // Fetch all active+disbursed loans (large page size for full snapshot)
-  const loadLoans = useCallback(async () => {
-    setLoading(true);
+  // Fetch all active+disbursed loans (large page size for full snapshot).
+  // `background` refreshes keep the current table visible instead of
+  // flashing the loading spinner over it.
+  const loadLoans = useCallback(async (background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const params: Record<string, string | number> = { page_size: 500 };
@@ -149,6 +156,8 @@ export default function DebtorsReportPage() {
   useEffect(() => {
     loadLoans();
   }, [loadLoans]);
+
+  useAutoRefresh(() => loadLoans(true), AUTO_REFRESH_MS);
 
   // Summary stats
   const totalOutstanding = loans.reduce(

@@ -41,6 +41,11 @@ import {
   InterestIncomeByModeResponse,
   ProvisioningComplianceResponse,
 } from '../../services/portfolioPerformanceService';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so cron-driven loan status/provisioning changes surface
+// without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -119,8 +124,8 @@ export default function PortfolioPerformanceReportPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
-    setLoading(true);
+  async function load(background = false) {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const [breakdownRes, interestRes, provisioningRes] = await Promise.all([
@@ -143,6 +148,8 @@ export default function PortfolioPerformanceReportPage() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [filters, groupBy]);
+
+  useAutoRefresh(() => load(true), AUTO_REFRESH_MS);
 
   const primaryDim = groupBy[0];
   const breakdownChartData = breakdown.map((row) => ({

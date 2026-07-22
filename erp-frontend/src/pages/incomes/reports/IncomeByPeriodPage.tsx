@@ -3,6 +3,11 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, AlertCircle, Download, Calendar } from 'lucide-react';
 import { IncomePeriodRow, PeriodGranularity } from '../../../services/incomeReportsService';
 import { useIncomeByPeriod } from '../../../hooks/useIncomeReports';
+import { useAutoRefresh } from '../../../hooks/useAutoRefresh';
+
+// Background refresh so income figures posted by other users / cron jobs
+// surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const todayStr = () => {
@@ -192,9 +197,11 @@ const IncomeByPeriodPage: React.FC = () => {
     period: 'monthly' as PeriodGranularity,
   });
 
-  const { data, isLoading: loading, error: queryError } = useIncomeByPeriod(appliedFilters);
+  const { data, isLoading: loading, error: queryError, refetch } = useIncomeByPeriod(appliedFilters);
   const error =
     queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
+
+  useAutoRefresh(() => refetch(), AUTO_REFRESH_MS);
 
   const handleApply = () => {
     setAppliedFilters({ date_from: dateFrom, date_to: dateTo, period });

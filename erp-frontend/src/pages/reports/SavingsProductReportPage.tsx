@@ -1,7 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Download, RefreshCw, Loader2, AlertCircle, PiggyBank, TrendingUp, Users, CheckCircle, XCircle } from 'lucide-react';
 import { api } from '../../services/api';
 import { getSavingsAccounts, getSavingsProductConfig, type SavingsAccount, type SavingsProductConfig } from '../../services/savingsService';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+
+// Background refresh so account balances updated by backend cron jobs
+// (interest posting) surface without a manual refresh.
+const AUTO_REFRESH_MS = 3 * 60_000;
 
 interface Product {
   id: number;
@@ -62,9 +67,9 @@ export default function SavingsProductReportPage() {
   }, []);
 
   // Load accounts + config when product changes
-  useEffect(() => {
+  const loadAccounts = useCallback((background = false) => {
     if (!selectedProduct) { setAccounts([]); setProductConfig(null); return; }
-    setLoading(true);
+    if (!background) setLoading(true);
     setError('');
     Promise.all([
       getSavingsAccounts({ product: selectedProduct.id }),
@@ -78,6 +83,10 @@ export default function SavingsProductReportPage() {
       .catch(() => setError('Failed to load product data.'))
       .finally(() => setLoading(false));
   }, [selectedProduct]);
+
+  useEffect(() => { loadAccounts(); }, [loadAccounts]);
+
+  useAutoRefresh(() => loadAccounts(true), AUTO_REFRESH_MS, !!selectedProduct);
 
   const filtered = accounts.filter(a =>
     !search ||
