@@ -73,7 +73,6 @@ export const ThreadPanel: React.FC = () => {
   const [createReason, setCreateReason] = useState<ThreadReason | ''>('');
   const [createParticipants, setCreateParticipants] = useState<{ id: number; full_name: string }[]>([]);
   const [createSearch, setCreateSearch] = useState('');
-  const [createSearchResults, setCreateSearchResults] = useState<{ id: number; username: string; full_name: string }[]>([]);
   const [createError, setCreateError] = useState('');
   const { draft, setDraft, clearDraft } = useThreadDraft(selectedThreadId);
   const [actionError, setActionError] = useState('');
@@ -129,7 +128,7 @@ export const ThreadPanel: React.FC = () => {
     staleTime: 10_000,
   });
 
-  const { data: createSearchResults: createSearchData = [] } = useQuery({
+  const { data: createSearchData = [] } = useQuery({
     queryKey: threadKeys.searchUsers(createSearch),
     queryFn: () => threadService.searchUsers(createSearch || undefined),
     enabled: creating,
@@ -634,7 +633,6 @@ export const ThreadPanel: React.FC = () => {
                                 ]);
                               }
                               setCreateSearch('');
-                              setCreateSearchResults([]);
                             }}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
                           >
@@ -660,7 +658,6 @@ export const ThreadPanel: React.FC = () => {
                     setCreating(false);
                     setCreateTitle('');
                     setCreateSearch('');
-                    setCreateSearchResults([]);
                     setCreateParticipants([]);
                   }}
                   className="px-3 py-2 border border-gray-300 text-sm rounded-lg hover:bg-gray-50 transition-colors"

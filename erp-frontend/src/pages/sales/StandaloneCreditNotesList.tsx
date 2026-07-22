@@ -189,8 +189,6 @@ const StandaloneCreditNotesList: React.FC = () => {
     }
   };
 
-  const totalPages = Math.ceil(pagination.count / (filters.page_size ?? 20));
-
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
