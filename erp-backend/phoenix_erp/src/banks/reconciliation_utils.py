@@ -581,6 +581,66 @@ def find_same_amount_erp_candidates(tx, window_days=None):
     return [p for p in payments if Decimal(p['amount']) == tx.amount]
 
 
+def find_occupied_erp_candidates(tx, window_days=None):
+    """
+    Same search as find_same_amount_erp_candidates, but WITHOUT excluding
+    payments some other currently-matched line already claims — then
+    returns only the ones THAT other line is occupying (the ones excluded
+    from the normal candidate pool for exactly that reason).
+
+    This is the "the correct payment wasn't showing up as a link candidate
+    because it was already matched to something else" case: a bank line
+    with zero normal candidates may still have its true counterpart sitting
+    right there, just currently held by a different (possibly wrongly-
+    matched) bank transaction. Surfacing it requires a second, unrestricted
+    search — find_same_amount_erp_candidates deliberately can't do this
+    itself, since every other caller (audit_unattached_statement_lines,
+    confirm_unambiguous_ghost_matches) needs the exclusion to stay accurate
+    about what Java would actually be offered.
+
+    Returns a list of (payment_dict, occupying_tx) tuples — occupying_tx is
+    the ReconciliationBankTransaction currently holding that payment, so a
+    human can judge whether ITS match is the wrong one and should be freed
+    (see unmatch_transaction_by_id) before this line can claim it instead.
+    """
+    from datetime import timedelta
+
+    from django.conf import settings
+
+    from .models import ReconciliationBankTransaction
+
+    if window_days is None:
+        window_days = getattr(settings, 'RECONCILIATION_MATCH_WINDOW_DAYS', 7)
+
+    window_start = tx.value_date - timedelta(days=window_days)
+    window_end = tx.value_date + timedelta(days=window_days)
+    direction = 'CREDIT' if tx.direction == 'CREDIT' else 'DEBIT'
+
+    unrestricted = fetch_erp_payments(
+        tx.bank_account, window_start, window_end,
+        direction=direction, exclude_payment_ids=(),
+    )
+    same_amount = [p for p in unrestricted if Decimal(p['amount']) == tx.amount]
+    normally_available_ids = {p['paymentId'] for p in find_same_amount_erp_candidates(tx, window_days)}
+
+    occupying_txs = {
+        occ.matched_erp_payment_id: occ
+        for occ in ReconciliationBankTransaction.objects.filter(
+            bank_account_id=tx.bank_account_id,
+            matched=True,
+            matched_erp_payment_id__in=[
+                p['paymentId'] for p in same_amount if p['paymentId'] not in normally_available_ids
+            ],
+        ).exclude(pk=tx.pk)
+    }
+
+    return [
+        (p, occupying_txs[p['paymentId']])
+        for p in same_amount
+        if p['paymentId'] in occupying_txs
+    ]
+
+
 def recompute_reconciliation_counts(recon):
     """
     Recompute matched_count/unmatched_bank_count/unmatched_erp_count/
