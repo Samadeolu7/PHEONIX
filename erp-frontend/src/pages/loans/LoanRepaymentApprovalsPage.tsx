@@ -3,8 +3,9 @@
  * Lists pending requests; director can approve or reject each.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   AlertCircle,
   ArrowLeft,
@@ -15,8 +16,13 @@ import {
   RefreshCw,
   XCircle,
 } from 'lucide-react';
-import { loanService, LoanRepaymentRequest } from '../../services/loanService';
+import { LoanRepaymentRequest } from '../../services/loanService';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
+import {
+  useLoanRepaymentApprovals,
+  useApproveRepaymentRequest,
+  useRejectRepaymentRequest,
+} from '../../hooks/useLoans';
 
 function fmt(v: string | number | null | undefined): string {
   const n = parseFloat(String(v ?? '0'));
@@ -94,11 +100,10 @@ interface RequestRowProps {
   req: LoanRepaymentRequest;
   onApprove: (id: number) => void;
   onReject: (req: LoanRepaymentRequest) => void;
-  actionLoading: number | null;
+  isApproving: boolean;
 }
 
-function RequestRow({ req, onApprove, onReject, actionLoading }: RequestRowProps) {
-  const isLoading = actionLoading === req.id;
+function RequestRow({ req, onApprove, onReject, isApproving }: RequestRowProps) {
   return (
     <tr className="hover:bg-gray-50">
       <td className="whitespace-nowrap px-4 py-3 text-sm font-medium text-gray-900">
@@ -149,16 +154,16 @@ function RequestRow({ req, onApprove, onReject, actionLoading }: RequestRowProps
           <div className="flex items-center gap-2">
             <button
               type="button"
-              disabled={isLoading}
+              disabled={isApproving}
               onClick={() => onApprove(req.id)}
               className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
             >
-              {isLoading ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
+              {isApproving ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
               Approve
             </button>
             <button
               type="button"
-              disabled={isLoading}
+              disabled={isApproving}
               onClick={() => onReject(req)}
               className="flex items-center gap-1 rounded-lg border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
             >
@@ -183,58 +188,35 @@ type StatusFilter = 'pending' | 'posted' | 'rejected' | 'all';
 
 export default function LoanRepaymentApprovalsPage() {
   const [filter, setFilter] = useState<StatusFilter>('pending');
-  const [requests, setRequests] = useState<LoanRepaymentRequest[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState<number | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<LoanRepaymentRequest | null>(null);
-  const [rejectLoading, setRejectLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = filter === 'all' ? {} : { status: filter };
-      const data = await loanService.listRepaymentRequests(params);
-      setRequests(data);
-    } catch (e: any) {
-      setError(e?.detail ?? e?.message ?? 'Failed to load requests.');
-    } finally {
-      setLoading(false);
-    }
-  }, [filter]);
-
-  useEffect(() => { load(); }, [load]);
+  const params = filter === 'all' ? {} : { status: filter };
+  const { data: requests = [], isLoading: loading, error: queryError, refetch } = useLoanRepaymentApprovals(params);
+  const approveMutation = useApproveRepaymentRequest();
+  const rejectMutation = useRejectRepaymentRequest();
 
   const handleApprove = async (id: number) => {
-    setActionLoading(id);
-    setActionError(null);
-    try {
-      const updated = await loanService.approveRepaymentRequest(id);
-      setRequests(prev => prev.map(r => (r.id === id ? updated : r)));
-    } catch (e: any) {
-      setActionError(e?.detail ?? e?.message ?? 'Approval failed.');
-    } finally {
-      setActionLoading(null);
-    }
+    approveMutation.mutate(id, {
+      onError: (e: any) => {
+        toast.error(e?.detail ?? e?.message ?? 'Approval failed.');
+      },
+    });
   };
 
   const handleRejectConfirm = async (reason: string) => {
     if (!rejectTarget) return;
-    setRejectLoading(true);
-    setActionError(null);
-    try {
-      const updated = await loanService.rejectRepaymentRequest(rejectTarget.id, reason);
-      setRequests(prev => prev.map(r => (r.id === rejectTarget.id ? updated : r)));
-      setRejectTarget(null);
-    } catch (e: any) {
-      setActionError(e?.detail ?? e?.message ?? 'Rejection failed.');
-    } finally {
-      setRejectLoading(false);
-    }
+    rejectMutation.mutate(
+      { id: rejectTarget.id, rejection_reason: reason },
+      {
+        onSuccess: () => setRejectTarget(null),
+        onError: (e: any) => {
+          toast.error(e?.detail ?? e?.message ?? 'Rejection failed.');
+        },
+      }
+    );
   };
 
+  const error = queryError ? ((queryError as any)?.detail ?? queryError.message ?? 'Failed to load requests.') : null;
   const pendingCount = requests.filter(r => r.status === 'pending').length;
 
   return (
@@ -259,7 +241,7 @@ export default function LoanRepaymentApprovalsPage() {
           </div>
           <button
             type="button"
-            onClick={load}
+            onClick={() => refetch()}
             disabled={loading}
             className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
           >
@@ -331,7 +313,7 @@ export default function LoanRepaymentApprovalsPage() {
                     req={req}
                     onApprove={handleApprove}
                     onReject={setRejectTarget}
-                    actionLoading={actionLoading}
+                    isApproving={approveMutation.isPending}
                   />
                 ))}
               </tbody>
@@ -345,7 +327,7 @@ export default function LoanRepaymentApprovalsPage() {
           request={rejectTarget}
           onConfirm={handleRejectConfirm}
           onClose={() => setRejectTarget(null)}
-          loading={rejectLoading}
+          loading={rejectMutation.isPending}
         />
       )}
     </div>

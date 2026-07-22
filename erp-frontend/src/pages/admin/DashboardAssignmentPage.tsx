@@ -1,5 +1,6 @@
 // Dashboard Assignment Page - Admin page for managing dashboard assignments
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Settings, Users, BarChart3, Shield, ArrowLeft, Info, Check, Loader2, AlertCircle } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { DashboardAssignmentManager } from '../../components/dashboard/DashboardAssignmentManager';
@@ -14,62 +15,50 @@ interface Dashboard {
   is_active: boolean;
 }
 
-interface RoleDashboardState {
-  roles: Role[];
-  dashboards: Dashboard[];
-  loading: boolean;
-  saving: Record<number, boolean>;
-  error: string | null;
-  success: Record<number, boolean>;
-}
+const dashboardAssignmentKeys = {
+  all: ['dashboardAssignment'] as const,
+  rolesDashboards: () => [...dashboardAssignmentKeys.all, 'rolesDashboards'] as const,
+};
 
 const RoleDashboardAssignment: React.FC = () => {
-  const [state, setState] = useState<RoleDashboardState>({
-    roles: [],
-    dashboards: [],
-    loading: true,
-    saving: {},
-    error: null,
-    success: {},
+  const queryClient = useQueryClient();
+
+  const { data: state, isLoading: loading, error: queryError } = useQuery({
+    queryKey: dashboardAssignmentKeys.rolesDashboards(),
+    queryFn: async () => {
+      const [roles, dashboardsRes] = await Promise.all([
+        userManagementService.getRoles(),
+        api.get('/dashboards/'),
+      ]);
+      return {
+        roles,
+        dashboards: Array.isArray(dashboardsRes) ? dashboardsRes : dashboardsRes?.results ?? [],
+      };
+    },
   });
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [roles, dashboardsRes] = await Promise.all([
-          userManagementService.getRoles(),
-          api.get('/dashboards/'),
-        ]);
-        setState(prev => ({
-          ...prev,
-          roles,
-          dashboards: Array.isArray(dashboardsRes) ? dashboardsRes : dashboardsRes?.results ?? [],
-          loading: false,
-        }));
-      } catch (e) {
-        setState(prev => ({ ...prev, loading: false, error: 'Failed to load data.' }));
-      }
-    };
-    load();
-  }, []);
-
-  const handleChange = async (roleId: number, dashboardId: number | null) => {
-    setState(prev => ({ ...prev, saving: { ...prev.saving, [roleId]: true }, success: { ...prev.success, [roleId]: false } }));
-    try {
+  const { data: savingIds = {}, mutate: updateRoleDashboard, isPending } = useMutation({
+    mutationFn: async ({ roleId, dashboardId }: { roleId: number; dashboardId: number | null }) => {
       await api.patch(`/users/roles/${roleId}/`, { default_dashboard: dashboardId });
-      setState(prev => ({
-        ...prev,
-        roles: prev.roles.map(r => r.id === roleId ? { ...r, default_dashboard: dashboardId } : r),
-        saving: { ...prev.saving, [roleId]: false },
-        success: { ...prev.success, [roleId]: true },
-      }));
-      setTimeout(() => setState(prev => ({ ...prev, success: { ...prev.success, [roleId]: false } })), 2000);
-    } catch {
-      setState(prev => ({ ...prev, saving: { ...prev.saving, [roleId]: false }, error: `Failed to update role ${roleId}.` }));
-    }
+      return { roleId, dashboardId };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: dashboardAssignmentKeys.rolesDashboards() });
+    },
+  });
+
+  const [successIds, setSuccessIds] = useState<Record<number, boolean>>({});
+
+  const handleChange = (roleId: number, dashboardId: number | null) => {
+    updateRoleDashboard({ roleId, dashboardId }, {
+      onSuccess: () => {
+        setSuccessIds(prev => ({ ...prev, [roleId]: true }));
+        setTimeout(() => setSuccessIds(prev => ({ ...prev, [roleId]: false })), 2000);
+      },
+    });
   };
 
-  if (state.loading) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-6 w-6 animate-spin text-blue-600 mr-2" />
@@ -78,14 +67,17 @@ const RoleDashboardAssignment: React.FC = () => {
     );
   }
 
-  if (state.error) {
+  if (queryError) {
     return (
       <div className="flex items-center gap-2 text-red-600 p-4 bg-red-50 rounded-lg">
         <AlertCircle className="h-5 w-5 flex-shrink-0" />
-        <span>{state.error}</span>
+        <span>Failed to load data.</span>
       </div>
     );
   }
+
+  const roles = state?.roles ?? [];
+  const dashboards = state?.dashboards ?? [];
 
   return (
     <div className="overflow-x-auto">
@@ -99,7 +91,7 @@ const RoleDashboardAssignment: React.FC = () => {
           </tr>
         </thead>
         <tbody>
-          {state.roles.map(role => (
+          {roles.map((role: any) => (
             <tr key={role.id} className="border-b border-gray-100 hover:bg-gray-50">
               <td className="py-3 px-4">
                 <div className="font-medium text-gray-900">{role.name}</div>
@@ -111,24 +103,24 @@ const RoleDashboardAssignment: React.FC = () => {
                   aria-label={`Default dashboard for ${role.name}`}
                   value={role.default_dashboard ?? ''}
                   onChange={e => handleChange(role.id, e.target.value ? Number(e.target.value) : null)}
-                  disabled={state.saving[role.id]}
+                  disabled={isPending}
                   className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 min-w-[200px]"
                 >
                   <option value="">— No default —</option>
-                  {state.dashboards.map(d => (
+                  {dashboards.map((d: any) => (
                     <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
                 </select>
               </td>
               <td className="py-3 px-4 w-8">
-                {state.saving[role.id] && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
-                {state.success[role.id] && <Check className="h-4 w-4 text-green-500" />}
+                {isPending && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
+                {successIds[role.id] && <Check className="h-4 w-4 text-green-500" />}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      {state.roles.length === 0 && (
+      {roles.length === 0 && (
         <p className="text-center text-gray-500 py-8">No roles found.</p>
       )}
     </div>

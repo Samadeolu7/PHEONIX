@@ -1,7 +1,8 @@
 // src/pages/sales/InvoicesList.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { invoiceService, Invoice, InvoiceFilters } from '../../services/invoiceService';
+import { invoiceService, InvoiceFilters } from '../../services/invoiceService';
+import { useInvoices } from '../../hooks/useInvoices';
 import { useToast } from '../../hooks/useToast';
 import { useAuth } from '../../contexts/AuthContext';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
@@ -20,12 +21,10 @@ import PaymentRecordingModal, { PaymentData } from '../../components/modals/Paym
 
 const InvoicesList: React.FC = () => {
   const navigate = useNavigate();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<InvoiceFilters>({});
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [emailData, setEmailData] = useState({ email: '', subject: '', message: '' });
   const [paymentData, setPaymentData] = useState({
     amount: '',
@@ -39,14 +38,16 @@ const InvoicesList: React.FC = () => {
   // Synchronous guard: useState re-renders async, so a second click can sneak
   // through before the button is disabled. The ref check is immediate.
   const downloadingRef = useRef<Set<number>>(new Set());
-  const [pagination, setPagination] = useState({
-    count: 0,
-    next: null,
-    previous: null,
-    currentPage: 1,
-  });
   const { success, error: showError, info, dismiss } = useToast();
   const { selectedRole } = useAuth();
+
+  // React Query hook replaces manual state + useEffect
+  const { data: invoiceResponse, isLoading: loading, refetch } = useInvoices(filters);
+  const invoices = (invoiceResponse as any)?.results || [];
+  const paginationCount = (invoiceResponse as any)?.count || 0;
+  const paginationNext = (invoiceResponse as any)?.next || null;
+  const paginationPrevious = (invoiceResponse as any)?.previous || null;
+  const currentPage = filters.page || 1;
 
   // Check if current user role can create invoices
   const canCreateInvoices = selectedRole && !['Principal', 'Officer'].includes(selectedRole);
@@ -54,29 +55,6 @@ const InvoicesList: React.FC = () => {
   // Check if current user role can record payments (mark as paid)
   const canRecordPayments = selectedRole && !['Administrator'].includes(selectedRole);
   const { canUserApprove } = useApprovalGuard();
-
-  useEffect(() => {
-    loadInvoices();
-  }, [filters]);
-
-  const loadInvoices = async () => {
-    try {
-      setLoading(true);
-      const response = await invoiceService.getInvoices(filters);
-      setInvoices(response.results || []);
-      setPagination({
-        count: response.count || 0,
-        next: response.next,
-        previous: response.previous,
-        currentPage: filters.page || 1,
-      });
-    } catch (error) {
-      console.error('Error loading invoices:', error);
-      showError('Failed to load invoices');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleFilterChange = (key: keyof InvoiceFilters, value: any) => {
     setFilters(prev => ({
@@ -111,7 +89,7 @@ const InvoicesList: React.FC = () => {
       success('Invoice sent successfully');
       setShowEmailModal(false);
       setSelectedInvoice(null);
-      loadInvoices(); // Refresh to update status
+      refetch(); // Refresh to update status
     } catch (error) {
       console.error('Error sending invoice:', error);
       showError('Failed to send invoice');
@@ -187,7 +165,7 @@ const InvoicesList: React.FC = () => {
       });
 
       success('Invoice marked as sent successfully');
-      loadInvoices(); // Refresh to update status
+      refetch(); // Refresh to update status
     } catch (error) {
       console.error('Error marking invoice as sent:', error);
       showError('Failed to mark invoice as sent');
@@ -203,7 +181,7 @@ const InvoicesList: React.FC = () => {
       try {
         await invoiceService.voidInvoice(invoice.id, { reason: 'Voided by user' });
         success('Invoice voided successfully');
-        loadInvoices(); // Refresh list
+        refetch(); // Refresh list
       } catch (error) {
         console.error('Error voiding invoice:', error);
         showError('Failed to void invoice');
@@ -237,7 +215,7 @@ const InvoicesList: React.FC = () => {
     try {
       await invoiceService.postInvoice(invoice.id);
       success('Invoice approved successfully. Revenue has been recognized.');
-      loadInvoices(); // Refresh to update status
+      refetch(); // Refresh to update status
     } catch (error: any) {
       console.error('Error approving invoice:', error);
       showError(error.response?.data?.error || 'Failed to approve invoice');
@@ -267,7 +245,7 @@ const InvoicesList: React.FC = () => {
       success('Payment recorded successfully');
       setShowPaymentModal(false);
       setSelectedInvoice(null);
-      loadInvoices(); // Refresh to update balances and status
+      refetch(); // Refresh to update balances and status
     } catch (error) {
       console.error('Error recording payment:', error);
       showError('Failed to record payment');
@@ -413,7 +391,7 @@ const InvoicesList: React.FC = () => {
             {/* Table Header */}
             <div className="px-6 py-3 border-b border-gray-200">
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-medium text-gray-900">Invoices ({pagination.count})</h3>
+                <h3 className="text-lg font-medium text-gray-900">Invoices ({paginationCount})</h3>
                 <div className="flex space-x-2">
                   <button
                     onClick={() => navigate('/receivables/list?receivable_type=invoice')}
@@ -620,23 +598,23 @@ const InvoicesList: React.FC = () => {
             </div>
 
             {/* Pagination */}
-            {pagination.count > 0 && (
+            {paginationCount > 0 && (
               <div className="px-6 py-3 border-t border-gray-200">
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-gray-700">
-                    Showing page {pagination.currentPage} of {Math.ceil(pagination.count / 20)}
+                    Showing page {currentPage} of {Math.ceil(paginationCount / 20)}
                   </div>
                   <div className="flex space-x-2">
                     <button
-                      onClick={() => handlePageChange(pagination.currentPage - 1)}
-                      disabled={!pagination.previous}
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={!paginationPrevious}
                       className="px-3 py-1 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Previous
                     </button>
                     <button
-                      onClick={() => handlePageChange(pagination.currentPage + 1)}
-                      disabled={!pagination.next}
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={!paginationNext}
                       className="px-3 py-1 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Next

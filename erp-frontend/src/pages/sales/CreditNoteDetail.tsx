@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { invoiceService, CreditNote } from '../../services/invoiceService';
+import { useCreditNote } from '../../hooks/useInvoices';
 import { useToast } from '../../hooks/useToast';
 import {
   ArrowLeft,
@@ -133,8 +134,6 @@ const ActionModal: React.FC<ActionModalProps> = ({
 const CreditNoteDetail: React.FC = () => {
   const { invoiceId, creditNoteId } = useParams<{ invoiceId: string; creditNoteId: string }>();
   const navigate = useNavigate();
-  const [creditNote, setCreditNote] = useState<CreditNote | null>(null);
-  const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionModal, setActionModal] = useState<{
     isOpen: boolean;
@@ -148,29 +147,18 @@ const CreditNoteDetail: React.FC = () => {
     description: '',
   });
   const { success, error: showError } = useToast();
+  const { data: creditNote, isLoading: loading, refetch: refetchCreditNote } = useCreditNote(
+    Number(invoiceId),
+    Number(creditNoteId),
+    !!(invoiceId && creditNoteId)
+  );
 
   useEffect(() => {
-    if (invoiceId && creditNoteId) {
-      loadCreditNote();
-    }
-  }, [invoiceId, creditNoteId]);
-
-  const loadCreditNote = async () => {
-    try {
-      setLoading(true);
-      const creditNoteData = await invoiceService.getCreditNote(
-        Number(invoiceId),
-        Number(creditNoteId)
-      );
-      setCreditNote(creditNoteData);
-    } catch (error) {
-      console.error('Error loading credit note:', error);
+    if (invoiceId && creditNoteId && !loading && !creditNote) {
       showError('Failed to load credit note');
       navigate(`/sales/invoices/${invoiceId}/credit-notes`);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [invoiceId, creditNoteId, loading, creditNote]);
 
   const handleAction = async (actionType: 'apply' | 'cancel' | 'reverse' | 'issue', data: any) => {
     if (!creditNote || !invoiceId || !creditNoteId) return;
@@ -217,7 +205,7 @@ const CreditNoteDetail: React.FC = () => {
       }
 
       setActionModal({ ...actionModal, isOpen: false });
-      loadCreditNote(); // Reload to get updated data
+      refetchCreditNote(); // Reload to get updated data
     } catch (error) {
       console.error(`Error ${actionType}ing credit note:`, error);
       showError(`Failed to ${actionType} credit note`);

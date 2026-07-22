@@ -4,18 +4,16 @@
  * Flow: search client → pick account → enter amount → submit.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   PiggyBank, Loader2, AlertCircle, CheckCircle,
   ArrowLeft, ChevronDown, X, Search,
 } from 'lucide-react';
-import {
-  getSavingsAccounts,
-  depositToSavings,
-  SavingsAccount,
-} from '../../services/savingsService';
+import { useSavingsAccounts, useDepositToSavings } from '../../hooks/useSavings';
+import type { SavingsAccount } from '../../services/savingsService';
 import { clientService, ClientOption } from '../../services/clientService';
+import { useEffect } from 'react';
 import { accountService } from '../../services/accountService';
 
 interface CashierAccount { id: number; name: string; code: string; }
@@ -82,7 +80,7 @@ export default function SavingsDepositPage() {
     if (!clientId) { setAccounts([]); setSelectedAccount(null); return; }
     setLoadingAccounts(true);
     setSelectedAccount(null);
-    getSavingsAccounts({ client: clientId, status: 'active', page_size: 50 })
+    accountService.getAccounts({ client: clientId, status: 'active', page_size: 50 })
       .then(res => {
         const list = Array.isArray(res) ? res : (res as { results: SavingsAccount[] }).results ?? [];
         setAccounts(list);
@@ -117,38 +115,39 @@ export default function SavingsDepositPage() {
   }, [selectedAccount]);
 
   // ── Submission ─────────────────────────────────────────────────────────
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  const depositMutation = useDepositToSavings({
+    onSuccess: (result) => {
+      setSuccess(
+        `₦${fmt(result.amount)} deposited to ${selectedAccount?.account_number}. ` +
+        `New balance: ₦${fmt(result.balance_after)}.`
+      );
+      setAmount('');
+      setDescription('');
+    },
+    onError: (e) => {
+      setError(e?.detail ?? e?.message ?? 'Deposit failed. Please try again.');
+    },
+  });
+
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     if (!selectedAccount) { setError('Please select a savings account.'); return; }
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) { setError('Enter a valid amount greater than zero.'); return; }
 
-    setSubmitting(true);
-    try {
-      const result = await depositToSavings(selectedAccount.id, {
+    depositMutation.mutate({
+      accountId: selectedAccount.id,
+      data: {
         amount,
         date: depositDate,
         cashier_account_id: cashierAccountId || undefined,
         description: description.trim() || `Savings deposit – ${selectedAccount.account_number}`,
-      });
-      setSuccess(
-        `₦${fmt(result.amount)} deposited to ${selectedAccount.account_number}. ` +
-        `New balance: ₦${fmt(result.balance_after)}.`
-      );
-      setAmount('');
-      setDescription('');
-      // Keep form ready for another deposit to the same or different account
-    } catch (err: unknown) {
-      const e = err as { detail?: string; message?: string };
-      setError(e?.detail ?? e?.message ?? 'Deposit failed. Please try again.');
-    } finally {
-      setSubmitting(false);
-    }
+      },
+    });
   }
 
   return (
@@ -376,10 +375,10 @@ export default function SavingsDepositPage() {
             <div className="flex items-center gap-3 pt-1">
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={depositMutation.isPending}
                 className="flex items-center gap-2 bg-teal-600 text-white rounded-lg px-5 py-2.5 text-sm font-medium hover:bg-teal-700 transition-colors disabled:opacity-50"
               >
-                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <PiggyBank className="w-4 h-4" />}
+                {depositMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <PiggyBank className="w-4 h-4" />}
                 Record Deposit
               </button>
               <button

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Calendar, Download, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 import { api } from '../../../services/api';
-import { getSavingsCollectionSheet, type ContributionScheduleItem } from '../../../services/savingsService';
+import { useSavingsCollections } from '../../../hooks/useSavings';
+import type { ContributionScheduleItem } from '../../../services/savingsService';
 
 interface Product { id: number; name: string; code: string; }
 interface DayMap { [accountId: number]: Set<number> }
@@ -24,11 +25,14 @@ export default function ThriftSpreadsheetPage() {
   const [productId, setProductId] = useState<number | ''>('');
   const [products, setProducts] = useState<Product[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [clients, setClients] = useState<{ id: number; name: string; amount: string }[]>([]);
   const [dayMap, setDayMap] = useState<DayMap>({});
   const [generated, setGenerated] = useState(false);
+
+  // Track collection data per day for spreadsheet generation
+  const [dayData, setDayData] = useState<Record<string, ContributionScheduleItem[]>>({});
+  const [loadingDays, setLoadingDays] = useState(false);
 
   useEffect(() => {
     api.get('/products/products/', { params: { product_type: 'SAVINGS', is_active: true, page_size: 200 } })
@@ -43,17 +47,23 @@ export default function ThriftSpreadsheetPage() {
 
   async function generate() {
     if (!productId) return;
-    setLoading(true);
+    setLoadingDays(true);
     setError('');
     setGenerated(false);
     try {
       const days = getDaysInMonth(year, month);
       const allItems: (ContributionScheduleItem & { _day: number })[] = [];
+
       for (const day of days) {
         const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        const dayItems = await getSavingsCollectionSheet({ date: dateStr, product: productId as number });
-        for (const item of dayItems) {
-          if (item.status === 'paid') allItems.push({ ...item, _day: day });
+        try {
+          const res = await api.get('/savings/collections/', { params: { date: dateStr, product: productId } });
+          const dayItems: ContributionScheduleItem[] = Array.isArray(res) ? res : ((res as any)?.results ?? []);
+          for (const item of dayItems) {
+            if (item.status === 'paid') allItems.push({ ...item, _day: day });
+          }
+        } catch {
+          // skip failed days
         }
       }
 
@@ -72,7 +82,7 @@ export default function ThriftSpreadsheetPage() {
     } catch {
       setError('Failed to load contribution data.');
     } finally {
-      setLoading(false);
+      setLoadingDays(false);
     }
   }
 
@@ -158,15 +168,15 @@ export default function ThriftSpreadsheetPage() {
           <button
             type="button"
             onClick={generate}
-            disabled={loading || !productId}
+            disabled={loadingDays || !productId}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />}
+            {loadingDays ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />}
             Generate
           </button>
         </div>
 
-        {loading && (
+        {loadingDays && (
           <div className="flex flex-col items-center py-16 gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
             <p className="text-sm text-gray-500">Loading {days.length} days of contributions…</p>
@@ -179,7 +189,7 @@ export default function ThriftSpreadsheetPage() {
           </div>
         )}
 
-        {generated && !loading && (
+        {generated && !loadingDays && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
             {clients.length === 0 ? (
               <div className="p-10 text-center text-gray-500">

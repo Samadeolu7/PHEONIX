@@ -1,5 +1,6 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Copy, Trash2, Settings, Users, Layout, AlertTriangle, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { DashboardBuilder } from '../../components/dashboard/DashboardBuilder';
@@ -15,14 +16,17 @@ interface DashboardBuilderPageProps {
   className?: string;
 }
 
-/** Modules that a role is allowed to include in their dashboard widgets */
 interface RoleModuleAccess {
   permittedModuleCodes: string[];
   permittedPageCodes: string[];
   isLoading: boolean;
 }
 
-/** Derive a stable default template when creating fresh */
+const dashboardBuilderKeys = {
+  all: ['dashboardBuilder'] as const,
+  templates: () => [...dashboardBuilderKeys.all, 'templates'] as const,
+};
+
 const buildEmptyTemplate = (): DashboardTemplate => ({
   id: `template-${Date.now()}`,
   name: 'New Dashboard',
@@ -51,40 +55,28 @@ export const DashboardBuilderPage: React.FC<DashboardBuilderPageProps> = ({ clas
   const navigate = useNavigate();
   const { templateId } = useParams<{ templateId?: string }>();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
 
-  const [templates, setTemplates] = useState<DashboardTemplate[]>([]);
-  const [templatesLoading, setTemplatesLoading] = useState(true);
   const [selectedTemplate, setSelectedTemplate] = useState<DashboardTemplate | null>(null);
   const [isBuilderMode, setIsBuilderMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Access grants for the role currently being edited
   const [roleAccess, setRoleAccess] = useState<RoleModuleAccess>({
     permittedModuleCodes: [],
     permittedPageCodes: [],
     isLoading: false,
   });
 
-  // â”€â”€ Load templates from API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-  const loadTemplates = useCallback(async () => {
-    setTemplatesLoading(true);
-    try {
+  const { data: templateList = [], isLoading: templatesLoading } = useQuery<DashboardTemplate[]>({
+    queryKey: dashboardBuilderKeys.templates(),
+    queryFn: async () => {
       const res = await api.get('/dashboards/');
       const items: any[] = Array.isArray(res) ? res : res?.results ?? res?.data ?? [];
-      // Only include templates that have a role assigned (dashboard-builder managed)
-      setTemplates(items.filter(t => t.role));
-    } catch {
-      toast.error('Failed to load dashboard templates');
-      setTemplates([]);
-    } finally {
-      setTemplatesLoading(false);
-    }
-  }, []);
+      return items.filter(t => t.role);
+    },
+  });
 
-  useEffect(() => {
-    loadTemplates();
-  }, [loadTemplates]);
+  const templates = templateList;
 
   // â”€â”€ Open builder when templateId is in URL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -208,7 +200,7 @@ export const DashboardBuilderPage: React.FC<DashboardBuilderPageProps> = ({ clas
       } else {
         await api.patch(`/dashboards/${template.id}/`, template);
       }
-      await loadTemplates();
+      await queryClient.invalidateQueries({ queryKey: dashboardBuilderKeys.templates() });
       toast.success(isNew ? 'Dashboard template created' : 'Dashboard template updated');
     } catch {
       toast.error('Failed to save dashboard template');
@@ -233,7 +225,7 @@ export const DashboardBuilderPage: React.FC<DashboardBuilderPageProps> = ({ clas
     };
     try {
       await api.post('/dashboards/', duplicated);
-      await loadTemplates();
+      await queryClient.invalidateQueries({ queryKey: dashboardBuilderKeys.templates() });
       toast.success('Dashboard template duplicated');
     } catch {
       toast.error('Failed to duplicate template');
@@ -244,7 +236,7 @@ export const DashboardBuilderPage: React.FC<DashboardBuilderPageProps> = ({ clas
     if (!window.confirm('Are you sure you want to delete this dashboard template?')) return;
     try {
       await api.delete(`/dashboards/${templateId}/`);
-      setTemplates(prev => prev.filter(t => t.id !== templateId));
+      await queryClient.invalidateQueries({ queryKey: dashboardBuilderKeys.templates() });
       toast.success('Dashboard template deleted');
     } catch {
       toast.error('Failed to delete template');

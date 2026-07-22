@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Download,
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { invoiceService, Invoice } from '../services/invoiceService';
+import { useBatchReviewSample } from '../hooks/useInvoices';
 
 interface BatchSampleData {
   batch_id: string;
@@ -36,33 +37,23 @@ const BatchReviewPage: React.FC = () => {
 
   const batchId = searchParams.get('batch_id') || '';
 
-  const [batchData, setBatchData] = useState<BatchSampleData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const [samplePercent, setSamplePercent] = useState(5);
   const [showAllInvoices, setShowAllInvoices] = useState(false);
 
-  useEffect(() => {
-    if (batchId) {
-      loadBatchSample();
-    } else {
+  const { data: batchData, isLoading: loading, refetch: refetchBatch } = useBatchReviewSample(
+    batchId,
+    samplePercent,
+    !!batchId
+  );
+
+  if (!batchId) {
+    if (!loading) {
       showError('No batch ID provided');
       navigate('/incomes/invoices');
     }
-  }, [batchId, samplePercent]);
-
-  const loadBatchSample = async () => {
-    try {
-      setLoading(true);
-      const data = await invoiceService.getBatchSample(batchId, samplePercent);
-      setBatchData(data);
-    } catch (error) {
-      console.error('Error loading batch sample:', error);
-      showError('Failed to load batch sample');
-    } finally {
-      setLoading(false);
-    }
-  };
+    return null;
+  }
 
   const handleDownloadReport = async () => {
     if (!batchId) return;
@@ -306,7 +297,7 @@ const BatchReviewPage: React.FC = () => {
               <option value={50}>50%</option>
             </select>
             <button
-              onClick={loadBatchSample}
+              onClick={() => refetchBatch()}
               className="flex items-center px-3 py-1 text-sm text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
             >
               <RefreshCw className="h-4 w-4 mr-1" />

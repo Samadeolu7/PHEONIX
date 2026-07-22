@@ -4,7 +4,7 @@
  * Data is scoped server-side to clients assigned to the logged-in officer.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -15,7 +15,8 @@ import {
   ChevronRight,
   Eye,
 } from 'lucide-react';
-import { loanService, LoanAccountList } from '../../services/loanService';
+import { LoanAccountList } from '../../services/loanService';
+import { useLoanAccounts } from '../../hooks/useLoans';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -73,49 +74,27 @@ const RISK_LEVELS = [
 
 export default function LoanAccountsPage() {
   const navigate = useNavigate();
-  const [loans, setLoans] = useState<LoanAccountList[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [riskFilter, setRiskFilter] = useState('');
   const [page, setPage] = useState(1);
-  const [totalCount, setTotalCount] = useState(0);
 
   const PAGE_SIZE = 25;
 
-  const loadLoans = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await loanService.listLoans({
-        search: search || undefined,
-        status: statusFilter || undefined,
-        risk_classification: riskFilter || undefined,
-        page,
-      });
-      const results = Array.isArray(res) ? res : (res?.results ?? []);
-      const count = Array.isArray(res) ? res.length : (res?.count ?? 0);
-      setLoans(results);
-      setTotalCount(count);
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      setError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load loan accounts.');
-    } finally {
-      setLoading(false);
-    }
-  }, [search, statusFilter, riskFilter, page]);
+  const { data: res, isLoading: loading, error, refetch } = useLoanAccounts({
+    search: search || undefined,
+    status: statusFilter || undefined,
+    risk_classification: riskFilter || undefined,
+    page,
+  });
+
+  const loans: LoanAccountList[] = Array.isArray(res) ? res : (res?.results ?? []);
+  const totalCount = Array.isArray(res) ? res.length : (res?.count ?? 0);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   useEffect(() => {
     setPage(1);
   }, [search, statusFilter, riskFilter]);
-
-  useEffect(() => {
-    loadLoans();
-  }, [loadLoans]);
-
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -171,7 +150,7 @@ export default function LoanAccountsPage() {
         </select>
 
         <button
-          onClick={loadLoans}
+          onClick={() => refetch()}
           disabled={loading}
           className="flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
@@ -184,7 +163,7 @@ export default function LoanAccountsPage() {
       {error && (
         <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
           <AlertCircle size={16} />
-          {error}
+          {(error as any)?.response?.data?.detail || error.message || 'Failed to load loan accounts.'}
         </div>
       )}
 

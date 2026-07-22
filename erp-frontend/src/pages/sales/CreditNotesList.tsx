@@ -1,7 +1,8 @@
 // src/pages/sales/CreditNotesList.tsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { invoiceService, CreditNote, Invoice } from '../../services/invoiceService';
+import { CreditNote } from '../../services/invoiceService';
+import { useInvoice, useCreditNotes } from '../../hooks/useInvoices';
 import { useToast } from '../../hooks/useToast';
 import {
   ArrowLeft,
@@ -29,58 +30,32 @@ interface CreditNotesFilters {
 const CreditNotesList: React.FC = () => {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const navigate = useNavigate();
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
-  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<CreditNotesFilters>({
     ordering: '-created_at',
   });
-  const [pagination, setPagination] = useState({
-    count: 0,
-    next: null,
-    previous: null,
-    currentPage: 1,
-  });
   const { success, error: showError } = useToast();
+
+  const { data: invoiceData, isLoading: loadingInvoice } = useInvoice(Number(invoiceId), !!invoiceId);
+  const invoice = invoiceData;
+  const { data: creditNoteResponse, isLoading: loadingCreditNotes } = useCreditNotes(
+    Number(invoiceId),
+    { ...filters, page: filters.page || 1 }
+  );
+  const creditNotes = creditNoteResponse?.results || [];
+  const paginationCount = creditNoteResponse?.count || 0;
+  const paginationNext = creditNoteResponse?.next || null;
+  const paginationPrevious = creditNoteResponse?.previous || null;
+  const currentPage = filters.page || 1;
+  const loading = loadingInvoice || loadingCreditNotes;
 
   useEffect(() => {
     if (invoiceId) {
-      loadInvoice();
-      loadCreditNotes();
+      if (loadingInvoice && !invoiceData) {
+        showError('Failed to load invoice');
+        navigate('/sales/invoices');
+      }
     }
-  }, [invoiceId, filters]);
-
-  const loadInvoice = async () => {
-    try {
-      const invoiceData = await invoiceService.getInvoice(Number(invoiceId));
-      setInvoice(invoiceData);
-    } catch (error) {
-      console.error('Error loading invoice:', error);
-      showError('Failed to load invoice');
-      navigate('/sales/invoices');
-    }
-  };
-
-  const loadCreditNotes = async () => {
-    if (!invoiceId) return;
-
-    try {
-      setLoading(true);
-      const response = await invoiceService.getCreditNotes(Number(invoiceId), filters);
-      setCreditNotes(response.results || []);
-      setPagination({
-        count: response.count || 0,
-        next: response.next,
-        previous: response.previous,
-        currentPage: filters.page || 1,
-      });
-    } catch (error) {
-      console.error('Error loading credit notes:', error);
-      showError('Failed to load credit notes');
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [invoiceId, loadingInvoice, invoiceData]);
 
   const handleFilterChange = (key: keyof CreditNotesFilters, value: any) => {
     setFilters(prev => ({
@@ -127,7 +102,7 @@ const CreditNotesList: React.FC = () => {
   };
 
   const getTotalPages = () => {
-    return Math.ceil(pagination.count / 20); // Assuming 20 items per page
+    return Math.ceil(paginationCount / 20); // Assuming 20 items per page
   };
 
   if (!invoice) {
@@ -250,7 +225,7 @@ const CreditNotesList: React.FC = () => {
       <div className="bg-white rounded-lg shadow">
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-medium text-gray-900">Credit Notes ({pagination.count})</h3>
+            <h3 className="text-lg font-medium text-gray-900">Credit Notes ({paginationCount})</h3>
             <div className="flex items-center space-x-2 text-sm text-gray-500">
               <Filter className="h-4 w-4" />
               <span>
@@ -393,20 +368,20 @@ const CreditNotesList: React.FC = () => {
               <div className="px-6 py-4 border-t border-gray-200">
                 <div className="flex items-center justify-between">
                   <div className="text-sm text-gray-700">
-                    Showing page {pagination.currentPage} of {getTotalPages()}({pagination.count}{' '}
+                    Showing page {currentPage} of {getTotalPages()}({paginationCount}{' '}
                     total credit notes)
                   </div>
                   <div className="flex space-x-2">
                     <button
-                      onClick={() => handlePageChange(pagination.currentPage - 1)}
-                      disabled={!pagination.previous}
+                      onClick={() => handlePageChange(currentPage - 1)}
+                      disabled={!paginationPrevious}
                       className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Previous
                     </button>
                     <button
-                      onClick={() => handlePageChange(pagination.currentPage + 1)}
-                      disabled={!pagination.next}
+                      onClick={() => handlePageChange(currentPage + 1)}
+                      disabled={!paginationNext}
                       className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Next

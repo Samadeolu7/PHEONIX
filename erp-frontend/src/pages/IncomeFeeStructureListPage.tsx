@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Plus,
   Edit,
@@ -16,8 +16,8 @@ import {
 import {
   incomeFeeStructureService,
   FeeStructure,
-  FeeStructureListResponse,
 } from '../services/incomeFeeStructureService';
+import { useIncomeFeeStructures } from '../hooks/useIncomeFees';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../hooks/useToast';
 
@@ -38,41 +38,18 @@ interface UsageStats {
 
 const IncomeFeeStructureListPage: React.FC = () => {
   const navigate = useNavigate();
-  const [feeStructures, setFeeStructures] = useState<FeeStructure[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<FeeStructureFilters>({});
-  const [pagination, setPagination] = useState({
-    count: 0,
-    next: null,
-    previous: null,
-    currentPage: 1,
-  });
   const [usageStats, setUsageStats] = useState<Record<number, UsageStats>>({});
   const [loadingStats, setLoadingStats] = useState<Record<number, boolean>>({});
   const { success, error: showError } = useToast();
 
-  useEffect(() => {
-    loadFeeStructures();
-  }, [filters]);
-
-  const loadFeeStructures = async () => {
-    try {
-      setLoading(true);
-      const response: FeeStructureListResponse =
-        await incomeFeeStructureService.getFeeStructures(filters);
-      setFeeStructures(response.results || []);
-      setPagination({
-        count: response.count || 0,
-        next: response.next,
-        previous: response.previous,
-        currentPage: filters.page || 1,
-      });
-    } catch (error) {
-      console.error('Error loading fee structures:', error);
-      showError('Failed to load fee structures');
-    } finally {
-      setLoading(false);
-    }
+  const { data, isLoading: loading, refetch: refetchStructures } = useIncomeFeeStructures(filters);
+  const feeStructures = data?.results ?? [];
+  const pagination = {
+    count: data?.count ?? 0,
+    next: data?.next ?? null,
+    previous: data?.previous ?? null,
+    currentPage: filters.page || 1,
   };
 
   const loadUsageStats = async (feeStructureId: number) => {
@@ -113,7 +90,7 @@ const IncomeFeeStructureListPage: React.FC = () => {
         await incomeFeeStructureService.activateFeeStructure(feeStructure.id);
         success(`Fee structure "${feeStructure.name}" activated successfully`);
       }
-      loadFeeStructures(); // Refresh list
+      refetchStructures();
     } catch (error) {
       console.error('Error toggling fee structure status:', error);
       showError('Failed to update fee structure status');

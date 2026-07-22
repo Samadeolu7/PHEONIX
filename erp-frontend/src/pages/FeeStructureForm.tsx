@@ -20,11 +20,14 @@ import {
   Package,
 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
+import { IncomeCategory, FeeStructure } from '../services/incomeFeeStructureService';
 import {
-  incomeFeeStructureService,
-  IncomeCategory,
-  FeeStructure,
-} from '../services/incomeFeeStructureService';
+  useIncomeCategories,
+  useIncomeFeeStructure,
+  useCreateIncomeFeeStructure,
+  useUpdateIncomeFeeStructure,
+  useSubmitForApproval,
+} from '../hooks/useIncomeFees';
 import IncomeCategoryModal from '../components/modals/IncomeCategoryModal';
 import { inventoryService } from '../services/inventoryService';
 
@@ -88,9 +91,18 @@ const FeeStructureForm: React.FC = () => {
   const { success, error: showError } = useToast();
   const isEditing = Boolean(id);
 
+  const { data: categoriesData, refetch: refetchCategories } = useIncomeCategories();
+  const categories = categoriesData?.results ?? [];
+  const { data: existingFeeStructure, isLoading: loadingData } = useIncomeFeeStructure(
+    parseInt(id || '0'),
+    isEditing
+  );
+
+  const createMutation = useCreateIncomeFeeStructure();
+  const updateMutation = useUpdateIncomeFeeStructure();
+  const submitForApprovalMutation = useSubmitForApproval();
+
   const [loading, setLoading] = useState(false);
-  const [loadingData, setLoadingData] = useState(isEditing);
-  const [categories, setCategories] = useState<IncomeCategory[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [loadingInventory, setLoadingInventory] = useState(true);
   const [submittingForApproval, setSubmittingForApproval] = useState(false);
@@ -126,50 +138,19 @@ const FeeStructureForm: React.FC = () => {
       restricted_services: [],
     },
     included_inventory_items: [],
-    is_active: false, // Default to inactive - must be approved first
+    is_active: false,
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    loadCategories();
     loadInventoryItems();
-    if (isEditing) {
-      loadFeeStructure();
-    }
-  }, [id]);
+  }, []);
 
-  const loadCategories = async () => {
-    try {
-      const response = await incomeFeeStructureService.getIncomeCategories();
-      setCategories(response.results || []);
-    } catch (error) {
-      console.error('Error loading categories:', error);
-      showError('Failed to load income categories');
-    }
-  };
-
-  const loadInventoryItems = async () => {
-    try {
-      setLoadingInventory(true);
-      const items = await inventoryService.getAllItems({ is_active: true });
-      setInventoryItems(items);
-    } catch (error) {
-      console.error('Error loading inventory items:', error);
-    } finally {
-      setLoadingInventory(false);
-    }
-  };
-
-  const loadFeeStructure = async () => {
-    if (!id) return;
-
-    try {
-      setLoadingData(true);
-      const data = await incomeFeeStructureService.getFeeStructure(parseInt(id));
-
-      // Parse industry_config if it's a string
-      let industryConfig = data.industry_config;
+  // Populate form when editing
+  useEffect(() => {
+    if (existingFeeStructure) {
+      let industryConfig = existingFeeStructure.industry_config;
       if (typeof industryConfig === 'string') {
         try {
           industryConfig = JSON.parse(industryConfig);
@@ -179,7 +160,7 @@ const FeeStructureForm: React.FC = () => {
       }
 
       setFormData({
-        ...data,
+        ...existingFeeStructure,
         industry_config: {
           ...industryConfig,
           custom_fields: industryConfig.custom_fields || {},
@@ -192,7 +173,7 @@ const FeeStructureForm: React.FC = () => {
             allows_partial: true,
           },
         },
-        access_rules: data.access_rules || {
+        access_rules: existingFeeStructure.access_rules || {
           requires_minimum: false,
           minimum_percent: 50,
           full_access_at_percent: 100,
@@ -200,14 +181,20 @@ const FeeStructureForm: React.FC = () => {
           allowed_services: [],
           restricted_services: [],
         },
-        included_inventory_items: data.included_inventory_items || [],
+        included_inventory_items: existingFeeStructure.included_inventory_items || [],
       });
+    }
+  }, [existingFeeStructure]);
+
+  const loadInventoryItems = async () => {
+    try {
+      setLoadingInventory(true);
+      const items = await inventoryService.getAllItems({ is_active: true });
+      setInventoryItems(items);
     } catch (error) {
-      console.error('Error loading fee structure:', error);
-      showError('Failed to load fee structure');
-      navigate('/incomes/fee-structures');
+      console.error('Error loading inventory items:', error);
     } finally {
-      setLoadingData(false);
+      setLoadingInventory(false);
     }
   };
 
@@ -263,7 +250,6 @@ const FeeStructureForm: React.FC = () => {
     setLoading(true);
 
     try {
-      // Calculate total from components if they exist
       const components = formData.industry_config.fee_components || [];
       const totalFromComponents = components.reduce(
         (sum, comp) => sum + (Number(comp.amount) || 0),
@@ -272,7 +258,6 @@ const FeeStructureForm: React.FC = () => {
 
       const submitData = {
         ...formData,
-        // Use total from components if available, otherwise use base_amount
         base_amount:
           totalFromComponents > 0 ? totalFromComponents.toString() : formData.base_amount,
         industry_config: formData.industry_config,
@@ -280,9 +265,9 @@ const FeeStructureForm: React.FC = () => {
 
       let result;
       if (isEditing) {
-        result = await incomeFeeStructureService.updateFeeStructure(parseInt(id!), submitData);
+        result = await updateMutation.mutateAsync({ id: parseInt(id!), data: submitData as any });
       } else {
-        result = await incomeFeeStructureService.createFeeStructure(submitData);
+        result = await createMutation.mutateAsync(submitData);
       }
 
       success(`Fee structure "${result.name}" ${isEditing ? 'updated' : 'created'} successfully`);
@@ -303,12 +288,11 @@ const FeeStructureForm: React.FC = () => {
 
     try {
       setSubmittingForApproval(true);
-      await incomeFeeStructureService.submitForApproval(
-        parseInt(id),
-        'Submitted for Principal/Board approval'
-      );
+      await submitForApprovalMutation.mutateAsync({
+        id: parseInt(id),
+        approval_notes: 'Submitted for Principal/Board approval',
+      });
       success('Fee structure submitted for approval');
-      loadFeeStructure(); // Reload to get updated status
     } catch (error: any) {
       console.error('Error submitting for approval:', error);
       showError(error.message || 'Failed to submit for approval');
@@ -330,15 +314,13 @@ const FeeStructureForm: React.FC = () => {
 
     try {
       setLoading(true);
-      // Update to set is_active to true
       const updatedData = {
         ...formData,
         is_active: true,
       };
 
-      await incomeFeeStructureService.updateFeeStructure(parseInt(id), updatedData);
+      await updateMutation.mutateAsync({ id: parseInt(id), data: updatedData as any });
       success('Fee structure activated successfully');
-      loadFeeStructure(); // Reload to get updated status
     } catch (error: any) {
       console.error('Error activating fee structure:', error);
       showError(error.message || 'Failed to activate fee structure');
@@ -516,9 +498,7 @@ const FeeStructureForm: React.FC = () => {
   };
 
   const handleCategoryModalSuccess = (category: IncomeCategory) => {
-    // Refresh categories list
-    loadCategories();
-    // Auto-select the newly created category
+    refetchCategories();
     handleInputChange('category', category.id);
   };
 

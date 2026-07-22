@@ -7,10 +7,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PiggyBank, Loader2, AlertCircle, CheckCircle, ArrowLeft, ChevronDown, X } from 'lucide-react';
-import {
-  createSavingsAccount,
-  CreateSavingsAccountData,
-} from '../../services/savingsService';
+import { useCreateSavingsAccount, useSavingsProducts } from '../../hooks/useSavings';
 import { clientService, ClientOption } from '../../services/clientService';
 
 // Product type from Products API (minimal shape needed for the dropdown)
@@ -54,7 +51,6 @@ export default function SavingsAccountFormPage() {
   const [showClientDropdown, setShowClientDropdown] = useState(false);
   const clientBoxRef = useRef<HTMLDivElement>(null);
   const [productId, setProductId] = useState('');
-  const [products, setProducts] = useState<SavingsProductOption[]>([]);
   const [nickname, setNickname] = useState('');
   const [openedOn, setOpenedOn] = useState(() => new Date().toISOString().slice(0, 10));
   const [interestRate, setInterestRate] = useState('0.00');
@@ -65,26 +61,30 @@ export default function SavingsAccountFormPage() {
   const [autoRenew, setAutoRenew] = useState(true);
   const [statementFreq, setStatementFreq] = useState('monthly');
   const [contribDay, setContribDay] = useState<number | ''>('');
-
-  const [selectedProduct, setSelectedProduct] = useState<SavingsProductOption | null>(null);
-
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  // Load savings products
-  useEffect(() => {
-    import('../../services/api').then(({ default: api }) => {
-      api.get('/products/products/', { params: { product_type: 'SAVINGS' } })
-        .then((data: unknown) => {
-          const items = Array.isArray(data) ? data : (data as { results?: SavingsProductOption[] })?.results ?? [];
-          setProducts(items as SavingsProductOption[]);
-        })
-        .catch(() => {/* products list may not be needed if admin manages them */});
-    });
-  }, []);
+  const { data: productsData } = useSavingsProducts();
+  const products: SavingsProductOption[] = useMemo(() => {
+    const raw = productsData as any;
+    if (!raw) return [];
+    return Array.isArray(raw) ? raw : (raw.results ?? []);
+  }, [productsData]);
 
-  // Load all active clients for the combobox (page_size=1000 inside getClientOptions)
+  const [selectedProduct, setSelectedProduct] = useState<SavingsProductOption | null>(null);
+
+  const createMutation = useCreateSavingsAccount({
+    onSuccess: () => {
+      setSuccess(true);
+      setTimeout(() => navigate('/savings/accounts'), 1500);
+    },
+    onError: (e) => {
+      const msg = (e as any)?.detail ?? ((e as any)?.non_field_errors ?? []).join(', ') ?? e?.message ?? 'Failed to create savings account.';
+      setError(msg);
+    },
+  });
+
+  // Load all active clients for the combobox
   useEffect(() => {
     setLoadingClients(true);
     clientService.getClientOptions({ status: 'active' })
@@ -93,7 +93,7 @@ export default function SavingsAccountFormPage() {
       .finally(() => setLoadingClients(false));
   }, []);
 
-  // Close dropdown when clicking outside the combobox
+  // Close dropdown when clicking outside
   useEffect(() => {
     function handleOutsideClick(e: MouseEvent) {
       if (clientBoxRef.current && !clientBoxRef.current.contains(e.target as Node)) {
@@ -129,7 +129,7 @@ export default function SavingsAccountFormPage() {
     if (!cId || isNaN(cId)) { setError('Please select a valid client.'); return; }
     if (!pId || isNaN(pId)) { setError('Please select a savings product.'); return; }
 
-    const payload: CreateSavingsAccountData = {
+    createMutation.mutate({
       client: cId,
       product: pId,
       nickname: nickname.trim() || undefined,
@@ -145,20 +145,7 @@ export default function SavingsAccountFormPage() {
         selectedProduct?.contribution_cycle === 'weekly' && contribDay !== ''
           ? Number(contribDay)
           : null,
-    };
-
-    setSubmitting(true);
-    try {
-      await createSavingsAccount(payload);
-      setSuccess(true);
-      setTimeout(() => navigate('/savings/accounts'), 1500);
-    } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string; non_field_errors?: string[] };
-      const msg = err?.detail ?? (err?.non_field_errors ?? []).join(', ') ?? err?.message ?? 'Failed to create savings account.';
-      setError(msg);
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   if (success) {
@@ -215,7 +202,6 @@ export default function SavingsAccountFormPage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">
                   Client <span className="text-red-500">*</span>
                 </label>
-                {/* Hidden native input keeps form validation working */}
                 <input type="hidden" name="client" value={clientId} required />
                 <div ref={clientBoxRef} className="relative">
                   <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-teal-400">
@@ -328,7 +314,7 @@ export default function SavingsAccountFormPage() {
               </div>
             </div>
 
-            {/* Weekly contribution day - only show if product cycle is weekly */}
+            {/* Weekly contribution day */}
             {selectedProduct?.contribution_cycle === 'weekly' && (
               <div className="mt-4">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Weekly Contribution Day</label>
@@ -445,10 +431,10 @@ export default function SavingsAccountFormPage() {
           <div className="flex items-center gap-3">
             <button
               type="submit"
-              disabled={submitting}
+              disabled={createMutation.isPending}
               className="flex items-center gap-2 bg-teal-600 text-white rounded-lg px-5 py-2.5 text-sm font-medium hover:bg-teal-700 transition-colors disabled:opacity-50"
             >
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <PiggyBank className="w-4 h-4" />}
+              {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <PiggyBank className="w-4 h-4" />}
               Open Savings Account
             </button>
             <button

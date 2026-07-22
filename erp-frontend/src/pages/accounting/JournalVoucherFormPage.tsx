@@ -2,11 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Save, AlertCircle, CheckCircle, Search } from 'lucide-react';
-import {
-  journalVoucherService,
-  TransactionSeries,
-  CreateJournalVoucherEntry,
-} from '../../services/journalVoucherService';
+import { CreateJournalVoucherEntry } from '../../services/journalVoucherService';
+import { useTransactionSeries, useCreateJournalVoucher } from '../../hooks/useJournalVouchers';
 import { accountService } from '../../services/accountService';
 import { Account } from '../../types/accounts';
 import { useToast } from '../../hooks/useToast';
@@ -39,8 +36,8 @@ const JournalVoucherFormPage: React.FC = () => {
   const navigate = useNavigate();
   const { success, error: showError } = useToast();
 
-  const [seriesList, setSeriesList] = useState<TransactionSeries[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const { data: seriesList = [] } = useTransactionSeries();
+  const createMutation = useCreateJournalVoucher();
 
   // Form state
   const [formData, setFormData] = useState({
@@ -52,16 +49,14 @@ const JournalVoucherFormPage: React.FC = () => {
 
   const [entries, setEntries] = useState<EntryRow[]>([emptyRow('row-0'), emptyRow('row-1')]);
 
-  // Load transaction series on mount
+  // Set default series once loaded
   useEffect(() => {
-    journalVoucherService.getTransactionSeries().then(s => {
-      setSeriesList(s);
-      // Default to 'JV' series if it exists
-      const jv = s.find(x => x.code === 'JV');
+    if (seriesList.length > 0 && !formData.series) {
+      const jv = seriesList.find(x => x.code === 'JV');
       if (jv) setFormData(f => ({ ...f, series: String(jv.id) }));
-      else if (s.length > 0) setFormData(f => ({ ...f, series: String(s[0].id) }));
-    });
-  }, []);
+      else setFormData(f => ({ ...f, series: String(seriesList[0].id) }));
+    }
+  }, [seriesList, formData.series]);
 
   // ─── Entries helpers ────────────────────────────────────────────────────────
 
@@ -138,8 +133,7 @@ const JournalVoucherFormPage: React.FC = () => {
     }));
 
     try {
-      setSubmitting(true);
-      const jv = await journalVoucherService.createJournalVoucher({
+      const jv = await createMutation.mutateAsync({
         series: parseInt(formData.series, 10),
         date: formData.date,
         description: formData.description.trim(),
@@ -151,8 +145,6 @@ const JournalVoucherFormPage: React.FC = () => {
     } catch (err) {
       console.error(err);
       showError('Failed to create journal voucher');
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -436,12 +428,12 @@ const JournalVoucherFormPage: React.FC = () => {
           <button
             type="submit"
             disabled={
-              submitting || !isBalanced || entries.filter(r => r.account && r.amount).length < 2
+              createMutation.isPending || !isBalanced || entries.filter(r => r.account && r.amount).length < 2
             }
             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Save size={16} />
-            {submitting ? 'Saving…' : 'Save Journal Voucher'}
+            {createMutation.isPending ? 'Saving…' : 'Save Journal Voucher'}
           </button>
         </div>
       </form>

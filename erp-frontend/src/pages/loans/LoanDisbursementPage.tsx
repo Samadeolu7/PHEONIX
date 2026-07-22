@@ -9,7 +9,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  loanService,
   LoanDisbursement,
   DisbursementStatus,
 } from '../../services/loanService';
@@ -17,6 +16,12 @@ import { bankService } from '../../services/bankService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
+import {
+  useLoanDisbursements,
+  useApproveDisbursement,
+  useDisburseLoan,
+  useRejectDisbursement,
+} from '../../hooks/useLoans';
 import {
   Banknote,
   CheckCircle,
@@ -74,15 +79,21 @@ const LoanDisbursementPage: React.FC = () => {
   const { user, selectedRole } = useAuth();
   const { success, error: showError } = useToast();
 
-  const [disbursement, setDisbursement] = useState<LoanDisbursement | null>(null);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const [loadingBankAccounts, setLoadingBankAccounts] = useState(true);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectForm, setShowRejectForm] = useState(false);
   const [selectedBankAccount, setSelectedBankAccount] = useState<number | ''>('');
   const [disburseNotes, setDisburseNotes] = useState('');
   const [copied, setCopied] = useState(false);
+
+  // React Query hooks
+  const { data: disbList = [], isLoading: loading } = useLoanDisbursements({ loan: Number(loanId) });
+  const approveDisbursementMutation = useApproveDisbursement();
+  const disburseLoanMutation = useDisburseLoan();
+  const rejectDisbursementMutation = useRejectDisbursement();
+
+  const disbursement = disbList.length > 0 ? disbList[0] : null;
 
   const copyAccountNumber = (value: string) => {
     navigator.clipboard.writeText(value).then(() => {
@@ -95,52 +106,34 @@ const LoanDisbursementPage: React.FC = () => {
   const isRequester = disbursement ? disbursement.requested_by === user?.id : false;
   const canDisburse = !isRequester;
 
-  const loadData = useCallback(async () => {
-    if (!loanId) return;
-    try {
-      const [disbList, bankAccRes] = await Promise.all([
-        loanService.listDisbursements({ loan: Number(loanId) }),
-        bankService.listBankAccounts({ is_active: true }),
-      ]);
-      setBankAccounts(bankAccRes);
+  useEffect(() => {
+    setLoadingBankAccounts(true);
+    bankService.listBankAccounts({ is_active: true })
+      .then(setBankAccounts)
+      .catch(() => {})
+      .finally(() => setLoadingBankAccounts(false));
+  }, []);
 
-      if (disbList.length > 0) {
-        setDisbursement(disbList[0]);
-      } else {
-        // No disbursement record yet — create one automatically.
-        // This handles the case where the user navigated here directly
-        // before the "Request Disbursement" button had a chance to create it.
-        const created = await loanService.requestDisbursement(Number(loanId));
-        setDisbursement(created);
-      }
-    } catch (err: any) {
-      const msg = extractApiError(err, 'Failed to load disbursement data.');
-      showError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }, [loanId]);
-
-  useEffect(() => { loadData(); }, [loadData]);
+  const handleApprove = async () => {
+    if (!disbursement) return;
+    approveDisbursementMutation.mutate(disbursement.id, {
+      onSuccess: () => success('Disbursement approved'),
+      onError: (err: any) => showError(extractApiError(err, 'Failed to approve disbursement.')),
+    });
+  };
 
   const handleDisburse = async () => {
     if (!disbursement || !selectedBankAccount) {
       showError('Please select a disbursement account');
       return;
     }
-    try {
-      setSubmitting(true);
-      const updated = await loanService.disburseLoan(disbursement.id, {
-        disbursement_account: Number(selectedBankAccount),
-        notes: disburseNotes,
-      });
-      setDisbursement(updated);
-      success('Loan disbursed successfully');
-    } catch (err: any) {
-      showError(extractApiError(err, 'Failed to disburse loan. Please try again.'));
-    } finally {
-      setSubmitting(false);
-    }
+    disburseLoanMutation.mutate(
+      { id: disbursement.id, data: { disbursement_account: Number(selectedBankAccount), notes: disburseNotes } },
+      {
+        onSuccess: () => success('Loan disbursed successfully'),
+        onError: (err: any) => showError(extractApiError(err, 'Failed to disburse loan. Please try again.')),
+      }
+    );
   };
 
   const handleReject = async () => {
@@ -148,17 +141,16 @@ const LoanDisbursementPage: React.FC = () => {
       showError('A rejection reason is required');
       return;
     }
-    try {
-      setSubmitting(true);
-      const updated = await loanService.rejectDisbursement(disbursement.id, rejectReason);
-      setDisbursement(updated);
-      setShowRejectForm(false);
-      success('Disbursement rejected');
-    } catch (err: any) {
-      showError(err?.response?.data?.detail || 'Failed to reject disbursement');
-    } finally {
-      setSubmitting(false);
-    }
+    rejectDisbursementMutation.mutate(
+      { id: disbursement.id, reason: rejectReason },
+      {
+        onSuccess: () => {
+          setShowRejectForm(false);
+          success('Disbursement rejected');
+        },
+        onError: (err: any) => showError(err?.response?.data?.detail || 'Failed to reject disbursement'),
+      }
+    );
   };
 
   if (loading) {
@@ -446,10 +438,10 @@ const LoanDisbursementPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleDisburse}
-                disabled={submitting || !selectedBankAccount}
+                disabled={disburseLoanMutation.isPending || !selectedBankAccount}
                 className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
               >
-                {submitting
+                {disburseLoanMutation.isPending
                   ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
                   : <Send className="w-4 h-4" />
                 }
@@ -477,10 +469,10 @@ const LoanDisbursementPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={handleReject}
-                  disabled={submitting || !rejectReason.trim()}
+                  disabled={rejectDisbursementMutation.isPending || !rejectReason.trim()}
                   className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
                 >
-                  {submitting ? 'Submitting…' : 'Confirm Rejection'}
+                  {rejectDisbursementMutation.isPending ? 'Submitting…' : 'Confirm Rejection'}
                 </button>
               </div>
             )}

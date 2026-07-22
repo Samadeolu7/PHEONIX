@@ -1,24 +1,15 @@
-/**
- * pages/admin/UserPermissionOverridePage.tsx
- *
- * Admin page for viewing and managing per-user permission overrides.
- *
- * Layout
- * ──────
- * • User selector at the top
- * • Role baseline (greyed) card
- * • Active overrides table with elevation badges, expiry countdown, grant reason
- * • "Grant Override" modal
- */
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  rolePermissionService,
+  useUserOverrides,
+  useCreateUserOverride,
+  useRevokeUserOverride,
+  useSuspendUserOverride,
+  useReinstateUserOverride,
+} from '../../hooks/useRolePermissions';
+import {
   UserPermissionOverride,
-} from '@/services/rolePermissionService';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
+} from '../../services/rolePermissionService';
 
 const SCOPE_LABELS: Record<string, string> = {
   global:           'Global',
@@ -87,8 +78,6 @@ function FlagPills({ override }: { override: UserPermissionOverride }) {
   );
 }
 
-// ── Grant Override Modal ───────────────────────────────────────────────────────
-
 interface GrantModalProps {
   userId: number;
   onClose: () => void;
@@ -114,6 +103,8 @@ function GrantModal({ userId, onClose, onSaved }: GrantModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const createOverride = useCreateUserOverride();
+
   const set = (key: string, val: unknown) =>
     setForm(f => ({ ...f, [key]: val }));
 
@@ -122,7 +113,7 @@ function GrantModal({ userId, onClose, onSaved }: GrantModalProps) {
     setSaving(true);
     setError(null);
     try {
-      await rolePermissionService.createUserOverride(form as Omit<UserPermissionOverride, 'id'>);
+      await createOverride.mutateAsync(form as Omit<UserPermissionOverride, 'id'>);
       onSaved();
     } catch (err: any) {
       const msg = err?.response?.data?.detail ?? err?.message ?? 'Failed to save override.';
@@ -274,8 +265,6 @@ function GrantModal({ userId, onClose, onSaved }: GrantModalProps) {
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
-
 interface UserOption {
   id: number;
   email: string;
@@ -288,14 +277,10 @@ export default function UserPermissionOverridePage() {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(
     searchParams.get('user') ? Number(searchParams.get('user')) : null
   );
-  const [overrides, setOverrides] = useState<UserPermissionOverride[]>([]);
-  const [loading, setLoading] = useState(false);
   const [showGrantModal, setShowGrantModal] = useState(false);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
 
-  // Load users list
   useEffect(() => {
-    // Use the existing users API endpoint
     import('@/services/api').then(({ api }) => {
       api.get('/users/staff-users/?limit=200').then((res: any) => {
         const list: UserOption[] = (res?.results ?? res ?? []).map((u: any) => ({
@@ -308,22 +293,9 @@ export default function UserPermissionOverridePage() {
     });
   }, []);
 
-  const loadOverrides = useCallback(async () => {
-    if (!selectedUserId) return;
-    setLoading(true);
-    try {
-      const data = await rolePermissionService.getUserOverrides({ user: selectedUserId });
-      setOverrides(data);
-    } catch {
-      setOverrides([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedUserId]);
-
-  useEffect(() => {
-    loadOverrides();
-  }, [loadOverrides]);
+  const { data: overrides = [], isLoading: loading, refetch: loadOverrides } = useUserOverrides(
+    selectedUserId ? { user: selectedUserId } : undefined
+  );
 
   useEffect(() => {
     if (selectedUserId) {
@@ -331,11 +303,15 @@ export default function UserPermissionOverridePage() {
     }
   }, [selectedUserId, setSearchParams]);
 
+  const revokeOverride = useRevokeUserOverride();
+  const suspendOverride = useSuspendUserOverride();
+  const reinstateOverride = useReinstateUserOverride();
+
   const handleRevoke = async (id: number) => {
     if (!window.confirm('Revoke this override?')) return;
     setActionLoading(id);
     try {
-      await rolePermissionService.revokeUserOverride(id, 'Revoked via admin panel');
+      await revokeOverride.mutateAsync({ id, reason: 'Revoked via admin panel' });
       await loadOverrides();
     } finally {
       setActionLoading(null);
@@ -345,7 +321,7 @@ export default function UserPermissionOverridePage() {
   const handleSuspend = async (id: number) => {
     setActionLoading(id);
     try {
-      await rolePermissionService.suspendUserOverride(id);
+      await suspendOverride.mutateAsync(id);
       await loadOverrides();
     } finally {
       setActionLoading(null);
@@ -355,7 +331,7 @@ export default function UserPermissionOverridePage() {
   const handleReinstate = async (id: number) => {
     setActionLoading(id);
     try {
-      await rolePermissionService.reinstateUserOverride(id);
+      await reinstateOverride.mutateAsync(id);
       await loadOverrides();
     } finally {
       setActionLoading(null);

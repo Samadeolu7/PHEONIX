@@ -44,6 +44,18 @@ import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import { guarantorService, GuarantorProfile } from '../../services/guarantorService';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
+import {
+  useLoanAccount,
+  useLoanSchedule,
+  useLoanGuarantors,
+  useLoanTransactions,
+  useApproveLoan,
+  useRejectLoan,
+  useRequestDisbursement,
+  useDeleteGuarantor,
+  useLoanRestructureApprovals,
+  useLoanDisbursementCorrections,
+} from '../../hooks/useLoans';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1108,25 +1120,12 @@ export default function LoanAccountDetailPage() {
   const navigate = useNavigate();
   const loanId = parseInt(id ?? '0', 10);
 
-  const [loan, setLoan] = useState<LoanAccount | null>(null);
-  const [schedule, setSchedule] = useState<LoanRepaymentSchedule[]>([]);
-  const [guarantors, setGuarantors] = useState<LoanGuarantor[]>([]);
-  const [ledger, setLedger] = useState<LoanTransactionRow[]>([]);
-  const [ledgerTotal, setLedgerTotal] = useState(0);
-  const [ledgerPage, setLedgerPage] = useState(1);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
   const LEDGER_PAGE_SIZE = 25;
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [ledgerPage, setLedgerPage] = useState(1);
   const [showRepayModal, setShowRepayModal] = useState(false);
   const [showRestructureModal, setShowRestructureModal] = useState(false);
-  const [pendingRestructureRequestId, setPendingRestructureRequestId] = useState<number | null>(null);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
-  const [pendingCorrectionRef, setPendingCorrectionRef] = useState<string | null>(null);
   const [showAddGuarantorModal, setShowAddGuarantorModal] = useState(false);
-  const [removingGuarantorId, setRemovingGuarantorId] = useState<number | null>(null);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   // Client bank details inline edit
   const [bankEditMode, setBankEditMode] = useState(false);
@@ -1134,96 +1133,44 @@ export default function LoanAccountDetailPage() {
   const [bankSaving, setBankSaving] = useState(false);
   const [bankError, setBankError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!loanId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const [loanData, scheduleData, guarantorData] = await Promise.all([
-        loanService.getLoan(loanId),
-        loanService.getLoanSchedule(loanId),
-        loanService.listGuarantors(loanId),
-      ]);
-      setLoan(loanData);
-      setSchedule(scheduleData);
-      setGuarantors(guarantorData);
+  // React Query hooks
+  const { data: loan, isLoading: loading, error: loanError, refetch: refetchLoan } = useLoanAccount(loanId);
+  const { data: schedule = [] } = useLoanSchedule(loanId);
+  const { data: guarantors = [], refetch: refetchGuarantors } = useLoanGuarantors(loanId);
+  const { data: ledgerData, isLoading: ledgerLoading } = useLoanTransactions(loanId, ledgerPage, LEDGER_PAGE_SIZE);
+  const ledger = ledgerData?.results ?? [];
+  const ledgerTotal = ledgerData?.count ?? 0;
+  const { data: pendingRestructures = [] } = useLoanRestructureApprovals({ status: 'pending' });
+  const { data: corrections = [] } = useLoanDisbursementCorrections();
+  const approveLoanMutation = useApproveLoan();
+  const rejectLoanMutation = useRejectLoan();
+  const requestDisbursementMutation = useRequestDisbursement();
+  const deleteGuarantorMutation = useDeleteGuarantor();
 
-      // Non-fatal: used only to disable "Restructure" while a proposal is pending
-      try {
-        const pending = await loanService.listRestructureRequests({ status: 'pending' });
-        const match = pending.find(r => r.loan === loanData.id);
-        setPendingRestructureRequestId(match ? match.id : null);
-      } catch {
-        setPendingRestructureRequestId(null);
-      }
+  const pendingRestructureRequestId = useMemo(() => {
+    const match = pendingRestructures.find(r => r.loan === loanId);
+    return match ? match.id : null;
+  }, [pendingRestructures, loanId]);
 
-      // Non-fatal: used only to disable "Correct Disbursement" while one is already in flight
-      try {
-        const corrections = await loanService.listDisbursementCorrections();
-        const match = corrections.find(
-          c => c.original_loan === loanData.id && (c.status === 'pending' || c.status === 'awaiting_second_approval')
-        );
-        setPendingCorrectionRef(match ? match.reference_number : null);
-      } catch {
-        setPendingCorrectionRef(null);
-      }
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      setError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load loan details.');
-    } finally {
-      setLoading(false);
-    }
-  }, [loanId]);
+  const pendingCorrectionRef = useMemo(() => {
+    const match = corrections.find(
+      c => c.original_loan === loanId && (c.status === 'pending' || c.status === 'awaiting_second_approval')
+    );
+    return match ? match.reference_number : null;
+  }, [corrections, loanId]);
 
-  const loadLedger = useCallback(async () => {
-    if (!loanId) return;
-    setLedgerLoading(true);
-    try {
-      const res = await loanService.getLoanTransactions(loanId, ledgerPage, LEDGER_PAGE_SIZE);
-      setLedger(res.results);
-      setLedgerTotal(res.count);
-    } catch {
-      // non-fatal
-    } finally {
-      setLedgerLoading(false);
-    }
-  }, [loanId, ledgerPage]);
-
-  async function handleRemoveGuarantor(guarantorId: number) {
-    if (!window.confirm('Remove this guarantor from the loan?')) return;
-    setRemovingGuarantorId(guarantorId);
-    try {
-      await loanService.deleteGuarantor(guarantorId);
-      setGuarantors(prev => prev.filter(g => g.id !== guarantorId));
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      const msg = data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to remove guarantor.';
-      setActionError(msg);
-      toast.error(msg);
-    } finally {
-      setRemovingGuarantorId(null);
-    }
-  }
-
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { loadLedger(); }, [loadLedger]);
+  const error = loanError ? ((loanError as any)?.response?.data?.detail || loanError.message || 'Failed to load loan details.') : null;
 
   async function handleApprove() {
     if (!loan) return;
     if (!window.confirm('Approve this loan application?')) return;
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await loanService.approveLoan(loan.id);
-      await load();
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Approval failed.';
-      setActionError(msg);
-      toast.error(msg);
-    } finally {
-      setActionLoading(false);
-    }
+    approveLoanMutation.mutate(loan.id, {
+      onError: (e: unknown) => {
+        const data = (e as any)?.response?.data;
+        const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Approval failed.';
+        toast.error(msg);
+      },
+    });
   }
 
   async function handleReject() {
@@ -1235,19 +1182,24 @@ export default function LoanAccountDetailPage() {
       return;
     }
     if (!window.confirm('Reject this loan application? This cannot be undone.')) return;
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await loanService.rejectLoan(loan.id, reason.trim());
-      await load();
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Rejection failed.';
-      setActionError(msg);
-      toast.error(msg);
-    } finally {
-      setActionLoading(false);
-    }
+    rejectLoanMutation.mutate({ id: loan.id, reason: reason.trim() }, {
+      onError: (e: unknown) => {
+        const data = (e as any)?.response?.data;
+        const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Rejection failed.';
+        toast.error(msg);
+      },
+    });
+  }
+
+  async function handleRemoveGuarantor(guarantorId: number) {
+    if (!window.confirm('Remove this guarantor from the loan?')) return;
+    deleteGuarantorMutation.mutate({ id: guarantorId, loanId }, {
+      onError: (e: unknown) => {
+        const data = (e as any)?.response?.data;
+        const msg = data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to remove guarantor.';
+        toast.error(msg);
+      },
+    });
   }
 
 
@@ -1301,7 +1253,7 @@ export default function LoanAccountDetailPage() {
           onClose={() => setShowRepayModal(false)}
           onSuccess={() => {
             setShowRepayModal(false);
-            load();
+            refetchLoan();
           }}
         />
       )}
@@ -1312,7 +1264,7 @@ export default function LoanAccountDetailPage() {
           onClose={() => setShowRestructureModal(false)}
           onSuccess={() => {
             setShowRestructureModal(false);
-            load();
+            refetchLoan();
           }}
         />
       )}
@@ -1323,7 +1275,7 @@ export default function LoanAccountDetailPage() {
           onClose={() => setShowAddGuarantorModal(false)}
           onSuccess={() => {
             setShowAddGuarantorModal(false);
-            loanService.listGuarantors(loan.id).then(setGuarantors);
+            refetchGuarantors();
           }}
         />
       )}
@@ -1334,7 +1286,7 @@ export default function LoanAccountDetailPage() {
           onClose={() => setShowCorrectionModal(false)}
           onSuccess={() => {
             setShowCorrectionModal(false);
-            load();
+            refetchLoan();
           }}
         />
       )}
@@ -1377,7 +1329,7 @@ export default function LoanAccountDetailPage() {
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
             <button
-              onClick={load}
+              onClick={() => refetchLoan()}
               className="rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-50"
               title="Refresh"
             >
@@ -1407,24 +1359,21 @@ export default function LoanAccountDetailPage() {
                 type="button"
                 onClick={async () => {
                   if (!loan) return;
-                  setActionLoading(true);
-                  setActionError(null);
-                  try {
-                    await loanService.requestDisbursement(loan.id);
-                    navigate(`/loans/disbursements/${loan.id}`);
-                  } catch (e: unknown) {
-                    const data = (e as any)?.response?.data;
-                    const msg = data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Could not create disbursement request.';
-                    setActionError(msg);
-                    toast.error(msg);
-                  } finally {
-                    setActionLoading(false);
-                  }
+                  requestDisbursementMutation.mutate({ loanId: loan.id }, {
+                    onSuccess: () => {
+                      navigate(`/loans/disbursements/${loan.id}`);
+                    },
+                    onError: (e: unknown) => {
+                      const data = (e as any)?.response?.data;
+                      const msg = data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Could not create disbursement request.';
+                      toast.error(msg);
+                    },
+                  });
                 }}
-                disabled={actionLoading}
+                disabled={requestDisbursementMutation.isPending}
                 className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                {requestDisbursementMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
                 Request Disbursement
               </button>
             )}
@@ -1433,7 +1382,7 @@ export default function LoanAccountDetailPage() {
               <button
                 type="button"
                 onClick={handleReject}
-                disabled={actionLoading}
+                disabled={rejectLoanMutation.isPending}
                 className="flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
               >
                 <XCircle size={14} />
@@ -1456,17 +1405,17 @@ export default function LoanAccountDetailPage() {
                   <button
                     type="button"
                     onClick={handleApprove}
-                    disabled={actionLoading || guarantorsMissing}
+                    disabled={approveLoanMutation.isPending || rejectLoanMutation.isPending || guarantorsMissing}
                     title={guarantorsMissing ? `Add at least ${minRequired} guarantor(s) before approving` : undefined}
                     className="flex items-center gap-2 rounded-lg border border-blue-300 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {actionLoading ? <Loader2 size={14} className="animate-spin" /> : null}
+                    {approveLoanMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
                     Approve
                   </button>
                   <button
                     type="button"
                     onClick={handleReject}
-                    disabled={actionLoading}
+                    disabled={approveLoanMutation.isPending || rejectLoanMutation.isPending}
                     className="flex items-center gap-2 rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
                   >
                     <XCircle size={14} />
@@ -1528,13 +1477,6 @@ export default function LoanAccountDetailPage() {
             )}
           </div>
         </div>
-
-        {actionError && (
-          <div className="mt-3 flex items-center gap-2 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">
-            <AlertCircle size={14} />
-            {actionError}
-          </div>
-        )}
 
         {loan.status === 'rejected' && loan.rejection_reason && (
           <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">
@@ -1779,13 +1721,7 @@ export default function LoanAccountDetailPage() {
                               bank_account_number: bankDraft.bank_account_number || undefined,
                               bank_verification_number: bankDraft.bvn || undefined,
                             });
-                            setLoan(prev => prev ? {
-                              ...prev,
-                              client_bank_name: bankDraft.bank_name || null,
-                              client_bank_account_name: bankDraft.bank_account_name || null,
-                              client_bank_account_number: bankDraft.bank_account_number || null,
-                              client_bvn: bankDraft.bvn || null,
-                            } : prev);
+                            refetchLoan();
                             setBankEditMode(false);
                           } catch (e: any) {
                             setBankError(e?.detail ?? e?.message ?? 'Failed to save bank details.');
@@ -1911,10 +1847,10 @@ export default function LoanAccountDetailPage() {
                       type="button"
                       aria-label="Remove guarantor"
                       onClick={() => handleRemoveGuarantor(g.id)}
-                      disabled={removingGuarantorId === g.id}
+                      disabled={deleteGuarantorMutation.isPending}
                       className="ml-2 shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
                     >
-                      {removingGuarantorId === g.id
+                      {deleteGuarantorMutation.isPending
                         ? <Loader2 size={14} className="animate-spin" />
                         : <Trash2 size={14} />}
                     </button>

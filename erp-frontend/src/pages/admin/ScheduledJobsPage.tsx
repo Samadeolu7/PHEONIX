@@ -1,7 +1,7 @@
-// src/pages/admin/ScheduledJobsPage.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { RefreshCw, Play, Power } from 'lucide-react';
-import { scheduledJobsService, ScheduledJob } from '../../services/scheduledJobsService';
+import { useScheduledJobs, useToggleJob, useRunJob } from '../../hooks/useScheduledJobs';
+import { ScheduledJob } from '../../services/scheduledJobsService';
 import { useToast } from '../../hooks/useToast';
 import { Badge } from '../../components/ui/Badge';
 import LoadingState from '../../components/ui/LoadingState';
@@ -22,32 +22,17 @@ function statusVariant(status: string | undefined): 'success' | 'error' | 'defau
 
 const ScheduledJobsPage: React.FC = () => {
   const toast = useToast();
-  const [jobs, setJobs] = useState<ScheduledJob[]>([]);
-  const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const data = await scheduledJobsService.getJobs();
-      setJobs(data);
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to load scheduled jobs');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
+  const { data: jobs = [], isLoading: loading, refetch } = useScheduledJobs();
+  const toggleJob = useToggleJob();
+  const runJob = useRunJob();
 
   const handleToggle = async (job: ScheduledJob) => {
     setBusyId(job.id);
     try {
-      await scheduledJobsService.toggleJob(job.id);
+      await toggleJob.mutateAsync(job.id);
       toast.success(`'${job.name}' ${job.enabled ? 'disabled' : 'enabled'}`);
-      loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update job');
     } finally {
@@ -58,9 +43,8 @@ const ScheduledJobsPage: React.FC = () => {
   const handleRunNow = async (job: ScheduledJob) => {
     setBusyId(job.id);
     try {
-      await scheduledJobsService.runNow(job.id);
+      await runJob.mutateAsync(job.id);
       toast.success(`'${job.name}' queued to run now — check back shortly for the result.`);
-      loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to queue job');
     } finally {
@@ -83,7 +67,7 @@ const ScheduledJobsPage: React.FC = () => {
             </p>
           </div>
           <button
-            onClick={loadData}
+            onClick={() => refetch()}
             className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50"
           >
             <RefreshCw className="w-4 h-4" />

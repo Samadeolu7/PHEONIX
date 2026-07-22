@@ -1,6 +1,6 @@
 // src/pages/sales/StandaloneCreditNotesList.tsx
 // Global credit notes list – accessible without being nested under a specific invoice
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { creditNoteService, StandaloneCreditNoteFilters } from '../../services/creditNoteService';
 import { CreditNote } from '../../services/invoiceService';
+import { useStandaloneCreditNotes } from '../../hooks/useInvoices';
 import { useToast } from '../../hooks/useToast';
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
@@ -141,9 +142,6 @@ const StandaloneCreditNotesList: React.FC = () => {
   const navigate = useNavigate();
   const { success, error: showError } = useToast();
 
-  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [pagination, setPagination] = useState({ count: 0, currentPage: 1 });
   const [filters, setFilters] = useState<StandaloneCreditNoteFilters>({
     ordering: '-created_at',
     page: 1,
@@ -157,23 +155,11 @@ const StandaloneCreditNotesList: React.FC = () => {
   } | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
-  const loadCreditNotes = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await creditNoteService.getCreditNotes(filters);
-      setCreditNotes(data.results);
-      setPagination({ count: data.count, currentPage: filters.page ?? 1 });
-    } catch (err) {
-      console.error(err);
-      showError('Failed to load credit notes');
-    } finally {
-      setLoading(false);
-    }
-  }, [filters, showError]);
-
-  useEffect(() => {
-    loadCreditNotes();
-  }, [loadCreditNotes]);
+  const { data: cnResponse, isLoading: loading, refetch: refetchCreditNotes } = useStandaloneCreditNotes(filters);
+  const creditNotes = cnResponse?.results || [];
+  const paginationCount = cnResponse?.count || 0;
+  const currentPage = filters.page ?? 1;
+  const totalPages = Math.ceil(paginationCount / (filters.page_size ?? 20));
 
   const handleSearch = () => setFilters(f => ({ ...f, search: searchInput || undefined, page: 1 }));
 
@@ -194,7 +180,7 @@ const StandaloneCreditNotesList: React.FC = () => {
         success(`Credit note ${actionModal.creditNote.credit_note_number} cancelled`);
       }
       setActionModal(null);
-      loadCreditNotes();
+      refetchCreditNotes();
     } catch (err) {
       console.error(err);
       showError(`Failed to ${actionModal.type} credit note`);
@@ -257,7 +243,7 @@ const StandaloneCreditNotesList: React.FC = () => {
               <Filter size={15} /> Filters
             </button>
             <button
-              onClick={loadCreditNotes}
+              onClick={() => refetchCreditNotes()}
               className="p-2 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors"
               title="Refresh"
             >
@@ -335,7 +321,7 @@ const StandaloneCreditNotesList: React.FC = () => {
 
         {/* Summary */}
         <div className="flex items-center gap-2 text-sm text-gray-500">
-          <span className="font-medium text-gray-700">{pagination.count}</span> credit notes
+          <span className="font-medium text-gray-700">{paginationCount}</span> credit notes
           {filters.status && (
             <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full text-xs">
               {filters.status}
@@ -498,18 +484,18 @@ const StandaloneCreditNotesList: React.FC = () => {
         {totalPages > 1 && (
           <div className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-4 py-3">
             <span className="text-sm text-gray-500">
-              Page {pagination.currentPage} of {totalPages} ({pagination.count} records)
+              Page {currentPage} of {totalPages} ({paginationCount} records)
             </span>
             <div className="flex gap-2">
               <button
-                disabled={pagination.currentPage <= 1}
+                disabled={currentPage <= 1}
                 onClick={() => setFilters(f => ({ ...f, page: (f.page ?? 1) - 1 }))}
                 className="p-1.5 border border-gray-200 rounded text-gray-500 disabled:opacity-40 hover:bg-gray-50 transition-colors"
               >
                 <ChevronLeft size={16} />
               </button>
               <button
-                disabled={pagination.currentPage >= totalPages}
+                disabled={currentPage >= totalPages}
                 onClick={() => setFilters(f => ({ ...f, page: (f.page ?? 1) + 1 }))}
                 className="p-1.5 border border-gray-200 rounded text-gray-500 disabled:opacity-40 hover:bg-gray-50 transition-colors"
               >

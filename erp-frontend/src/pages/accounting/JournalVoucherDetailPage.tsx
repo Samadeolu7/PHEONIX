@@ -1,5 +1,5 @@
 // src/pages/accounting/JournalVoucherDetailPage.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -13,7 +13,9 @@ import {
   ExternalLink,
   Info,
 } from 'lucide-react';
-import { journalVoucherService, JournalVoucher } from '../../services/journalVoucherService';
+import { JournalVoucher } from '../../services/journalVoucherService';
+import { useJournalVoucher, useApproveJournalVoucher } from '../../hooks/useJournalVouchers';
+import { journalVoucherService } from '../../services/journalVoucherService';
 import { useToast } from '../../hooks/useToast';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 
@@ -89,59 +91,37 @@ const JournalVoucherDetailPage: React.FC = () => {
   const { success, error: showError } = useToast();
   const { canUserApprove } = useApprovalGuard();
 
-  const [jv, setJv] = useState<JournalVoucher | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
   const [modal, setModal] = useState<'approve' | 'reverse' | null>(null);
+  const [reverseLoading, setReverseLoading] = useState(false);
 
-  const loadJv = async () => {
-    if (!id) return;
-    try {
-      setLoading(true);
-      const data = await journalVoucherService.getJournalVoucher(Number(id));
-      setJv(data);
-    } catch (err) {
-      console.error(err);
-      showError('Failed to load journal voucher');
-      navigate('/accounting/journal-vouchers');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadJv();
-  }, [id]);
+  const jvId = Number(id);
+  const { data: jv, isLoading: loading } = useJournalVoucher(jvId, !!id);
+  const approveMutation = useApproveJournalVoucher();
 
   const handleApprove = async () => {
     if (!jv) return;
     try {
-      setActionLoading(true);
-      await journalVoucherService.approveJournalVoucher(jv.id);
+      await approveMutation.mutateAsync(jv.id);
       success(`Journal Voucher ${jv.reference_number} posted successfully`);
       setModal(null);
-      loadJv();
     } catch (err) {
       console.error(err);
       showError('Failed to post journal voucher');
-    } finally {
-      setActionLoading(false);
     }
   };
 
   const handleReverse = async (reason?: string) => {
     if (!jv || !reason) return;
     try {
-      setActionLoading(true);
+      setReverseLoading(true);
       await journalVoucherService.reverseJournalVoucher(jv.id, reason);
       success(`Journal Voucher ${jv.reference_number} reversed successfully`);
       setModal(null);
-      loadJv();
     } catch (err) {
       console.error(err);
       showError('Failed to reverse journal voucher');
     } finally {
-      setActionLoading(false);
+      setReverseLoading(false);
     }
   };
 
@@ -426,7 +406,7 @@ const JournalVoucherDetailPage: React.FC = () => {
           description={`Post ${jv.reference_number}? This will apply the journal entries to the general ledger. You can reverse it later if needed.`}
           onConfirm={handleApprove}
           onCancel={() => setModal(null)}
-          loading={actionLoading}
+          loading={approveMutation.isPending}
           confirmLabel="Post Voucher"
           confirmClass="bg-green-600 hover:bg-green-700"
         />
@@ -439,7 +419,7 @@ const JournalVoucherDetailPage: React.FC = () => {
           requireReason
           onConfirm={handleReverse}
           onCancel={() => setModal(null)}
-          loading={actionLoading}
+          loading={reverseLoading}
           confirmLabel="Reverse Voucher"
           confirmClass="bg-red-600 hover:bg-red-700"
         />

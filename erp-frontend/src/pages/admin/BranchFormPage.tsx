@@ -1,8 +1,8 @@
-// src/pages/admin/BranchFormPage.tsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { branchService, Branch, CreateBranchData } from '../../services/branchService';
-import { tenantManagementService, TenantOption } from '../../services/tenantManagementService';
+import { CreateBranchData } from '../../services/branchService';
+import { useBranch, useCreateBranch, useUpdateBranch } from '../../hooks/useBranches';
+import { useTenantOptions } from '../../hooks/useTenants';
 import { useToast } from '../../hooks/useToast';
 import { ArrowLeft, Save, Building } from 'lucide-react';
 
@@ -10,12 +10,15 @@ const BranchFormPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isEditMode = Boolean(id);
-  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [tenants, setTenants] = useState<TenantOption[]>([]);
   const [originalData, setOriginalData] = useState<CreateBranchData | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const { success, error: showError } = useToast();
+
+  const { data: branch, isLoading: branchLoading } = useBranch(isEditMode ? Number(id) : 0);
+  const { data: tenants = [] } = useTenantOptions();
+  const createBranch = useCreateBranch();
+  const updateBranch = useUpdateBranch();
 
   const [formData, setFormData] = useState<CreateBranchData>({
     name: '',
@@ -28,42 +31,7 @@ const BranchFormPage: React.FC = () => {
   });
 
   useEffect(() => {
-    loadTenants();
-    if (isEditMode && id) {
-      loadBranch();
-    }
-  }, [id, isEditMode]);
-
-  // Check for changes when formData updates
-  useEffect(() => {
-    if (isEditMode && originalData) {
-      const hasFormChanges = Object.keys(formData).some(key => {
-        return (
-          formData[key as keyof CreateBranchData] !== originalData[key as keyof CreateBranchData]
-        );
-      });
-      setHasChanges(hasFormChanges);
-    } else if (!isEditMode) {
-      // For create mode, check if required fields are filled
-      const requiredFieldsFilled = formData.name && formData.code;
-      setHasChanges(Boolean(requiredFieldsFilled));
-    }
-  }, [formData, originalData, isEditMode]);
-
-  const loadTenants = async () => {
-    try {
-      const tenantOptions = await tenantManagementService.getTenantOptions({ is_active: true });
-      setTenants(tenantOptions);
-    } catch (error) {
-      console.error('Error loading tenants:', error);
-      showError('Failed to load tenants');
-    }
-  };
-
-  const loadBranch = async () => {
-    try {
-      setLoading(true);
-      const branch = await branchService.getBranch(Number(id));
+    if (branch) {
       const branchData: CreateBranchData = {
         name: branch.name,
         code: branch.code,
@@ -75,14 +43,29 @@ const BranchFormPage: React.FC = () => {
       };
       setFormData(branchData);
       setOriginalData(branchData);
-    } catch (error) {
-      console.error('Error loading branch:', error);
+    }
+  }, [branch]);
+
+  useEffect(() => {
+    if (isEditMode && originalData) {
+      const hasFormChanges = Object.keys(formData).some(key => {
+        return (
+          formData[key as keyof CreateBranchData] !== originalData[key as keyof CreateBranchData]
+        );
+      });
+      setHasChanges(hasFormChanges);
+    } else if (!isEditMode) {
+      const requiredFieldsFilled = formData.name && formData.code;
+      setHasChanges(Boolean(requiredFieldsFilled));
+    }
+  }, [formData, originalData, isEditMode]);
+
+  useEffect(() => {
+    if (!branchLoading && isEditMode && !branch) {
       showError('Failed to load branch');
       navigate('/admin/branches');
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [branchLoading, branch, isEditMode, navigate, showError]);
 
   const handleInputChange = (field: keyof CreateBranchData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -100,10 +83,10 @@ const BranchFormPage: React.FC = () => {
       setSubmitting(true);
 
       if (isEditMode && id) {
-        await branchService.updateBranch(Number(id), formData);
+        await updateBranch.mutateAsync({ id: Number(id), data: formData });
         success('Branch updated successfully');
       } else {
-        await branchService.createBranch(formData);
+        await createBranch.mutateAsync(formData);
         success('Branch created successfully');
       }
 
@@ -116,7 +99,7 @@ const BranchFormPage: React.FC = () => {
     }
   };
 
-  if (loading) {
+  if (branchLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>

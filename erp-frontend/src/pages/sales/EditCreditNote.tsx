@@ -7,6 +7,7 @@ import {
   CreateCreditNoteData,
   CreditNote,
 } from '../../services/invoiceService';
+import { useInvoice, useCreditNote, useUpdateCreditNote } from '../../hooks/useInvoices';
 import { inventoryService } from '../../services/inventoryService';
 import { InventoryItem } from '../../types/inventory';
 import { useToast } from '../../hooks/useToast';
@@ -62,14 +63,17 @@ const isValidDecimalInput = (value: string) => value === '' || DECIMAL_INPUT_REG
 const EditCreditNote: React.FC = () => {
   const { invoiceId, creditNoteId } = useParams<{ invoiceId: string; creditNoteId: string }>();
   const navigate = useNavigate();
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
-  const [creditNote, setCreditNote] = useState<CreditNote | null>(null);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const loading = loadingInvoice || loadingCreditNote;
   const [saving, setSaving] = useState(false);
   const [itemSearchQuery, setItemSearchQuery] = useState('');
   const [showItemSearch, setShowItemSearch] = useState(false);
   const { success, error: showError } = useToast();
+  const { data: invoiceData, isLoading: loadingInvoice } = useInvoice(Number(invoiceId), !!invoiceId);
+  const invoice = invoiceData as Invoice | null;
+  const { data: creditNoteData, isLoading: loadingCreditNote } = useCreditNote(Number(invoiceId), Number(creditNoteId), !!invoiceId && !!creditNoteId);
+  const creditNote = creditNoteData as CreditNote | null;
+  const updateCreditNoteMutation = useUpdateCreditNote();
 
   const [formData, setFormData] = useState<CreditNoteFormData>({
     reason: '',
@@ -84,38 +88,15 @@ const EditCreditNote: React.FC = () => {
 
   useEffect(() => {
     if (invoiceId && creditNoteId) {
-      loadInvoice();
-      loadCreditNote();
       loadInventoryItems();
     }
   }, [invoiceId, creditNoteId]);
 
+  // Populate form when credit note data is loaded
   useEffect(() => {
-    calculateTotals();
-  }, [formData.items, formData.discount]);
-
-  const loadInvoice = async () => {
-    try {
-      const invoiceData = await invoiceService.getInvoice(Number(invoiceId));
-      setInvoice(invoiceData);
-    } catch (error) {
-      console.error('Error loading invoice:', error);
-      showError('Failed to load invoice');
-      navigate('/sales/invoices');
-    }
-  };
-
-  const loadCreditNote = async () => {
-    try {
-      setLoading(true);
-      const creditNoteData = await invoiceService.getCreditNote(
-        Number(invoiceId),
-        Number(creditNoteId)
-      );
-      setCreditNote(creditNoteData);
-
+    if (creditNote) {
       // Check if credit note can be edited
-      if (creditNoteData.status !== 'draft') {
+      if (creditNote.status !== 'draft') {
         showError('Only draft credit notes can be edited');
         navigate(`/sales/invoices/${invoiceId}/credit-notes/${creditNoteId}/view`);
         return;
@@ -123,16 +104,16 @@ const EditCreditNote: React.FC = () => {
 
       // Populate form with existing data
       setFormData({
-        reason: creditNoteData.reason,
-        notes: creditNoteData.notes || '',
-        subtotal: creditNoteData.subtotal,
-        discount: creditNoteData.discount,
-        tax_amount: creditNoteData.tax_amount,
-        total_amount: creditNoteData.total_amount,
-        status: creditNoteData.status,
-        items: creditNoteData.items.map((item, index) => ({
+        reason: creditNote.reason,
+        notes: creditNote.notes || '',
+        subtotal: creditNote.subtotal,
+        discount: creditNote.discount,
+        tax_amount: creditNote.tax_amount,
+        total_amount: creditNote.total_amount,
+        status: creditNote.status,
+        items: creditNote.items.map((item, index) => ({
           id: `existing-${item.id || index}`,
-          item: item.item,
+          item: item.original_invoice_item,
           item_name: item.item_name,
           item_sku: item.item_sku,
           description: item.description,
@@ -147,14 +128,12 @@ const EditCreditNote: React.FC = () => {
           return_to_stock: item.return_to_stock,
         })),
       });
-    } catch (error) {
-      console.error('Error loading credit note:', error);
-      showError('Failed to load credit note');
-      navigate(`/sales/invoices/${invoiceId}/credit-notes`);
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [creditNote]);
+
+  useEffect(() => {
+    calculateTotals();
+  }, [formData.items, formData.discount]);
 
   const loadInventoryItems = async () => {
     try {
@@ -324,11 +303,11 @@ const EditCreditNote: React.FC = () => {
         })),
       };
 
-      await invoiceService.updateCreditNote(
-        Number(invoiceId),
-        Number(creditNoteId),
-        creditNoteData
-      );
+      await updateCreditNoteMutation.mutateAsync({
+        invoiceId: Number(invoiceId),
+        creditNoteId: Number(creditNoteId),
+        data: creditNoteData,
+      });
       success('Credit note updated successfully');
       navigate(`/sales/invoices/${invoiceId}/credit-notes/${creditNoteId}/view`);
     } catch (error) {

@@ -26,11 +26,8 @@ import {
 } from 'lucide-react';
 import { clientService, ClientGroup, Client } from '../../services/clientService';
 import { loanService, LoanAccountList, LoanRepaymentSchedule } from '../../services/loanService';
-import {
-  getSavingsAccounts,
-  SavingsAccount,
-  depositToSavings,
-} from '../../services/savingsService';
+import type { SavingsAccount } from '../../services/savingsService';
+import { getSavingsAccounts, depositToSavings } from '../../services/savingsService';
 import api from '../../services/api';
 
 // ── Helpers ────────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
  * Data is scoped server-side to clients assigned to the logged-in officer.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -15,12 +15,8 @@ import {
   ChevronRight,
   Eye,
 } from 'lucide-react';
-import {
-  getSavingsAccounts,
-  SavingsAccount,
-  ContributionCycle,
-  SavingsAccountStatus,
-} from '../../services/savingsService';
+import { useSavingsAccounts } from '../../hooks/useSavings';
+import type { ContributionCycle, SavingsAccountStatus } from '../../services/savingsService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -65,11 +61,6 @@ const PAGE_SIZE = 25;
 
 export default function SavingsAccountsPage() {
   const navigate = useNavigate();
-  const [accounts, setAccounts] = useState<SavingsAccount[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [totalCount, setTotalCount] = useState(0);
-
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -77,6 +68,14 @@ export default function SavingsAccountsPage() {
   const [page, setPage] = useState(1);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { data, isLoading, error, refetch } = useSavingsAccounts({
+    cycle: cycleFilter ? (cycleFilter as ContributionCycle) : undefined,
+    status: statusFilter || undefined,
+    search: search || undefined,
+    page,
+    page_size: PAGE_SIZE,
+  });
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -88,41 +87,14 @@ export default function SavingsAccountsPage() {
     }, 300);
   };
 
-  const loadAccounts = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await getSavingsAccounts({
-        cycle: cycleFilter ? (cycleFilter as ContributionCycle) : undefined,
-        status: statusFilter || undefined,
-        search: search || undefined,
-        page,
-        page_size: PAGE_SIZE,
-      });
-      if (Array.isArray(data)) {
-        setAccounts(data);
-        setTotalCount(data.length);
-      } else {
-        setAccounts(data.results ?? []);
-        setTotalCount(data.count ?? 0);
-      }
-    } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Failed to load savings accounts.');
-    } finally {
-      setLoading(false);
-    }
-  }, [cycleFilter, statusFilter, search, page]);
-
   useEffect(() => {
     setPage(1);
   }, [cycleFilter, statusFilter, search]);
 
-  useEffect(() => {
-    loadAccounts();
-  }, [loadAccounts]);
-
+  const accounts = Array.isArray(data) ? data : (data?.results ?? []);
+  const totalCount = Array.isArray(data) ? data.length : (data?.count ?? 0);
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const errorMsg = error?.detail ?? error?.message ?? null;
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -186,26 +158,26 @@ export default function SavingsAccountsPage() {
         </select>
 
         <button
-          onClick={loadAccounts}
-          disabled={loading}
+          onClick={() => refetch()}
+          disabled={isLoading}
           className="flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
           Refresh
         </button>
       </div>
 
       {/* Error */}
-      {error && (
+      {errorMsg && (
         <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
           <AlertCircle size={16} />
-          {error}
+          {errorMsg}
         </div>
       )}
 
       {/* Table */}
       <div className="overflow-hidden rounded-xl bg-white shadow-sm">
-        {loading ? (
+        {isLoading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 size={24} className="animate-spin text-blue-600" />
           </div>
@@ -277,7 +249,7 @@ export default function SavingsAccountsPage() {
         )}
 
         {/* Pagination */}
-        {!loading && totalPages > 1 && (
+        {!isLoading && totalPages > 1 && (
           <div className="flex items-center justify-between border-t px-4 py-3">
             <p className="text-xs text-gray-500">
               Showing page {page} of {totalPages} ({totalCount} total)

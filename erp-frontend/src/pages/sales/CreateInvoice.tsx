@@ -1,6 +1,7 @@
 // src/pages/sales/CreateInvoice.tsx
 import React, { useState, useEffect } from 'react';
 import { invoiceService, CreateInvoiceData } from '../../services/invoiceService';
+import { useCreateInvoice } from '../../hooks/useInvoices';
 import { clientService, ClientOption } from '../../services/clientService';
 import { api } from '../../services/api';
 import { useToast } from '../../hooks/useToast';
@@ -61,6 +62,7 @@ const CreateInvoice: React.FC = () => {
   const [errors, setErrors] = useState<FormErrors>({});
   const { success, error: showError } = useToast();
   const navigate = useNavigate();
+  const createInvoiceMutation = useCreateInvoice();
 
   useEffect(() => {
     loadClients();
@@ -188,7 +190,7 @@ const CreateInvoice: React.FC = () => {
           : {},
       };
 
-      const createdInvoice = await invoiceService.createInvoice(invoiceData);
+      const createdInvoice = await createInvoiceMutation.mutateAsync(invoiceData);
 
       success(`Invoice ${createdInvoice.invoice_number} created successfully`);
 

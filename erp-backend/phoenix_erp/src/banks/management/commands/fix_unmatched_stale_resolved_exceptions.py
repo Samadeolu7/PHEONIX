@@ -1,30 +1,42 @@
 """
 banks/management/commands/fix_unmatched_stale_resolved_exceptions.py
 ====================================================================
-One-time (and safely re-runnable) fix for exceptions left in a stale
-resolved state after a director unmatch-ed a bank transaction.
+Repairs exception bookkeeping for every "ghost match" — a
+ReconciliationBankTransaction sitting matched=False but with
+matched_erp_payment_id still set (it WAS auto-matched, then a director
+manually unmatch()-ed it, or a low-confidence Java guess was rejected by
+the AUTO_MATCH_MIN_CONFIDENCE gate in banks/tasks.py — either way, this
+is a "corrupted" row: matched=False but nothing visibly open to review
+it against).
 
-The bug: ReconciliationBankTransaction.unmatch() called
-get_or_create_bank_only_exception() which used get_or_create but never
-reopened an already-resolved row, AND it never touched the erp_only
-exception for the matched ERP payment.  Result: after unmatch, both
-the bank_only and erp_only exceptions stayed resolved=True while the
-bank line sat unmatched — invisible to LinkCandidatesView (which
-filters resolved=False).
+Originally written for one specific bug (unmatch() calling
+get_or_create_bank_only_exception(), which used get_or_create but never
+reopened an already-resolved row, and never touched the erp_only side at
+all) — that bug in unmatch() itself is long since fixed (see
+ReconciliationBankTransaction.unmatch(), models.py). But two more corrupted
+shapes turned up investigating a production case where a bank line was
+found matched=True with NO erp_only exception ever recorded for the ERP
+payment it claimed — i.e. the exception was never created in the first
+place, not just left stale-resolved:
 
-This command:
-  1. Finds every ReconciliationBankTransaction where matched=False
-     but matched_erp_payment_id is NOT NULL (was matched, now
-     unmatched — the unmatch action).
-  2. Reopens any still-resolved bank_only exception for that bank
-     transaction.
-  3. Reopens any still-resolved erp_only exception for the ERP
-     payment the line was matched to.
-  4. Recomputes DailyReconciliation counts for every affected
-     reconciliation.
+  1. Never created at all — the bank_only and/or erp_only exception row
+     for a ghost match simply doesn't exist. This is the shape a low-
+     confidence match rejected before the AUTO_MATCH_MIN_CONFIDENCE fix
+     existed would leave behind (it was silently committed as matched=True
+     with no exception ever opened), and also the shape a since-patched
+     gap in unmatch() itself could produce historically.
+  2. Left in a stale resolved state — the row exists but resolved=True
+     even though the underlying bank line is genuinely unmatched (the
+     original bug this command was written for).
 
-Safe to re-run — a second pass finds nothing once exceptions are
-consistent.
+This command finds every ghost match and, for each side (bank_only against
+the bank transaction, erp_only against matched_erp_payment_id), CREATES the
+exception if it doesn't exist and REOPENS it if it's resolved — using the
+same get_or_create_bank_only_exception/get_or_create_erp_only_exception
+helpers unmatch() itself uses (reconciliation_utils.py), so the end state
+is identical to what a correct unmatch() would have produced. Never
+touches the underlying GL Transaction/TransactionEntry — only reconciliation-
+side bookkeeping. Safe to re-run — a second pass finds nothing left to do.
 
 Usage:
     python manage.py fix_unmatched_stale_resolved_exceptions --dry-run
@@ -33,13 +45,13 @@ Usage:
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand
-from django.db.models import Q
 
 
 class Command(BaseCommand):
     help = (
-        "Reopens bank_only and erp_only exceptions that stayed resolved after "
-        "a director unmatch-ed a bank transaction (stale resolved state)."
+        "Creates or reopens bank_only/erp_only exceptions for every ghost match "
+        "(matched=False with matched_erp_payment_id still set) whose exception "
+        "bookkeeping is missing or stuck resolved."
     )
 
     def add_arguments(self, parser):
@@ -47,92 +59,106 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from banks.models import DailyReconciliation, ReconciliationBankTransaction, ReconciliationException
-        from banks.reconciliation_utils import recompute_reconciliation_counts
+        from banks.reconciliation_utils import (
+            get_or_create_bank_only_exception,
+            get_or_create_erp_only_exception,
+            recompute_reconciliation_counts,
+        )
 
         dry_run = options['dry_run']
         if dry_run:
             self.stdout.write(self.style.WARNING('DRY RUN — no changes will be saved.\n'))
 
-        # All unmatched bank transactions that WERE matched (have a
-        # matched_erp_payment_id).  These are the ones that went through
-        # the old buggy unmatch path.
-        stale_txs = ReconciliationBankTransaction.objects.filter(
+        ghost_txs = ReconciliationBankTransaction.objects.filter(
             matched=False,
             matched_erp_payment_id__isnull=False,
         ).select_related('bank_account')
 
         fix_count = 0
+        no_recon_count = 0
         touched_recon_ids: set[int] = set()
 
-        for tx in stale_txs:
-            # Find the reconciliation for this bank line's date
+        for tx in ghost_txs:
             recon = DailyReconciliation.objects.filter(
                 bank_account=tx.bank_account,
                 reconciliation_date=tx.value_date,
             ).first()
             if recon is None:
+                no_recon_count += 1
+                self.stdout.write(
+                    f'  skipping bank tx {tx.id} ({tx.bank_account}, {tx.value_date}, '
+                    f'₦{tx.amount}) — no DailyReconciliation exists for that date'
+                )
                 continue
 
-            tx_fixed = False
-
-            # 1. Reopen bank_only exception for this bank transaction
-            bank_exc = ReconciliationException.objects.filter(
-                reconciliation=recon,
-                exception_type='bank_only',
-                bank_transaction_id=tx.id,
-                resolved=True,
+            # --- bank_only side ---
+            existing_bank_exc = ReconciliationException.objects.filter(
+                reconciliation=recon, exception_type='bank_only', bank_transaction_id=tx.id,
             ).first()
-            if bank_exc:
+            bank_state = (
+                'missing entirely' if existing_bank_exc is None else
+                'stuck resolved' if existing_bank_exc.resolved else None
+            )
+            if bank_state:
                 fix_count += 1
-                tx_fixed = True
-                self.stdout.write(
-                    f'  {"[DRY RUN] " if dry_run else ""}'
-                    f'reopening bank_only exception id={bank_exc.pk} '
-                    f'({bank_exc.bank_amount}) on recon {recon.id} — '
-                    f'bank tx {tx.id} was unmatched'
-                )
-                if not dry_run:
-                    bank_exc.resolved = False
-                    bank_exc.save(update_fields=['resolved'])
-
-            # 2. Reopen erp_only exception for the ERP payment
-            erp_exc = ReconciliationException.objects.filter(
-                reconciliation__bank_account=tx.bank_account,
-                exception_type='erp_only',
-                loan_payment_id=tx.matched_erp_payment_id,
-                resolved=True,
-            ).first()
-            if erp_exc:
-                fix_count += 1
-                tx_fixed = True
-                self.stdout.write(
-                    f'  {"[DRY RUN] " if dry_run else ""}'
-                    f'reopening erp_only exception id={erp_exc.pk} '
-                    f'({erp_exc.erp_amount}) on recon {erp_exc.reconciliation_id} — '
-                    f'bank tx {tx.id} was unmatched'
-                )
-                if not dry_run:
-                    erp_exc.resolved = False
-                    erp_exc.save(update_fields=['resolved'])
-                    touched_recon_ids.add(erp_exc.reconciliation_id)
-
-            if tx_fixed:
                 touched_recon_ids.add(recon.id)
+                self.stdout.write(
+                    f'  {"[DRY RUN] " if dry_run else ""}bank_only exception for tx {tx.id} '
+                    f'(₦{tx.amount} on {tx.value_date}) was {bank_state} — '
+                    f'{"would create/reopen" if dry_run else "creating/reopening"}'
+                )
+                if not dry_run:
+                    get_or_create_bank_only_exception(recon, tx)
+
+            # --- erp_only side ---
+            # Looked up WITHOUT a reconciliation filter — the natural key for
+            # erp_only is (reconciliation, loan_payment_id), and the widened
+            # ±window matching means a stale-resolved row for this same ERP
+            # payment could legitimately live on a different date's
+            # reconciliation than tx's own. If one is found, it's reopened
+            # directly (never via get_or_create_erp_only_exception, which
+            # would create a SECOND row under `recon` instead of reopening
+            # the one that already exists elsewhere). get_or_create is only
+            # used when none exists anywhere yet.
+            existing_erp_exc = ReconciliationException.objects.filter(
+                exception_type='erp_only', loan_payment_id=tx.matched_erp_payment_id,
+            ).first()
+            erp_state = (
+                'missing entirely' if existing_erp_exc is None else
+                'stuck resolved' if existing_erp_exc.resolved else None
+            )
+            if erp_state:
+                fix_count += 1
+                self.stdout.write(
+                    f'  {"[DRY RUN] " if dry_run else ""}erp_only exception for ERP payment '
+                    f'{tx.matched_erp_payment_id} (bank tx {tx.id}) was {erp_state} — '
+                    f'{"would create/reopen" if dry_run else "creating/reopening"}'
+                )
+                if not dry_run:
+                    if existing_erp_exc is None:
+                        erp_exc = get_or_create_erp_only_exception(recon, tx)
+                        if erp_exc is not None:
+                            touched_recon_ids.add(erp_exc.reconciliation_id)
+                    else:
+                        existing_erp_exc.resolved = False
+                        existing_erp_exc.save(update_fields=['resolved'])
+                        touched_recon_ids.add(existing_erp_exc.reconciliation_id)
 
         if fix_count == 0:
-            self.stdout.write(self.style.SUCCESS('No stale resolved exceptions found.'))
+            self.stdout.write(self.style.SUCCESS('\nNo corrupted exception bookkeeping found.'))
         else:
             action = 'Would fix' if dry_run else 'Fixed'
-            self.stdout.write(f'\n{action} {fix_count} stale resolved exception(s).')
-
-        # --- recompute counts for every touched reconciliation ---
-        if not touched_recon_ids:
-            return
-
-        if dry_run:
+            self.stdout.write(f'\n{action} {fix_count} missing/stale exception(s).')
+        if no_recon_count:
             self.stdout.write(
-                f'\nWould recompute counts for {len(touched_recon_ids)} affected reconciliation(s).'
+                f'{no_recon_count} ghost match(es) skipped — no reconciliation exists for their date yet.'
             )
+
+        if not touched_recon_ids or dry_run:
+            if touched_recon_ids:
+                self.stdout.write(
+                    f'\nWould recompute counts for {len(touched_recon_ids)} affected reconciliation(s).'
+                )
             return
 
         self.stdout.write('\nRecomputing counts for affected reconciliations...')

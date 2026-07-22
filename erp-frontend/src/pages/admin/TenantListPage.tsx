@@ -1,49 +1,26 @@
-// src/pages/admin/TenantListPage.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  tenantManagementService,
-  Tenant,
-  TenantFilters,
-} from '../../services/tenantManagementService';
+import { TenantFilters } from '../../services/tenantManagementService';
+import { tenantManagementService } from '../../services/tenantManagementService';
+import { useTenants, useDeleteTenant } from '../../hooks/useTenants';
 import { useToast } from '../../hooks/useToast';
 import { Trash2, Edit, Plus, Building2 } from 'lucide-react';
 
 const TenantListPage: React.FC = () => {
   const navigate = useNavigate();
-  const [tenants, setTenants] = useState<Tenant[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<TenantFilters>({});
-  const [pagination, setPagination] = useState({
-    count: 0,
-    next: null,
-    previous: null,
-    currentPage: 1,
-  });
   const { success, error: showError } = useToast();
 
-  useEffect(() => {
-    loadTenants();
-  }, [filters]);
-
-  const loadTenants = async () => {
-    try {
-      setLoading(true);
-      const response = await tenantManagementService.getTenants(filters);
-      setTenants(response.results || []);
-      setPagination({
-        count: response.count || 0,
-        next: response.next,
-        previous: response.previous,
-        currentPage: filters.page || 1,
-      });
-    } catch (error) {
-      console.error('Error loading tenants:', error);
-      showError('Failed to load tenants');
-    } finally {
-      setLoading(false);
-    }
+  const { data, isLoading: loading } = useTenants(filters);
+  const tenants = data?.results || [];
+  const pagination = {
+    count: data?.count || 0,
+    next: data?.next ?? null,
+    previous: data?.previous ?? null,
+    currentPage: filters.page || 1,
   };
+
+  const deleteTenant = useDeleteTenant();
 
   const handleDeleteTenant = async (tenantId: number, tenantName: string) => {
     if (
@@ -55,9 +32,8 @@ const TenantListPage: React.FC = () => {
     }
 
     try {
-      await tenantManagementService.deleteTenant(tenantId);
+      await deleteTenant.mutateAsync(tenantId);
       success('Tenant deleted successfully');
-      loadTenants(); // Reload the list
     } catch (error: any) {
       console.error('Error deleting tenant:', error);
       showError(error.message || 'Failed to delete tenant');
@@ -68,7 +44,7 @@ const TenantListPage: React.FC = () => {
     setFilters(prev => ({
       ...prev,
       [key]: value,
-      page: 1, // Reset to first page when filtering
+      page: 1,
     }));
   };
 
@@ -262,7 +238,7 @@ const TenantListPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {tenants.map(tenant => (
+                  {tenants.map((tenant: any) => (
                     <tr key={tenant.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">

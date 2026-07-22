@@ -93,6 +93,76 @@ class RunReconciliationMatchTests(TestCase):
         self.assertEqual(self.tx.matched_erp_payment_id, 101)
         self.assertIsNotNone(self.tx.matched_at)
 
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_medium_confidence_match_is_not_auto_committed(self, mock_post, mock_fetch):
+        # A MEDIUM (or LOW/blank) confidence guess from Java must never be
+        # silently trusted as a confirmed match — see AUTO_MATCH_MIN_CONFIDENCE
+        # (banks/tasks.py). It should instead surface as an ordinary
+        # bank_only/erp_only exception pair for a director to confirm.
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0,
+            'unmatchedBankCount': 1,
+            'unmatchedErpCount': 1,
+            'matches': [
+                {'bankTransactionId': str(self.tx.id), 'erpPaymentId': 101,
+                 'confidence': 'MEDIUM', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.recon.refresh_from_db()
+        self.tx.refresh_from_db()
+        self.assertEqual(self.recon.status, 'completed')
+        self.assertEqual(self.recon.matched_count, 0)
+        self.assertFalse(self.tx.matched)
+        self.assertIsNone(self.tx.matched_erp_payment_id)
+        self.assertIsNone(self.tx.matched_at)
+
+        bank_exc = ReconciliationException.objects.get(
+            reconciliation=self.recon, exception_type='bank_only', bank_transaction_id=self.tx.id,
+        )
+        self.assertFalse(bank_exc.resolved)
+        self.assertTrue(bank_exc.is_high_priority)
+
+        erp_exc = ReconciliationException.objects.get(
+            reconciliation=self.recon, exception_type='erp_only', loan_payment_id=101,
+        )
+        self.assertFalse(erp_exc.resolved)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_mixed_confidence_only_high_ones_committed(self, mock_post, mock_fetch):
+        low_tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='REF2', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('7000.00'), narration='Test credit 2',
+        )
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 1, 'unmatchedBankCount': 1, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(self.tx.id), 'erpPaymentId': 101,
+                 'confidence': 'HIGH', 'direction': 'CREDIT'},
+                {'bankTransactionId': str(low_tx.id), 'erpPaymentId': 202,
+                 'confidence': 'LOW', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+
+        run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.tx.refresh_from_db()
+        low_tx.refresh_from_db()
+        self.assertTrue(self.tx.matched)
+        self.assertEqual(self.tx.matched_erp_payment_id, 101)
+        self.assertFalse(low_tx.matched)
+        self.assertIsNone(low_tx.matched_erp_payment_id)
+
+        self.recon.refresh_from_db()
+        self.assertEqual(self.recon.matched_count, 1)
+        self.assertEqual(self.recon.unmatched_bank_count, 1)
+
     @patch('banks.reconciliation_utils.fetch_erp_payments')
     @patch('banks.tasks.http_requests.post')
     def test_match_captures_officer_reference_compliance_and_posting_lag(self, mock_post, mock_fetch):
@@ -523,7 +593,9 @@ class RunReconciliationMatchTests(TestCase):
         })
         run_reconciliation_match(self.recon.id, include_debits=False)
 
-        exc = ReconciliationException.objects.get(reconciliation=self.recon, bank_transaction_id=self.tx.id)
+        exc = ReconciliationException.objects.get(
+            reconciliation=self.recon, exception_type='bank_only', bank_transaction_id=self.tx.id,
+        )
         self.assertTrue(exc.resolved)
         self.assertIn('Auto-resolved', exc.resolution_notes)
 

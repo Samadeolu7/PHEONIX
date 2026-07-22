@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Calendar, CheckCircle, Loader2, AlertCircle, Plus } from 'lucide-react';
-import { depositToSavings } from '../../../services/savingsService';
+import { useDepositToSavings } from '../../../hooks/useSavings';
 import { api } from '../../../services/api';
 
 interface SavingsAccount { id: number; account_number: string; client_name: string; current_balance: string; product_name: string; }
@@ -19,10 +19,13 @@ export default function ThriftMultiDayPage() {
   const [selectedAccount, setSelectedAccount] = useState<SavingsAccount | null>(null);
   const [days, setDays] = useState<DayEntry[]>([{ date: today, amount: '' }]);
   const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  const depositMutation = useDepositToSavings({
+    onSuccess: () => {},
+    onError: () => {},
+  });
 
   async function searchAccounts() {
     if (!accountSearch.trim()) return;
@@ -49,40 +52,42 @@ export default function ThriftMultiDayPage() {
       .map((d, idx) => ({ ...d, idx }))
       .filter(d => d.date && parseFloat(d.amount) > 0);
     if (validEntries.length === 0) { setError('Add at least one day with a valid amount.'); return; }
-    setSubmitting(true);
     setError('');
     const postedIndices: number[] = [];
-    try {
-      for (const entry of validEntries) {
-        await depositToSavings(selectedAccount.id, {
-          amount: entry.amount,
-          description: `Savings contribution - ${entry.date}`,
-          date: entry.date,
+
+    for (const entry of validEntries) {
+      try {
+        depositMutation.mutate({
+          accountId: selectedAccount.id,
+          data: {
+            amount: entry.amount,
+            description: `Savings contribution - ${entry.date}`,
+            date: entry.date,
+          },
         });
         postedIndices.push(entry.idx);
-      }
-      setSuccess(`${validEntries.length} day(s) of contributions posted successfully. Total: ₦${fmt(total)}`);
-      setDays([{ date: today, amount: '' }]);
-      setSelectedAccount(null);
-      setAccounts([]);
-      setAccountSearch('');
-    } catch (err: unknown) {
-      const e = err as { detail?: string; message?: string };
-      const reason = e?.detail ?? e?.message ?? 'Unknown error.';
-      const failedEntry = validEntries[postedIndices.length];
-      if (postedIndices.length > 0) {
-        // Remove the days that already posted so retrying doesn't double-post them.
-        setDays(prev => prev.filter((_, i) => !postedIndices.includes(i)));
-        setError(
-          `Posted ${postedIndices.length} of ${validEntries.length} day(s), then failed on ` +
-          `${failedEntry.date}: ${reason}. The posted day(s) were removed from the list below — ` +
-          `fix the remaining entry and try again.`
-        );
-      } else {
-        setError(`Failed to post ${failedEntry.date}: ${reason}`);
+      } catch (err: unknown) {
+        const e = err as { detail?: string; message?: string };
+        const reason = e?.detail ?? e?.message ?? 'Unknown error.';
+        const failedEntry = validEntries[postedIndices.length];
+        if (postedIndices.length > 0) {
+          setDays(prev => prev.filter((_, i) => !postedIndices.includes(i)));
+          setError(
+            `Posted ${postedIndices.length} of ${validEntries.length} day(s), then failed on ` +
+            `${failedEntry.date}: ${reason}. The posted day(s) were removed from the list below — ` +
+            `fix the remaining entry and try again.`
+          );
+        } else {
+          setError(`Failed to post ${failedEntry.date}: ${reason}`);
+        }
+        return;
       }
     }
-    finally { setSubmitting(false); }
+    setSuccess(`${validEntries.length} day(s) of contributions posted successfully. Total: ₦${fmt(total)}`);
+    setDays([{ date: today, amount: '' }]);
+    setSelectedAccount(null);
+    setAccounts([]);
+    setAccountSearch('');
   }
 
   return (
@@ -190,10 +195,10 @@ export default function ThriftMultiDayPage() {
 
         <button
           onClick={handleSubmit}
-          disabled={!selectedAccount || submitting || total <= 0}
+          disabled={!selectedAccount || depositMutation.isPending || total <= 0}
           className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 disabled:opacity-50"
         >
-          {submitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle className="w-5 h-5" />}
+          {depositMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle className="w-5 h-5" />}
           Post {days.filter(d => parseFloat(d.amount) > 0).length} Day(s) — ₦{fmt(total)}
         </button>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Plus,
   Edit,
@@ -14,8 +14,8 @@ import { useToast } from '../hooks/useToast';
 import {
   incomeCategoryService,
   IncomeCategory,
-  IncomeCategoryListResponse,
 } from '../services/incomeCategoryService';
+import { useIncomeCategories } from '../hooks/useIncomeFees';
 import IncomeCategoryModal from '../components/modals/IncomeCategoryModal';
 
 interface CategoryFilters {
@@ -24,15 +24,7 @@ interface CategoryFilters {
 }
 
 const IncomeCategoryListPage: React.FC = () => {
-  const [categories, setCategories] = useState<IncomeCategory[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<CategoryFilters>({});
-  const [pagination, setPagination] = useState({
-    count: 0,
-    next: null,
-    previous: null,
-    currentPage: 1,
-  });
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -40,28 +32,13 @@ const IncomeCategoryListPage: React.FC = () => {
 
   const { success, error: showError } = useToast();
 
-  useEffect(() => {
-    loadCategories();
-  }, [filters]);
-
-  const loadCategories = async () => {
-    try {
-      setLoading(true);
-      const response: IncomeCategoryListResponse =
-        await incomeCategoryService.getIncomeCategories(filters);
-      setCategories(response.results || []);
-      setPagination({
-        count: response.count || 0,
-        next: response.next,
-        previous: response.previous,
-        currentPage: filters.page || 1,
-      });
-    } catch (error) {
-      console.error('Error loading income categories:', error);
-      showError('Failed to load income categories');
-    } finally {
-      setLoading(false);
-    }
+  const { data, isLoading: loading, refetch: refetchCategories } = useIncomeCategories(filters);
+  const categories = data?.results ?? [];
+  const pagination = {
+    count: data?.count ?? 0,
+    next: data?.next ?? null,
+    previous: data?.previous ?? null,
+    currentPage: filters.page || 1,
   };
 
   const handleFilterChange = (key: keyof CategoryFilters, value: any) => {
@@ -94,7 +71,7 @@ const IncomeCategoryListPage: React.FC = () => {
     try {
       await incomeCategoryService.deleteIncomeCategory(category.id!);
       success(`Income category "${category.name}" deleted successfully`);
-      loadCategories(); // Refresh list
+      refetchCategories();
     } catch (error: any) {
       console.error('Error deleting income category:', error);
       showError(error.message || 'Failed to delete income category');
@@ -109,15 +86,15 @@ const IncomeCategoryListPage: React.FC = () => {
       success(
         `Income category "${updatedCategory.name}" ${updatedCategory.is_active ? 'activated' : 'deactivated'} successfully`
       );
-      loadCategories(); // Refresh list
+      refetchCategories();
     } catch (error: any) {
       console.error('Error toggling category status:', error);
       showError(error.message || 'Failed to update category status');
     }
   };
 
-  const handleModalSuccess = (category: IncomeCategory) => {
-    loadCategories(); // Refresh list
+  const handleModalSuccess = (_category: IncomeCategory) => {
+    refetchCategories();
   };
 
   const formatDate = (dateString: string) => {

@@ -32,6 +32,14 @@ import {
 } from '../../services/loanService';
 import { accountService } from '../../services/accountService';
 import { Account } from '../../types/accounts';
+import {
+  useLoanProduct,
+  useLoanProductFees,
+  useLoanSavingsRequirements,
+  useUpdateLoanProduct,
+  useDeleteLoanProductFee,
+  useDeleteSavingsRequirement,
+} from '../../hooks/useLoans';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -406,30 +414,19 @@ export default function LoanProductConfigPage() {
   const productId = Number(id);
   const navigate = useNavigate();
 
-  const [product, setProduct] = useState<LoanProduct | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('settings');
 
   // ── Settings tab state ───────────────────────────────────────────────────
   const [settingsForm, setSettingsForm] = useState<Partial<LoanProduct>>({});
-  const [settingsSaving, setSettingsSaving] = useState(false);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
   // Fee lines state
-  const [fees, setFees] = useState<LoanProductFee[]>([]);
-  const [feesLoading, setFeesLoading] = useState(false);
-  const [feesError, setFeesError] = useState<string | null>(null);
   const [showFeeForm, setShowFeeForm] = useState(false);
   const [editingFee, setEditingFee] = useState<LoanProductFee | null>(null);
-  const [deletingFeeId, setDeletingFeeId] = useState<number | null>(null);
 
   // Savings requirements state
-  const [requirements, setRequirements] = useState<LoanProductSavingsRequirement[]>([]);
-  const [reqLoading, setReqLoading] = useState(false);
-  const [reqError, setReqError] = useState<string | null>(null);
   const [showReqForm, setShowReqForm] = useState(false);
   const [editingReq, setEditingReq] = useState<LoanProductSavingsRequirement | null>(null);
-  const [deletingReqId, setDeletingReqId] = useState<number | null>(null);
 
   // Support data
   const [incomeAccounts, setIncomeAccounts] = useState<Account[]>([]);
@@ -438,39 +435,49 @@ export default function LoanProductConfigPage() {
   const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
   const [savingsProducts, setSavingsProducts] = useState<{ id: number; name: string }[]>([]);
 
-  // Load product
+  // React Query hooks
+  const { data: product } = useLoanProduct(productId);
+  const { data: fees = [], isLoading: feesLoading, error: feesError } = useLoanProductFees(productId);
+  const { data: requirements = [], isLoading: reqLoading, error: reqError } = useLoanSavingsRequirements(productId);
+  const updateProductMutation = useUpdateLoanProduct();
+  const deleteFeeMutation = useDeleteLoanProductFee();
+  const deleteReqMutation = useDeleteSavingsRequirement();
+
+  // Sort fees by order
+  const sortedFees = [...fees].sort((a, b) => a.order - b.order);
+
+  // Populate settings form when product loads
   useEffect(() => {
-    loanService.getProduct(productId).then(p => {
-      setProduct(p);
+    if (product) {
       setSettingsForm({
-        default_interest_rate: p.default_interest_rate,
-        interest_calculation_method: p.interest_calculation_method,
-        min_loan_amount: p.min_loan_amount,
-        max_loan_amount: p.max_loan_amount,
-        term_unit: p.term_unit ?? 'months',
-        min_term_months: p.min_term_months,
-        max_term_months: p.max_term_months,
-        first_repayment_buffer_days: p.first_repayment_buffer_days ?? 0,
-        allowed_repayment_frequencies: p.allowed_repayment_frequencies,
-        processing_fee_type: p.processing_fee_type,
-        processing_fee_amount: p.processing_fee_amount,
-        processing_fee_percentage: p.processing_fee_percentage,
-        insurance_rate: p.insurance_rate,
-        late_payment_penalty_type: p.late_payment_penalty_type,
-        late_payment_penalty: p.late_payment_penalty,
-        grace_period_days: p.grace_period_days,
-        requires_collateral: p.requires_collateral,
-        collateral_percentage: p.collateral_percentage,
-        requires_guarantor: p.requires_guarantor,
-        min_guarantors: p.min_guarantors,
-        requires_approval: p.requires_approval,
-        interest_income_account: p.interest_income_account,
-        accrued_interest_account: p.accrued_interest_account,
-        unearned_interest_income_account: p.unearned_interest_income_account,
-        interest_writeoff_expense_account: p.interest_writeoff_expense_account,
+        default_interest_rate: product.default_interest_rate,
+        interest_calculation_method: product.interest_calculation_method,
+        min_loan_amount: product.min_loan_amount,
+        max_loan_amount: product.max_loan_amount,
+        term_unit: product.term_unit ?? 'months',
+        min_term_months: product.min_term_months,
+        max_term_months: product.max_term_months,
+        first_repayment_buffer_days: product.first_repayment_buffer_days ?? 0,
+        allowed_repayment_frequencies: product.allowed_repayment_frequencies,
+        processing_fee_type: product.processing_fee_type,
+        processing_fee_amount: product.processing_fee_amount,
+        processing_fee_percentage: product.processing_fee_percentage,
+        insurance_rate: product.insurance_rate,
+        late_payment_penalty_type: product.late_payment_penalty_type,
+        late_payment_penalty: product.late_payment_penalty,
+        grace_period_days: product.grace_period_days,
+        requires_collateral: product.requires_collateral,
+        collateral_percentage: product.collateral_percentage,
+        requires_guarantor: product.requires_guarantor,
+        min_guarantors: product.min_guarantors,
+        requires_approval: product.requires_approval,
+        interest_income_account: product.interest_income_account,
+        accrued_interest_account: product.accrued_interest_account,
+        unearned_interest_income_account: product.unearned_interest_income_account,
+        interest_writeoff_expense_account: product.interest_writeoff_expense_account,
       });
-    }).catch(() => {});
-  }, [productId]);
+    }
+  }, [product]);
 
   // Load GL accounts by type (for the Deferred Interest Income section)
   useEffect(() => {
@@ -499,53 +506,19 @@ export default function LoanProductConfigPage() {
       .catch(() => {});
   }, []);
 
-  const loadFees = useCallback(async () => {
-    setFeesLoading(true);
-    setFeesError(null);
-    try {
-      const data = await loanService.listProductFees(productId);
-      setFees(data.sort((a, b) => a.order - b.order));
-    } catch (e: any) {
-      setFeesError(e?.message ?? 'Failed to load fees.');
-    } finally {
-      setFeesLoading(false);
-    }
-  }, [productId]);
-
-  const loadRequirements = useCallback(async () => {
-    setReqLoading(true);
-    setReqError(null);
-    try {
-      const data = await loanService.listSavingsRequirements(productId);
-      setRequirements(data);
-    } catch (e: any) {
-      setReqError(e?.message ?? 'Failed to load savings requirements.');
-    } finally {
-      setReqLoading(false);
-    }
-  }, [productId]);
-
-  useEffect(() => { loadFees(); }, [loadFees]);
-  useEffect(() => { loadRequirements(); }, [loadRequirements]);
-
   // ── Settings save handler ────────────────────────────────────────────────
   const handleSettingsSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSettingsSaving(true);
-    setSettingsError(null);
     setSettingsSaved(false);
-    try {
-      const updated = await loanService.updateProduct(productId, settingsForm);
-      setProduct(updated);
-      setSettingsSaved(true);
-      setTimeout(() => setSettingsSaved(false), 3000);
-    } catch (err: any) {
-      setSettingsError(
-        err?.detail ?? err?.message ?? 'Failed to save settings.'
-      );
-    } finally {
-      setSettingsSaving(false);
-    }
+    updateProductMutation.mutate(
+      { id: productId, data: settingsForm },
+      {
+        onSuccess: () => {
+          setSettingsSaved(true);
+          setTimeout(() => setSettingsSaved(false), 3000);
+        },
+      }
+    );
   };
 
   const FREQ_OPTIONS = [
@@ -565,48 +538,22 @@ export default function LoanProductConfigPage() {
     }));
   };
   const handleFeeSaved = (fee: LoanProductFee) => {
-    setFees(prev => {
-      const idx = prev.findIndex(f => f.id === fee.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = fee; return next.sort((a, b) => a.order - b.order); }
-      return [...prev, fee].sort((a, b) => a.order - b.order);
-    });
     setShowFeeForm(false);
     setEditingFee(null);
   };
 
   const handleDeleteFee = async (feeId: number) => {
-    setDeletingFeeId(feeId);
-    try {
-      await loanService.deleteProductFee(feeId);
-      setFees(prev => prev.filter(f => f.id !== feeId));
-    } catch {
-      // silently ignore
-    } finally {
-      setDeletingFeeId(null);
-    }
+    deleteFeeMutation.mutate(feeId);
   };
 
   // Requirement handlers
   const handleReqSaved = (req: LoanProductSavingsRequirement) => {
-    setRequirements(prev => {
-      const idx = prev.findIndex(r => r.id === req.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = req; return next; }
-      return [...prev, req];
-    });
     setShowReqForm(false);
     setEditingReq(null);
   };
 
   const handleDeleteReq = async (reqId: number) => {
-    setDeletingReqId(reqId);
-    try {
-      await loanService.deleteSavingsRequirement(reqId);
-      setRequirements(prev => prev.filter(r => r.id !== reqId));
-    } catch {
-      // silently ignore
-    } finally {
-      setDeletingReqId(null);
-    }
+    deleteReqMutation.mutate(reqId);
   };
 
   return (
@@ -654,10 +601,10 @@ export default function LoanProductConfigPage() {
           >
             <BadgeDollarSign className="w-4 h-4" />
             Fee Lines
-            {fees.length > 0 && (
+            {sortedFees.length > 0 && (
               <span className={`ml-1 text-xs px-1.5 py-0.5 rounded-full ${
                 activeTab === 'fees' ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600'
-              }`}>{fees.length}</span>
+              }`}>{sortedFees.length}</span>
             )}
           </button>
           <button
@@ -681,9 +628,9 @@ export default function LoanProductConfigPage() {
         {/* ── TAB: PRODUCT SETTINGS ── */}
         {activeTab === 'settings' && (
           <form onSubmit={handleSettingsSave} className="space-y-5">
-            {settingsError && (
+            {updateProductMutation.isError && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-2 text-sm text-red-700">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {settingsError}
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {(updateProductMutation.error as any)?.response?.data?.detail || updateProductMutation.error?.message || 'Failed to save settings.'}
               </div>
             )}
             {settingsSaved && (
@@ -1044,10 +991,10 @@ export default function LoanProductConfigPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <button type="submit" disabled={settingsSaving}
+              <button type="submit" disabled={updateProductMutation.isPending}
                 className="flex items-center gap-2 bg-gray-800 hover:bg-gray-900 text-white rounded-lg px-5 py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
               >
-                {settingsSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                {updateProductMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Save Settings
               </button>
             </div>
@@ -1076,7 +1023,7 @@ export default function LoanProductConfigPage() {
 
             {feesError && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 mb-4 text-sm text-red-700">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {feesError}
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {(feesError as any)?.response?.data?.detail || feesError.message || 'Failed to load fees.'}
               </div>
             )}
 
@@ -1095,7 +1042,7 @@ export default function LoanProductConfigPage() {
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
               </div>
-            ) : fees.length === 0 ? (
+            ) : sortedFees.length === 0 ? (
               <div className="bg-white rounded-xl border border-dashed border-gray-300 p-10 text-center">
                 <BadgeDollarSign className="w-8 h-8 text-gray-300 mx-auto mb-2" />
                 <p className="text-sm text-gray-500">No fee lines configured yet.</p>
@@ -1118,7 +1065,7 @@ export default function LoanProductConfigPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {fees.map(fee => (
+                    {sortedFees.map(fee => (
                       <React.Fragment key={fee.id}>
                         <tr className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 text-gray-400 text-xs">{fee.order}</td>
@@ -1172,11 +1119,11 @@ export default function LoanProductConfigPage() {
                               </button>
                               <button
                                 onClick={() => handleDeleteFee(fee.id)}
-                                disabled={deletingFeeId === fee.id}
+                                disabled={deleteFeeMutation.isPending}
                                 className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50"
                                 title="Delete"
                               >
-                                {deletingFeeId === fee.id
+                                {deleteFeeMutation.isPending
                                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                   : <Trash2 className="w-3.5 h-3.5" />}
                               </button>
@@ -1228,7 +1175,7 @@ export default function LoanProductConfigPage() {
 
             {reqError && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-start gap-2 mb-4 text-sm text-red-700">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {reqError}
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {(reqError as any)?.response?.data?.detail || reqError.message || 'Failed to load savings requirements.'}
               </div>
             )}
 
@@ -1301,11 +1248,11 @@ export default function LoanProductConfigPage() {
                               </button>
                               <button
                                 onClick={() => handleDeleteReq(req.id)}
-                                disabled={deletingReqId === req.id}
+                                disabled={deleteReqMutation.isPending}
                                 className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50"
                                 title="Delete"
                               >
-                                {deletingReqId === req.id
+                                {deleteReqMutation.isPending
                                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                   : <Trash2 className="w-3.5 h-3.5" />}
                               </button>

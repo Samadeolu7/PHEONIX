@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MessageSquare, ChevronDown, ChevronUp, Loader2, Save } from 'lucide-react';
 import { api } from '../../api/axios';
 import { userManagementService } from '../../services/userManagementService';
@@ -62,41 +63,41 @@ function Toggle({
   );
 }
 
+const discussionKeys = {
+  all: ['pageDiscussions'] as const,
+  modules: () => [...discussionKeys.all, 'modules'] as const,
+  roles: () => [...discussionKeys.all, 'roles'] as const,
+};
+
 export default function PageDiscussionsPage() {
   const toast = useToast();
-  const [modules, setModules] = useState<Module[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [expandedPages, setExpandedPages] = useState<Set<number>>(new Set());
   const [configs, setConfigs] = useState<Record<number, ThreadConfig>>({});
   const [saving, setSaving] = useState<Set<number>>(new Set());
   const [toggling, setToggling] = useState<Set<number>>(new Set());
 
+  const { data: modules = [], isLoading: modsLoading } = useQuery<Module[]>({
+    queryKey: discussionKeys.modules(),
+    queryFn: async () => {
+      const res = await api.get('/pages/modules/admin-all/');
+      return Array.isArray(res.data) ? res.data : res.data?.results || [];
+    },
+  });
+
+  const { data: roles = [] } = useQuery<Role[]>({
+    queryKey: discussionKeys.roles(),
+    queryFn: async () => {
+      const res = await userManagementService.getRoles();
+      const raw = (res as any)?.data ?? res;
+      return Array.isArray(raw) ? raw : raw?.results || [];
+    },
+  });
+
   useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [modulesRes, rolesRes] = await Promise.all([
-        api.get('/pages/modules/admin-all/'),
-        userManagementService.getRoles(),
-      ]);
-
-      const mods: Module[] = Array.isArray(modulesRes.data)
-        ? modulesRes.data
-        : modulesRes.data?.results || [];
-      setModules(mods);
-
-      const rawRoles = (rolesRes as any)?.data ?? rolesRes;
-      const rls: Role[] = Array.isArray(rawRoles)
-        ? rawRoles
-        : rawRoles?.results || [];
-      setRoles(rls);
-
+    if (modules.length > 0) {
       const initialConfigs: Record<number, ThreadConfig> = {};
-      for (const mod of mods) {
+      for (const mod of modules) {
         for (const page of mod.pages || []) {
           const tc = page.page_config?.thread || {};
           initialConfigs[page.id] = {
@@ -108,28 +109,33 @@ export default function PageDiscussionsPage() {
         }
       }
       setConfigs(initialConfigs);
-    } catch {
-      toast.error('Failed to load page data');
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [modules]);
+
+  const toggleThreadableMutation = useMutation({
+    mutationFn: async ({ pageId, isThreadable }: { pageId: number; isThreadable: boolean }) => {
+      await api.patch(`/pages/module-pages/${pageId}/thread-config/`, {
+        is_threadable: isThreadable,
+      });
+      return { pageId, isThreadable };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: discussionKeys.modules() });
+    },
+  });
+
+  const saveConfigMutation = useMutation({
+    mutationFn: async ({ pageId, config }: { pageId: number; config: ThreadConfig }) => {
+      await api.patch(`/pages/module-pages/${pageId}/thread-config/`, config);
+      return pageId;
+    },
+  });
 
   const toggleThreadable = async (page: ModulePage) => {
     setToggling(prev => new Set(prev).add(page.id));
     const next = !page.is_threadable;
     try {
-      await api.patch(`/pages/module-pages/${page.id}/thread-config/`, {
-        is_threadable: next,
-      });
-      setModules(prev =>
-        prev.map(mod => ({
-          ...mod,
-          pages: (mod.pages || []).map(p =>
-            p.id === page.id ? { ...p, is_threadable: next } : p
-          ),
-        }))
-      );
+      await toggleThreadableMutation.mutateAsync({ pageId: page.id, isThreadable: next });
       toast.success(
         `Discussions ${next ? 'enabled' : 'disabled'} for ${page.title}`
       );
@@ -147,7 +153,7 @@ export default function PageDiscussionsPage() {
   const saveConfig = async (pageId: number, pageTitle: string) => {
     setSaving(prev => new Set(prev).add(pageId));
     try {
-      await api.patch(`/pages/module-pages/${pageId}/thread-config/`, configs[pageId]);
+      await saveConfigMutation.mutateAsync({ pageId, config: configs[pageId] });
       toast.success(`Configuration saved for ${pageTitle}`);
     } catch {
       toast.error('Failed to save configuration');
@@ -196,6 +202,8 @@ export default function PageDiscussionsPage() {
     0
   );
   const totalPages = activeMods.reduce((acc, m) => acc + (m.pages || []).length, 0);
+
+  const loading = modsLoading;
 
   if (loading) {
     return (

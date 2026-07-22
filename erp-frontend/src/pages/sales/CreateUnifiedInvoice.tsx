@@ -3,8 +3,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useToast } from '../../contexts/ToastContext';
 import { invoiceService, CreateInvoiceData, InvoiceItem } from '../../services/invoiceService';
+import { useCreateInvoice, useUpdateInvoice, useInvoiceServiceItems, invoiceKeys } from '../../hooks/useInvoices';
+import { useQueryClient } from '@tanstack/react-query';
 import { clientService, ClientOption } from '../../services/clientService';
-import { serviceItemService } from '../../services/serviceItemService';
 import { api } from '../../services/api';
 import { inventoryService } from '../../services/inventoryService';
 import CreateServiceItemModal, {
@@ -111,25 +112,28 @@ const CreateUnifiedInvoice: React.FC = () => {
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [feeStructures, setFeeStructures] = useState<FeeStructure[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
-  const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
+  const serviceItems = serviceItemsData as ServiceItem[];
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(isEditMode);
   const [loadingClients, setLoadingClients] = useState(true);
   const [loadingFeeStructures, setLoadingFeeStructures] = useState(true);
   const [loadingInventory, setLoadingInventory] = useState(true);
-  const [loadingServices, setLoadingServices] = useState(true);
+  const loadingServices = false; // Handled by React Query
   const [loadingFeeStructureDetails, setLoadingFeeStructureDetails] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [preselectedClientName, setPreselectedClientName] = useState<string>('');
   const [showCreateServiceModal, setShowCreateServiceModal] = useState(false);
   const [createServiceForItemIndex, setCreateServiceForItemIndex] = useState<number | null>(null);
   const { success, error: showError } = useToast();
+  const createInvoiceMutation = useCreateInvoice();
+  const updateInvoiceMutation = useUpdateInvoice();
+  const { data: serviceItemsData = [] } = useInvoiceServiceItems();
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     loadClients();
     loadFeeStructures();
     loadInventoryItems();
-    loadServiceItems();
 
     if (isEditMode && id) {
       loadInvoice(parseInt(id));
@@ -242,18 +246,6 @@ const CreateUnifiedInvoice: React.FC = () => {
       console.error('Error loading inventory items:', error);
     } finally {
       setLoadingInventory(false);
-    }
-  };
-
-  const loadServiceItems = async () => {
-    try {
-      setLoadingServices(true);
-      const response = await serviceItemService.getServiceItems({ is_active: true });
-      setServiceItems(response.results || []);
-    } catch (error) {
-      console.error('Error loading service items:', error);
-    } finally {
-      setLoadingServices(false);
     }
   };
 
@@ -537,11 +529,11 @@ const CreateUnifiedInvoice: React.FC = () => {
       let createdInvoice;
       if (isEditMode && id) {
         // Update existing invoice
-        createdInvoice = await invoiceService.updateInvoice(parseInt(id), invoiceData);
+        createdInvoice = await updateInvoiceMutation.mutateAsync({ id: parseInt(id), data: invoiceData });
         success(`Invoice ${createdInvoice.invoice_number} updated successfully`);
       } else {
         // Create new invoice
-        createdInvoice = await invoiceService.createInvoice(invoiceData);
+        createdInvoice = await createInvoiceMutation.mutateAsync(invoiceData);
         success(`Invoice ${createdInvoice.invoice_number} created successfully`);
       }
 
@@ -1086,8 +1078,8 @@ const CreateUnifiedInvoice: React.FC = () => {
           setCreateServiceForItemIndex(null);
         }}
         onCreated={(newItem: CreatedServiceItem) => {
-          // Add to the local catalog list
-          setServiceItems(prev => [...prev, newItem]);
+          // Invalidate service items query so it refetches with the new item
+          queryClient.invalidateQueries({ queryKey: invoiceKeys.serviceItems() });
           // Auto-select it in whichever line-item triggered the modal
           if (createServiceForItemIndex !== null) {
             handleLineItemChange(createServiceForItemIndex, 'service_item', newItem.id);

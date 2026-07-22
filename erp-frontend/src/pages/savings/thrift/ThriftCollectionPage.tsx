@@ -2,10 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Calendar, CheckCircle, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { api } from '../../../services/api';
 import {
-  getSavingsCollectionSheet,
-  markContributionPaid,
-  type ContributionScheduleItem,
-} from '../../../services/savingsService';
+  useSavingsCollections,
+  useMarkContributionPaid,
+} from '../../../hooks/useSavings';
+import type { ContributionScheduleItem } from '../../../services/savingsService';
 
 interface Product {
   id: number;
@@ -27,11 +27,7 @@ export default function ThriftCollectionPage() {
   const [date, setDate] = useState(today);
   const [productId, setProductId] = useState<number | ''>('');
   const [products, setProducts] = useState<Product[]>([]);
-  const [items, setItems] = useState<ContributionScheduleItem[]>([]);
-  const [loading, setLoading] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(true);
-  const [error, setError] = useState('');
-  const [marking, setMarking] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     api.get('/products/products/', { params: { product_type: 'SAVINGS', is_active: true, page_size: 200 } })
@@ -44,38 +40,18 @@ export default function ThriftCollectionPage() {
       .finally(() => setLoadingProducts(false));
   }, []);
 
-  async function load() {
-    if (!productId) return;
-    setLoading(true);
-    setError('');
-    try {
-      const data = await getSavingsCollectionSheet({ date, product: productId as number });
-      setItems(data);
-    } catch {
-      setError('Failed to load collection sheet.');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const collectionParams: any = { date };
+  if (productId) collectionParams.product = productId;
 
-  useEffect(() => {
-    if (productId) load();
-    else setItems([]);
-  }, [date, productId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { data: items = [], isLoading: loading, error: queryError, refetch } = useSavingsCollections(collectionParams, {
+    enabled: !!productId,
+  });
 
-  async function handleMark(item: ContributionScheduleItem) {
-    setMarking(prev => new Set(prev).add(item.id));
-    try {
-      await markContributionPaid(item.id);
-      setItems(prev =>
-        prev.map(i => (i.id === item.id ? { ...i, status: 'paid' as const } : i))
-      );
-    } catch {
-      setError(`Failed to mark payment for ${item.client_name}.`);
-    } finally {
-      setMarking(prev => { const s = new Set(prev); s.delete(item.id); return s; });
-    }
-  }
+  const markPaidMutation = useMarkContributionPaid({
+    onSuccess: () => { refetch(); },
+  });
+
+  const error = (queryError as any)?.detail ?? (queryError as any)?.message ?? null;
 
   const pending = items.filter(i => i.status === 'pending');
   const paid = items.filter(i => i.status === 'paid');
@@ -90,7 +66,7 @@ export default function ThriftCollectionPage() {
           </div>
           <button
             type="button"
-            onClick={load}
+            onClick={() => refetch()}
             disabled={loading || !productId}
             className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
           >
@@ -197,11 +173,11 @@ export default function ThriftCollectionPage() {
                           {item.status !== 'paid' && (
                             <button
                               type="button"
-                              onClick={() => handleMark(item)}
-                              disabled={marking.has(item.id)}
+                              onClick={() => markPaidMutation.mutate({ scheduleId: item.id })}
+                              disabled={markPaidMutation.isPending}
                               className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 disabled:opacity-50"
                             >
-                              {marking.has(item.id) ? (
+                              {markPaidMutation.isPending ? (
                                 <Loader2 className="w-3 h-3 animate-spin" />
                               ) : (
                                 <CheckCircle className="w-3 h-3" />

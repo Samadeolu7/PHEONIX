@@ -4,44 +4,57 @@
  * Only Finance Officers / Administrators should be able to edit.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Shield, Loader2, AlertCircle, CheckCircle, Edit2, X, Save } from 'lucide-react';
 import {
-  getCompulsorySavingsPolicies,
-  updateCompulsorySavingsPolicy,
-  createCompulsorySavingsPolicy,
-  CompulsorySavingsPolicy,
-} from '../../services/savingsService';
+  useCompulsorySavingsPolicies,
+  useUpdateCompulsorySavingsPolicy,
+  useCreateCompulsorySavingsPolicy,
+} from '../../hooks/useSavings';
 
 export default function SavingsPolicyPage() {
-  const [policies, setPolicies] = useState<CompulsorySavingsPolicy[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { data: policies = [], isLoading: loading, error: queryError } = useCompulsorySavingsPolicies();
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   // Edit state
-  const [editing, setEditing] = useState<number | null>(null); // id of policy being edited
+  const [editing, setEditing] = useState<number | null>(null);
   const [draftAmount, setDraftAmount] = useState('');
   const [draftEnabled, setDraftEnabled] = useState(true);
-  const [saving, setSaving] = useState(false);
 
   // New policy state
   const [showNew, setShowNew] = useState(false);
   const [newAmount, setNewAmount] = useState('');
   const [newEnabled, setNewEnabled] = useState(true);
 
-  useEffect(() => {
-    setLoading(true);
-    getCompulsorySavingsPolicies()
-      .then(data => setPolicies(data))
-      .catch(e => {
-        const err = e as { detail?: string; message?: string };
-        setError(err?.detail ?? err?.message ?? 'Failed to load policy.');
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  const updateMutation = useUpdateCompulsorySavingsPolicy({
+    onSuccess: (updated) => {
+      setEditing(null);
+      setSuccess('Policy updated successfully.');
+      setTimeout(() => setSuccess(null), 4000);
+    },
+    onError: (e) => {
+      setError(e?.detail ?? e?.message ?? 'Failed to save policy.');
+    },
+  });
 
-  function startEdit(p: CompulsorySavingsPolicy) {
+  const createMutation = useCreateCompulsorySavingsPolicy({
+    onSuccess: () => {
+      setShowNew(false);
+      setNewAmount('');
+      setNewEnabled(true);
+      setSuccess('Policy created successfully.');
+      setTimeout(() => setSuccess(null), 4000);
+    },
+    onError: (e) => {
+      setError(e?.detail ?? e?.message ?? 'Failed to create policy.');
+    },
+  });
+
+  const queryErr = (queryError as any)?.detail ?? (queryError as any)?.message ?? null;
+
+  function startEdit(p: { id: number; amount: string; enabled: boolean }) {
     setEditing(p.id);
     setDraftAmount(p.amount);
     setDraftEnabled(p.enabled);
@@ -53,56 +66,24 @@ export default function SavingsPolicyPage() {
     setEditing(null);
   }
 
-  async function saveEdit(id: number) {
+  function saveEdit(id: number) {
     const amt = parseFloat(draftAmount);
     if (isNaN(amt) || amt <= 0) {
       setError('Amount must be a positive number.');
       return;
     }
-    setSaving(true);
     setError(null);
-    try {
-      const updated = await updateCompulsorySavingsPolicy(id, {
-        amount: draftAmount,
-        enabled: draftEnabled,
-      });
-      setPolicies(prev => prev.map(p => (p.id === id ? updated : p)));
-      setEditing(null);
-      setSuccess('Policy updated successfully.');
-      setTimeout(() => setSuccess(null), 4000);
-    } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Failed to save policy.');
-    } finally {
-      setSaving(false);
-    }
+    updateMutation.mutate({ id, data: { amount: draftAmount, enabled: draftEnabled } });
   }
 
-  async function createNew() {
+  function createNew() {
     const amt = parseFloat(newAmount);
     if (isNaN(amt) || amt <= 0) {
       setError('Amount must be a positive number.');
       return;
     }
-    setSaving(true);
     setError(null);
-    try {
-      const created = await createCompulsorySavingsPolicy({
-        amount: newAmount,
-        enabled: newEnabled,
-      });
-      setPolicies(prev => [...prev, created]);
-      setShowNew(false);
-      setNewAmount('');
-      setNewEnabled(true);
-      setSuccess('Policy created successfully.');
-      setTimeout(() => setSuccess(null), 4000);
-    } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Failed to create policy.');
-    } finally {
-      setSaving(false);
-    }
+    createMutation.mutate({ amount: newAmount, enabled: newEnabled });
   }
 
   return (
@@ -137,10 +118,10 @@ export default function SavingsPolicyPage() {
       </div>
 
       <div className="max-w-3xl mx-auto px-6 py-6 space-y-4">
-        {error && (
+        {(error || queryErr) && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-red-700">{error}</p>
+            <p className="text-sm text-red-700">{error ?? queryErr}</p>
           </div>
         )}
         {success && (
@@ -193,10 +174,10 @@ export default function SavingsPolicyPage() {
             <div className="flex gap-2">
               <button
                 onClick={createNew}
-                disabled={saving}
+                disabled={createMutation.isPending}
                 className="flex items-center gap-1.5 text-sm bg-teal-600 text-white rounded-lg px-4 py-2 hover:bg-teal-700 transition-colors disabled:opacity-50"
               >
-                {saving ? (
+                {createMutation.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <Save className="w-4 h-4" />
@@ -256,10 +237,10 @@ export default function SavingsPolicyPage() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => saveEdit(p.id)}
-                      disabled={saving}
+                      disabled={updateMutation.isPending}
                       className="flex items-center gap-1.5 text-sm bg-teal-600 text-white rounded-lg px-4 py-2 hover:bg-teal-700 transition-colors disabled:opacity-50"
                     >
-                      {saving ? (
+                      {updateMutation.isPending ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
                       ) : (
                         <Save className="w-4 h-4" />

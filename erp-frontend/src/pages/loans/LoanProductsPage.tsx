@@ -4,10 +4,11 @@
  * Finance/Admin staff use this to manage interest rates, terms, and fees per product.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertCircle, Loader2, RefreshCw, Landmark, Settings2 } from 'lucide-react';
-import { loanService, LoanProduct } from '../../services/loanService';
+import { LoanProduct } from '../../services/loanService';
+import { useLoanProducts } from '../../hooks/useLoans';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -28,28 +29,10 @@ const METHOD_LABEL: Record<string, string> = {
 // ── Page ───────────────────────────────────────────────────────────────────
 
 export default function LoanProductsPage() {
-  const [products, setProducts] = useState<LoanProduct[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [activeOnly, setActiveOnly] = useState(false);
-
-  const loadProducts = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await loanService.listProducts(activeOnly ? { is_active: true } : undefined);
-      setProducts(data);
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      setError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load loan products.');
-    } finally {
-      setLoading(false);
-    }
-  }, [activeOnly]);
-
-  useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
+  const { data: products = [], isLoading: loading, error, refetch } = useLoanProducts(
+    activeOnly ? { is_active: true } : undefined
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -66,7 +49,7 @@ export default function LoanProductsPage() {
             </div>
           </div>
           <button
-            onClick={loadProducts}
+            onClick={() => refetch()}
             disabled={loading}
             className="flex items-center gap-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
           >
@@ -94,7 +77,9 @@ export default function LoanProductsPage() {
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 mb-4">
             <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-red-700">{error}</p>
+            <p className="text-sm text-red-700">
+              {(error as any)?.response?.data?.detail || error.message || 'Failed to load loan products.'}
+            </p>
           </div>
         )}
 

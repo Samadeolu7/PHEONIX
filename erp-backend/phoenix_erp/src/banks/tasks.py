@@ -22,6 +22,19 @@ logger = logging.getLogger(__name__)
 
 AUTO_RESOLVE_NOTE = 'Auto-resolved: matched in a later re-run.'
 
+# Java reports a confidence label per match ('HIGH', 'MEDIUM', 'LOW', or
+# blank/unrecognized). Only HIGH is trustworthy enough to auto-commit as a
+# confirmed match — a MEDIUM/LOW guess (typically an amount-only match with
+# no corroborating reference/narration) committed silently produces a
+# reconciliation that *looks* complete but has the wrong two lines
+# cancelling each other out; a director only discovers it later, if at all
+# (see ReconciliationBankTransaction.unmatch()'s docstring — this is exactly
+# the shape of match it's built to undo). Anything below this bar is instead
+# surfaced as an ordinary bank_only/erp_only exception pair for a director
+# to confirm manually via the existing Link picker, same as a missed
+# auto-match.
+AUTO_MATCH_MIN_CONFIDENCE = 'HIGH'
+
 
 @shared_task(
     bind=True,
@@ -243,10 +256,40 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
     rather than re-queried.
     """
     from .models import DailyReconciliation, ReconciliationBankTransaction, ReconciliationException
-    from .reconciliation_utils import _BANK_REFERENCE_RE
+    from .reconciliation_utils import (
+        _BANK_REFERENCE_RE,
+        get_or_create_bank_only_exception,
+        get_or_create_erp_only_exception,
+    )
+
+    # A windowed run can surface an exception whose own date differs from
+    # reconciliation_date. It's only persisted against the DailyReconciliation
+    # for THAT date, and only if one already exists — otherwise it's skipped
+    # for now and will surface naturally once that date gets its own run.
+    # Defined before the matches block below (not just the exceptions_data
+    # loop it originally served) since the confidence gate needs it too.
+    recon_by_date = {reconciliation_date: recon}
+
+    def get_target_recon(own_date):
+        if own_date is None:
+            return recon
+        if own_date not in recon_by_date:
+            recon_by_date[own_date] = DailyReconciliation.objects.filter(
+                bank_account=bank_account, reconciliation_date=own_date,
+            ).select_related('owner__tenant', 'branch').first()
+        return recon_by_date[own_date]
 
     # --- persist confirmed matches onto ReconciliationBankTransaction ---
-    matches_data = outcome.get('matches', [])
+    # Only HIGH confidence is auto-committed — see AUTO_MATCH_MIN_CONFIDENCE.
+    all_matches_data = outcome.get('matches', [])
+    matches_data = [
+        m for m in all_matches_data
+        if (m.get('confidence') or '').upper() == AUTO_MATCH_MIN_CONFIDENCE
+    ]
+    low_confidence_matches = [
+        m for m in all_matches_data
+        if (m.get('confidence') or '').upper() != AUTO_MATCH_MIN_CONFIDENCE
+    ]
     matched_txs = []
     if matches_data:
         match_by_id = {m['bankTransactionId']: m for m in matches_data}
@@ -285,6 +328,34 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
             ]
         )
 
+    # --- surface rejected (below-threshold) matches as review candidates ---
+    # tx stays matched=False — Java's guess is NOT trusted — but both halves
+    # (the bank line and the ERP payment it guessed at) are opened as an
+    # ordinary bank_only/erp_only exception pair, exactly the shape
+    # ReconciliationBankTransaction.unmatch() produces for an undone bad
+    # match, and just as linkable via the existing manual Link picker. This
+    # is what turns Java's rejected guess into a fast one-click confirmation
+    # instead of a director having to notice the amount/date coincidence
+    # themselves from a cold start.
+    if low_confidence_matches:
+        candidates_by_id = {str(tx.id): tx for tx in candidates}
+        for m in low_confidence_matches:
+            tx = candidates_by_id.get(m.get('bankTransactionId'))
+            if tx is None or tx in matched_txs:
+                continue
+            target_recon = get_target_recon(tx.value_date)
+            if target_recon is None:
+                continue
+            get_or_create_bank_only_exception(target_recon, tx)
+            erp_payment_id = m.get('erpPaymentId')
+            if erp_payment_id is not None:
+                # In-memory only — tx is never saved with this value, so
+                # ReconciliationBankTransaction.matched_erp_payment_id stays
+                # NULL until a director (or a later HIGH-confidence rerun)
+                # actually confirms the match.
+                tx.matched_erp_payment_id = erp_payment_id
+                get_or_create_erp_only_exception(target_recon, tx)
+
     # --- auto-resolve exceptions superseded by a match found this run ---
     # A late-posted transaction found via the widened window may resolve an
     # exception recorded on an earlier (already-completed) date's run — but
@@ -306,22 +377,6 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
             exception_type='erp_only',
             resolved=False,
         ).update(resolved=True, resolved_at=now, resolution_notes=AUTO_RESOLVE_NOTE)
-
-    # --- save new exceptions from Java response ---
-    # A windowed run can surface an exception whose own date differs from
-    # reconciliation_date. It's only persisted against the DailyReconciliation
-    # for THAT date, and only if one already exists — otherwise it's skipped
-    # for now and will surface naturally once that date gets its own run.
-    recon_by_date = {reconciliation_date: recon}
-
-    def get_target_recon(own_date):
-        if own_date is None:
-            return recon
-        if own_date not in recon_by_date:
-            recon_by_date[own_date] = DailyReconciliation.objects.filter(
-                bank_account=bank_account, reconciliation_date=own_date,
-            ).select_related('owner__tenant', 'branch').first()
-        return recon_by_date[own_date]
 
     exceptions_data = outcome.get('exceptions', [])
 

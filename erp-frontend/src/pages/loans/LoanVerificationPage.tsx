@@ -6,16 +6,16 @@
  *
  * Route: /loans/verification/:loanId
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  loanService,
   LoanVerificationRequest,
   VerificationVerdict,
 } from '../../services/loanService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
+import { useLoanVerifications, useRunVerificationCheck, useUpdateVerdict } from '../../hooks/useLoans';
 import {
   Shield,
   AlertTriangle,
@@ -48,58 +48,41 @@ const LoanVerificationPage: React.FC = () => {
   const { selectedRole } = useAuth();
   const { success, error: showError } = useToast();
 
-  const [vr, setVr] = useState<LoanVerificationRequest | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [selectedVerdict, setSelectedVerdict] = useState<VerificationVerdict>('pending');
 
   const canSetVerdict = selectedRole && ['branch_manager', 'supervisor', 'director', 'admin'].includes(selectedRole);
 
-  const loadVr = useCallback(async () => {
-    if (!loanId) return;
-    try {
-      const list = await loanService.listVerificationRequests({ loan: Number(loanId) });
-      if (list.length > 0) {
-        setVr(list[0]);
-        setSelectedVerdict(list[0].verdict);
-      }
-    } catch {
-      showError('Failed to load verification request');
-    } finally {
-      setLoading(false);
-    }
-  }, [loanId]);
-
-  useEffect(() => { loadVr(); }, [loadVr]);
+  const { data: vrList = [], isLoading: loading } = useLoanVerifications({ loan: Number(loanId) });
+  const vr = vrList.length > 0 ? vrList[0] : null;
+  const runCheckMutation = useRunVerificationCheck();
+  const updateVerdictMutation = useUpdateVerdict();
 
   const handleRunCheck = async () => {
     if (!vr) return;
-    try {
-      setRunning(true);
-      const updated = await loanService.runVerificationCheck(vr.id);
-      setVr(updated);
-      setSelectedVerdict(updated.verdict);
-      success('Verification check complete');
-    } catch (err: any) {
-      showError(err?.response?.data?.detail || 'Failed to run verification check');
-    } finally {
-      setRunning(false);
-    }
+    runCheckMutation.mutate(vr.id, {
+      onSuccess: (updated) => {
+        setSelectedVerdict(updated.verdict);
+        success('Verification check complete');
+      },
+      onError: (err: any) => {
+        showError(err?.response?.data?.detail || 'Failed to run verification check');
+      },
+    });
   };
 
   const handleSetVerdict = async () => {
     if (!vr) return;
-    try {
-      setSubmitting(true);
-      const updated = await loanService.updateVerdict(vr.id, selectedVerdict);
-      setVr(updated);
-      success(`Verdict set to "${VERDICT_LABELS[selectedVerdict]}"`);
-    } catch (err: any) {
-      showError(err?.response?.data?.detail || 'Failed to update verdict');
-    } finally {
-      setSubmitting(false);
-    }
+    updateVerdictMutation.mutate(
+      { id: vr.id, verdict: selectedVerdict },
+      {
+        onSuccess: () => {
+          success(`Verdict set to "${VERDICT_LABELS[selectedVerdict]}"`);
+        },
+        onError: (err: any) => {
+          showError(err?.response?.data?.detail || 'Failed to update verdict');
+        },
+      }
+    );
   };
 
   if (loading) {
@@ -216,11 +199,11 @@ const LoanVerificationPage: React.FC = () => {
         {/* Re-run check */}
         <button
           onClick={handleRunCheck}
-          disabled={running}
+          disabled={runCheckMutation.isPending}
           className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors disabled:opacity-50"
         >
-          <RefreshCw className={`w-4 h-4 ${running ? 'animate-spin' : ''}`} />
-          {running ? 'Running Check…' : 'Re-run Verification Check'}
+          <RefreshCw className={`w-4 h-4 ${runCheckMutation.isPending ? 'animate-spin' : ''}`} />
+          {runCheckMutation.isPending ? 'Running Check…' : 'Re-run Verification Check'}
         </button>
 
         {/* Verdict */}
@@ -244,10 +227,10 @@ const LoanVerificationPage: React.FC = () => {
             </div>
             <button
               onClick={handleSetVerdict}
-              disabled={submitting || selectedVerdict === 'pending'}
+              disabled={updateVerdictMutation.isPending || selectedVerdict === 'pending'}
               className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
             >
-              {submitting ? (
+              {updateVerdictMutation.isPending ? (
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
               ) : (
                 <CheckCircle className="w-4 h-4" />

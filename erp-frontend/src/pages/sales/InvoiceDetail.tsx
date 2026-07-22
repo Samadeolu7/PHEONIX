@@ -1,7 +1,8 @@
 // src/pages/sales/InvoiceDetail.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { invoiceService, Invoice } from '../../services/invoiceService';
+import { invoiceService } from '../../services/invoiceService';
+import { useInvoice, useInvoicePaymentHistory } from '../../hooks/useInvoices';
 import { useToast } from '../../hooks/useToast';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -43,8 +44,6 @@ interface PaymentRecord {
 const InvoiceDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
-  const [loading, setLoading] = useState(true);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [paymentData, setPaymentData] = useState({
@@ -60,8 +59,6 @@ const InvoiceDetail: React.FC = () => {
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const downloadingPdfRef = useRef(false); // synchronous double-click guard
   const [postingInvoice, setPostingInvoice] = useState(false);
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [loadingPayments, setLoadingPayments] = useState(false);
   // Request reversal modal
   const [showRequestReversalModal, setShowRequestReversalModal] = useState(false);
   const [requestingReversal, setRequestingReversal] = useState(false);
@@ -76,44 +73,15 @@ const InvoiceDetail: React.FC = () => {
   const { success, error: showError, info, dismiss } = useToast();
   const { selectedRole } = useAuth();
 
+  const invoiceId = Number(id);
+  const { data: invoice, isLoading: loading, refetch: refetchInvoice } = useInvoice(invoiceId, !!id);
+  const { data: payments = [], refetch: refetchPayments } = useInvoicePaymentHistory(invoiceId, !!id);
+
   // Check if current user role can record payments
   const canRecordPayments = selectedRole && !['Administrator'].includes(selectedRole);
   // Approver roles — adjust to match your permission setup
   const canApprove =
     selectedRole && ['Administrator', 'Finance Manager', 'Accountant'].includes(selectedRole);
-
-  useEffect(() => {
-    if (id) {
-      loadInvoice();
-      loadPaymentHistory(Number(id));
-    }
-  }, [id]);
-
-  const loadPaymentHistory = async (invoiceId: number) => {
-    try {
-      setLoadingPayments(true);
-      const data = await invoiceService.getPaymentHistory(invoiceId);
-      setPayments((data as any).payments || []);
-    } catch {
-      // Non-critical — don't show error
-    } finally {
-      setLoadingPayments(false);
-    }
-  };
-
-  const loadInvoice = async () => {
-    try {
-      setLoading(true);
-      const invoiceData = await invoiceService.getInvoice(Number(id));
-      setInvoice(invoiceData);
-    } catch (error) {
-      console.error('Error loading invoice:', error);
-      showError('Failed to load invoice');
-      navigate('/sales/invoices');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const formatCurrency = (amount: string) => {
     return new Intl.NumberFormat('en-NG', {
@@ -249,7 +217,7 @@ const InvoiceDetail: React.FC = () => {
       setPostingInvoice(true);
       await invoiceService.postInvoice(invoice.id);
       success('Invoice posted successfully. Revenue has been recognized.');
-      loadInvoice(); // Reload to get updated is_posted status
+      refetchInvoice(); // Reload to get updated is_posted status
     } catch (error: any) {
       console.error('Error posting invoice:', error);
       showError(error.response?.data?.error || 'Failed to post invoice');
@@ -296,8 +264,8 @@ const InvoiceDetail: React.FC = () => {
 
       success('Payment recorded successfully');
       setShowPaymentModal(false);
-      loadInvoice();
-      loadPaymentHistory(invoice.id);
+      refetchInvoice();
+      refetchPayments();
     } catch (error) {
       console.error('Error recording payment:', error);
       showError('Failed to record payment');
@@ -326,7 +294,7 @@ const InvoiceDetail: React.FC = () => {
           'Awaiting approver review.'
       );
       setShowRequestReversalModal(false);
-      loadPaymentHistory(invoice.id);
+      refetchPayments();
     } catch (error: any) {
       showError(error?.response?.data?.error || 'Failed to submit reversal request');
     } finally {
@@ -358,8 +326,8 @@ const InvoiceDetail: React.FC = () => {
         success('Reversal request rejected. Payment remains in effect.');
       }
       setShowApprovalModal(false);
-      loadInvoice();
-      loadPaymentHistory(invoice.id);
+      refetchInvoice();
+      refetchPayments();
     } catch (error: any) {
       showError(error?.response?.data?.error || `Failed to ${approvalAction} reversal request`);
     } finally {
@@ -386,7 +354,7 @@ const InvoiceDetail: React.FC = () => {
       });
 
       success('Invoice marked as sent successfully');
-      loadInvoice();
+      refetchInvoice();
     } catch (error) {
       console.error('Error marking invoice as sent:', error);
       showError('Failed to mark invoice as sent');
@@ -703,16 +671,13 @@ const InvoiceDetail: React.FC = () => {
       )}
 
       {/* Payment History */}
-      {(payments.length > 0 || loadingPayments) && (
+      {(payments.length > 0) && (
         <div className="bg-white rounded-lg shadow">
           <div className="px-6 py-4 border-b border-gray-200">
             <h3 className="text-lg font-medium text-gray-900">Payment History</h3>
           </div>
           <div className="divide-y divide-gray-100">
-            {loadingPayments ? (
-              <div className="px-6 py-4 text-sm text-gray-500">Loading payments…</div>
-            ) : (
-              payments.map(p => {
+            {payments.map(p => {
                 const rr = p.reversal_request;
                 const hasPendingRequest = rr?.status === 'pending';
                 const hasApprovedRequest = rr?.status === 'approved';
@@ -835,7 +800,7 @@ const InvoiceDetail: React.FC = () => {
                   </div>
                 );
               })
-            )}
+            }
           </div>
         </div>
       )}

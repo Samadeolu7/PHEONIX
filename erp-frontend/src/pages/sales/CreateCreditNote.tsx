@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { invoiceService, Invoice, CreateCreditNoteData } from '../../services/invoiceService';
+import { useInvoice, useCreateCreditNote } from '../../hooks/useInvoices';
 import { inventoryService } from '../../services/inventoryService';
 import { InventoryItem } from '../../types/inventory';
 import { useToast } from '../../hooks/useToast';
@@ -57,13 +58,15 @@ const isValidDecimalInput = (value: string) => value === '' || DECIMAL_INPUT_REG
 const CreateCreditNote: React.FC = () => {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const navigate = useNavigate();
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const loading = loadingInvoice;
   const [saving, setSaving] = useState(false);
   const [itemSearchQuery, setItemSearchQuery] = useState('');
   const [showItemSearch, setShowItemSearch] = useState(false);
   const { success, error: showError } = useToast();
+  const { data: invoiceData, isLoading: loadingInvoice } = useInvoice(Number(invoiceId), !!invoiceId);
+  const invoice = invoiceData as Invoice | null;
+  const createCreditNoteMutation = useCreateCreditNote();
 
   const [formData, setFormData] = useState<CreditNoteFormData>({
     reason: '',
@@ -78,7 +81,6 @@ const CreateCreditNote: React.FC = () => {
 
   useEffect(() => {
     if (invoiceId) {
-      loadInvoice();
       loadInventoryItems();
     }
   }, [invoiceId]);
@@ -86,20 +88,6 @@ const CreateCreditNote: React.FC = () => {
   useEffect(() => {
     calculateTotals();
   }, [formData.items, formData.discount]);
-
-  const loadInvoice = async () => {
-    try {
-      setLoading(true);
-      const invoiceData = await invoiceService.getInvoice(Number(invoiceId));
-      setInvoice(invoiceData);
-    } catch (error) {
-      console.error('Error loading invoice:', error);
-      showError('Failed to load invoice');
-      navigate('/sales/invoices');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const loadInventoryItems = async () => {
     try {
@@ -269,7 +257,7 @@ const CreateCreditNote: React.FC = () => {
         })),
       };
 
-      await invoiceService.createCreditNote(invoice.id, creditNoteData);
+      await createCreditNoteMutation.mutateAsync({ invoiceId: invoice.id, data: creditNoteData });
       success('Credit note created successfully');
       navigate(`/sales/invoices/${invoiceId}/credit-notes`);
     } catch (error) {

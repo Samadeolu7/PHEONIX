@@ -1,21 +1,7 @@
-/**
- * pages/admin/PermissionExceptionReportPage.tsx
- *
- * Shows all active elevated permission overrides across the tenant.
- * An "exception" is any override where the user's grant EXCEEDS their
- * role baseline (is_elevated = true).
- *
- * Data source: GET /api/permissions/exception-report/
- */
-
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  rolePermissionService,
-  UserPermissionOverride,
-} from '@/services/rolePermissionService';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
+import { useExceptionReport } from '../../hooks/useRolePermissions';
+import { UserPermissionOverride } from '../../services/rolePermissionService';
 
 const SCOPE_LABELS: Record<string, string> = {
   global:           'Global',
@@ -68,31 +54,13 @@ function ElevatedFields({ fields }: { fields: string[] }) {
   );
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
-
 export default function PermissionExceptionReportPage() {
-  const [data, setData] = useState<UserPermissionOverride[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filterUser, setFilterUser] = useState('');
-  const [filterExpiry, setFilterExpiry] = useState('all'); // 'all' | 'expiring24h' | 'permanent'
+  const [filterExpiry, setFilterExpiry] = useState('all');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const items = await rolePermissionService.getExceptionReport();
-      setData(items);
-    } catch {
-      setData([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data: data = [], isLoading: loading, refetch } = useExceptionReport();
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const filtered = data.filter(o => {
+  const filtered = data.filter((o: UserPermissionOverride) => {
     if (filterUser) {
       const name = o.user_display ?? String(o.user);
       if (!name.toLowerCase().includes(filterUser.toLowerCase())) return false;
@@ -120,7 +88,7 @@ export default function PermissionExceptionReportPage() {
           </p>
         </div>
         <button
-          onClick={load}
+          onClick={() => refetch()}
           className="text-sm px-3 py-2 border rounded-lg hover:bg-gray-50 text-gray-600"
         >
           ↻ Refresh
@@ -135,7 +103,7 @@ export default function PermissionExceptionReportPage() {
         </div>
         <div className="bg-white border rounded-xl p-4">
           <div className="text-3xl font-bold text-red-600">
-            {data.filter(o => {
+            {data.filter((o: UserPermissionOverride) => {
               const h = o.hours_until_expiry;
               return o.expiry_type !== 'permanent' && h !== null && h !== undefined && h <= 24;
             }).length}
@@ -144,7 +112,7 @@ export default function PermissionExceptionReportPage() {
         </div>
         <div className="bg-white border rounded-xl p-4">
           <div className="text-3xl font-bold text-blue-600">
-            {data.filter(o => o.expiry_type === 'permanent').length}
+            {data.filter((o: UserPermissionOverride) => o.expiry_type === 'permanent').length}
           </div>
           <div className="text-sm text-gray-500 mt-1">Permanent Elevations</div>
         </div>
@@ -212,7 +180,7 @@ export default function PermissionExceptionReportPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filtered.map(o => (
+                {filtered.map((o: UserPermissionOverride) => (
                   <tr key={o.id} className="hover:bg-amber-50/30">
                     <td className="px-4 py-3">
                       <div className="font-medium text-gray-800">{o.user_display ?? `#${o.user}`}</div>
@@ -232,7 +200,6 @@ export default function PermissionExceptionReportPage() {
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      {/* Backend doesn't return elevated_fields on list—show badge */}
                       <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-medium">
                         ⚠ Elevated
                       </span>

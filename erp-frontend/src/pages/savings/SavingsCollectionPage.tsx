@@ -7,7 +7,7 @@
  * Feature #1 — Savings Cycles (daily / weekly / monthly)
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertCircle,
   Calendar,
@@ -20,9 +20,11 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import {
-  getSavingsCollectionSheet,
-  markContributionPaid,
-  generateScheduleForMonth,
+  useSavingsCollections,
+  useMarkContributionPaid,
+  useGenerateScheduleForMonth,
+} from '../../hooks/useSavings';
+import type {
   ContributionScheduleItem,
   ContributionCycle,
   ContributionStatus,
@@ -180,17 +182,36 @@ export default function SavingsCollectionPage() {
   const [selectedDate, setSelectedDate] = useState<string>(toISO(new Date()));
   const [cycleFilter, setCycleFilter] = useState<ContributionCycle | ''>('');
   const [statusFilter, setStatusFilter] = useState<ContributionStatus | ''>('');
-  const [items, setItems] = useState<ContributionScheduleItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [generating, setGenerating] = useState(false);
   const [generateMsg, setGenerateMsg] = useState<string | null>(null);
 
   const [cashierAccounts, setCashierAccounts] = useState<CashierAccount[]>([]);
-
   const [markPaidItem, setMarkPaidItem] = useState<ContributionScheduleItem | null>(null);
 
-  // Load ASSET accounts once (these are the cash / cashier tills)
+  const collectionParams: any = { date: selectedDate };
+  if (cycleFilter) collectionParams.cycle = cycleFilter;
+  if (statusFilter) collectionParams.status = statusFilter;
+
+  const { data: items = [], isLoading: loading, error: queryError, refetch } = useSavingsCollections(collectionParams);
+
+  const markPaidMutation = useMarkContributionPaid({
+    onSuccess: () => { refetch(); },
+  });
+
+  const generateMutation = useGenerateScheduleForMonth({
+    onSuccess: (result) => {
+      setGenerateMsg(
+        result.created > 0
+          ? `Generated ${result.created} schedule entries for ${result.year}-${String(result.month).padStart(2, '0')}.`
+          : 'Schedule already up to date for this month.',
+      );
+      refetch();
+    },
+    onError: (e) => {
+      setGenerateMsg(e?.detail ?? e?.message ?? 'Failed to generate schedule.');
+    },
+  });
+
+  // Load ASSET accounts once (cashier tills)
   useEffect(() => {
     accountService
       .getAccounts({ account_type: 'ASSET' })
@@ -199,52 +220,20 @@ export default function SavingsCollectionPage() {
           accounts.map((a) => ({ id: Number(a.id), name: a.name, code: a.code })),
         ),
       )
-      .catch(() => {/* non-fatal — modal shows a warning */});
+      .catch(() => {/* non-fatal */});
   }, []);
 
-  const loadItems = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params: any = { date: selectedDate };
-      if (cycleFilter) params.cycle = cycleFilter;
-      if (statusFilter) params.status = statusFilter;
-      const data = await getSavingsCollectionSheet(params);
-      setItems(data);
-    } catch (e: any) {
-      setError(e?.detail ?? e?.message ?? 'Failed to load collection sheet.');
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedDate, cycleFilter, statusFilter]);
-
-  useEffect(() => {
-    loadItems();
-  }, [loadItems]);
-
   const handleMarkPaid = async (itemId: number, cashierAccountId: number) => {
-    await markContributionPaid(itemId, cashierAccountId);
-    await loadItems();
+    markPaidMutation.mutate({ scheduleId: itemId, cashierAccountId });
   };
 
-  const handleGenerateSchedule = async () => {
-    setGenerating(true);
+  const handleGenerateSchedule = () => {
     setGenerateMsg(null);
-    try {
-      const d = new Date(selectedDate);
-      const result = await generateScheduleForMonth(d.getFullYear(), d.getMonth() + 1);
-      setGenerateMsg(
-        result.created > 0
-          ? `Generated ${result.created} schedule entries for ${result.year}-${String(result.month).padStart(2, '0')}.`
-          : 'Schedule already up to date for this month.',
-      );
-      await loadItems();
-    } catch (e: any) {
-      setGenerateMsg(e?.detail ?? e?.message ?? 'Failed to generate schedule.');
-    } finally {
-      setGenerating(false);
-    }
+    const d = new Date(selectedDate);
+    generateMutation.mutate({ year: d.getFullYear(), month: d.getMonth() + 1 });
   };
+
+  const error = (queryError as any)?.detail ?? (queryError as any)?.message ?? null;
 
   // Summary stats
   const totalExpected = items.reduce((s, i) => s + parseFloat(i.expected_amount), 0);
@@ -309,7 +298,7 @@ export default function SavingsCollectionPage() {
 
         {/* Refresh */}
         <button
-          onClick={loadItems}
+          onClick={() => refetch()}
           disabled={loading}
           className="flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
@@ -321,10 +310,10 @@ export default function SavingsCollectionPage() {
         {selectedRole !== 'credit_officer' && (
           <button
             onClick={handleGenerateSchedule}
-            disabled={generating}
+            disabled={generateMutation.isPending}
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            {generating ? <Loader2 size={14} className="animate-spin" /> : <Calendar size={14} />}
+            {generateMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Calendar size={14} />}
             Generate Month Schedule
           </button>
         )}

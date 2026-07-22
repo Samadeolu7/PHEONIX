@@ -3,7 +3,7 @@
  * Shows account summary, transaction ledger, deposit/withdraw actions, and contribution schedule.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -18,14 +18,13 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import {
-  getSavingsAccount,
-  getAccountSchedule,
-  getSavingsTransactions,
-  initiateWithdrawal,
-  SavingsAccount,
-  ContributionScheduleItem,
-  SavingsTransactionRow,
-} from '../../services/savingsService';
+  useSavingsAccount,
+  useSavingsTransactions,
+  useSavingsSchedule,
+  useDepositToSavings,
+  useInitiateWithdrawal,
+} from '../../hooks/useSavings';
+import type { SavingsAccount } from '../../services/savingsService';
 import api from '../../services/api';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
@@ -73,12 +72,21 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'bank'>('cash');
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [selectedBankAccount, setSelectedBankAccount] = useState<number | ''>('');
+
+  const depositMutation = useDepositToSavings({
+    onSuccess: () => {
+      setSuccess(true);
+      setTimeout(onSuccess, 1200);
+    },
+    onError: (e) => {
+      setError(e?.detail ?? e?.message ?? 'Deposit failed.');
+    },
+  });
 
   useEffect(() => {
     bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
@@ -95,23 +103,17 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
       setError('Please select a destination bank account.');
       return;
     }
-    setSubmitting(true);
     setError(null);
-    try {
-      await api.post(`/savings/accounts/${account.id}/deposit/`, {
+    depositMutation.mutate({
+      accountId: account.id,
+      data: {
         amount,
+        date: paymentDate,
         description: description || 'Deposit',
-        payment_date: paymentDate,
-        payment_method: paymentMethod,
-        ...(paymentMethod === 'bank' ? { bank_account_id: selectedBankAccount } : {}),
-      });
-      setSuccess(true);
-      setTimeout(onSuccess, 1200);
-    } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Deposit failed.');
-      setSubmitting(false);
-    }
+        payment_mode: paymentMethod,
+        ...(paymentMethod === 'bank' ? { bank_reference: String(selectedBankAccount) } : {}),
+      },
+    });
   }
 
   return (
@@ -170,7 +172,7 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
                       : 'border-gray-200 text-gray-500 hover:border-green-300'
                   }`}
                 >
-                  💵 Cash
+                  Cash
                 </button>
                 <button
                   type="button"
@@ -181,7 +183,7 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
                       : 'border-gray-200 text-gray-500 hover:border-green-300'
                   }`}
                 >
-                  🏦 Bank
+                  Bank
                 </button>
               </div>
             </div>
@@ -241,10 +243,10 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
               </button>
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={depositMutation.isPending}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
               >
-                {submitting ? (
+                {depositMutation.isPending ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : (
                   <ArrowDownCircle size={14} />
@@ -270,9 +272,18 @@ interface WithdrawModalProps {
 function WithdrawModal({ account, onClose, onSuccess }: WithdrawModalProps) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  const withdrawMutation = useInitiateWithdrawal({
+    onSuccess: () => {
+      setSuccess(true);
+      setTimeout(onSuccess, 1200);
+    },
+    onError: (e) => {
+      setError(e?.detail ?? e?.message ?? 'Withdrawal request failed.');
+    },
+  });
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -281,21 +292,12 @@ function WithdrawModal({ account, onClose, onSuccess }: WithdrawModalProps) {
       setError('Please enter a valid amount.');
       return;
     }
-    setSubmitting(true);
     setError(null);
-    try {
-      await initiateWithdrawal({
-        savings_account: account.id,
-        amount,
-        description: description || 'Withdrawal',
-      });
-      setSuccess(true);
-      setTimeout(onSuccess, 1200);
-    } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Withdrawal request failed.');
-      setSubmitting(false);
-    }
+    withdrawMutation.mutate({
+      savings_account: account.id,
+      amount,
+      description: description || 'Withdrawal',
+    });
   }
 
   return (
@@ -362,10 +364,10 @@ function WithdrawModal({ account, onClose, onSuccess }: WithdrawModalProps) {
               </button>
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={withdrawMutation.isPending}
                 className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-50"
               >
-                {submitting ? (
+                {withdrawMutation.isPending ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : (
                   <ArrowUpCircle size={14} />
@@ -387,75 +389,23 @@ export default function SavingsAccountDetailPage() {
   const navigate = useNavigate();
   const accountId = parseInt(id ?? '0', 10);
 
-  const [account, setAccount] = useState<SavingsAccount | null>(null);
-  const [transactions, setTransactions] = useState<SavingsTransactionRow[]>([]);
-  const [txTotal, setTxTotal] = useState(0);
   const [txPage, setTxPage] = useState(1);
   const TX_PAGE_SIZE = 25;
 
   const today = new Date();
   const [scheduleYear, setScheduleYear] = useState(today.getFullYear());
   const [scheduleMonth, setScheduleMonth] = useState(today.getMonth() + 1);
-  const [schedule, setSchedule] = useState<ContributionScheduleItem[]>([]);
 
-  const [loading, setLoading] = useState(true);
-  const [txLoading, setTxLoading] = useState(false);
-  const [scheduleLoading, setScheduleLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [showDeposit, setShowDeposit] = useState(false);
   const [showWithdraw, setShowWithdraw] = useState(false);
 
-  const loadAccount = useCallback(async () => {
-    if (!accountId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const acc = await getSavingsAccount(accountId);
-      setAccount(acc);
-    } catch (e: unknown) {
-      const err = e as { detail?: string; message?: string };
-      setError(err?.detail ?? err?.message ?? 'Failed to load savings account.');
-    } finally {
-      setLoading(false);
-    }
-  }, [accountId]);
+  const { data: account, isLoading: loading, error: accountError, refetch: refetchAccount } = useSavingsAccount(accountId || null);
+  const { data: txData, isLoading: txLoading, refetch: refetchTx } = useSavingsTransactions(accountId || null, txPage, TX_PAGE_SIZE);
+  const { data: scheduleData, isLoading: scheduleLoading } = useSavingsSchedule(accountId || null, scheduleYear, scheduleMonth);
 
-  const loadTransactions = useCallback(async () => {
-    if (!accountId) return;
-    setTxLoading(true);
-    try {
-      const res = await getSavingsTransactions(accountId, txPage, TX_PAGE_SIZE);
-      setTransactions(res.results);
-      setTxTotal(res.count);
-    } catch {
-      // non-fatal
-    } finally {
-      setTxLoading(false);
-    }
-  }, [accountId, txPage]);
-
-  const loadSchedule = useCallback(async () => {
-    if (!accountId) return;
-    setScheduleLoading(true);
-    try {
-      const res = await getAccountSchedule(accountId, scheduleYear, scheduleMonth);
-      setSchedule(Array.isArray(res) ? res : []);
-    } catch {
-      setSchedule([]);
-    } finally {
-      setScheduleLoading(false);
-    }
-  }, [accountId, scheduleYear, scheduleMonth]);
-
-  useEffect(() => {
-    loadAccount();
-  }, [loadAccount]);
-  useEffect(() => {
-    loadTransactions();
-  }, [loadTransactions]);
-  useEffect(() => {
-    loadSchedule();
-  }, [loadSchedule]);
+  const transactions = txData?.results ?? [];
+  const txTotal = txData?.count ?? 0;
+  const schedule = Array.isArray(scheduleData) ? scheduleData : [];
 
   const txTotalPages = Math.max(1, Math.ceil(txTotal / TX_PAGE_SIZE));
 
@@ -473,6 +423,8 @@ export default function SavingsAccountDetailPage() {
     'Nov',
     'Dec',
   ];
+
+  const error = accountError?.detail ?? accountError?.message ?? null;
 
   if (loading) {
     return (
@@ -501,8 +453,8 @@ export default function SavingsAccountDetailPage() {
           onClose={() => setShowDeposit(false)}
           onSuccess={() => {
             setShowDeposit(false);
-            loadAccount();
-            loadTransactions();
+            refetchAccount();
+            refetchTx();
           }}
         />
       )}
@@ -512,8 +464,8 @@ export default function SavingsAccountDetailPage() {
           onClose={() => setShowWithdraw(false)}
           onSuccess={() => {
             setShowWithdraw(false);
-            loadAccount();
-            loadTransactions();
+            refetchAccount();
+            refetchTx();
           }}
         />
       )}
@@ -545,10 +497,7 @@ export default function SavingsAccountDetailPage() {
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                loadAccount();
-                loadTransactions();
-              }}
+              onClick={() => { refetchAccount(); refetchTx(); }}
               className="rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-50"
               title="Refresh"
             >

@@ -1,5 +1,5 @@
 // src/pages/accounting/JournalVoucherListPage.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Plus,
@@ -15,11 +15,8 @@ import {
   ChevronRight,
   RefreshCw,
 } from 'lucide-react';
-import {
-  journalVoucherService,
-  JournalVoucherListItem,
-  JournalVoucherFilters,
-} from '../../services/journalVoucherService';
+import { JournalVoucherListItem, JournalVoucherFilters } from '../../services/journalVoucherService';
+import { useJournalVouchers } from '../../hooks/useJournalVouchers';
 import { useToast } from '../../hooks/useToast';
 
 // ─── Status Badge ─────────────────────────────────────────────────────────────
@@ -56,9 +53,6 @@ const JournalVoucherListPage: React.FC = () => {
   const navigate = useNavigate();
   const { error: showError } = useToast();
 
-  const [vouchers, setVouchers] = useState<JournalVoucherListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [pagination, setPagination] = useState({ count: 0, currentPage: 1 });
   const [filters, setFilters] = useState<JournalVoucherFilters>({
     ordering: '-date',
     show_reversed: false,
@@ -68,23 +62,9 @@ const JournalVoucherListPage: React.FC = () => {
   const [searchInput, setSearchInput] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
-  const loadVouchers = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await journalVoucherService.getJournalVouchers(filters);
-      setVouchers(data.results);
-      setPagination({ count: data.count, currentPage: filters.page ?? 1 });
-    } catch (err) {
-      console.error(err);
-      showError('Failed to load journal vouchers');
-    } finally {
-      setLoading(false);
-    }
-  }, [filters, showError]);
-
-  useEffect(() => {
-    loadVouchers();
-  }, [loadVouchers]);
+  const { data, isLoading: loading, refetch: loadVouchers } = useJournalVouchers(filters);
+  const vouchers = data?.results ?? [];
+  const pagination = { count: data?.count ?? 0, currentPage: filters.page ?? 1 };
 
   const handleSearch = () => {
     setFilters(f => ({ ...f, search: searchInput || undefined, page: 1 }));

@@ -33,21 +33,23 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import {
+import type {
   SavingsWithdrawalRequest,
   WithdrawalApprovalTier,
   WithdrawalStatus,
-  getPendingMyApproval,
-  getPendingDisburse,
-  getWithdrawals,
-  approveWithdrawalStep,
-  cancelWithdrawal,
-  disburseWithdrawal,
-  getWithdrawalTiers,
-  createWithdrawalTier,
-  updateWithdrawalTier,
-  deleteWithdrawalTier,
 } from '../../services/savingsService';
+import { cancelWithdrawal } from '../../services/savingsService';
+import {
+  usePendingMyApproval,
+  usePendingDisburse,
+  useWithdrawals,
+  useApproveWithdrawalStep,
+  useDisburseWithdrawal,
+  useWithdrawalTiers,
+  useCreateWithdrawalTier,
+  useUpdateWithdrawalTier,
+  useDeleteWithdrawalTier,
+} from '../../hooks/useSavings';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
 import { accountService } from '../../services/accountService';
@@ -89,7 +91,6 @@ interface ApproveModalProps {
 function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
   const [approved, setApproved] = useState<boolean | null>(null);
   const [comment, setComment] = useState('');
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Payment method selection (only needed on first step)
@@ -109,7 +110,12 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
     }
   }, [needsPaymentMethod]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const approveMutation = useApproveWithdrawalStep({
+    onSuccess: (updated) => { onDone(updated); },
+    onError: (e) => { setError(e?.message ?? e?.detail ?? 'Action failed.'); },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (approved === null) { setError('Please select Approve or Reject.'); return; }
     if (approved && needsPaymentMethod) {
@@ -118,21 +124,13 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
         return;
       }
     }
-    setSaving(true);
     setError(null);
-    try {
-      const payload: Parameters<typeof approveWithdrawalStep>[1] = { approved, comment };
-      if (approved && needsPaymentMethod) {
-        payload.payment_method = paymentMethod;
-        if (paymentMethod === 'cash') payload.cashier_account = cashierAccountId as number;
-      }
-      const updated = await approveWithdrawalStep(withdrawal.id, payload);
-      onDone(updated);
-    } catch (e: any) {
-      setError(e?.message ?? e?.detail ?? 'Action failed.');
-    } finally {
-      setSaving(false);
+    const payload: any = { approved, comment };
+    if (approved && needsPaymentMethod) {
+      payload.payment_method = paymentMethod;
+      if (paymentMethod === 'cash') payload.cashier_account = cashierAccountId as number;
     }
+    approveMutation.mutate({ id: withdrawal.id, data: payload });
   };
 
   const pendingStep = withdrawal.approval_steps?.find(s => s.status === 'pending');
@@ -348,10 +346,10 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
-              disabled={saving}
+              disabled={approveMutation.isPending}
               className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 rounded-lg transition-colors disabled:opacity-50"
             >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {approveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               Submit Decision
             </button>
             <button
@@ -382,7 +380,6 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
 
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<number | ''>('');
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -392,26 +389,23 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
     }
   }, [isBank]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const disburseMutation = useDisburseWithdrawal({
+    onSuccess: (updated) => { onDone(updated); },
+    onError: (e) => { setError(e?.message ?? e?.detail ?? 'Disbursement failed.'); },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isBank && typeof selectedBankId !== 'number') {
       setError('Please select an organisation bank account to disburse from.');
       return;
     }
-    setSaving(true);
     setError(null);
-    try {
-      const payload: { destination_bank_account?: number } = {};
-      if (isBank && typeof selectedBankId === 'number') {
-        payload.destination_bank_account = selectedBankId;
-      }
-      const updated = await disburseWithdrawal(withdrawal.id, payload);
-      onDone(updated);
-    } catch (e: any) {
-      setError(e?.message ?? e?.detail ?? 'Disbursement failed.');
-    } finally {
-      setSaving(false);
+    const payload: { destination_bank_account?: number } = {};
+    if (isBank && typeof selectedBankId === 'number') {
+      payload.destination_bank_account = selectedBankId;
     }
+    disburseMutation.mutate({ id: withdrawal.id, data: payload });
   };
 
   const hasClientBankDetails = !!(withdrawal.client_bank_account_number);
@@ -597,14 +591,14 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
           <div className="flex gap-2 pt-1">
             <button
               type="submit"
-              disabled={saving}
+              disabled={disburseMutation.isPending}
               className={`flex-1 flex items-center justify-center gap-2 text-white text-sm py-2.5 rounded-lg transition-colors disabled:opacity-50 ${
                 isCash
                   ? 'bg-orange-500 hover:bg-orange-600'
                   : 'bg-teal-600 hover:bg-teal-700'
               }`}
             >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              {disburseMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               {isCash ? 'Confirm Cash Payout' : 'Confirm Bank Transfer'}
             </button>
             <button
@@ -633,19 +627,16 @@ interface WithdrawalRowProps {
 
 function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, showApproveButton }: WithdrawalRowProps) {
   const [expanded, setExpanded] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
+  const cancelMutation = useDeleteWithdrawalTier ? undefined : undefined; // We use the service directly for cancel
   const handleCancel = async () => {
-    setCancelling(true);
     setCancelError(null);
     try {
       const updated = await cancelWithdrawal(wr.id);
       onCancel?.(updated);
     } catch (e: any) {
       setCancelError(e?.detail ?? e?.message ?? 'Cancel failed.');
-    } finally {
-      setCancelling(false);
     }
   };
 
@@ -700,10 +691,10 @@ function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, showApproveButton 
             {(wr.status === 'pending' || wr.status === 'partially_approved') && (
               <button
                 onClick={handleCancel}
-                disabled={cancelling}
+                disabled={false}
                 className="text-xs text-gray-500 border border-gray-200 px-2.5 py-1 rounded-lg hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-50"
               >
-                {cancelling ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Cancel'}
+                Cancel
               </button>
             )}
             {wr.status === 'fully_approved' && (
@@ -793,8 +784,19 @@ function TierForm({ initial, onSaved, onCancel }: TierFormProps) {
   const [roleInput, setRoleInput] = useState('');
   const [isActive, setIsActive] = useState(initial?.is_active ?? true);
   const [order, setOrder] = useState(initial?.order ?? 1);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const createTierMutation = useCreateWithdrawalTier({
+    onSuccess: (tier) => { onSaved(tier); },
+    onError: (e) => { setError(e?.message ?? 'Failed to save tier.'); },
+  });
+
+  const updateTierMutation = useUpdateWithdrawalTier({
+    onSuccess: (tier) => { onSaved(tier); },
+    onError: (e) => { setError(e?.message ?? 'Failed to save tier.'); },
+  });
+
+  const saving = createTierMutation.isPending || updateTierMutation.isPending;
 
   const addRole = (role: string) => {
     const r = role.trim();
@@ -802,29 +804,23 @@ function TierForm({ initial, onSaved, onCancel }: TierFormProps) {
     setRoleInput('');
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!tierName.trim()) { setError('Tier name is required.'); return; }
-    setSaving(true);
     setError(null);
-    try {
-      const payload: Partial<WithdrawalApprovalTier> = {
-        tier_name: tierName.trim(),
-        min_amount: minAmount,
-        max_amount: maxAmount || null,
-        required_approvers: requiredApprovers,
-        approver_roles: roles,
-        is_active: isActive,
-        order,
-      };
-      const saved = isEdit
-        ? await updateWithdrawalTier(initial!.id, payload)
-        : await createWithdrawalTier(payload);
-      onSaved(saved);
-    } catch (e: any) {
-      setError(e?.message ?? 'Failed to save tier.');
-    } finally {
-      setSaving(false);
+    const payload: Partial<WithdrawalApprovalTier> = {
+      tier_name: tierName.trim(),
+      min_amount: minAmount,
+      max_amount: maxAmount || null,
+      required_approvers: requiredApprovers,
+      approver_roles: roles,
+      is_active: isActive,
+      order,
+    };
+    if (isEdit) {
+      updateTierMutation.mutate({ id: initial!.id, data: payload });
+    } else {
+      createTierMutation.mutate(payload);
     }
   };
 
@@ -985,135 +981,83 @@ const PAGE_SIZE = 25;
 export default function SavingsWithdrawalsPage() {
   const [activeTab, setActiveTab] = useState<Tab>('my_approvals');
 
-  // My approvals
-  const [pendingApprovals, setPendingApprovals] = useState<SavingsWithdrawalRequest[]>([]);
-  const [pendingLoading, setPendingLoading] = useState(false);
-  const [pendingError, setPendingError] = useState<string | null>(null);
   const [approveTarget, setApproveTarget] = useState<SavingsWithdrawalRequest | null>(null);
   const [disburseTarget, setDisburseTarget] = useState<SavingsWithdrawalRequest | null>(null);
-
-  // Pending disburse
-  const [pendingDisburse, setPendingDisburse] = useState<SavingsWithdrawalRequest[]>([]);
-  const [pendingDisburseLoading, setPendingDisburseLoading] = useState(false);
-  const [pendingDisburseError, setPendingDisburseError] = useState<string | null>(null);
-
-  // All withdrawals
-  const [allWithdrawals, setAllWithdrawals] = useState<SavingsWithdrawalRequest[]>([]);
-  const [allTotal, setAllTotal] = useState(0);
-  const [allPage, setAllPage] = useState(1);
-  const [allLoading, setAllLoading] = useState(false);
-  const [allError, setAllError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
-
-  // Approval tiers
-  const [tiers, setTiers] = useState<WithdrawalApprovalTier[]>([]);
-  const [tiersLoading, setTiersLoading] = useState(false);
-  const [tiersError, setTiersError] = useState<string | null>(null);
+  const [allPage, setAllPage] = useState(1);
   const [showTierForm, setShowTierForm] = useState(false);
   const [editingTier, setEditingTier] = useState<WithdrawalApprovalTier | null>(null);
   const [deletingTierId, setDeletingTierId] = useState<number | null>(null);
 
-  const loadPending = useCallback(async () => {
-    setPendingLoading(true);
-    setPendingError(null);
-    try {
-      const data = await getPendingMyApproval();
-      setPendingApprovals(data);
-    } catch (e: any) {
-      setPendingError(e?.message ?? 'Failed to load pending approvals.');
-    } finally {
-      setPendingLoading(false);
-    }
-  }, []);
+  // Query hooks
+  const { data: pendingApprovals = [], isLoading: pendingLoading, error: pendingError, refetch: loadPending } = usePendingMyApproval();
+  const { data: pendingDisburse = [], isLoading: pendingDisburseLoading, error: pendingDisburseError, refetch: loadPendingDisburse } = usePendingDisburse();
+  const { data: allData, isLoading: allLoading, error: allError, refetch: loadAll } = useWithdrawals({
+    ...(statusFilter ? { status: statusFilter } : {}),
+    page: allPage,
+    page_size: PAGE_SIZE,
+  });
+  const allWithdrawals = allData?.results ?? [];
+  const allTotal = allData?.count ?? 0;
+  const { data: tiersData = [], isLoading: tiersLoading, error: tiersError, refetch: loadTiers } = useWithdrawalTiers();
+  const tiers = [...tiersData].sort((a, b) => a.order - b.order);
 
-  const loadPendingDisburse = useCallback(async () => {
-    setPendingDisburseLoading(true);
-    setPendingDisburseError(null);
-    try {
-      const data = await getPendingDisburse();
-      setPendingDisburse(data);
-    } catch (e: any) {
-      setPendingDisburseError(e?.message ?? 'Failed to load pending disbursements.');
-    } finally {
-      setPendingDisburseLoading(false);
-    }
-  }, []);
+  // Mutation hooks
+  const approveMutation = useApproveWithdrawalStep({
+    onSuccess: () => {
+      loadPending();
+      setApproveTarget(null);
+    },
+  });
 
-  const loadAll = useCallback(async () => {
-    setAllLoading(true);
-    setAllError(null);
-    try {
-      const page = await getWithdrawals({
-        ...(statusFilter ? { status: statusFilter } : {}),
-        page: allPage,
-        page_size: PAGE_SIZE,
-      });
-      setAllWithdrawals(page.results);
-      setAllTotal(page.count);
-    } catch (e: any) {
-      setAllError(e?.message ?? 'Failed to load withdrawals.');
-    } finally {
-      setAllLoading(false);
-    }
-  }, [statusFilter, allPage]);
+  const disburseMutation = useDisburseWithdrawal({
+    onSuccess: () => {
+      loadPendingDisburse();
+      setDisburseTarget(null);
+    },
+  });
 
-  const loadTiers = useCallback(async () => {
-    setTiersLoading(true);
-    setTiersError(null);
-    try {
-      const data = await getWithdrawalTiers();
-      setTiers(data.sort((a, b) => a.order - b.order));
-    } catch (e: any) {
-      setTiersError(e?.message ?? 'Failed to load tiers.');
-    } finally {
-      setTiersLoading(false);
-    }
-  }, []);
+  const createTierMutation = useCreateWithdrawalTier({
+    onSuccess: () => {
+      loadTiers();
+      setShowTierForm(false);
+    },
+  });
 
-  useEffect(() => { loadPending(); }, [loadPending]);
-  useEffect(() => { if (activeTab === 'pending_disburse') loadPendingDisburse(); }, [activeTab, loadPendingDisburse]);
+  const updateTierMutation = useUpdateWithdrawalTier({
+    onSuccess: () => {
+      loadTiers();
+      setEditingTier(null);
+    },
+  });
+
+  const deleteTierMutation = useDeleteWithdrawalTier({
+    onSuccess: () => { loadTiers(); },
+  });
+
   useEffect(() => { if (activeTab === 'all') loadAll(); }, [activeTab, loadAll]);
-  useEffect(() => { if (activeTab === 'tiers') loadTiers(); }, [activeTab, loadTiers]);
-  // Reset to page 1 when filter changes
   useEffect(() => { setAllPage(1); }, [statusFilter]);
 
-  // Update a withdrawal in state after approval / disbursement action
-  const patchWithdrawal = (updated: SavingsWithdrawalRequest) => {
-    // Remove from pending-approval list whenever the user has acted on it
-    // (status changed away from pending, or they approved one step)
-    setPendingApprovals(prev => prev.filter(w => w.id !== updated.id));
-    // Remove from pending-disburse list when completed or rejected
-    setPendingDisburse(prev =>
-      ['completed', 'rejected', 'cancelled'].includes(updated.status)
-        ? prev.filter(w => w.id !== updated.id)
-        : prev.map(w => w.id === updated.id ? updated : w)
-    );
-    setAllWithdrawals(prev => prev.map(w => w.id === updated.id ? updated : w));
+  // Called after approve/disburse/cancel actions complete
+  const handleActionDone = () => {
+    loadPending();
+    loadPendingDisburse();
+    loadAll();
     setApproveTarget(null);
     setDisburseTarget(null);
   };
 
-  // Tiers handlers
-  const handleTierSaved = (tier: WithdrawalApprovalTier) => {
-    setTiers(prev => {
-      const idx = prev.findIndex(t => t.id === tier.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = tier; return next.sort((a, b) => a.order - b.order); }
-      return [...prev, tier].sort((a, b) => a.order - b.order);
-    });
+  const handleTierSaved = (_tier?: WithdrawalApprovalTier) => {
+    loadTiers();
     setShowTierForm(false);
     setEditingTier(null);
   };
 
-  const handleDeleteTier = async (tierId: number) => {
+  const handleDeleteTier = (tierId: number) => {
     setDeletingTierId(tierId);
-    try {
-      await deleteWithdrawalTier(tierId);
-      setTiers(prev => prev.filter(t => t.id !== tierId));
-    } catch {
-      // silent
-    } finally {
-      setDeletingTierId(null);
-    }
+    deleteTierMutation.mutate(tierId, {
+      onSettled: () => { setDeletingTierId(null); },
+    });
   };
 
   const STATUSES = ['', 'pending', 'partially_approved', 'fully_approved', 'completed', 'rejected', 'cancelled'];
@@ -1243,7 +1187,7 @@ export default function SavingsWithdrawalsPage() {
                         wr={wr}
                         showApproveButton
                         onApprove={setApproveTarget}
-                        onCancel={patchWithdrawal}
+                        onCancel={handleActionDone}
                       />
                     ))}
                   </tbody>
@@ -1404,7 +1348,7 @@ export default function SavingsWithdrawalsPage() {
                         key={wr.id}
                         wr={wr}
                         showApproveButton={false}
-                        onCancel={updated => setAllWithdrawals(prev => prev.map(w => w.id === updated.id ? updated : w))}
+                        onCancel={handleActionDone}
                         onDisburse={setDisburseTarget}
                       />
                     ))}
@@ -1582,7 +1526,7 @@ export default function SavingsWithdrawalsPage() {
       {approveTarget && (
         <ApproveModal
           withdrawal={approveTarget}
-          onDone={patchWithdrawal}
+          onDone={handleActionDone}
           onClose={() => setApproveTarget(null)}
         />
       )}
@@ -1591,7 +1535,7 @@ export default function SavingsWithdrawalsPage() {
       {disburseTarget && (
         <DisburseModal
           withdrawal={disburseTarget}
-          onDone={patchWithdrawal}
+          onDone={handleActionDone}
           onClose={() => setDisburseTarget(null)}
         />
       )}

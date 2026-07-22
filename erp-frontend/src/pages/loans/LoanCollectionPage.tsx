@@ -37,6 +37,15 @@ import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
+import {
+  useLoanSchedule,
+  useRepayLoan,
+  useBulkRepay,
+  useRequestSavingsRepayment,
+  useGroupCollection,
+  useOfflinePayments,
+  useCreateOfflinePayment,
+} from '../../hooks/useLoans';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -81,9 +90,10 @@ function NormalCollectionPanel() {
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<number | ''>('');
-  const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<{ message: string; overpayment?: string } | null>(null);
+
+  const repayLoanMutation = useRepayLoan();
 
   useEffect(() => {
     bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
@@ -154,34 +164,36 @@ function NormalCollectionPanel() {
         return;
       }
     }
-    setSubmitting(true);
     setSubmitError(null);
-    try {
-      const payload: RepayLoanPayload = {
-        amount,
-        payment_date: paymentDate,
-        payment_mode: paymentMode,
-        bank_account_id: paymentMode === 'bank_transfer' ? selectedBankId : undefined,
-        bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
-      };
-      const result = await loanService.repayLoan(selectedLoan.id, payload);
-      const overpay = parseFloat(result.overpayment_credited ?? '0');
-      setSubmitSuccess({
-        message: `₦${fmt(amount)} recorded for ${selectedLoan.client_name} (${selectedLoan.loan_number})`,
-        overpayment: overpay > 0 ? `₦${fmt(result.overpayment_credited)} credited to savings` : undefined,
-      });
-      setSelectedLoan(null);
-      setSchedule([]);
-      setAmount('');
-      setBankReference('');
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Repayment failed.';
-      setSubmitError(msg);
-      toast.error(msg);
-    } finally {
-      setSubmitting(false);
-    }
+    const payload: RepayLoanPayload = {
+      amount,
+      payment_date: paymentDate,
+      payment_mode: paymentMode,
+      bank_account_id: paymentMode === 'bank_transfer' ? selectedBankId : undefined,
+      bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
+    };
+    repayLoanMutation.mutate(
+      { id: selectedLoan.id, data: payload },
+      {
+        onSuccess: (result) => {
+          const overpay = parseFloat(result.overpayment_credited ?? '0');
+          setSubmitSuccess({
+            message: `₦${fmt(amount)} recorded for ${selectedLoan.client_name} (${selectedLoan.loan_number})`,
+            overpayment: overpay > 0 ? `₦${fmt(result.overpayment_credited)} credited to savings` : undefined,
+          });
+          setSelectedLoan(null);
+          setSchedule([]);
+          setAmount('');
+          setBankReference('');
+        },
+        onError: (e: unknown) => {
+          const data = (e as any)?.response?.data;
+          const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Repayment failed.';
+          setSubmitError(msg);
+          toast.error(msg);
+        },
+      }
+    );
   }
 
   const unpaidInstallments = schedule.filter(
@@ -462,10 +474,10 @@ function NormalCollectionPanel() {
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || !amount}
+                  disabled={repayLoanMutation.isPending || !amount}
                   className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                 >
-                  {submitting ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
+                  {repayLoanMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
                   Post Repayment
                 </button>
               </div>
@@ -487,20 +499,22 @@ function GroupCollectionPanel() {
   const [collectionDate, setCollectionDate] = useState(new Date().toISOString().slice(0, 10));
   const [rows, setRows] = useState<GroupCollectionRow[]>([]);
   const [amounts, setAmounts] = useState<Record<number, string>>({});
-  const [sheetLoading, setSheetLoading] = useState(false);
   const [sheetError, setSheetError] = useState<string | null>(null);
 
   const [paymentMode, setPaymentMode] = useState<'cash' | 'bank_transfer'>('cash');
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<number | ''>('');
   const [bankReference, setBankReference] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
-  }, []);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitResult, setSubmitResult] = useState<{ succeeded: number; failed: { loan_account_id: number; error: string }[] } | null>(null);
+
+  // React Query hooks
+  const { data: collectionRows = [], isLoading: sheetLoading, refetch: refetchSheet } = useGroupCollection(
+    Number(selectedGroup) || 0,
+    collectionDate,
+    { enabled: false }
+  );
+  const bulkRepayMutation = useBulkRepay();
 
   useEffect(() => {
     setGroupsLoading(true);
@@ -512,21 +526,18 @@ function GroupCollectionPanel() {
 
   async function loadSheet() {
     if (!selectedGroup) return;
-    setSheetLoading(true);
     setSheetError(null);
     setRows([]);
     setSubmitResult(null);
-    try {
-      const data = await loanService.getGroupCollection(Number(selectedGroup), collectionDate);
+    const { data, error } = await refetchSheet();
+    if (error) {
+      const e = error as any;
+      setSheetError(e?.response?.data?.detail || (typeof e?.response?.data === 'string' ? e.response.data : '') || e?.message || 'Failed to load collection sheet.');
+    } else if (data) {
       setRows(data);
       const initial: Record<number, string> = {};
       data.forEach((r) => { initial[r.loan_account_id] = r.remaining; });
       setAmounts(initial);
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      setSheetError(data?.detail || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Failed to load collection sheet.');
-    } finally {
-      setSheetLoading(false);
     }
   }
 
@@ -555,26 +566,28 @@ function GroupCollectionPanel() {
       return;
     }
 
-    setSubmitting(true);
     setSubmitError(null);
-    try {
-      const result = await loanService.bulkRepay({
+    bulkRepayMutation.mutate(
+      {
         payments,
         payment_mode: paymentMode,
         bank_account_id: paymentMode === 'bank_transfer' ? selectedBankId : undefined,
         bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
-      });
-      setSubmitResult(result);
-      setRows([]);
-      setAmounts({});
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Bulk repayment failed.';
-      setSubmitError(msg);
-      toast.error(msg);
-    } finally {
-      setSubmitting(false);
-    }
+      },
+      {
+        onSuccess: (result) => {
+          setSubmitResult(result);
+          setRows([]);
+          setAmounts({});
+        },
+        onError: (e: unknown) => {
+          const data = (e as any)?.response?.data;
+          const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Bulk repayment failed.';
+          setSubmitError(msg);
+          toast.error(msg);
+        },
+      }
+    );
   }
 
   return (
@@ -758,10 +771,10 @@ function GroupCollectionPanel() {
                 )}
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={bulkRepayMutation.isPending}
                   className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                 >
-                  {submitting ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
+                  {bulkRepayMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
                   Post All
                 </button>
               </div>
@@ -800,9 +813,10 @@ function SavingsDebitPanel() {
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState('');
 
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<LoanRepaymentRequest | null>(null);
+
+  const requestSavingsRepaymentMutation = useRequestSavingsRepayment();
 
   const unpaidInstallments = schedule
     .filter(s => s.status === 'overdue' || s.status === 'pending' || s.status === 'partial')
@@ -889,7 +903,7 @@ function SavingsDebitPanel() {
     setError(null);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedLoan || !selectedSavings) return;
     if (selectedInstallments.length === 0) {
@@ -900,21 +914,22 @@ function SavingsDebitPanel() {
       setError('Selected total exceeds the available savings balance.');
       return;
     }
-    setSubmitting(true);
     setError(null);
-    try {
-      const result = await loanService.requestSavingsRepayment(selectedLoan.id, {
-        installment_ids: selectedInstallments.map(s => s.id),
-        savings_account_id: selectedSavings.id,
-        payment_date: paymentDate || undefined,
-        notes: notes || undefined,
-      });
-      setSubmitted(result);
-    } catch (err: any) {
-      setError(err?.detail ?? err?.message ?? 'Submission failed. Please try again.');
-    } finally {
-      setSubmitting(false);
-    }
+    requestSavingsRepaymentMutation.mutate(
+      {
+        loanId: selectedLoan.id,
+        data: {
+          installment_ids: selectedInstallments.map(s => s.id),
+          savings_account_id: selectedSavings.id,
+          payment_date: paymentDate || undefined,
+          notes: notes || undefined,
+        },
+      },
+      {
+        onSuccess: (result) => setSubmitted(result),
+        onError: (err: any) => setError(err?.detail ?? err?.message ?? 'Submission failed. Please try again.'),
+      }
+    );
   };
 
   if (submitted) {
@@ -1201,10 +1216,10 @@ function SavingsDebitPanel() {
             <div className="flex gap-3">
               <button
                 type="submit"
-                disabled={submitting || selectedInstallments.length === 0 || exceedsBalance}
+                disabled={requestSavingsRepaymentMutation.isPending || selectedInstallments.length === 0 || exceedsBalance}
                 className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
               >
-                {submitting ? <Loader2 size={14} className="animate-spin" /> : <PiggyBank size={14} />}
+                {requestSavingsRepaymentMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <PiggyBank size={14} />}
                 Submit for Approval
               </button>
               <button
@@ -1266,29 +1281,12 @@ function OfflineCollectionPanel() {
   const [locationError, setLocationError] = useState<string | null>(null);
 
   // ── submission ──
-  const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState<OfflinePaymentRecord | null>(null);
 
-  // ── history ──
-  const [history, setHistory] = useState<OfflinePaymentRecord[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  useEffect(() => {
-    loadHistory();
-  }, []);
-
-  async function loadHistory() {
-    setHistoryLoading(true);
-    try {
-      const recs = await loanService.listOfflinePayments();
-      setHistory(recs);
-    } catch {
-      // Non-critical — silently ignore
-    } finally {
-      setHistoryLoading(false);
-    }
-  }
+  // ── React Query hooks ──
+  const { data: history = [], isLoading: historyLoading, refetch: refetchHistory } = useOfflinePayments();
+  const createOfflinePaymentMutation = useCreateOfflinePayment();
 
   const doSearch = useCallback(async () => {
     if (!search.trim()) return;
@@ -1366,29 +1364,26 @@ function OfflineCollectionPanel() {
       setSubmitError('Reference / transaction ID is required for this payment mode.');
       return;
     }
-    setSubmitting(true);
     setSubmitError(null);
-    try {
-      const payload: OfflinePaymentPayload = {
-        loan: selectedLoan.id,
-        amount,
-        payment_date: paymentDate,
-        payment_mode: paymentMode,
-        bank_reference: bankReference || undefined,
-        notes: notes || undefined,
-        latitude: location?.latitude ?? null,
-        longitude: location?.longitude ?? null,
-        location_accuracy: location?.accuracy ?? null,
-        location_address: locationAddress || undefined,
-      };
-      const rec = await loanService.createOfflinePayment(payload);
-      setSubmitted(rec);
-      loadHistory();
-    } catch (err: any) {
-      setSubmitError(err?.detail ?? err?.message ?? 'Submission failed.');
-    } finally {
-      setSubmitting(false);
-    }
+    const payload: OfflinePaymentPayload = {
+      loan: selectedLoan.id,
+      amount,
+      payment_date: paymentDate,
+      payment_mode: paymentMode,
+      bank_reference: bankReference || undefined,
+      notes: notes || undefined,
+      latitude: location?.latitude ?? null,
+      longitude: location?.longitude ?? null,
+      location_accuracy: location?.accuracy ?? null,
+      location_address: locationAddress || undefined,
+    };
+    createOfflinePaymentMutation.mutate(payload, {
+      onSuccess: (rec) => {
+        setSubmitted(rec);
+        refetchHistory();
+      },
+      onError: (err: any) => setSubmitError(err?.detail ?? err?.message ?? 'Submission failed.'),
+    });
   }
 
   function resetForm() {
@@ -1727,10 +1722,10 @@ function OfflineCollectionPanel() {
           <div className="flex gap-3">
             <button
               type="submit"
-              disabled={submitting}
+              disabled={createOfflinePaymentMutation.isPending}
               className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
             >
-              {submitting ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
+              {createOfflinePaymentMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <DollarSign size={14} />}
               Submit for Approval
             </button>
             <button
@@ -1748,7 +1743,7 @@ function OfflineCollectionPanel() {
       <div className="rounded-xl bg-white shadow-sm overflow-hidden">
         <div className="flex items-center justify-between border-b px-5 py-3">
           <h3 className="text-sm font-semibold text-gray-700">My Offline Records</h3>
-          <button type="button" onClick={loadHistory} className="text-xs text-blue-600 hover:underline">Refresh</button>
+          <button type="button" onClick={() => refetchHistory()} className="text-xs text-blue-600 hover:underline">Refresh</button>
         </div>
         {historyLoading ? (
           <div className="flex items-center justify-center py-8">

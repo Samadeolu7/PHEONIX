@@ -2,11 +2,6 @@
  * Savings Product Config Page
  * Configure behaviour rules for a specific savings product.
  * Route: /savings/products/:id/config
- *
- * Sections:
- *   1. Daily Contribution Settings  — first-deposit-as-income config
- *   2. Savings Cycle Settings       — cycle length, interest rate, break penalty
- *   3. Withdrawal Controls          — manager-only, approval required
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -23,11 +18,11 @@ import {
 } from 'lucide-react';
 import { api as apiClient } from '../../api';
 import {
-  getSavingsProductConfig,
-  createSavingsProductConfig,
-  updateSavingsProductConfig,
-  SavingsProductConfig,
-} from '../../services/savingsService';
+  useSavingsProductConfig,
+  useCreateSavingsProductConfig,
+  useUpdateSavingsProductConfig,
+} from '../../hooks/useSavings';
+import type { SavingsProductConfig } from '../../services/savingsService';
 import { accountService } from '../../services/accountService';
 import { Account } from '../../types/accounts';
 
@@ -151,9 +146,6 @@ export default function SavingsProductConfigPage() {
   const navigate = useNavigate();
 
   const [productName, setProductName] = useState<string>('');
-  const [configId, setConfigId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
@@ -161,25 +153,22 @@ export default function SavingsProductConfigPage() {
   const [incomeAccounts, setIncomeAccounts] = useState<Account[]>([]);
   const [expenseAccounts, setExpenseAccounts] = useState<Account[]>([]);
 
-  // Form state — Daily Contribution
+  // Form state
+  const [configId, setConfigId] = useState<number | null>(null);
   const [isDailyContribution, setIsDailyContribution] = useState(false);
   const [firstDepositIsIncome, setFirstDepositIsIncome] = useState(false);
   const [firstDepositIncomeAccount, setFirstDepositIncomeAccount] = useState<number | null>(null);
-
-  // Form state — Savings Cycle
   const [hasSavingsCycle, setHasSavingsCycle] = useState(false);
   const [cycleLengthMonths, setCycleLengthMonths] = useState<string>('3');
   const [cycleInterestRate, setCycleInterestRate] = useState<string>('0');
   const [cycleBreakPenaltyRate, setCycleBreakPenaltyRate] = useState<string>('0');
   const [cycleAutoRenew, setCycleAutoRenew] = useState(true);
-
-  // Form state — GL Accounts
   const [interestExpenseAccount, setInterestExpenseAccount] = useState<number | null>(null);
   const [penaltyIncomeAccount, setPenaltyIncomeAccount] = useState<number | null>(null);
-
-  // Form state — Withdrawal Controls
   const [withdrawalNeedsApproval, setWithdrawalNeedsApproval] = useState(true);
   const [onlyAccountManagerCanWithdraw, setOnlyAccountManagerCanWithdraw] = useState(true);
+
+  const [configLoading, setConfigLoading] = useState(true);
 
   // Load GL accounts
   useEffect(() => {
@@ -199,10 +188,10 @@ export default function SavingsProductConfigPage() {
   }, [productId]);
 
   const loadConfig = useCallback(async () => {
-    setLoading(true);
+    setConfigLoading(true);
     setError(null);
     try {
-      const configs = await getSavingsProductConfig(productId);
+      const configs = await import('../../services/savingsService').then(m => m.getSavingsProductConfig(productId));
       const cfg: SavingsProductConfig | undefined = Array.isArray(configs) ? configs[0] : undefined;
       if (cfg) {
         setConfigId(cfg.id);
@@ -220,20 +209,43 @@ export default function SavingsProductConfigPage() {
         setOnlyAccountManagerCanWithdraw(cfg.only_account_manager_can_withdraw);
       }
     } catch (e: any) {
-      // 404 is fine — config doesn't exist yet
       if (e?.status !== 404) {
         setError(e?.message ?? 'Failed to load configuration.');
       }
     } finally {
-      setLoading(false);
+      setConfigLoading(false);
     }
   }, [productId]);
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
 
-  const handleSave = async (e: React.FormEvent) => {
+  const createConfigMutation = useCreateSavingsProductConfig({
+    onSuccess: (created) => {
+      setConfigId(created.id);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    },
+    onError: (e) => {
+      const detail = e?.details ?? e?.message ?? 'Failed to save configuration.';
+      setError(typeof detail === 'object' ? JSON.stringify(detail) : String(detail));
+    },
+  });
+
+  const updateConfigMutation = useUpdateSavingsProductConfig({
+    onSuccess: () => {
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    },
+    onError: (e) => {
+      const detail = e?.details ?? e?.message ?? 'Failed to save configuration.';
+      setError(typeof detail === 'object' ? JSON.stringify(detail) : String(detail));
+    },
+  });
+
+  const saving = createConfigMutation.isPending || updateConfigMutation.isPending;
+
+  const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    // Validation
     if (hasSavingsCycle && !interestExpenseAccount) {
       setError('An interest expense account is required when savings cycle is enabled.');
       return;
@@ -247,38 +259,29 @@ export default function SavingsProductConfigPage() {
       return;
     }
 
-    setSaving(true);
     setError(null);
     setSuccess(false);
-    try {
-      const payload: Partial<SavingsProductConfig> = {
-        product: productId,
-        interest_expense_account: interestExpenseAccount,
-        penalty_income_account: penaltyIncomeAccount,
-        is_daily_contribution: isDailyContribution,
-        first_deposit_is_income: firstDepositIsIncome,
-        first_deposit_income_account: firstDepositIsIncome ? firstDepositIncomeAccount : null,
-        has_savings_cycle: hasSavingsCycle,
-        cycle_length_months: hasSavingsCycle ? Number(cycleLengthMonths) : null,
-        cycle_interest_rate: hasSavingsCycle ? cycleInterestRate : null,
-        cycle_break_penalty_rate: hasSavingsCycle ? cycleBreakPenaltyRate : null,
-        cycle_auto_renew: cycleAutoRenew,
-        withdrawal_needs_approval: withdrawalNeedsApproval,
-        only_account_manager_can_withdraw: onlyAccountManagerCanWithdraw,
-      };
-      if (configId) {
-        await updateSavingsProductConfig(configId, payload);
-      } else {
-        const created = await createSavingsProductConfig(payload);
-        setConfigId(created.id);
-      }
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (e: any) {
-      const detail = e?.details ?? e?.message ?? 'Failed to save configuration.';
-      setError(typeof detail === 'object' ? JSON.stringify(detail) : String(detail));
-    } finally {
-      setSaving(false);
+
+    const payload: Partial<SavingsProductConfig> = {
+      product: productId,
+      interest_expense_account: interestExpenseAccount,
+      penalty_income_account: penaltyIncomeAccount,
+      is_daily_contribution: isDailyContribution,
+      first_deposit_is_income: firstDepositIsIncome,
+      first_deposit_income_account: firstDepositIsIncome ? firstDepositIncomeAccount : null,
+      has_savings_cycle: hasSavingsCycle,
+      cycle_length_months: hasSavingsCycle ? Number(cycleLengthMonths) : null,
+      cycle_interest_rate: hasSavingsCycle ? cycleInterestRate : null,
+      cycle_break_penalty_rate: hasSavingsCycle ? cycleBreakPenaltyRate : null,
+      cycle_auto_renew: cycleAutoRenew,
+      withdrawal_needs_approval: withdrawalNeedsApproval,
+      only_account_manager_can_withdraw: onlyAccountManagerCanWithdraw,
+    };
+
+    if (configId) {
+      updateConfigMutation.mutate({ id: configId, data: payload });
+    } else {
+      createConfigMutation.mutate(payload);
     }
   };
 
@@ -302,16 +305,16 @@ export default function SavingsProductConfigPage() {
           </div>
           <button
             onClick={loadConfig}
-            disabled={loading}
+            disabled={configLoading}
             className="flex items-center gap-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${configLoading ? 'animate-spin' : ''}`} />
             Reload
           </button>
         </div>
       </div>
 
-      {loading ? (
+      {configLoading ? (
         <div className="flex items-center justify-center py-20">
           <Loader2 className="w-7 h-7 animate-spin text-blue-500" />
         </div>

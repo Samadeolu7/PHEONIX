@@ -1,11 +1,7 @@
-// src/pages/admin/TenantFormPage.tsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import {
-  tenantManagementService,
-  Tenant,
-  CreateTenantData,
-} from '../../services/tenantManagementService';
+import { CreateTenantData, tenantManagementService } from '../../services/tenantManagementService';
+import { useTenant, useCreateTenant, useUpdateTenant } from '../../hooks/useTenants';
 import { useToast } from '../../hooks/useToast';
 import { ArrowLeft, Save, Building2 } from 'lucide-react';
 
@@ -13,11 +9,14 @@ const TenantFormPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const isEditMode = Boolean(id);
-  const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [originalData, setOriginalData] = useState<CreateTenantData | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const { success, error: showError } = useToast();
+
+  const { data: tenant, isLoading: tenantLoading } = useTenant(isEditMode ? Number(id) : 0);
+  const createTenant = useCreateTenant();
+  const updateTenant = useUpdateTenant();
 
   const [formData, setFormData] = useState<CreateTenantData>({
     name: '',
@@ -31,32 +30,7 @@ const TenantFormPage: React.FC = () => {
   });
 
   useEffect(() => {
-    if (isEditMode && id) {
-      loadTenant();
-    }
-  }, [id, isEditMode]);
-
-  // Check for changes when formData updates
-  useEffect(() => {
-    if (isEditMode && originalData) {
-      const hasFormChanges = Object.keys(formData).some(key => {
-        return (
-          JSON.stringify(formData[key as keyof CreateTenantData]) !==
-          JSON.stringify(originalData[key as keyof CreateTenantData])
-        );
-      });
-      setHasChanges(hasFormChanges);
-    } else if (!isEditMode) {
-      // For create mode, check if required fields are filled
-      const requiredFieldsFilled = formData.name && formData.slug;
-      setHasChanges(Boolean(requiredFieldsFilled));
-    }
-  }, [formData, originalData, isEditMode]);
-
-  const loadTenant = async () => {
-    try {
-      setLoading(true);
-      const tenant = await tenantManagementService.getTenant(Number(id));
+    if (tenant) {
       const tenantData: CreateTenantData = {
         name: tenant.name,
         slug: tenant.slug,
@@ -69,25 +43,40 @@ const TenantFormPage: React.FC = () => {
       };
       setFormData(tenantData);
       setOriginalData(tenantData);
-    } catch (error) {
-      console.error('Error loading tenant:', error);
+    }
+  }, [tenant]);
+
+  useEffect(() => {
+    if (isEditMode && originalData) {
+      const hasFormChanges = Object.keys(formData).some(key => {
+        return (
+          JSON.stringify(formData[key as keyof CreateTenantData]) !==
+          JSON.stringify(originalData[key as keyof CreateTenantData])
+        );
+      });
+      setHasChanges(hasFormChanges);
+    } else if (!isEditMode) {
+      const requiredFieldsFilled = formData.name && formData.slug;
+      setHasChanges(Boolean(requiredFieldsFilled));
+    }
+  }, [formData, originalData, isEditMode]);
+
+  useEffect(() => {
+    if (!tenantLoading && isEditMode && !tenant) {
       showError('Failed to load tenant');
       navigate('/admin/tenants');
-    } finally {
-      setLoading(false);
     }
-  };
+  }, [tenantLoading, tenant, isEditMode, navigate, showError]);
 
   const handleInputChange = (field: keyof CreateTenantData, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
 
-    // Auto-generate slug from name if creating new tenant
     if (field === 'name' && !isEditMode) {
       const slug = value
         .toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
-        .replace(/\s+/g, '-') // Replace spaces with hyphens
-        .replace(/-+/g, '-') // Replace multiple hyphens with single
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
         .trim();
       setFormData(prev => ({ ...prev, slug }));
     }
@@ -101,7 +90,6 @@ const TenantFormPage: React.FC = () => {
       return;
     }
 
-    // Validate slug format
     const slugRegex = /^[-a-zA-Z0-9_]+$/;
     if (!slugRegex.test(formData.slug)) {
       showError('Slug can only contain letters, numbers, hyphens, and underscores');
@@ -112,10 +100,10 @@ const TenantFormPage: React.FC = () => {
       setSubmitting(true);
 
       if (isEditMode && id) {
-        await tenantManagementService.updateTenant(Number(id), formData);
+        await updateTenant.mutateAsync({ id: Number(id), data: formData });
         success('Tenant updated successfully');
       } else {
-        await tenantManagementService.createTenant(formData);
+        await createTenant.mutateAsync(formData);
         success('Tenant created successfully');
       }
 
@@ -130,7 +118,7 @@ const TenantFormPage: React.FC = () => {
 
   const domainTypeOptions = tenantManagementService.getDomainTypeOptions();
 
-  if (loading) {
+  if (tenantLoading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -200,7 +188,7 @@ const TenantFormPage: React.FC = () => {
                 required
                 maxLength={200}
                 pattern="^[-a-zA-Z0-9_]+$"
-                disabled={isEditMode} // Don't allow changing slug in edit mode
+                disabled={isEditMode}
               />
               <p className="text-sm text-gray-500 mt-1">
                 {isEditMode

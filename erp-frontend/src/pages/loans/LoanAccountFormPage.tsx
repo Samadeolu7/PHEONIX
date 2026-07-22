@@ -16,12 +16,13 @@ import {
   Info, CreditCard, Wallet, Search, X,
 } from 'lucide-react';
 import {
-  loanService, LoanProduct, CreateLoanAccountData,
+  LoanProduct, CreateLoanAccountData,
   LoanAccount, FeePreviewItem, FeeRouting, TermUnit,
 } from '../../services/loanService';
 import { clientService, Client } from '../../services/clientService';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
+import { useLoanProducts, useFeesPreview, useCreateLoan } from '../../hooks/useLoans';
 
 const REPAYMENT_FREQS = [
   { value: 'daily',   label: 'Daily' },
@@ -43,9 +44,7 @@ const TRIGGER_LABEL: Record<string, string> = {
 export default function LoanAccountFormPage() {
   const navigate = useNavigate();
 
-  const [products, setProducts] = useState<LoanProduct[]>([]);
   const [clientSavings, setClientSavings] = useState<SavingsAccount[]>([]);
-  const [loadingProducts, setLoadingProducts] = useState(true);
   const [loadingSavings, setLoadingSavings] = useState(false);
 
   // Client search combobox state
@@ -67,29 +66,24 @@ export default function LoanAccountFormPage() {
   const [applicationDate, setApplicationDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [purpose, setPurpose] = useState('');
 
-  const [feePreviews, setFeePreviews] = useState<FeePreviewItem[]>([]);
-  const [loadingFees, setLoadingFees] = useState(false);
   const [feeRouting, setFeeRouting] = useState<Record<number, { destination: 'cashier' | 'savings'; savings_account_id: number | null }>>({});
-  const feeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Optional cashier account override. The backend auto-resolves from the teller
   // session but staff can specify a different account if needed.
   const [cashierAccountId, setCashierAccountId] = useState('');
 
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [success, setSuccess] = useState(false);
 
-  const loadProducts = useCallback(async () => {
-    setLoadingProducts(true);
-    try { const data = await loanService.listProducts({ is_active: true }); setProducts(data); }
-    catch {
-      toast.error('Failed to load loan products. Please refresh the page.');
-    }
-    finally { setLoadingProducts(false); }
-  }, []);
-
-  useEffect(() => { loadProducts(); }, [loadProducts]);
+  // React Query hooks
+  const { data: products = [], isLoading: loadingProducts } = useLoanProducts({ is_active: true });
+  const pid = parseInt(productId);
+  const amt = parseFloat(requestedAmount);
+  const { data: feePreviews = [], isLoading: loadingFees } = useFeesPreview(
+    pid && !isNaN(pid) && amt && amt > 0 ? pid : 0,
+    amt && amt > 0 ? amt : 0
+  );
+  const createLoanMutation = useCreateLoan();
 
   // Debounced client search
   useEffect(() => {
@@ -130,31 +124,17 @@ export default function LoanAccountFormPage() {
       .finally(() => setLoadingSavings(false));
   }, [clientId]);
 
+  // Initialize fee routing for user_choice fees
   useEffect(() => {
-    if (feeDebounceRef.current) clearTimeout(feeDebounceRef.current);
-    const pid = parseInt(productId);
-    const amt = parseFloat(requestedAmount);
-    if (!pid || isNaN(pid) || !amt || amt <= 0) { setFeePreviews([]); return; }
-    feeDebounceRef.current = setTimeout(async () => {
-      setLoadingFees(true);
-      try {
-        const previews = await loanService.previewFees(pid, amt);
-        setFeePreviews(previews);
-        setFeeRouting(prev => {
-          const next = { ...prev };
-          previews.forEach(fee => {
-            if (fee.debit_destination === 'user_choice' && !(fee.id in next))
-              next[fee.id] = { destination: 'cashier', savings_account_id: null };
-          });
-          return next;
-        });
-      } catch {
-        setFeePreviews([]);
-        toast.error('Could not load fee preview. Fees will still apply at submission.');
-      }
-      finally { setLoadingFees(false); }
-    }, 600);
-  }, [productId, requestedAmount]);
+    setFeeRouting(prev => {
+      const next = { ...prev };
+      feePreviews.forEach(fee => {
+        if (fee.debit_destination === 'user_choice' && !(fee.id in next))
+          next[fee.id] = { destination: 'cashier', savings_account_id: null };
+      });
+      return next;
+    });
+  }, [feePreviews]);
 
   function handleProductChange(id: string) {
     setProductId(id);
@@ -222,33 +202,35 @@ export default function LoanAccountFormPage() {
       fee_routing: Object.keys(feeRoutingPayload).length ? feeRoutingPayload : undefined,
       cashier_account_id: cashierAccountId ? parseInt(cashierAccountId) : undefined,
     };
-    setSubmitting(true);
-    try {
-      const createdLoan = await loanService.createLoan(payload) as LoanAccount & { warnings?: string[] };
-      const responseWarnings = Array.isArray(createdLoan?.warnings) ? createdLoan.warnings : [];
-      if (responseWarnings.length) setWarnings(responseWarnings);
-      setSuccess(true);
-      setTimeout(() => navigate('/loans/accounts'), responseWarnings.length ? 3000 : 1500);
-    } catch (e: unknown) {
-      const data = (e as any)?.response?.data;
-      let msg: string;
-      if (data && typeof data === 'object') {
-        const fieldErrors = Object.entries(data)
-          .filter(([k]) => k !== 'detail' && k !== 'non_field_errors')
-          .map(([, v]) => (Array.isArray(v) ? v.join(', ') : String(v)))
-          .join('; ');
-        msg = data.detail
-          || (Array.isArray(data.non_field_errors) ? data.non_field_errors.join(', ') : '')
-          || fieldErrors
-          || 'Failed to submit loan application.';
-      } else if (typeof data === 'string' && data) {
-        msg = data;
-      } else {
-        msg = (e as Error)?.message || 'Failed to submit loan application.';
-      }
-      setError(msg);
-      toast.error(msg);
-    } finally { setSubmitting(false); }
+    createLoanMutation.mutate(payload, {
+      onSuccess: (createdLoan) => {
+        const loan = createdLoan as LoanAccount & { warnings?: string[] };
+        const responseWarnings = Array.isArray(loan?.warnings) ? loan.warnings : [];
+        if (responseWarnings.length) setWarnings(responseWarnings);
+        setSuccess(true);
+        setTimeout(() => navigate('/loans/accounts'), responseWarnings.length ? 3000 : 1500);
+      },
+      onError: (e: unknown) => {
+        const data = (e as any)?.response?.data;
+        let msg: string;
+        if (data && typeof data === 'object') {
+          const fieldErrors = Object.entries(data)
+            .filter(([k]) => k !== 'detail' && k !== 'non_field_errors')
+            .map(([, v]) => (Array.isArray(v) ? v.join(', ') : String(v)))
+            .join('; ');
+          msg = data.detail
+            || (Array.isArray(data.non_field_errors) ? data.non_field_errors.join(', ') : '')
+            || fieldErrors
+            || 'Failed to submit loan application.';
+        } else if (typeof data === 'string' && data) {
+          msg = data;
+        } else {
+          msg = (e as Error)?.message || 'Failed to submit loan application.';
+        }
+        setError(msg);
+        toast.error(msg);
+      },
+    });
   }
 
   if (success) {
@@ -642,9 +624,9 @@ export default function LoanAccountFormPage() {
 
           {/* Submit */}
           <div className="flex items-center gap-3">
-            <button type="submit" disabled={submitting}
+            <button type="submit" disabled={createLoanMutation.isPending}
               className="flex items-center gap-2 bg-blue-600 text-white rounded-lg px-5 py-2.5 text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50">
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Landmark className="w-4 h-4" />}
+              {createLoanMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Landmark className="w-4 h-4" />}
               Submit Application
             </button>
             <button type="button" onClick={() => navigate('/loans/accounts')}

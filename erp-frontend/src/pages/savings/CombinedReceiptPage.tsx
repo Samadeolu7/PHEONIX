@@ -26,12 +26,9 @@ import {
   X,
 } from 'lucide-react';
 import { loanService, LoanAccountList, LoanRepaymentSchedule } from '../../services/loanService';
-import {
-  getSavingsAccounts,
-  SavingsAccount,
-  depositToSavings,
-  SavingsDepositResult,
-} from '../../services/savingsService';
+import type { SavingsAccount } from '../../services/savingsService';
+import { getSavingsAccounts, depositToSavings } from '../../services/savingsService';
+import { useDepositToSavings } from '../../hooks/useSavings';
 import { BRAND } from '../../constants/brand';
 
 // ── Helpers ────────────────────────────────────────────────────────────────

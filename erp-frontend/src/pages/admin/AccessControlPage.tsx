@@ -1,6 +1,7 @@
 // src/pages/admin/AccessControlPage.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { entitlementService } from '../../services/entitlementService';
 import { userManagementService } from '../../services/userManagementService';
 import { useToast } from '../../hooks/useToast';
@@ -37,12 +38,15 @@ interface AccessControlEntry {
   restrictions: string[];
 }
 
+const accessControlKeys = {
+  all: ['accessControl'] as const,
+  entries: () => [...accessControlKeys.all, 'entries'] as const,
+};
+
 const AccessControlPage: React.FC = () => {
   const navigate = useNavigate();
   const { showError, showSuccess } = useToast();
 
-  const [accessEntries, setAccessEntries] = useState<AccessControlEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'granted' | 'denied' | 'pending'>('all');
   const [selectedEntry, setSelectedEntry] = useState<AccessControlEntry | null>(null);
@@ -58,23 +62,15 @@ const AccessControlPage: React.FC = () => {
     { code: 'transcript', name: 'Transcript Request' },
   ];
 
-  useEffect(() => {
-    loadAccessControlData();
-  }, []);
-
-  const loadAccessControlData = async () => {
-    try {
-      setLoading(true);
-
-      // In a real implementation, this would fetch from an access control API
-      // For now, we'll generate mock data based on entitlements
+  const { data: accessEntries = [], isLoading: loading, refetch } = useQuery<AccessControlEntry[]>({
+    queryKey: accessControlKeys.entries(),
+    queryFn: async () => {
       const entitlements = await entitlementService.getEntitlements({ status: 'active' });
-
       const mockEntries: AccessControlEntry[] = [];
 
       if (entitlements.results) {
-        entitlements.results.forEach((entitlement, index) => {
-          services.forEach((service, serviceIndex) => {
+        entitlements.results.forEach((entitlement) => {
+          services.forEach((service) => {
             const paymentPercentage = parseFloat(entitlement.payment_percentage);
             const requiredPercentage = entitlement.access_rules.full_access_at_percent || 100;
             const isRestricted = entitlement.access_rules.restricted_services.includes(
@@ -113,14 +109,9 @@ const AccessControlPage: React.FC = () => {
         });
       }
 
-      setAccessEntries(mockEntries);
-    } catch (error: any) {
-      console.error('Failed to load access control data:', error);
-      showError('Failed to load access control data');
-    } finally {
-      setLoading(false);
-    }
-  };
+      return mockEntries;
+    },
+  });
 
   const filteredEntries = accessEntries.filter(entry => {
     const matchesSearch =
@@ -135,25 +126,7 @@ const AccessControlPage: React.FC = () => {
 
   const handleRefreshAccess = async (entry: AccessControlEntry) => {
     try {
-      // In a real implementation, this would refresh the access check
-      const result = await entitlementService.checkServiceAccess(entry.clientId, entry.serviceCode);
-
-      // Update the entry with fresh data
-      setAccessEntries(prev =>
-        prev.map(e =>
-          e.id === entry.id
-            ? {
-                ...e,
-                status: result.can_access ? 'granted' : 'denied',
-                paymentPercentage: result.payment_percentage,
-                accessLevel: result.access_level || 'none',
-                restrictions: result.restrictions || [],
-                lastChecked: new Date().toISOString(),
-              }
-            : e
-        )
-      );
-
+      await refetch();
       showSuccess('Access status refreshed');
     } catch (error: any) {
       console.error('Failed to refresh access:', error);
@@ -265,7 +238,7 @@ const AccessControlPage: React.FC = () => {
             {/* Actions */}
             <div className="flex gap-2">
               <button
-                onClick={loadAccessControlData}
+                onClick={() => refetch()}
                 disabled={loading}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >

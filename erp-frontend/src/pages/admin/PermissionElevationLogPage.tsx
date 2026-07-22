@@ -1,16 +1,5 @@
-/**
- * pages/admin/PermissionElevationLogPage.tsx
- *
- * Immutable audit log of every action performed while a user's permission
- * was elevated above their role baseline.
- *
- * Data source: GET /api/permissions/elevation-log/
- */
-
-import React, { useState, useEffect, useCallback } from 'react';
-import { rolePermissionService } from '@/services/rolePermissionService';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
+import React, { useState } from 'react';
+import { useElevationLog } from '../../hooks/useRolePermissions';
 
 interface ElevationLogEntry {
   id: number;
@@ -28,8 +17,6 @@ interface ElevationLogEntry {
   field_changes: Record<string, { before: unknown; after: unknown }>;
   logged_at: string;
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const SCOPE_LABELS: Record<string, string> = {
   global:           'Global',
@@ -67,43 +54,40 @@ function formatDate(iso: string) {
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
-
 export default function PermissionElevationLogPage() {
-  const [entries, setEntries] = useState<ElevationLogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filterUser, setFilterUser] = useState('');
   const [filterRecordType, setFilterRecordType] = useState('');
   const [filterFrom, setFilterFrom] = useState('');
   const [filterTo, setFilterTo] = useState('');
+  const [paramsApplied, setParamsApplied] = useState<Record<string, string>>({});
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string> = {};
-      if (filterRecordType) params.record_type = filterRecordType;
-      if (filterFrom) params.from = filterFrom;
-      if (filterTo) params.to = filterTo;
-      const data = await rolePermissionService.getElevationLog(params);
-      setEntries(data as ElevationLogEntry[]);
-    } catch {
-      setEntries([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [filterRecordType, filterFrom, filterTo]);
-
-  // Auto-load on mount; manual refresh on filter apply
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const { data: entries = [], isLoading: loading } = useElevationLog(
+    Object.keys(paramsApplied).length > 0 ? paramsApplied : undefined
+  );
 
   const displayed = filterUser
-    ? entries.filter(e =>
+    ? entries.filter((e: ElevationLogEntry) =>
         (e.user_display ?? '').toLowerCase().includes(filterUser.toLowerCase())
       )
     : entries;
 
-  // Unique record types for dropdown
-  const recordTypes = Array.from(new Set(entries.map(e => e.record_type))).sort();
+  const recordTypes = Array.from(new Set(entries.map((e: ElevationLogEntry) => e.record_type))).sort();
+
+  const handleApply = () => {
+    const params: Record<string, string> = {};
+    if (filterRecordType) params.record_type = filterRecordType;
+    if (filterFrom) params.from = filterFrom;
+    if (filterTo) params.to = filterTo;
+    setParamsApplied(params);
+  };
+
+  const handleClear = () => {
+    setFilterUser('');
+    setFilterRecordType('');
+    setFilterFrom('');
+    setFilterTo('');
+    setParamsApplied({});
+  };
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -166,20 +150,14 @@ export default function PermissionElevationLogPage() {
           />
         </div>
         <button
-          onClick={load}
+          onClick={handleApply}
           className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
         >
           Apply
         </button>
         {(filterRecordType || filterFrom || filterTo || filterUser) && (
           <button
-            onClick={() => {
-              setFilterUser('');
-              setFilterRecordType('');
-              setFilterFrom('');
-              setFilterTo('');
-              load();
-            }}
+            onClick={handleClear}
             className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 text-gray-500"
           >
             Clear
@@ -221,7 +199,7 @@ export default function PermissionElevationLogPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {displayed.map(e => (
+                {displayed.map((e: ElevationLogEntry) => (
                   <tr key={e.id} className="hover:bg-amber-50/20">
                     <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
                       {formatDate(e.logged_at)}

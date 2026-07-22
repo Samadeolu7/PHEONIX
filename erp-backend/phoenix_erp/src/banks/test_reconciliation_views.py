@@ -566,9 +566,20 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         self.assertEqual(tx.matched_erp_payment_id, 42)
         self.assertEqual(tx.match_confidence, 'HIGH')
 
-        exc = ReconciliationException.objects.get(reconciliation=self.recon, bank_transaction_id=tx.id)
-        self.assertEqual(exc.exception_type, 'bank_only')
+        exc = ReconciliationException.objects.get(
+            reconciliation=self.recon, exception_type='bank_only', bank_transaction_id=tx.id,
+        )
         self.assertFalse(exc.resolved)
+
+        # unmatch() also reopens/creates the erp_only side for the ERP
+        # payment this line was wrongly matched to (get_or_create_erp_only_
+        # exception, reconciliation_utils.py) — that row carries the same
+        # bank_transaction_id for audit context, so a bare query without
+        # exception_type would ambiguously match both rows.
+        erp_exc = ReconciliationException.objects.get(
+            reconciliation=self.recon, exception_type='erp_only', loan_payment_id=42,
+        )
+        self.assertFalse(erp_exc.resolved)
 
         self.recon.refresh_from_db()
         self.assertEqual(self.recon.matched_count, 0)

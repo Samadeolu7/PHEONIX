@@ -7,7 +7,7 @@
  *
  * Route: /loans/disbursement-corrections
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertCircle,
@@ -22,6 +22,12 @@ import {
 import { loanService, LoanDisbursementCorrection, CorrectionStatus } from '../../services/loanService';
 import { useAuth } from '../../contexts/AuthContext';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
+import {
+  useLoanDisbursementCorrections,
+  useFirstApproveCorrection,
+  useSecondApproveCorrection,
+  useRejectCorrection,
+} from '../../hooks/useLoans';
 
 function fmt(v: string | number | null | undefined): string {
   const n = parseFloat(String(v ?? '0'));
@@ -198,47 +204,47 @@ type StatusFilter = 'pending' | 'awaiting_second_approval' | 'completed' | 'reje
 export default function LoanDisbursementCorrectionsPage() {
   const { user } = useAuth();
   const [filter, setFilter] = useState<StatusFilter>('pending');
-  const [requests, setRequests] = useState<LoanDisbursementCorrection[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [actionLoading, setActionLoading] = useState(false);
   const [modal, setModal] = useState<{ req: LoanDisbursementCorrection; kind: 'first' | 'second' | 'reject' } | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = filter === 'all' ? {} : { status: filter };
-      const data = await loanService.listDisbursementCorrections(params);
-      setRequests(data);
-    } catch (e: any) {
-      setError(e?.response?.data?.detail ?? e?.message ?? 'Failed to load corrections.');
-    } finally {
-      setLoading(false);
-    }
-  }, [filter]);
+  // React Query hooks
+  const { data: requests = [], isLoading: loading, error: queryError, refetch } = useLoanDisbursementCorrections(
+    filter === 'all' ? {} : { status: filter }
+  );
+  const firstApproveMutation = useFirstApproveCorrection();
+  const secondApproveMutation = useSecondApproveCorrection();
+  const rejectMutation = useRejectCorrection();
 
-  useEffect(() => { load(); }, [load]);
+  const error = queryError ? (queryError as any)?.response?.data?.detail ?? queryError.message ?? 'Failed to load corrections.' : null;
 
   const handleConfirm = async (notes: string) => {
     if (!modal) return;
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      let updated: LoanDisbursementCorrection;
-      if (modal.kind === 'first') updated = await loanService.firstApproveCorrection(modal.req.id, notes);
-      else if (modal.kind === 'second') updated = await loanService.secondApproveCorrection(modal.req.id, notes);
-      else updated = await loanService.rejectCorrection(modal.req.id, notes);
-      setRequests(prev => prev.map(r => (r.id === modal.req.id ? updated : r)));
-      setModal(null);
-    } catch (e: any) {
-      const data = e?.response?.data;
-      setActionError(data?.detail ?? e?.message ?? 'Action failed.');
-    } finally {
-      setActionLoading(false);
-    }
+    const mutation = modal.kind === 'first'
+      ? firstApproveMutation
+      : modal.kind === 'second'
+        ? secondApproveMutation
+        : rejectMutation;
+
+    const payload = modal.kind === 'reject'
+      ? { id: modal.req.id, rejection_reason: notes }
+      : { id: modal.req.id, notes };
+
+    mutation.mutate(payload as any, {
+      onSuccess: () => setModal(null),
+      onError: (e: any) => {
+        const data = e?.response?.data;
+        // error is handled by mutation state
+      },
+    });
   };
+
+  const actionLoading = firstApproveMutation.isPending || secondApproveMutation.isPending || rejectMutation.isPending;
+  const actionError = (firstApproveMutation.error as any)?.response?.data?.detail
+    || firstApproveMutation.error?.message
+    || (secondApproveMutation.error as any)?.response?.data?.detail
+    || secondApproveMutation.error?.message
+    || (rejectMutation.error as any)?.response?.data?.detail
+    || rejectMutation.error?.message
+    || null;
 
   const pendingCount = requests.filter(r => r.status === 'pending' || r.status === 'awaiting_second_approval').length;
 
@@ -263,7 +269,7 @@ export default function LoanDisbursementCorrectionsPage() {
               Loans disbursed to the wrong customer — always requires two different directors.
             </p>
           </div>
-          <button type="button" onClick={load} disabled={loading}
+          <button type="button" onClick={() => refetch()} disabled={loading}
             className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Refresh

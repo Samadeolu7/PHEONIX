@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CheckCircle,
@@ -15,16 +15,18 @@ import {
 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { useApprovalGuard } from '../hooks/useApprovalGuard';
-import { incomeFeeStructureService, FeeStructure } from '../services/incomeFeeStructureService';
+import { FeeStructure } from '../services/incomeFeeStructureService';
+import {
+  useIncomeFeeStructures,
+  useApproveFeeStructure,
+  useRejectFeeStructure,
+} from '../hooks/useIncomeFees';
 
 const FeeStructureApprovalPage: React.FC = () => {
   const navigate = useNavigate();
   const { success, error: showError } = useToast();
   const { canUserApprove } = useApprovalGuard();
 
-  const [feeStructures, setFeeStructures] = useState<FeeStructure[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [processingId, setProcessingId] = useState<number | null>(null);
   const [selectedStructure, setSelectedStructure] = useState<FeeStructure | null>(null);
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [approvalNotes, setApprovalNotes] = useState('');
@@ -36,41 +38,24 @@ const FeeStructureApprovalPage: React.FC = () => {
     search: '',
   });
 
-  useEffect(() => {
-    loadFeeStructures();
-  }, [filters]);
+  const { data, isLoading: loading } = useIncomeFeeStructures({ ordering: '-updated_at' });
+  const approveMutation = useApproveFeeStructure();
+  const rejectMutation = useRejectFeeStructure();
 
-  const loadFeeStructures = async () => {
-    try {
-      setLoading(true);
-      const response = await incomeFeeStructureService.getFeeStructures({
-        ordering: '-updated_at',
-      });
+  const allStructures = data?.results ?? [];
+  let feeStructures = allStructures;
 
-      let filtered = response.results || [];
-
-      // Filter by approval status
-      if (filters.status !== 'all') {
-        filtered = filtered.filter(fs => fs.approval_status === filters.status);
-      }
-
-      // Filter by search
-      if (filters.search) {
-        filtered = filtered.filter(
-          fs =>
-            fs.name.toLowerCase().includes(filters.search.toLowerCase()) ||
-            fs.code.toLowerCase().includes(filters.search.toLowerCase())
-        );
-      }
-
-      setFeeStructures(filtered);
-    } catch (error) {
-      console.error('Error loading fee structures:', error);
-      showError('Failed to load fee structures');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Client-side filtering
+  if (filters.status !== 'all') {
+    feeStructures = feeStructures.filter(fs => fs.approval_status === filters.status);
+  }
+  if (filters.search) {
+    feeStructures = feeStructures.filter(
+      fs =>
+        fs.name.toLowerCase().includes(filters.search.toLowerCase()) ||
+        fs.code.toLowerCase().includes(filters.search.toLowerCase())
+    );
+  }
 
   const handleApprove = async () => {
     if (!selectedStructure || !approvalNotes.trim()) {
@@ -79,18 +64,14 @@ const FeeStructureApprovalPage: React.FC = () => {
     }
 
     try {
-      setProcessingId(selectedStructure.id);
-      await incomeFeeStructureService.approveFeeStructure(selectedStructure.id, approvalNotes);
+      await approveMutation.mutateAsync({ id: selectedStructure.id, approval_notes: approvalNotes });
       success(`Fee structure "${selectedStructure.name}" approved successfully`);
       setShowApprovalModal(false);
       setApprovalNotes('');
       setSelectedStructure(null);
-      loadFeeStructures();
     } catch (error) {
       console.error('Error approving fee structure:', error);
       showError('Failed to approve fee structure');
-    } finally {
-      setProcessingId(null);
     }
   };
 
@@ -101,18 +82,14 @@ const FeeStructureApprovalPage: React.FC = () => {
     }
 
     try {
-      setProcessingId(selectedStructure.id);
-      await incomeFeeStructureService.rejectFeeStructure(selectedStructure.id, rejectReason);
+      await rejectMutation.mutateAsync({ id: selectedStructure.id, approval_notes: rejectReason });
       success(`Fee structure "${selectedStructure.name}" rejected`);
       setShowApprovalModal(false);
       setRejectReason('');
       setSelectedStructure(null);
-      loadFeeStructures();
     } catch (error) {
       console.error('Error rejecting fee structure:', error);
       showError('Failed to reject fee structure');
-    } finally {
-      setProcessingId(null);
     }
   };
 
@@ -296,7 +273,7 @@ const FeeStructureApprovalPage: React.FC = () => {
                   <div className="flex space-x-3 pt-4 border-t border-gray-200">
                     <button
                       onClick={() => openApprovalModal(structure, 'approve')}
-                      disabled={processingId === structure.id}
+                      disabled={approveMutation.isPending || rejectMutation.isPending}
                       className="flex-1 flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <CheckCircle className="h-4 w-4 mr-2" />
@@ -304,7 +281,7 @@ const FeeStructureApprovalPage: React.FC = () => {
                     </button>
                     <button
                       onClick={() => openApprovalModal(structure, 'reject')}
-                      disabled={processingId === structure.id}
+                      disabled={approveMutation.isPending || rejectMutation.isPending}
                       className="flex-1 flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <XCircle className="h-4 w-4 mr-2" />
@@ -380,21 +357,21 @@ const FeeStructureApprovalPage: React.FC = () => {
               <div className="flex space-x-3">
                 <button
                   onClick={() => setShowApprovalModal(false)}
-                  disabled={processingId !== null}
+                  disabled={approveMutation.isPending || rejectMutation.isPending}
                   className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={modalAction === 'approve' ? handleApprove : handleReject}
-                  disabled={processingId !== null}
+                  disabled={approveMutation.isPending || rejectMutation.isPending}
                   className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-md disabled:opacity-50 disabled:cursor-not-allowed ${
                     modalAction === 'approve'
                       ? 'bg-green-600 hover:bg-green-700'
                       : 'bg-red-600 hover:bg-red-700'
                   }`}
                 >
-                  {processingId !== null ? (
+                  {(approveMutation.isPending || rejectMutation.isPending) ? (
                     <div className="flex items-center justify-center">
                       <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2"></div>
                       Processing...

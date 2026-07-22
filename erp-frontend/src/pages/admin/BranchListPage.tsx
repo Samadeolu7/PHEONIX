@@ -1,47 +1,27 @@
-// src/pages/admin/BranchListPage.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { branchService, Branch, BranchFilters } from '../../services/branchService';
+import { BranchFilters } from '../../services/branchService';
+import { useBranches, useDeleteBranch } from '../../hooks/useBranches';
 import { useToast } from '../../hooks/useToast';
 import { Trash2, Edit, Plus, Building, Copy } from 'lucide-react';
 import CloneBranchConfigModal from '../../components/admin/CloneBranchConfigModal';
 
 const BranchListPage: React.FC = () => {
   const navigate = useNavigate();
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<BranchFilters>({});
-  const [pagination, setPagination] = useState({
-    count: 0,
-    next: null,
-    previous: null,
-    currentPage: 1,
-  });
   const [cloneModalOpen, setCloneModalOpen] = useState(false);
   const { success, error: showError } = useToast();
 
-  useEffect(() => {
-    loadBranches();
-  }, [filters]);
-
-  const loadBranches = async () => {
-    try {
-      setLoading(true);
-      const response = await branchService.getBranches(filters);
-      setBranches(response.results || []);
-      setPagination({
-        count: response.count || 0,
-        next: response.next,
-        previous: response.previous,
-        currentPage: filters.page || 1,
-      });
-    } catch (error) {
-      console.error('Error loading branches:', error);
-      showError('Failed to load branches');
-    } finally {
-      setLoading(false);
-    }
+  const { data, isLoading: loading } = useBranches(filters);
+  const branches = data?.results || [];
+  const pagination = {
+    count: data?.count || 0,
+    next: data?.next ?? null,
+    previous: data?.previous ?? null,
+    currentPage: filters.page || 1,
   };
+
+  const deleteBranch = useDeleteBranch();
 
   const handleDeleteBranch = async (branchId: number, branchName: string) => {
     if (
@@ -53,9 +33,8 @@ const BranchListPage: React.FC = () => {
     }
 
     try {
-      await branchService.deleteBranch(branchId);
+      await deleteBranch.mutateAsync(branchId);
       success('Branch deleted successfully');
-      loadBranches(); // Reload the list
     } catch (error: any) {
       console.error('Error deleting branch:', error);
       showError(error.message || 'Failed to delete branch');
@@ -66,7 +45,7 @@ const BranchListPage: React.FC = () => {
     setFilters(prev => ({
       ...prev,
       [key]: value,
-      page: 1, // Reset to first page when filtering
+      page: 1,
     }));
   };
 
@@ -229,7 +208,7 @@ const BranchListPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {branches.map(branch => (
+                  {branches.map((branch: any) => (
                     <tr key={branch.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center">

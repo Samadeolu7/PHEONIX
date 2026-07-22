@@ -6,6 +6,7 @@ import {
   FeeComponent,
   Account,
 } from '../services/incomeFeeStructureService';
+import { useSetupFeeStructure, useFeeStructureAccounts } from '../hooks/useIncomeFees';
 
 const IncomeFeeStructureSetupPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
@@ -13,6 +14,10 @@ const IncomeFeeStructureSetupPage: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [parentAccounts, setParentAccounts] = useState<Account[]>([]);
+
+  const setupMutation = useSetupFeeStructure();
+  const { data: allAccountsData } = useFeeStructureAccounts();
+  const { data: parentAccountsData } = useFeeStructureAccounts({ account_level: 'PARENT' });
 
   const [formData, setFormData] = useState<FeeStructureSetupData>({
     name: '',
@@ -37,25 +42,16 @@ const IncomeFeeStructureSetupPage: React.FC = () => {
   });
 
   useEffect(() => {
-    fetchAccounts();
-  }, []);
-
-  const fetchAccounts = async () => {
-    try {
-      // Fetch all accounts for existing account selection
-      const allAccountsResponse = await incomeFeeStructureService.getAccounts();
-      setAccounts(allAccountsResponse.results);
-
-      // Fetch parent accounts for parent selection
-      const parentAccountsResponse = await incomeFeeStructureService.getAccounts({
-        account_level: 'PARENT',
-      });
-      setParentAccounts(parentAccountsResponse.results);
-    } catch (err: any) {
-      console.error('Error fetching accounts:', err);
-      setError('Failed to load accounts');
+    if (allAccountsData?.results) {
+      setAccounts(allAccountsData.results);
     }
-  };
+  }, [allAccountsData]);
+
+  useEffect(() => {
+    if (parentAccountsData?.results) {
+      setParentAccounts(parentAccountsData.results);
+    }
+  }, [parentAccountsData]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -107,7 +103,7 @@ const IncomeFeeStructureSetupPage: React.FC = () => {
         income_account: cleanedIncomeAccount,
       };
 
-      const response = await incomeFeeStructureService.setupFeeStructure(submitData);
+      const response = await setupMutation.mutateAsync(submitData);
 
       setSuccess(`Fee structure "${response.fee_structure.name}" created successfully!`);
 
