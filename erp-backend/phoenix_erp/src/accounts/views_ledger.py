@@ -248,12 +248,40 @@ class AccountLedgerViewSet(ScopedModelViewSet):
                                     row.get('client__last_name'),
                                 )
 
-            # ── Strategy 5: FinancialAuditLog-backed events ────────────────────
-            # Loan repayments (record_payment) and savings deposits/withdrawals
-            # all log a FinancialAuditLog row with extra.journal_entry_id and
-            # extra.client_id, regardless of workflow_reference — covers LNPMT
-            # and SVDEP/SVWD series transactions that the strategies above (all
-            # incomes-app specific) never touch.
+                # ── Strategy 5: Loan interest accrual entries ─────────────────
+                # Pattern: workflow_reference = "ACCR-{loanId}-{YYYY-MM-DD}"
+                # (see internal_api.views batch_post_accruals / LoanAccrualRecord).
+                loan_id_to_tx_ids: dict = {}
+                for tx_id, wref in still_uncovered.items():
+                    if tx_id not in client_by_txn and wref:
+                        m = _re.match(r'^ACCR-(\d+)-\d{4}-\d{2}-\d{2}$', wref)
+                        if m:
+                            loan_id_to_tx_ids.setdefault(int(m.group(1)), []).append(tx_id)
+
+                if loan_id_to_tx_ids:
+                    from loans.models import LoanAccount
+                    loan_qs = (
+                        LoanAccount.objects.all_tenants()
+                        .filter(id__in=list(loan_id_to_tx_ids.keys()))
+                        .values('id', 'client__first_name', 'client__last_name')
+                    )
+                    for row in loan_qs:
+                        for tx_id in loan_id_to_tx_ids.get(row['id'], []):
+                            if tx_id not in client_by_txn:
+                                client_by_txn[tx_id] = _build_name(
+                                    row.get('client__first_name'),
+                                    row.get('client__last_name'),
+                                )
+
+            # ── Strategy 6: FinancialAuditLog-backed events ────────────────────
+            # Loan disbursements/repayments (record_payment) and savings
+            # deposits/withdrawals all log a FinancialAuditLog row with
+            # extra.journal_entry_id and extra.client_id, regardless of
+            # workflow_reference — covers DISB-, LNPMT and SVDEP/SVWD series
+            # transactions that the strategies above (all incomes-app specific)
+            # never touch. Disbursement matters here because the interest
+            # income booked at disbursement time (the default, non-deferred
+            # recognition path) shares the same journal entry/audit log row.
             final_uncovered = [tid for tid in transaction_ids if tid not in client_by_txn]
             if final_uncovered:
                 from common.models import FinancialAuditLog
@@ -261,6 +289,7 @@ class AccountLedgerViewSet(ScopedModelViewSet):
 
                 audit_qs = FinancialAuditLog.objects.filter(
                     event_type__in=[
+                        FinancialAuditLog.LOAN_DISBURSE,
                         FinancialAuditLog.LOAN_REPAY,
                         FinancialAuditLog.SAVINGS_DEPOSIT,
                         FinancialAuditLog.SAVINGS_WITHDRAW,
