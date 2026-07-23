@@ -197,6 +197,82 @@ class RunReconciliationMatchTests(TestCase):
         self.assertEqual(self.recon.matched_count, 1)
         self.assertEqual(self.recon.unmatched_bank_count, 1)
 
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_same_erp_payment_claimed_twice_in_one_response_only_first_committed(self, mock_post, mock_fetch):
+        # Defense-in-depth: even within a single Java response, the same
+        # erpPaymentId must never be committed as a match on two different
+        # bank lines. The second is demoted to a bank_only/erp_only
+        # exception pair instead of silently double-claiming.
+        other_tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='REF2', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('5000.00'), narration='Test credit 2',
+        )
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 2, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(self.tx.id), 'erpPaymentId': 101,
+                 'confidence': 'HIGH', 'direction': 'CREDIT'},
+                {'bankTransactionId': str(other_tx.id), 'erpPaymentId': 101,
+                 'confidence': 'HIGH', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+
+        with self.assertLogs('banks.tasks', level='WARNING'):
+            run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.tx.refresh_from_db()
+        other_tx.refresh_from_db()
+        self.assertTrue(self.tx.matched)
+        self.assertEqual(self.tx.matched_erp_payment_id, 101)
+        self.assertFalse(other_tx.matched)
+        self.assertIsNone(other_tx.matched_erp_payment_id)
+
+        bank_exc = ReconciliationException.objects.get(
+            reconciliation=self.recon, exception_type='bank_only', bank_transaction_id=other_tx.id,
+        )
+        self.assertFalse(bank_exc.resolved)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_erp_payment_already_claimed_by_another_run_is_not_double_claimed(self, mock_post, mock_fetch):
+        # The race actually seen in production: a DIFFERENT reconciliation's
+        # overlapping window already committed payment 101 to some other
+        # bank line before this run's own Java call returns. This run must
+        # not also commit it — the already_matched_erp_ids exclusion (built
+        # before the ~90s HTTP call) is only a stale snapshot and can't see
+        # that claim, so the persist-time recheck is what actually catches it.
+        already_claimed_tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='ALREADY', value_date='2026-07-03',
+            direction='CREDIT', amount=Decimal('5000.00'), narration='claimed elsewhere',
+            matched=True, matched_erp_payment_id=101, match_confidence='HIGH',
+        )
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 1, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(self.tx.id), 'erpPaymentId': 101,
+                 'confidence': 'HIGH', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+
+        with self.assertLogs('banks.tasks', level='WARNING'):
+            run_reconciliation_match(self.recon.id, include_debits=False)
+
+        self.tx.refresh_from_db()
+        already_claimed_tx.refresh_from_db()
+        self.assertFalse(self.tx.matched)
+        self.assertIsNone(self.tx.matched_erp_payment_id)
+        # The pre-existing claim is left completely untouched.
+        self.assertTrue(already_claimed_tx.matched)
+        self.assertEqual(already_claimed_tx.matched_erp_payment_id, 101)
+
+        bank_exc = ReconciliationException.objects.get(
+            reconciliation=self.recon, exception_type='bank_only', bank_transaction_id=self.tx.id,
+        )
+        self.assertFalse(bank_exc.resolved)
+
     @patch('banks.reconciliation_utils.fetch_erp_payments')
     @patch('banks.tasks.http_requests.post')
     def test_match_captures_officer_reference_compliance_and_posting_lag(self, mock_post, mock_fetch):

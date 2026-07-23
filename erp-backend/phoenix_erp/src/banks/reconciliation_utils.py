@@ -76,6 +76,66 @@ def reference_mismatches_bank_line(tx, payment):
     return embedded_ref.upper() not in haystack
 
 
+def reference_confirms_bank_line(tx, payment):
+    """
+    True only when `payment` has an explicit embedded bank reference AND
+    that reference actually appears in `tx`'s own bank_ref/narration — a
+    positive confirmation, not merely the absence of a contradiction (see
+    reference_mismatches_bank_line, which returns False in both the
+    "confirmed" and "nothing to check" cases). Used to pick the genuinely
+    correct claimant out of a group of bank lines all pointing at the same
+    ERP payment (find_duplicate_claimed_payments /
+    unmatch_duplicate_claimed_payments) — an absent reference can't settle
+    which of several claimants is right, so this only counts a real match.
+    """
+    embedded_ref = extract_embedded_reference(payment.description)
+    if not embedded_ref:
+        return False
+    haystack = f'{tx.bank_ref or ""} {tx.narration or ""}'.upper()
+    return embedded_ref.upper() in haystack
+
+
+def find_duplicate_claimed_payments():
+    """
+    Returns {payment_id: [ReconciliationBankTransaction, ...]} for every ERP
+    payment currently claimed (matched=True, matched_erp_payment_id set) by
+    more than one bank line at once — structurally impossible under one-to-
+    one matching, yet possible in practice because matched_erp_payment_id is
+    a plain IntegerField with no DB-level uniqueness guard, and
+    run_reconciliation_match's locking only covers the DailyReconciliation
+    row itself, not the ERP payment side (see banks/tasks.py's persist-time
+    race guard, added after this was confirmed live: 21 payments each
+    claimed by 2-3 different bank lines simultaneously).
+    """
+    from collections import defaultdict
+
+    from django.db.models import Count
+
+    from .models import ReconciliationBankTransaction
+
+    dupe_ids = (
+        ReconciliationBankTransaction.objects.filter(
+            matched=True, matched_erp_payment_id__isnull=False,
+        )
+        .values('matched_erp_payment_id')
+        .annotate(n=Count('id'))
+        .filter(n__gt=1)
+        .values_list('matched_erp_payment_id', flat=True)
+    )
+    dupe_ids = list(dupe_ids)
+    if not dupe_ids:
+        return {}
+
+    groups = defaultdict(list)
+    for tx in (
+        ReconciliationBankTransaction.objects.filter(
+            matched=True, matched_erp_payment_id__in=dupe_ids,
+        ).select_related('bank_account').order_by('value_date')
+    ):
+        groups[tx.matched_erp_payment_id].append(tx)
+    return dict(groups)
+
+
 def claimed_payment_visible_in_trace(tx):
     """
     True if tx.matched_erp_payment_id points to a Transaction that would

@@ -306,6 +306,62 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
                 "treating as unmatched instead of committing.",
                 recon.id, AUTO_MATCH_MIN_CONFIDENCE, m.get('bankTransactionId'),
             )
+
+    # --- guard against the same ERP payment being claimed twice ---
+    # Two independent hazards, both closed by the same check: (1) Java
+    # itself could in principle return the same erpPaymentId against two
+    # different bank transactions in one response, and (2) a DIFFERENT task
+    # run — a different reconciliation_date's overlapping ±window_days on
+    # the same bank_account — may have committed a match against this exact
+    # erpPaymentId while THIS run's own ~90s Java HTTP call was still in
+    # flight. already_matched_erp_ids (built before that call) is only a
+    # snapshot taken before the race window opens, so it cannot see a claim
+    # made during it. Confirmed live in production: 21 ERP payments each
+    # simultaneously matched=True on 2-3 different bank lines. Anything
+    # caught here is demoted to the same manual-review path as a
+    # low-confidence guess rather than silently committed as a second
+    # claim — a director resolves the conflict by hand instead of the data
+    # going wrong invisibly. This narrows the race window from ~90s of HTTP
+    # latency down to a single DB round trip; the migration adding a
+    # partial unique index on matched_erp_payment_id WHERE matched=true is
+    # the last-resort guarantee for the residual window.
+    claimed_this_batch = set()
+    deduped_matches = []
+    for m in matches_data:
+        erp_id = m.get('erpPaymentId')
+        if erp_id in claimed_this_batch:
+            logger.warning(
+                "run_reconciliation_match: recon %s — Java returned erpPaymentId %s "
+                "for more than one bank transaction in the same response; keeping "
+                "only the first, demoting the rest to manual review.",
+                recon.id, erp_id,
+            )
+            low_confidence_matches.append(m)
+            continue
+        claimed_this_batch.add(erp_id)
+        deduped_matches.append(m)
+    matches_data = deduped_matches
+
+    if matches_data:
+        already_claimed_elsewhere = set(
+            ReconciliationBankTransaction.objects.filter(
+                matched=True, matched_erp_payment_id__in=claimed_this_batch,
+            ).values_list('matched_erp_payment_id', flat=True)
+        )
+        if already_claimed_elsewhere:
+            logger.warning(
+                "run_reconciliation_match: recon %s — %d ERP payment(s) already "
+                "claimed by another matched bank line (cross-run race), demoting "
+                "to manual review instead of double-claiming: %s",
+                recon.id, len(already_claimed_elsewhere), sorted(already_claimed_elsewhere),
+            )
+            low_confidence_matches.extend(
+                m for m in matches_data if m.get('erpPaymentId') in already_claimed_elsewhere
+            )
+            matches_data = [
+                m for m in matches_data if m.get('erpPaymentId') not in already_claimed_elsewhere
+            ]
+
     matched_txs = []
     if matches_data:
         match_by_id = {m['bankTransactionId']: m for m in matches_data}
