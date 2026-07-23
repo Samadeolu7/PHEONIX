@@ -173,6 +173,49 @@ def _bank_line_reference_token_in_erp_text(tx, erp_text):
     return any(t in haystack for t in tokens)
 
 
+def narration_relationship(bank_text, erp_text):
+    """
+    Tri-state read on whether two pieces of free text (a bank line's own
+    narration and an ERP payment's narration/description — NOT restricted
+    to an embedded "| Ref:" segment, unlike the stricter helpers above)
+    look like the same real-world event, for callers that want a soft
+    preference/safety-net rather than a hard verification gate:
+
+      'CONFIRMED'    — they share a meaningful word or a digit-dominant id
+                       token (positive evidence of correspondence).
+      'CONTRADICTED' — both sides have at least one meaningful word, and
+                       they share NONE at all — positive evidence they
+                       name two different things (e.g. bank narration says
+                       "KAFILAT A", payment narration says "MARVELLOU" —
+                       different customers, different transactions).
+      'NEUTRAL'      — not enough distinguishing text on one or both sides
+                       to say anything either way (e.g. one side is blank,
+                       or all its words are structural boilerplate).
+
+    Built for bulk_match_by_amount_and_date: an amount+date-only bulk
+    match is deliberately allowed to proceed on a NEUTRAL pair (that's the
+    whole point of the tool), but a CONTRADICTED pair — two specific,
+    named, different things — should never be silently paired just
+    because they happen to share an amount and land near each other in
+    time. Not a verification gate on its own; reuses the same word/token
+    vocabulary as reference_confirms_bank_line and
+    _bank_line_reference_token_in_erp_text so the three don't disagree
+    about what counts as a genuine signal.
+    """
+    bank_norm = _normalized_for_reference_compare(bank_text)
+    erp_norm = _normalized_for_reference_compare(erp_text)
+    bank_words = {w for w in _REF_WORD_RE.findall(bank_norm) if w not in _REF_STRUCTURAL_TOKENS}
+    erp_words = {w for w in _REF_WORD_RE.findall(erp_norm) if w not in _REF_STRUCTURAL_TOKENS}
+    bank_tokens = _long_tokens(bank_text)
+    erp_tokens = _long_tokens(erp_text)
+
+    if (bank_words & erp_words) or (bank_tokens & erp_tokens):
+        return 'CONFIRMED'
+    if bank_words and erp_words:
+        return 'CONTRADICTED'
+    return 'NEUTRAL'
+
+
 def match_is_reference_and_amount_verified(tx, payment):
     """
     The director's auto-match acceptance policy, checkable after the fact:

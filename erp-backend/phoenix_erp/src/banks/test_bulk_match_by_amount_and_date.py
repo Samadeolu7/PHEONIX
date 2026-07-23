@@ -14,9 +14,48 @@ from django.test import TestCase
 
 from accounts.models import Account
 from banks.models import Bank, BankAccount, DailyReconciliation, ReconciliationBankTransaction, ReconciliationException
+from banks.reconciliation_utils import narration_relationship
 from transactions.models import Transaction, TransactionEntry, TransactionSeries
 
 User = get_user_model()
+
+
+class NarrationRelationshipTests(TestCase):
+    """Direct unit tests for the tri-state primitive bulk_match_by_amount_and_date relies on."""
+
+    def test_shared_meaningful_word_is_confirmed(self):
+        self.assertEqual(
+            narration_relationship('CPWInward:.../KAFILAT A', 'Loan repayment | Ref: KAFILAT abdulrazak'),
+            'CONFIRMED',
+        )
+
+    def test_shared_long_digit_token_is_confirmed(self):
+        self.assertEqual(
+            narration_relationship(
+                'FIP CHARGES Ref002278932824',
+                'Bank Payment: EXP-2026-000018 - FIP CHARGES Ref002278932824',
+            ),
+            'CONFIRMED',
+        )
+
+    def test_two_different_named_customers_is_contradicted(self):
+        self.assertEqual(
+            narration_relationship(
+                'CPWInward:100004260716190817165549851580/KAFILAT A',
+                'Loan repayment – LN-20260706-892715 | Ref: CPWInward:100004260723070805166115964890/MARVELLOU',
+            ),
+            'CONTRADICTED',
+        )
+
+    def test_generic_boilerplate_only_is_neutral(self):
+        self.assertEqual(
+            narration_relationship('Transfer from Krystar customer', 'Transfer: Krystar payment received'),
+            'NEUTRAL',
+        )
+
+    def test_blank_side_is_neutral(self):
+        self.assertEqual(narration_relationship('', 'Loan repayment – LN-1 | Ref: something'), 'NEUTRAL')
+        self.assertEqual(narration_relationship('CPWInward:.../SOMEONE', ''), 'NEUTRAL')
 
 
 class BulkMatchByAmountAndDateTests(TestCase):
@@ -162,6 +201,53 @@ class BulkMatchByAmountAndDateTests(TestCase):
         other_line.refresh_from_db()
         self.assertFalse(line.matched)  # different account than the one scoped, untouched
         self.assertFalse(other_line.matched)  # no ERP payment on ITS account, so no pair either
+
+    def test_contradicted_narration_is_never_paired_even_as_only_option(self):
+        # The exact live case: a bank line clearly naming one customer and
+        # the only same-amount ERP payment clearly naming a DIFFERENT one
+        # — nearest-date alone would have paired them (nothing else at
+        # this amount), but the narration conflict must block it.
+        self._payment(
+            Decimal('4000.00'), date(2026, 7, 23),
+            description='Loan repayment – LN-20260706-892715 | Ref: CPWInward:100004260723070805166115964890/MARVELLOU',
+        )
+        line = self._line(
+            'KAFILAT-1', Decimal('4000.00'), date(2026, 7, 16),
+            narration='CPWInward:100004260716190817165549851580/KAFILAT A Ref100229919329',
+        )
+
+        output = self._run(start_date='2026-07-01', end_date='2026-07-25', apply=True)
+
+        line.refresh_from_db()
+        self.assertFalse(line.matched)
+        self.assertIn('SKIPPED (narration conflict)', output)
+        self.assertIn('Matched 0', output)
+
+    def test_confirmed_narration_preferred_over_closer_neutral_date(self):
+        # Two same-amount ERP payments: one is CLOSER in date but shares no
+        # narration text with the bank line at all (neutral, generic
+        # "unrelated" text), the other is FARTHER in date but its
+        # narration genuinely corresponds. The referenced one must win
+        # even though it's not the nearest date.
+        far_but_confirmed = self._payment(
+            Decimal('5000.00'), date(2026, 7, 10),
+            description='Transfer: OLUWASEUN BABATUNDE',
+        )
+        near_but_neutral = self._payment(
+            Decimal('5000.00'), date(2026, 7, 6),
+            description='Transfer: generic entry, no matching detail',
+        )
+        line = self._line(
+            'PREF-1', Decimal('5000.00'), date(2026, 7, 5),
+            narration='Transfer from OLUWASEUN BABATUNDE',
+        )
+
+        self._run(start_date='2026-07-01', end_date='2026-07-18', apply=True)
+
+        line.refresh_from_db()
+        self.assertTrue(line.matched)
+        self.assertEqual(line.matched_erp_payment_id, far_but_confirmed.id)
+        near_but_neutral  # the farther-in-time but unconfirmed candidate correctly loses
 
     def test_already_matched_payment_is_never_reused(self):
         payment = self._payment(Decimal('9000.00'), date(2026, 7, 5))

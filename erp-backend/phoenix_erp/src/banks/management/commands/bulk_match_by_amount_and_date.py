@@ -79,7 +79,12 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from banks.models import BankAccount, DailyReconciliation, ReconciliationBankTransaction, ReconciliationException
-        from banks.reconciliation_utils import _BANK_REFERENCE_RE, fetch_erp_payments, recompute_reconciliation_counts
+        from banks.reconciliation_utils import (
+            _BANK_REFERENCE_RE,
+            fetch_erp_payments,
+            narration_relationship,
+            recompute_reconciliation_counts,
+        )
         from django.utils import timezone
         from transactions.models import Transaction
 
@@ -167,7 +172,7 @@ class Command(BaseCommand):
                     if not bank_group or not erp_group:
                         continue  # only on one side — nothing to pair, reported above
 
-                    pairs = self._nearest_date_pairs(bank_group, erp_group)
+                    pairs, contradicted = self._best_pairs(bank_group, erp_group, narration_relationship)
                     for tx, payment in pairs:
                         self.stdout.write(
                             f'    {"[DRY RUN] " if not apply_changes else ""}'
@@ -185,6 +190,21 @@ class Command(BaseCommand):
                         )
                         if recon_id:
                             touched_recon_ids.add(recon_id)
+
+                    # `contradicted` is the full remaining cross-product after
+                    # pairing stopped early (every combination among what's
+                    # left looked like a conflict) — purely informational,
+                    # not additional items to subtract: `pairs` is the only
+                    # thing that actually consumes bank lines/payments, so
+                    # the leftover counts below are still just bank_group/
+                    # erp_group minus what got paired.
+                    for tx, payment in contradicted:
+                        self.stdout.write(self.style.ERROR(
+                            f'    SKIPPED (narration conflict) tx={tx.id} ({tx.value_date}, '
+                            f'{tx.narration[:50]!r}) vs payment {payment["paymentId"]} '
+                            f'({payment["paymentDate"]}, {(payment.get("narration") or "")[:50]!r}) '
+                            f'— looks like a different customer/transaction, needs a human.'
+                        ))
 
                     leftover_bank = len(bank_group) - len(pairs)
                     leftover_erp = len(erp_group) - len(pairs)
@@ -211,32 +231,67 @@ class Command(BaseCommand):
                 )
 
     @staticmethod
-    def _nearest_date_pairs(bank_group, erp_group):
+    def _best_pairs(bank_group, erp_group, narration_relationship):
         """
-        Greedy nearest-date bipartite pairing within one amount bucket:
-        repeatedly takes the (bank line, ERP payment) combination with the
-        smallest remaining date difference, assigns it, removes both sides,
-        and repeats until either pool is exhausted. Good enough for the
-        small per-amount buckets a single reconciliation period produces —
-        not claiming global-optimal assignment, just "closest available."
+        Greedy bipartite pairing within one amount bucket — checks
+        reference/narration correspondence to an extent (narration_
+        relationship, reconciliation_utils.py) as a soft preference and
+        safety net layered on top of the amount+date-only policy this
+        tool otherwise runs on:
+
+          - CONFIRMED pairs (share a meaningful word or id token) are
+            preferred over NEUTRAL ones at any date distance — a genuine
+            textual match beats a merely-closer-in-time coincidence.
+          - NEUTRAL pairs (not enough distinguishing text either way) fall
+            back to nearest-date, same as before — this is the actual
+            "cheat" the tool exists for when there's no information to
+            go on.
+          - CONTRADICTED pairs (both sides name something specific, and
+            they don't overlap at all — e.g. "KAFILAT A" vs "MARVELLOU")
+            are NEVER eligible to be chosen, even as a last resort. Found
+            live: a bank line whose real counterpart was a split entry not
+            present in this amount bucket at all got nearest-date-paired
+            with a completely unrelated customer's loan payment purely
+            because it was the only same-amount option available.
+
+        Returns (pairs, contradicted) — pairs is what actually got
+        assigned; contradicted is every remaining (bank, erp) combination
+        left over once assignment stopped because nothing eligible
+        remained, purely for reporting (not additional consumed items —
+        see the caller).
         """
         remaining_bank = list(bank_group)
         remaining_erp = list(erp_group)
         pairs = []
+        rank = {'CONFIRMED': 0, 'NEUTRAL': 1}
+
         while remaining_bank and remaining_erp:
             best = None
-            best_diff = None
+            best_key = None
             for tx in remaining_bank:
                 for payment in remaining_erp:
+                    relationship = narration_relationship(
+                        f'{tx.bank_ref or ""} {tx.narration or ""}',
+                        payment.get('narration') or '',
+                    )
+                    if relationship == 'CONTRADICTED':
+                        continue
                     erp_date = date_cls.fromisoformat(payment['paymentDate'])
                     diff = abs((tx.value_date - erp_date).days)
-                    if best_diff is None or diff < best_diff:
-                        best_diff = diff
+                    key = (rank[relationship], diff)
+                    if best_key is None or key < best_key:
+                        best_key = key
                         best = (tx, payment)
+            if best is None:
+                break  # every remaining combination is CONTRADICTED
             pairs.append(best)
             remaining_bank.remove(best[0])
             remaining_erp.remove(best[1])
-        return pairs
+
+        contradicted = [
+            (tx, payment) for tx in remaining_bank for payment in remaining_erp
+        ] if remaining_bank and remaining_erp else []
+        return pairs, contradicted
 
     @staticmethod
     def _commit_match(tx, payment, now, start, end, Transaction, ReconciliationException, DailyReconciliation,
