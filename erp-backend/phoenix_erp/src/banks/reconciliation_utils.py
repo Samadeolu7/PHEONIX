@@ -19,6 +19,18 @@ from .tasks import run_reconciliation_match
 _LOAN_NUMBER_RE = re.compile(r'Loan repayment\s*[–-]\s*([^|]+)')
 _BANK_REFERENCE_RE = re.compile(r'\|\s*Ref:\s*(.+)$')
 
+# Tokens this short ("FIP", "CHARGES", "Transfer") recur across dozens of
+# unrelated transactions and would make every same-amount coincidence look
+# like a match — 8+ chars is long enough to only really match on an actual
+# shared transaction id / reference number (mirrors Bank-Recon's own
+# BankReferenceMatcher.TOKEN, minus its 5-char floor, which is too loose for
+# this narration-vs-narration comparison rather than reference-vs-narration).
+_LONG_TOKEN_RE = re.compile(r'[A-Za-z0-9]{8,}')
+
+
+def _long_tokens(text):
+    return {t.upper() for t in _LONG_TOKEN_RE.findall(text or '')}
+
 
 def extract_embedded_reference(description):
     """
@@ -48,6 +60,43 @@ def reference_mismatches_bank_line(tx, payment):
         return False
     haystack = f'{tx.bank_ref or ""} {tx.narration or ""}'.upper()
     return embedded_ref.upper() not in haystack
+
+
+def claimed_payment_visible_in_trace(tx):
+    """
+    True if tx.matched_erp_payment_id points to a Transaction that would
+    actually appear in PaymentTraceView's own "payments" search (banks/
+    views.py) for tx's own amount — i.e. approved, not deleted, with an
+    entry on tx's bank account's GL account AND an entry equal to tx.amount.
+
+    This is the precise, general (non-search-specific) replica of what
+    Payment Trace's frontend actually checks (PaymentTracePage.tsx's
+    unattachedLines filter: !line.matched_erp_payment_id ||
+    !paymentIds.has(line.matched_erp_payment_id)) — a currently matched=True
+    line whose claim fails this predicate is exactly the "double blocking"
+    shape spotted live: it shows as Matched, yet also surfaces under
+    Payment Trace's own Unattached Statement Lines panel for any search on
+    its amount, because the payment it claims would never come back from
+    that search itself. Since matched_erp_payment_id is a plain IntegerField
+    (not a real FK — nothing clears it automatically), the most likely
+    cause is the claimed Transaction having since been corrected/deleted/
+    unapproved while the stale reference on the bank line was never
+    updated.
+
+    Returns True (visible — not disqualified) when there's no
+    matched_erp_payment_id at all, since there's nothing to check.
+    """
+    from transactions.models import Transaction
+
+    if tx.matched_erp_payment_id is None:
+        return True
+    gl_account_id = tx.bank_account.gl_account_id
+    if not gl_account_id:
+        return True  # nothing to check against — never flag on a data gap
+    return Transaction.objects.filter(
+        id=tx.matched_erp_payment_id, approved=True, is_deleted=False,
+        entries__account_id=gl_account_id,
+    ).filter(entries__amount=tx.amount).exists()
 
 # Applies to the three mandatory-reason fields introduced alongside the
 # resolve-flexibility features: ResolveExceptionView's resolution_notes
@@ -628,6 +677,20 @@ def find_occupied_erp_candidates(tx, window_days=None):
     confirm_unambiguous_ghost_matches) needs the exclusion to stay accurate
     about what Java would actually be offered.
 
+    Same amount alone is far too weak a filter once there's any volume of
+    recurring identical-amount transactions (daily bank charges, round-
+    number thrift contributions) — confirmed live: a single ₦2,000 line
+    "conflicted" with 29 completely unrelated payments. Results are
+    therefore additionally required to share a long (8+ char) alphanumeric
+    token between tx's own narration and the candidate payment's narration/
+    embedded reference — in practice, an actual shared transaction id or
+    name fragment, not a coincidental amount. This mirrors why Bank-Recon's
+    own BankReferenceMatcher treats a verbatim reference hit as authoritative
+    over amount+date (see MatchScorer.java): a short shared word ("FIP",
+    "CHARGES", "Transfer") recurs across dozens of unrelated rows and proves
+    nothing, but a matching transaction-id-length token essentially never
+    collides by chance.
+
     Returns a list of (payment_dict, occupying_tx) tuples — occupying_tx is
     the ReconciliationBankTransaction currently holding that payment, so a
     human can judge whether ITS match is the wrong one and should be freed
@@ -664,11 +727,16 @@ def find_occupied_erp_candidates(tx, window_days=None):
         ).exclude(pk=tx.pk)
     }
 
-    return [
-        (p, occupying_txs[p['paymentId']])
-        for p in same_amount
-        if p['paymentId'] in occupying_txs
-    ]
+    tx_tokens = _long_tokens(tx.narration) | _long_tokens(tx.bank_ref)
+
+    results = []
+    for p in same_amount:
+        if p['paymentId'] not in occupying_txs:
+            continue
+        payment_tokens = _long_tokens(p.get('narration')) | _long_tokens(p.get('bankReference'))
+        if tx_tokens & payment_tokens:
+            results.append((p, occupying_txs[p['paymentId']]))
+    return results
 
 
 def recompute_reconciliation_counts(recon):

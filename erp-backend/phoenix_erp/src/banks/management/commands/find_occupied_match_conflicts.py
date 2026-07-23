@@ -27,9 +27,16 @@ then the freed payment becomes a normal link candidate for the correct
 line (re-run audit_unattached_statement_lines or confirm_unambiguous_
 ghost_matches to pick it up).
 
+Candidates are only reported when tx's own narration shares a long (8+
+char) token with the candidate payment's narration/reference — see
+find_occupied_erp_candidates (reconciliation_utils.py) for why same-amount
+alone is far too weak a filter once there's any volume of recurring
+identical-amount transactions.
+
 Usage:
     python manage.py find_occupied_match_conflicts
     python manage.py find_occupied_match_conflicts --bank-account=3
+    python manage.py find_occupied_match_conflicts --days=5
 """
 from __future__ import annotations
 
@@ -40,7 +47,8 @@ class Command(BaseCommand):
     help = (
         "Reports unattached bank lines whose true-candidate ERP payment is "
         "currently held by a different bank transaction, so it never shows "
-        "up as a link candidate. Read-only."
+        "up as a link candidate. Candidates require a genuinely shared "
+        "reference token, not just a matching amount. Read-only."
     )
 
     def add_arguments(self, parser):
@@ -48,16 +56,26 @@ class Command(BaseCommand):
             '--bank-account', type=int, default=None,
             help='Restrict to a single BankAccount id.',
         )
+        parser.add_argument(
+            '--days', type=int, default=None,
+            help='Only consider bank lines with value_date in the last N days.',
+        )
 
     def handle(self, *args, **options):
         from banks.models import ReconciliationBankTransaction
         from banks.reconciliation_utils import find_occupied_erp_candidates
 
         bank_account_id = options['bank_account']
+        days = options['days']
 
         qs = ReconciliationBankTransaction.objects.filter(matched=False)
         if bank_account_id:
             qs = qs.filter(bank_account_id=bank_account_id)
+        if days is not None:
+            from datetime import timedelta
+
+            from django.utils import timezone
+            qs = qs.filter(value_date__gte=timezone.now().date() - timedelta(days=days))
         qs = qs.select_related('bank_account').order_by('value_date')
 
         lines = list(qs)

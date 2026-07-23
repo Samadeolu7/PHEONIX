@@ -34,9 +34,9 @@ class FindOccupiedMatchConflictsTests(TestCase):
         )
         self.series = TransactionSeries.objects.create(code='OT', description='Occupied test series')
 
-    def _make_erp_payment(self, amount, txn_date):
+    def _make_erp_payment(self, amount, txn_date, description='Transfer: occupied test'):
         txn = Transaction.objects.create(
-            series=self.series, date=txn_date, description='Transfer: occupied test',
+            series=self.series, date=txn_date, description=description,
             owner=self.user, created_by=self.user, approved=True,
         )
         TransactionEntry.objects.create(
@@ -49,8 +49,14 @@ class FindOccupiedMatchConflictsTests(TestCase):
         call_command('find_occupied_match_conflicts', stdout=out, **options)
         return out.getvalue()
 
-    def test_reports_conflict_when_candidate_is_occupied(self):
-        payment = self._make_erp_payment(Decimal('5000.00'), date(2026, 7, 2))
+    def test_reports_conflict_when_candidate_is_occupied_and_shares_a_token(self):
+        # Both sides mention the same long reference token
+        # ("CPWI100004260721ADEYINKA") — a genuine shared identifier, not
+        # just a coincidental amount.
+        payment = self._make_erp_payment(
+            Decimal('5000.00'), date(2026, 7, 2),
+            description='Loan repayment – LN-1 | Ref: CPWI100004260721ADEYINKA',
+        )
         occupying_tx = ReconciliationBankTransaction.objects.create(
             bank_account=self.bank_account, bank_ref='OCCUPYING-1', value_date='2026-07-02',
             direction='CREDIT', amount=Decimal('5000.00'), narration='wrong holder',
@@ -58,7 +64,8 @@ class FindOccupiedMatchConflictsTests(TestCase):
         )
         unattached_tx = ReconciliationBankTransaction.objects.create(
             bank_account=self.bank_account, bank_ref='NEEDS-IT-1', value_date='2026-07-01',
-            direction='CREDIT', amount=Decimal('5000.00'), narration='the real owner',
+            direction='CREDIT', amount=Decimal('5000.00'),
+            narration='CPWI100004260721ADEYINKA the real owner',
             matched=False,
         )
 
@@ -75,6 +82,29 @@ class FindOccupiedMatchConflictsTests(TestCase):
         ReconciliationBankTransaction.objects.create(
             bank_account=self.bank_account, bank_ref='FREE-1', value_date='2026-07-01',
             direction='CREDIT', amount=Decimal('750.00'), narration='test', matched=False,
+        )
+
+        output = self._run()
+        self.assertIn('No occupied-candidate conflicts found', output)
+
+    def test_no_conflict_when_only_the_amount_coincides(self):
+        # Regression test for the exact noise found live: dozens of
+        # recurring same-amount transactions (bank charges, generic
+        # transfers) with nothing but the amount in common must NOT be
+        # reported — only a genuinely shared long token counts.
+        payment = self._make_erp_payment(
+            Decimal('53.75'), date(2026, 7, 6),
+            description='Bank Payment: EXP-2026-000054 - FIP CHARGES Ref002309495798',
+        )
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='CHARGE-A', value_date='2026-07-06',
+            direction='DEBIT', amount=Decimal('53.75'), narration='FIP CHARGES Ref002303803279',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='CHARGE-B', value_date='2026-07-07',
+            direction='DEBIT', amount=Decimal('53.75'), narration='FIP CHARGES Ref002314769838',
+            matched=False,
         )
 
         output = self._run()
