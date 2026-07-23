@@ -124,7 +124,13 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
           <div className="bg-gray-50 rounded-md p-3 text-sm">
             <p className="text-gray-900">
               {TYPE_LABELS[exception.exception_type]} · {exception.direction}:{' '}
-              {exception.bank_narration || exception.erp_narration || '—'}
+              {/* erp_only rows carry the last claimant bank line's narration in
+                  bank_narration (unmatch bookkeeping) — the payment's own
+                  description must win or a no-reference payment masquerades as
+                  one whose reference matches a bank line verbatim. */}
+              {exception.exception_type === 'erp_only'
+                ? exception.erp_narration || exception.bank_narration || '—'
+                : exception.bank_narration || exception.erp_narration || '—'}
             </p>
             <p className="text-gray-500 mt-1">
               {formatAmount(resolveAmount(exception))} on{' '}
@@ -182,7 +188,9 @@ export const LinkResolveModal: React.FC<LinkResolveModalProps> = ({
                             )}
                           </span>
                           <span className="block text-gray-900 mt-0.5 truncate">
-                            {c.bank_narration || c.erp_narration || '—'}
+                            {c.exception_type === 'erp_only'
+                              ? c.erp_narration || c.bank_narration || '—'
+                              : c.bank_narration || c.erp_narration || '—'}
                           </span>
                           <span className="block text-gray-500 text-xs mt-0.5">
                             {formatAmount(resolveAmount(c))} on {c.bank_date || c.erp_date}

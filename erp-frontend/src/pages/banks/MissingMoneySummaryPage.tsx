@@ -321,7 +321,9 @@ const MissingMoneySummaryPage: React.FC = () => {
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
                             <p className="text-sm text-gray-900 truncate">
-                              {exc.bank_narration || exc.erp_narration || '—'}
+                              {exc.exception_type === 'erp_only'
+                                ? exc.erp_narration || exc.bank_narration || '—'
+                                : exc.bank_narration || exc.erp_narration || '—'}
                             </p>
                             <p className="text-xs text-gray-500 mt-0.5">
                               {exc.bank_date || exc.erp_date} · {exc.direction}

@@ -431,7 +431,14 @@ const ReconciliationDetailPage: React.FC = () => {
                             )}
                           </div>
                           <p className="text-sm text-gray-900 mt-1 truncate">
-                            {exception.bank_narration || exception.erp_narration || '—'}
+                            {/* For erp_only the payment's own description must win —
+                                bank_narration on those rows is just the last claimant
+                                line's text (unmatch bookkeeping), and showing it first
+                                makes a no-reference payment masquerade as one whose
+                                reference matches a bank line verbatim. */}
+                            {exception.exception_type === 'erp_only'
+                              ? exception.erp_narration || exception.bank_narration || '—'
+                              : exception.bank_narration || exception.erp_narration || '—'}
                           </p>
                           <p className="text-xs text-gray-500 mt-0.5">
                             {exception.exception_type !== 'erp_only' && (

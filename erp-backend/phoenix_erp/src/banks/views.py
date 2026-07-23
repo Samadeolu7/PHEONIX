@@ -2340,6 +2340,20 @@ def _clean_up_stranded_pair(request, resolved_exc, unresolved_exc, fee, resoluti
         return {'fee_amount': None, 'payment_id': None}
 
 
+def _exception_display_narration(exc):
+    """
+    For erp_only the payment's own description must win — bank_narration on
+    those rows is just the last claimant bank line's text (recorded by
+    unmatch()'s bookkeeping for traceability), and preferring it makes a
+    no-reference payment masquerade in the UI as one whose reference matches
+    a bank line verbatim (misread as "Java won't match identical refs"
+    repeatedly in production).
+    """
+    if exc.exception_type == 'erp_only':
+        return exc.erp_narration or exc.bank_narration or ''
+    return exc.bank_narration or exc.erp_narration or ''
+
+
 def _serialize_exception_summary(exc, fee=None):
     """Compact shape for one exception inside an ambiguous-pair candidate
     list — just enough for a director to visually tell candidates apart
@@ -2349,7 +2363,7 @@ def _serialize_exception_summary(exc, fee=None):
         'exception_type': exc.exception_type,
         'direction': exc.direction,
         'amount': str(exc.resolve_amount) if exc.resolve_amount is not None else None,
-        'narration': exc.bank_narration or exc.erp_narration or '',
+        'narration': _exception_display_narration(exc),
         'date': str(exc.bank_date or exc.erp_date) if (exc.bank_date or exc.erp_date) else None,
         'fee_amount': str(fee) if fee is not None else None,
     }
@@ -3311,7 +3325,7 @@ class PaymentTraceView(APIView):
                     'exception_type': p.exception_type,
                     'direction': p.direction,
                     'amount': str(p.resolve_amount) if p.resolve_amount is not None else None,
-                    'narration': p.bank_narration or p.erp_narration or '',
+                    'narration': _exception_display_narration(p),
                     'transaction_reference': p_txn.reference_number if p_txn else None,
                     'resolved': p.resolved,
                 }
@@ -3322,7 +3336,7 @@ class PaymentTraceView(APIView):
                 'direction': e.direction,
                 'amount': str(e.resolve_amount) if e.resolve_amount is not None else None,
                 'date': str(e.bank_date or e.erp_date or ''),
-                'narration': e.bank_narration or e.erp_narration or '',
+                'narration': _exception_display_narration(e),
                 'officer_name': user_name(e.officer),
                 'resolved': e.resolved,
                 'resolved_by': user_name(e.resolved_by),
