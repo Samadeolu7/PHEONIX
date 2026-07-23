@@ -56,6 +56,22 @@ def extract_embedded_reference(description):
     return match.group(1).strip() if match else None
 
 
+def _normalized_for_reference_compare(text):
+    """
+    Uppercase + collapse every run of whitespace to a single space.
+
+    Bank narrations routinely pad with double spaces ("EPHRAIM DEE  Trf
+    for Custo", "SERAH OLALEYE  /...") while the same text stored into a
+    Transaction.description's "| Ref:" segment comes back with runs
+    collapsed — an exact substring test then reports a perfectly correct
+    match as a mismatch on nothing but a swallowed space. Found live: a
+    find_reference_mismatched_matches run flagged dozens of correct
+    matches whose embedded reference differed from the bank narration
+    only by consecutive-whitespace collapsing.
+    """
+    return re.sub(r'\s+', ' ', (text or '')).upper()
+
+
 def reference_mismatches_bank_line(tx, payment):
     """
     True if `payment` (a transactions.Transaction) has an explicit embedded
@@ -67,13 +83,14 @@ def reference_mismatches_bank_line(tx, payment):
 
     Returns False (no mismatch) when there's no embedded reference to check
     at all — absence of a reference is not evidence of a wrong match, only
-    an explicit contradiction is.
+    an explicit contradiction is. Comparison is whitespace-normalized —
+    see _normalized_for_reference_compare.
     """
     embedded_ref = extract_embedded_reference(payment.description)
     if not embedded_ref:
         return False
-    haystack = f'{tx.bank_ref or ""} {tx.narration or ""}'.upper()
-    return embedded_ref.upper() not in haystack
+    haystack = _normalized_for_reference_compare(f'{tx.bank_ref or ""} {tx.narration or ""}')
+    return _normalized_for_reference_compare(embedded_ref) not in haystack
 
 
 def reference_confirms_bank_line(tx, payment):
@@ -87,12 +104,14 @@ def reference_confirms_bank_line(tx, payment):
     ERP payment (find_duplicate_claimed_payments /
     unmatch_duplicate_claimed_payments) — an absent reference can't settle
     which of several claimants is right, so this only counts a real match.
+    Comparison is whitespace-normalized — see
+    _normalized_for_reference_compare.
     """
     embedded_ref = extract_embedded_reference(payment.description)
     if not embedded_ref:
         return False
-    haystack = f'{tx.bank_ref or ""} {tx.narration or ""}'.upper()
-    return embedded_ref.upper() in haystack
+    haystack = _normalized_for_reference_compare(f'{tx.bank_ref or ""} {tx.narration or ""}')
+    return _normalized_for_reference_compare(embedded_ref) in haystack
 
 
 def find_duplicate_claimed_payments():
