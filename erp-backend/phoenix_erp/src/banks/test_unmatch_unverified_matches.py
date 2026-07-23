@@ -138,6 +138,36 @@ class UnmatchUnverifiedMatchesTests(TestCase):
         self.assertIn('DRY RUN', output)
         self.assertIn('Would free 1', output)
 
+    def test_reverse_direction_bank_line_token_in_erp_description_is_kept(self):
+        # No "| Ref:" segment on the payment at all, and its full
+        # description does NOT wholly correspond to the (much shorter)
+        # bank narration word-for-word — but the bank line's own unique
+        # reference token appears verbatim inside the payment's text.
+        # Found live: expense entries described "Bank Payment: EXP-2026-
+        # 000018 - FIP CHARGES Ref002278932824" against bank line
+        # "FIP CHARGES Ref002278932824".
+        payment = self._payment(
+            Decimal('53.75'),
+            'Bank Payment: EXP-2026-000018 - FIP CHARGES Ref002278932824',
+        )
+        line = self._line('FEE-1', Decimal('53.75'), 'FIP CHARGES Ref002278932824', payment)
+
+        self._run(user_id=self.user.id, apply=True)
+
+        line.refresh_from_db()
+        self.assertTrue(line.matched)
+
+    def test_reverse_direction_short_alpha_token_does_not_count(self):
+        # A short/non-digit-dominant shared word ("CHARGES") must not
+        # count in reverse either — only real id fragments do.
+        payment = self._payment(Decimal('60.00'), 'Bank Payment: unrelated entry entirely')
+        line = self._line('FEE-2', Decimal('60.00'), 'FIP CHARGES Ref009999999999', payment)
+
+        self._run(user_id=self.user.id, apply=True)
+
+        line.refresh_from_db()
+        self.assertFalse(line.matched)
+
     def test_helper_rejects_missing_payment(self):
         payment = self._payment(Decimal('7000.00'), 'Loan repayment – LN-2 | Ref: GONE88888')
         line = self._line('GONE-1', Decimal('7000.00'), 'GONE88888 present here', payment)

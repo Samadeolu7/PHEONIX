@@ -150,6 +150,29 @@ def reference_confirms_bank_line(tx, payment):
     return _reference_found_in(_normalized_for_reference_compare(embedded_ref), haystack)
 
 
+def _bank_line_reference_token_in_erp_text(tx, erp_text):
+    """
+    Reverse direction: a digit-dominant id token from the BANK LINE itself
+    (bank_ref/narration) appearing verbatim in the ERP payment's own text —
+    the mirror of the forward reference check, for a payment with no
+    "| Ref:" segment whose description doesn't wholly correspond to the
+    line's narration word-for-word. Found live: an expense entry described
+    "Bank Payment: EXP-2026-000018 - FIP CHARGES Ref002278932824" against
+    bank line "FIP CHARGES Ref002278932824" — same amount, same unique
+    reference, but the description-as-a-whole check failed on "BANK",
+    "PAYMENT", "EXP", "000018" not being in the (much shorter) bank
+    narration. Restricted to _long_tokens' digit-dominant ids only —
+    letting names/boilerplate flow this way would reopen the structural-
+    token hole reference_confirms_bank_line's forward check closes.
+    Mirrors Bank-Recon's BankReferenceMatcher.tier() reverse branch.
+    """
+    tokens = _long_tokens(f'{tx.bank_ref or ""} {tx.narration or ""}')
+    if not tokens:
+        return False
+    haystack = (erp_text or '').upper()
+    return any(t in haystack for t in tokens)
+
+
 def match_is_reference_and_amount_verified(tx, payment):
     """
     The director's auto-match acceptance policy, checkable after the fact:
@@ -163,8 +186,11 @@ def match_is_reference_and_amount_verified(tx, payment):
         reference must appear in the line (reference_confirms_bank_line,
         whitespace-normalized with token-subset fallback);
       - if it doesn't (savings deposits/transfers whose description IS the
-        raw narration, or a name-only description), the payment's own
-        description must correspond to the line the same way.
+        raw narration, or a name-only description), either the payment's
+        own description corresponds to the line the same way, or — the
+        reverse direction — a digit-dominant id token from the LINE's own
+        narration appears verbatim inside the payment's description (see
+        _bank_line_reference_token_in_erp_text).
 
     Anything else — amount+date coincidences, tolerance matches, fuzzy
     guesses — is unverified: Bank-Recon no longer auto-commits such pairs
@@ -181,7 +207,9 @@ def match_is_reference_and_amount_verified(tx, payment):
     if not description:
         return False
     haystack = _normalized_for_reference_compare(f'{tx.bank_ref or ""} {tx.narration or ""}')
-    return _reference_found_in(description, haystack)
+    if _reference_found_in(description, haystack):
+        return True
+    return _bank_line_reference_token_in_erp_text(tx, payment.description)
 
 
 def find_duplicate_claimed_payments():
