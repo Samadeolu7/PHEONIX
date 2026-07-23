@@ -145,8 +145,9 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     first_repayment_buffer_days = models.PositiveIntegerField(
         default=0,
         help_text=(
-            "Minimum calendar days from disbursement before the first repayment is due. "
-            "0 = follows normal cadence. E.g. 14 means first weekly repayment won't be before day 14."
+            "Extra calendar days added on top of the first naturally-occurring repayment date. "
+            "0 = follows normal cadence. E.g. for a weekly loan, a buffer of 7 pushes the first "
+            "repayment from day 7 to day 14."
         ),
     )
     

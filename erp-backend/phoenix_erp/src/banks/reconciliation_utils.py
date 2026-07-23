@@ -19,6 +19,36 @@ from .tasks import run_reconciliation_match
 _LOAN_NUMBER_RE = re.compile(r'Loan repayment\s*[–-]\s*([^|]+)')
 _BANK_REFERENCE_RE = re.compile(r'\|\s*Ref:\s*(.+)$')
 
+
+def extract_embedded_reference(description):
+    """
+    Returns the trimmed "Ref: ..." fragment LoanAccount.record_payment()
+    embeds in a Transaction.description (see _BANK_REFERENCE_RE), or None
+    if the description has no such segment at all.
+    """
+    match = _BANK_REFERENCE_RE.search(description or '')
+    return match.group(1).strip() if match else None
+
+
+def reference_mismatches_bank_line(tx, payment):
+    """
+    True if `payment` (a transactions.Transaction) has an explicit embedded
+    bank reference that does NOT appear anywhere in `tx`'s (a
+    ReconciliationBankTransaction) own bank_ref/narration — the Django-side
+    equivalent of Bank-Recon's BankReferenceMatcher.tier() scoring NONE for
+    this pair. Used to verify an ALREADY-committed match after the fact
+    (find_reference_mismatched_matches, unmatch_recent_reference_mismatches).
+
+    Returns False (no mismatch) when there's no embedded reference to check
+    at all — absence of a reference is not evidence of a wrong match, only
+    an explicit contradiction is.
+    """
+    embedded_ref = extract_embedded_reference(payment.description)
+    if not embedded_ref:
+        return False
+    haystack = f'{tx.bank_ref or ""} {tx.narration or ""}'.upper()
+    return embedded_ref.upper() not in haystack
+
 # Applies to the three mandatory-reason fields introduced alongside the
 # resolve-flexibility features: ResolveExceptionView's resolution_notes
 # (amount-mismatch case), ReconciliationBankTransaction.unmatch()'s reason,

@@ -498,7 +498,7 @@ export default function LoanAccountFormPage() {
                 </div>
                 {(selectedProduct.first_repayment_buffer_days ?? 0) > 0 && (
                   <div className="text-blue-600">
-                    First repayment starts at least {selectedProduct.first_repayment_buffer_days} days after disbursement.
+                    First repayment is pushed back an extra {selectedProduct.first_repayment_buffer_days} days beyond the normal cadence.
                   </div>
                 )}
               </div>

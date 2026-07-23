@@ -824,9 +824,9 @@ export default function LoanProductConfigPage() {
                     className="w-48 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
                   />
                   <p className="text-xs text-gray-400 mt-1">
-                    Minimum calendar days from disbursement before the first installment is due.
-                    0 = first repayment follows normal cadence. E.g. 14 means the first weekly
-                    repayment won't fall before day 14.
+                    Extra calendar days added on top of the first naturally-occurring repayment
+                    date. 0 = first repayment follows normal cadence. E.g. for a weekly loan, a
+                    buffer of 7 pushes the first repayment from day 7 to day 14.
                   </p>
                 </div>
               </div>

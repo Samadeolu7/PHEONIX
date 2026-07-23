@@ -16,6 +16,13 @@ class LoanProductAdmin(admin.ModelAdmin):
         (None, {
             'fields': ('product', 'parent_account'),
         }),
+        ('Repayment Terms', {
+            'fields': ('first_repayment_buffer_days',),
+            'description': (
+                'Extra calendar days added on top of the first naturally-occurring repayment '
+                'date. 0 = follows normal cadence.'
+            ),
+        }),
         ('GL Accounts', {
             'fields': (
                 'disbursement_account',

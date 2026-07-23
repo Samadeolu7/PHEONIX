@@ -23,9 +23,13 @@ This means:
   • Monthly frequency + 6-month term  → exactly 6 installments
   • Weekly  frequency + 3-month term  → however many Mondays (or whatever day)
     fall within the 3-month window after the optional buffer period
-  • The buffer period shifts the first payment forward; dates consumed by the
-    buffer are naturally removed from the count, so the schedule never runs
-    past the loan's maturity date.
+  • The buffer is additive: it is added on top of the first naturally-occurring
+    due date (disbursement + one frequency period), not used as a floor. E.g.
+    weekly frequency + 7-day buffer pushes the first due date to day 14, not
+    day 7 — a buffer equal to (or smaller than) the frequency period is never
+    a no-op. Later installments continue stepping by the normal frequency
+    period from that shifted first due date, so the schedule never runs past
+    the loan's maturity date.
 """
 from __future__ import annotations
 
@@ -70,9 +74,7 @@ def _build_due_dates(disbursement_date, date_increment, maturity_date, buffer_da
     """
     first_due = disbursement_date + date_increment
     if buffer_days > 0:
-        buffer_end = disbursement_date + timedelta(days=buffer_days)
-        while first_due < buffer_end:
-            first_due += date_increment
+        first_due += timedelta(days=buffer_days)
 
     due_dates = []
     current = first_due
