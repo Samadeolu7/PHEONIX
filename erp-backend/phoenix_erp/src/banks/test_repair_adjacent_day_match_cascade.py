@@ -91,9 +91,9 @@ class RepairAdjacentDayMatchCascadeTests(TestCase):
         recon = DailyReconciliation.objects.get(
             bank_account=self.bank_account, reconciliation_date=date(2026, 7, 14),
         )
-        with patch('banks.tasks.run_reconciliation_match') as mock_task:
+        with patch('banks.tasks.run_pool_reconciliation_match') as mock_task:
             call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=StringIO())
-            mock_task.delay.assert_called_once_with(recon.id, recon.include_debits)
+            mock_task.delay.assert_called_once_with(recon.bank_account_id)
 
         wrong_tx.refresh_from_db()
         true_tx.refresh_from_db()
@@ -123,14 +123,52 @@ class RepairAdjacentDayMatchCascadeTests(TestCase):
         already_unmatched.unmatched_reason = REPAIR_REASON
         already_unmatched.save(update_fields=['unmatched_reason'])
 
-        with patch('banks.tasks.run_reconciliation_match') as mock_task:
+        with patch('banks.tasks.run_pool_reconciliation_match') as mock_task:
             out = StringIO()
             call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=out)
-            mock_task.delay.assert_called_once_with(recon.id, recon.include_debits)
+            mock_task.delay.assert_called_once_with(recon.bank_account_id)
 
         recon.refresh_from_db()
         self.assertEqual(recon.status, 'processing')
         self.assertIn('0 unmatched this run, 1 reconciliation date(s) queued', out.getvalue())
+
+    def test_two_victims_on_different_dates_same_account_dispatch_only_once(self):
+        # Two independent cascade victims on two different dates, both on
+        # the SAME bank_account, must collapse to a single pool dispatch —
+        # not one per date. run_pool_reconciliation_match re-queries which
+        # dates are actually 'processing' once it holds the account's lock.
+        erp_1 = self._erp_payment(date(2026, 7, 15), Decimal('50.00'))
+        wrong_tx_1 = self._bank_tx(
+            date(2026, 7, 14), Decimal('50.00'), matched=True,
+            matched_erp_payment_id=erp_1.id, posting_lag_days=-1,
+        )
+        self._bank_tx(date(2026, 7, 15), Decimal('50.00'))
+        DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date=date(2026, 7, 14),
+            uploaded_by=self.director, statement_file='bank_statements/x.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+        erp_2 = self._erp_payment(date(2026, 7, 21), Decimal('80.00'))
+        wrong_tx_2 = self._bank_tx(
+            date(2026, 7, 20), Decimal('80.00'), matched=True,
+            matched_erp_payment_id=erp_2.id, posting_lag_days=-1,
+        )
+        self._bank_tx(date(2026, 7, 21), Decimal('80.00'))
+        DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date=date(2026, 7, 20),
+            uploaded_by=self.director, statement_file='bank_statements/y.csv',
+            status='completed', owner=self.director, branch=self.branch, tenant=self.tenant,
+        )
+
+        with patch('banks.tasks.run_pool_reconciliation_match') as mock_task:
+            call_command('repair_adjacent_day_match_cascade', f'--user-id={self.director.id}', '--apply', stdout=StringIO())
+            mock_task.delay.assert_called_once_with(self.bank_account.id)
+
+        wrong_tx_1.refresh_from_db()
+        wrong_tx_2.refresh_from_db()
+        self.assertFalse(wrong_tx_1.matched)
+        self.assertFalse(wrong_tx_2.matched)
 
     def test_leaves_lag_one_match_alone_when_no_exact_day_candidate_exists(self):
         # No competing bank line on the ERP payment's real date — plausibly
@@ -180,7 +218,7 @@ class RepairAdjacentDayMatchCascadeTests(TestCase):
         self._bank_tx(date(2026, 7, 15), Decimal('75.00'), bank_ref='dup-a')
         self._bank_tx(date(2026, 7, 15), Decimal('75.00'), bank_ref='dup-b')
 
-        with patch('banks.tasks.run_reconciliation_match'):
+        with patch('banks.tasks.run_pool_reconciliation_match'):
             out = StringIO()
             call_command(
                 'repair_adjacent_day_match_cascade', f'--user-id={self.director.id}',

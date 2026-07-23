@@ -37,10 +37,12 @@ that's what this command finds and repairs.
      .unmatch(), banks/models.py) that frees the ERP payment and reopens the
      bank line as a bank_only exception — then queue a re-run (via .delay(),
      same as the "Re-run matching" button — banks/tasks.py's
-     run_reconciliation_match must never be called synchronously here, since
-     Bank-Recon is only reachable from the celery_worker container) for
-     every DailyReconciliation date touched, so the now-fixed Java scorer
-     re-derives each correct exact-day pairing on its own.
+     run_pool_reconciliation_match must never be called synchronously here,
+     since Bank-Recon is only reachable from the celery_worker container),
+     one dispatch per distinct bank_account touched (not per date — the
+     pool task re-queries which dates are actually processing once it
+     holds that account's lock), so the now-fixed Java scorer re-derives
+     each correct exact-day pairing on its own.
 
 --include-ambiguous additionally unmatches the "No exact-day candidate" and
 "Ambiguous (>1 candidate)" buckets. Those are left alone by default because
@@ -97,7 +99,7 @@ class Command(BaseCommand):
         from django.db.models import F
 
         from banks.models import DailyReconciliation, ReconciliationBankTransaction
-        from banks.tasks import run_reconciliation_match
+        from banks.tasks import run_pool_reconciliation_match
         from transactions.models import TransactionEntry
 
         User = get_user_model()
@@ -223,6 +225,7 @@ class Command(BaseCommand):
         # the task directly regardless of which container it's run from.
         self.stdout.write(f'\nQueuing a re-run for {len(touched_dates)} affected reconciliation date(s)...')
         queued = 0
+        queued_bank_account_ids = set()
         for bank_account_id_, recon_date in sorted(touched_dates):
             recon = DailyReconciliation.objects.filter(
                 bank_account_id=bank_account_id_, reconciliation_date=recon_date,
@@ -236,9 +239,14 @@ class Command(BaseCommand):
             recon.status = 'processing'
             recon.rerun_count = F('rerun_count') + 1
             recon.save(update_fields=['status', 'rerun_count', 'updated_at'])
-            run_reconciliation_match.delay(recon.id, recon.include_debits)
+            queued_bank_account_ids.add(bank_account_id_)
             self.stdout.write(f'  queued recon {recon.id} ({recon_date})')
             queued += 1
+
+        # One pool task per distinct bank_account, not one per date — see
+        # run_pool_reconciliation_match (banks/tasks.py).
+        for bank_account_id_ in queued_bank_account_ids:
+            run_pool_reconciliation_match.delay(bank_account_id_)
 
         self.stdout.write(self.style.SUCCESS(
             f'\nDone — {len(to_unmatch)} unmatched this run, {queued} reconciliation date(s) queued for re-run. '

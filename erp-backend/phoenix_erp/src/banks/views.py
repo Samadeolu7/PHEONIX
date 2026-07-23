@@ -1077,7 +1077,7 @@ from .serializers import (
     ReconciliationExceptionSerializer,
     ReconciliationBankTransactionSerializer,
 )
-from .tasks import run_reconciliation_match
+from .tasks import run_pool_reconciliation_match
 
 
 class StatementUploadView(APIView):
@@ -1098,9 +1098,11 @@ class StatementUploadView(APIView):
       3. Group parsed transactions by their own value_date — a statement
          commonly spans more than one day (e.g. a weekly export) — and
          create one DailyReconciliation (status='processing') per distinct
-         date found, enqueuing banks.tasks.run_reconciliation_match for
-         each. Dates that already have a reconciliation for this account
-         are skipped rather than failing the whole upload.
+         date found, then enqueue a single
+         banks.tasks.run_pool_reconciliation_match for the whole upload
+         (scoped to this bank_account). Dates that already have a
+         reconciliation for this account are skipped rather than failing
+         the whole upload.
 
     Returns 202 immediately — each reconciliation's matching call can take
     up to ~90 seconds, so it must not block this request. The frontend
@@ -1225,8 +1227,9 @@ class MatchedTransactionsView(APIView):
 
     ReconciliationBankTransaction has no FK to DailyReconciliation — it's a
     persistent pool per bank_account, deduplicated by bank_ref and reused
-    across reruns and the ±window matching used by run_reconciliation_match
-    (see banks/tasks.py) — so rows are looked up by (bank_account,
+    across reruns and the ±window matching used by
+    run_pool_reconciliation_match (see banks/tasks.py) — so rows are looked
+    up by (bank_account,
     value_date) rather than by reconciliation id, matching exactly what a
     statement upload for this reconciliation's date would have populated.
 
@@ -1348,7 +1351,7 @@ class RerunReconciliationView(APIView):
         recon.include_debits = include_debits
         recon.rerun_count = F('rerun_count') + 1
         recon.save(update_fields=['status', 'include_debits', 'rerun_count', 'updated_at'])
-        run_reconciliation_match.delay(recon.id, include_debits)
+        run_pool_reconciliation_match.delay(recon.bank_account_id)
         recon.refresh_from_db()
 
         serializer = DailyReconciliationSerializer(recon)
@@ -1392,6 +1395,7 @@ class BulkRerunReconciliationView(APIView):
 
         queued = []
         skipped = []
+        touched_bank_account_ids = set()
 
         for recon in qs.select_related('bank_account').order_by('reconciliation_date'):
             if recon.status == 'processing':
@@ -1407,8 +1411,8 @@ class BulkRerunReconciliationView(APIView):
             recon.include_debits = include_debits
             recon.rerun_count = F('rerun_count') + 1
             recon.save(update_fields=['status', 'include_debits', 'rerun_count', 'updated_at'])
-            run_reconciliation_match.delay(recon.id, include_debits)
             recon.refresh_from_db()
+            touched_bank_account_ids.add(recon.bank_account_id)
 
             queued.append({
                 'id': recon.id,
@@ -1416,6 +1420,15 @@ class BulkRerunReconciliationView(APIView):
                 'date': str(recon.reconciliation_date),
                 'rerun_count': recon.rerun_count,
             })
+
+        # One pool task per distinct bank_account touched by this request,
+        # not one per row — a "rerun everything for account X" request used
+        # to fire N per-date tasks that all raced each other over the same
+        # account's candidate pool; run_pool_reconciliation_match re-queries
+        # which rows are actually processing once it holds that account's
+        # lock, so a single dispatch per account picks all of them up.
+        for bank_account_id in touched_bank_account_ids:
+            run_pool_reconciliation_match.delay(bank_account_id)
 
         return Response({
             'queued': len(queued),

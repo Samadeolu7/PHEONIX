@@ -1,9 +1,11 @@
 """
-Tests for banks/tasks.py's run_reconciliation_match.
+Tests for banks/tasks.py's run_pool_reconciliation_match.
 
 Since it's decorated with @shared_task, it's directly callable as a plain
 function (bypassing .delay()/the broker entirely) — no live Celery worker
-or broker connection needed to test the task body.
+or broker connection needed to test the task body. setUp creates
+self.recon already at status='processing' so the pool task's live re-query
+picks it up, mirroring what a real call site does before dispatching.
 """
 from datetime import date, timedelta
 from decimal import Decimal
@@ -24,7 +26,7 @@ from banks.models import (
     ReconciliationBankTransaction,
     ReconciliationException,
 )
-from banks.tasks import run_reconciliation_match
+from banks.tasks import run_pool_reconciliation_match
 from transactions.models import Transaction, TransactionSeries
 
 User = get_user_model()
@@ -82,7 +84,7 @@ class RunReconciliationMatchTests(TestCase):
             'exceptions': [],
         })
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.recon.refresh_from_db()
         self.tx.refresh_from_db()
@@ -111,7 +113,7 @@ class RunReconciliationMatchTests(TestCase):
             'exceptions': [],
         })
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.recon.refresh_from_db()
         self.tx.refresh_from_db()
@@ -150,7 +152,7 @@ class RunReconciliationMatchTests(TestCase):
         })
 
         with self.assertLogs('banks.tasks', level='WARNING'):
-            run_reconciliation_match(self.recon.id, include_debits=False)
+            run_pool_reconciliation_match(self.bank_account.id)
 
         self.tx.refresh_from_db()
         self.assertFalse(self.tx.matched)
@@ -184,7 +186,7 @@ class RunReconciliationMatchTests(TestCase):
             'exceptions': [],
         })
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.tx.refresh_from_db()
         low_tx.refresh_from_db()
@@ -220,7 +222,7 @@ class RunReconciliationMatchTests(TestCase):
         })
 
         with self.assertLogs('banks.tasks', level='WARNING'):
-            run_reconciliation_match(self.recon.id, include_debits=False)
+            run_pool_reconciliation_match(self.bank_account.id)
 
         self.tx.refresh_from_db()
         other_tx.refresh_from_db()
@@ -258,7 +260,7 @@ class RunReconciliationMatchTests(TestCase):
         })
 
         with self.assertLogs('banks.tasks', level='WARNING'):
-            run_reconciliation_match(self.recon.id, include_debits=False)
+            run_pool_reconciliation_match(self.bank_account.id)
 
         self.tx.refresh_from_db()
         already_claimed_tx.refresh_from_db()
@@ -303,7 +305,7 @@ class RunReconciliationMatchTests(TestCase):
             'exceptions': [],
         })
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.tx.refresh_from_db()
         self.assertEqual(self.tx.matched_erp_officer_id, officer.id)
@@ -334,7 +336,7 @@ class RunReconciliationMatchTests(TestCase):
             'exceptions': [],
         })
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.tx.refresh_from_db()
         self.assertFalse(self.tx.matched_erp_had_reference)
@@ -360,7 +362,7 @@ class RunReconciliationMatchTests(TestCase):
             ],
         })
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.recon.refresh_from_db()
         self.assertEqual(self.recon.status, 'completed')
@@ -400,7 +402,7 @@ class RunReconciliationMatchTests(TestCase):
             ],
         })
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.recon.refresh_from_db()
         self.assertEqual(self.recon.status, 'completed')
@@ -420,7 +422,7 @@ class RunReconciliationMatchTests(TestCase):
         mock_post.side_effect = real_requests.exceptions.Timeout()
 
         with self.assertRaises(Retry):
-            run_reconciliation_match(self.recon.id, include_debits=False)
+            run_pool_reconciliation_match(self.bank_account.id)
 
         self.recon.refresh_from_db()
         self.assertEqual(self.recon.status, 'processing')
@@ -430,11 +432,11 @@ class RunReconciliationMatchTests(TestCase):
     def test_timeout_marks_failed_after_retry_exhausted(self, mock_post, mock_fetch):
         mock_post.side_effect = real_requests.exceptions.Timeout()
 
-        run_reconciliation_match.push_request(retries=1)
+        run_pool_reconciliation_match.push_request(retries=1)
         try:
-            run_reconciliation_match(self.recon.id, include_debits=False)
+            run_pool_reconciliation_match(self.bank_account.id)
         finally:
-            run_reconciliation_match.pop_request()
+            run_pool_reconciliation_match.pop_request()
 
         self.recon.refresh_from_db()
         self.assertEqual(self.recon.status, 'failed')
@@ -456,7 +458,7 @@ class RunReconciliationMatchTests(TestCase):
         mock_post.side_effect = real_requests.exceptions.ConnectionError()
 
         with self.assertRaises((Retry, real_requests.exceptions.ConnectionError)):
-            run_reconciliation_match(self.recon.id, include_debits=False)
+            run_pool_reconciliation_match(self.bank_account.id)
 
         self.recon.refresh_from_db()
         self.assertEqual(self.recon.status, 'processing')
@@ -467,7 +469,7 @@ class RunReconciliationMatchTests(TestCase):
         self.recon.save(update_fields=['status'])
 
         with patch('banks.tasks.http_requests.post') as mock_post:
-            run_reconciliation_match(self.recon.id, include_debits=False)
+            run_pool_reconciliation_match(self.bank_account.id)
             mock_post.assert_not_called()
 
     @patch('banks.tasks._persist_outcome')
@@ -493,7 +495,7 @@ class RunReconciliationMatchTests(TestCase):
         mock_persist.side_effect = RuntimeError('simulated database contention')
 
         with self.assertRaises((Retry, RuntimeError)):
-            run_reconciliation_match(self.recon.id, include_debits=False)
+            run_pool_reconciliation_match(self.bank_account.id)
 
         self.recon.refresh_from_db()
         self.assertEqual(self.recon.status, 'processing')
@@ -526,7 +528,7 @@ class RunReconciliationMatchTests(TestCase):
             'matches': [], 'exceptions': [],
         })
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         sent_payload = mock_post.call_args.kwargs['json']
         sent_ids = {tx['id'] for tx in sent_payload['bankTransactions']}
@@ -552,7 +554,7 @@ class RunReconciliationMatchTests(TestCase):
         })
         mock_post.return_value = response
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
         self.assertEqual(
             ReconciliationException.objects.filter(reconciliation=self.recon).count(), 1
         )
@@ -562,7 +564,7 @@ class RunReconciliationMatchTests(TestCase):
         # bank_transaction_id.
         self.recon.status = 'processing'
         self.recon.save(update_fields=['status'])
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.assertEqual(
             ReconciliationException.objects.filter(reconciliation=self.recon).count(), 1
@@ -591,7 +593,7 @@ class RunReconciliationMatchTests(TestCase):
         })
         mock_post.return_value = response
 
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
         exc = ReconciliationException.objects.get(reconciliation=self.recon)
 
         exc.resolved = True
@@ -604,7 +606,7 @@ class RunReconciliationMatchTests(TestCase):
         # reuse the resolved row, not reopen it with a duplicate.
         self.recon.status = 'processing'
         self.recon.save(update_fields=['status'])
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.assertEqual(
             ReconciliationException.objects.filter(reconciliation=self.recon).count(), 1
@@ -627,7 +629,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
         exc = ReconciliationException.objects.get(reconciliation=self.recon)
         self.assertFalse(exc.resolved)
 
@@ -643,7 +645,7 @@ class RunReconciliationMatchTests(TestCase):
             ],
             'exceptions': [],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         exc.refresh_from_db()
         self.assertTrue(exc.resolved)
@@ -675,7 +677,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         exc = ReconciliationException.objects.get(reconciliation=self.recon, loan_payment_id=555)
         self.assertTrue(exc.resolved)
@@ -701,7 +703,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         exc = ReconciliationException.objects.get(
             reconciliation=self.recon, exception_type='bank_only', bank_transaction_id=self.tx.id,
@@ -734,7 +736,7 @@ class RunReconciliationMatchTests(TestCase):
             'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
             'matches': [], 'exceptions': [],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.recon.refresh_from_db()
         self.tx.refresh_from_db()
@@ -757,7 +759,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         self.assertEqual(ReconciliationException.objects.count(), 0)
 
@@ -781,7 +783,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         exc = ReconciliationException.objects.get()
         self.assertEqual(exc.reconciliation_id, neighbor.id)
@@ -809,7 +811,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         bank_only = ReconciliationException.objects.get(exception_type='bank_only')
         erp_only = ReconciliationException.objects.get(exception_type='erp_only')
@@ -838,7 +840,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         exc = ReconciliationException.objects.get()
         self.assertEqual(exc.officer_id, officer.id)
@@ -875,7 +877,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         mock_notify_cls.return_value.send_from_template.assert_called_once()
         call_kwargs = mock_notify_cls.return_value.send_from_template.call_args.kwargs
@@ -949,7 +951,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         notifications = Notification.objects.filter(recipient_user=director)
         self.assertEqual(notifications.count(), 2)  # in_app + email
@@ -1008,7 +1010,7 @@ class RunReconciliationMatchTests(TestCase):
                 },
             ],
         })
-        run_reconciliation_match(self.recon.id, include_debits=False)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         exc = ReconciliationException.objects.get(exception_type='erp_only')
         self.assertTrue(exc.is_high_priority)
@@ -1020,15 +1022,198 @@ class RunReconciliationMatchTests(TestCase):
         self.assertNotIn('{{', body)
 
 
+class RunPoolReconciliationMatchBatchTests(TestCase):
+    """
+    Behavior specific to the pool redesign — everything above this class
+    exercises the single-recon-batch business logic (confidence gating,
+    exceptions, notifications, retries) via a batch of size one; these
+    tests exercise the actual "one run per bank_account, not per date"
+    mechanics: multi-row batches, cross-account isolation, the advisory
+    lock, and include_debits reconciliation across a batch.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='pool_manager', password='test123')
+        gl_account = Account.objects.create(
+            code='1499', name='Pool Test GL', account_level=Account.LEVEL_PARENT
+        )
+        bank = Bank.objects.create(bank_name='Pool Test Bank', bank_code='996')
+        self.bank_account = BankAccount.objects.create(
+            bank=bank, account_number='0000005', account_name='Pool Test Account',
+            gl_account=gl_account, account_manager=self.user,
+        )
+
+    @staticmethod
+    def _mock_java_response(payload):
+        mock_response = MagicMock()
+        mock_response.json.return_value = payload
+        mock_response.raise_for_status = MagicMock()
+        return mock_response
+
+    def _make_recon(self, bank_account, date_str, status='processing', include_debits=False):
+        return DailyReconciliation.objects.create(
+            bank_account=bank_account, reconciliation_date=date_str,
+            uploaded_by=self.user, statement_file='bank_statements/pool.csv',
+            status=status, include_debits=include_debits,
+        )
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_two_processing_dates_same_account_one_java_call_both_completed(self, mock_post, mock_fetch):
+        recon_a = self._make_recon(self.bank_account, '2026-07-01')
+        recon_b = self._make_recon(self.bank_account, '2026-07-05')
+        tx_a = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='POOL-A', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1000.00'), narration='a',
+        )
+        tx_b = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='POOL-B', value_date='2026-07-05',
+            direction='CREDIT', amount=Decimal('2000.00'), narration='b',
+        )
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 2, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [
+                {'bankTransactionId': str(tx_a.id), 'erpPaymentId': 301, 'confidence': 'HIGH', 'direction': 'CREDIT'},
+                {'bankTransactionId': str(tx_b.id), 'erpPaymentId': 302, 'confidence': 'HIGH', 'direction': 'CREDIT'},
+            ],
+            'exceptions': [],
+        })
+
+        run_pool_reconciliation_match(self.bank_account.id)
+
+        self.assertEqual(mock_post.call_count, 1)
+        recon_a.refresh_from_db()
+        recon_b.refresh_from_db()
+        tx_a.refresh_from_db()
+        tx_b.refresh_from_db()
+        self.assertEqual(recon_a.status, 'completed')
+        self.assertEqual(recon_b.status, 'completed')
+        self.assertEqual(recon_a.matched_count, 1)
+        self.assertEqual(recon_b.matched_count, 1)
+        self.assertTrue(tx_a.matched)
+        self.assertTrue(tx_b.matched)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_processing_row_on_a_different_account_is_untouched(self, mock_post, mock_fetch):
+        other_bank_account = BankAccount.objects.create(
+            bank=self.bank_account.bank, account_number='0000006',
+            account_name='Other Pool Account',
+            gl_account=Account.objects.create(
+                code='1599', name='Other Pool GL', account_level=Account.LEVEL_PARENT,
+            ),
+            account_manager=self.user,
+        )
+        own_recon = self._make_recon(self.bank_account, '2026-07-01')
+        other_recon = self._make_recon(other_bank_account, '2026-07-01')
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [],
+        })
+
+        run_pool_reconciliation_match(self.bank_account.id)
+
+        own_recon.refresh_from_db()
+        other_recon.refresh_from_db()
+        self.assertEqual(own_recon.status, 'completed')
+        self.assertEqual(other_recon.status, 'processing')
+
+    @patch('banks.tasks.http_requests.post')
+    def test_no_processing_rows_makes_no_java_call(self, mock_post):
+        self._make_recon(self.bank_account, '2026-07-01', status='completed')
+
+        result = run_pool_reconciliation_match(self.bank_account.id)
+
+        mock_post.assert_not_called()
+        self.assertEqual(result, 0)
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments')
+    @patch('banks.tasks.http_requests.post')
+    def test_conflicting_include_debits_resolves_to_any_true_and_bumps_rows(self, mock_post, mock_fetch):
+        recon_wants_debits = self._make_recon(self.bank_account, '2026-07-01', include_debits=True)
+        recon_credit_only = self._make_recon(self.bank_account, '2026-07-02', include_debits=False)
+        mock_fetch.return_value = []
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [],
+        })
+
+        run_pool_reconciliation_match(self.bank_account.id)
+
+        recon_wants_debits.refresh_from_db()
+        recon_credit_only.refresh_from_db()
+        self.assertTrue(recon_wants_debits.include_debits)
+        self.assertTrue(recon_credit_only.include_debits)  # bumped to match the effective value
+        # fetch_erp_payments called for both CREDIT and DEBIT since the
+        # batch's effective include_debits is True.
+        directions_fetched = {call.kwargs['direction'] for call in mock_fetch.call_args_list}
+        self.assertIn('DEBIT', directions_fetched)
+
+    def test_lock_busy_retries_without_touching_any_row(self):
+        # Real cross-session contention, not a mock — pg_try_advisory_xact_lock's
+        # entire purpose is inter-session serialization, which a mock of
+        # connection.cursor() can't faithfully exercise (the same call also
+        # backs every ORM query in this task, including the row lock). A
+        # genuinely separate DB connection holds the exact same lock key
+        # the task will try to acquire.
+        import psycopg
+        from django.conf import settings
+        from django.db import connection as django_connection
+
+        from banks.tasks import RECONCILIATION_POOL_LOCK_CLASSID
+
+        recon = self._make_recon(self.bank_account, '2026-07-01')
+
+        db = settings.DATABASES['default']
+        other_conn = psycopg.connect(
+            host=db['HOST'], port=db['PORT'], user=db['USER'], password=db.get('PASSWORD'),
+            dbname=django_connection.settings_dict['NAME'],
+        )
+        try:
+            with other_conn.cursor() as cur:
+                cur.execute(
+                    'SELECT pg_advisory_xact_lock(%s, %s)',
+                    [RECONCILIATION_POOL_LOCK_CLASSID, self.bank_account.id],
+                )
+            # Transaction deliberately left open (no commit) — the lock is
+            # still held on this other session for the duration of the test.
+
+            with self.assertRaises(Retry):
+                run_pool_reconciliation_match(self.bank_account.id)
+        finally:
+            other_conn.rollback()
+            other_conn.close()
+
+        recon.refresh_from_db()
+        self.assertEqual(recon.status, 'processing')
+
+    @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
+    @patch('banks.tasks.http_requests.post')
+    def test_calling_twice_back_to_back_only_calls_java_once(self, mock_post, mock_fetch):
+        # Simulates a second, late-arriving dispatch for the same account —
+        # the second call's live re-query finds nothing left processing.
+        self._make_recon(self.bank_account, '2026-07-01')
+        mock_post.return_value = self._mock_java_response({
+            'matchedCount': 0, 'unmatchedBankCount': 0, 'unmatchedErpCount': 0,
+            'matches': [], 'exceptions': [],
+        })
+
+        run_pool_reconciliation_match(self.bank_account.id)
+        run_pool_reconciliation_match(self.bank_account.id)
+
+        self.assertEqual(mock_post.call_count, 1)
+
+
 class RequeueStuckReconciliationsTests(TestCase):
     """
     requeue_stuck_reconciliations is the backstop for a task getting lost
     when celery_worker's process disappears mid-flight (most commonly a
     deploy recreating the container while a just-uploaded statement's
-    tasks are still being dispatched) — nothing inside run_reconciliation_
-    match itself can catch that, since the process vanishes out from under
-    it. This only re-queues rows stale enough that they can't just be
-    legitimately still running.
+    tasks are still being dispatched) — nothing inside
+    run_pool_reconciliation_match itself can catch that, since the process
+    vanishes out from under it. This only re-queues rows stale enough that
+    they can't just be legitimately still running, and dispatches one pool
+    task per distinct bank_account among them, not one per row.
     """
 
     def setUp(self):
@@ -1053,7 +1238,7 @@ class RequeueStuckReconciliationsTests(TestCase):
         recon.refresh_from_db()
         return recon
 
-    @patch('banks.tasks.run_reconciliation_match.apply_async')
+    @patch('banks.tasks.run_pool_reconciliation_match.apply_async')
     def test_requeues_only_processing_rows_past_the_threshold(self, mock_apply_async):
         from banks.tasks import requeue_stuck_reconciliations
 
@@ -1065,13 +1250,13 @@ class RequeueStuckReconciliationsTests(TestCase):
 
         self.assertEqual(count, 1)
         mock_apply_async.assert_called_once_with(
-            args=[genuinely_stuck.id, genuinely_stuck.include_debits], countdown=0,
+            args=[genuinely_stuck.bank_account_id], countdown=0,
         )
         called_ids = {call.kwargs['args'][0] for call in mock_apply_async.call_args_list}
         self.assertNotIn(recently_queued.id, called_ids)
         self.assertNotIn(already_done.id, called_ids)
 
-    @patch('banks.tasks.run_reconciliation_match.apply_async')
+    @patch('banks.tasks.run_pool_reconciliation_match.apply_async')
     def test_noop_when_nothing_is_stuck(self, mock_apply_async):
         from banks.tasks import requeue_stuck_reconciliations
 
@@ -1082,6 +1267,52 @@ class RequeueStuckReconciliationsTests(TestCase):
 
         self.assertEqual(count, 0)
         mock_apply_async.assert_not_called()
+
+    @patch('banks.tasks.run_pool_reconciliation_match.apply_async')
+    def test_two_stuck_rows_same_account_dispatch_only_once(self, mock_apply_async):
+        # The whole point of the pool redesign: N stuck dates for the SAME
+        # account must collapse to one dispatch, not N — the pool task
+        # re-queries which rows are actually processing once it holds the
+        # account's lock, so a single dispatch picks up both.
+        from banks.tasks import requeue_stuck_reconciliations
+
+        self._make_recon('2026-07-01', 'processing', minutes_ago=30)
+        self._make_recon('2026-07-02', 'processing', minutes_ago=30)
+
+        count = requeue_stuck_reconciliations()
+
+        self.assertEqual(count, 2)
+        mock_apply_async.assert_called_once_with(
+            args=[self.bank_account.id], countdown=0,
+        )
+
+    @patch('banks.tasks.run_pool_reconciliation_match.apply_async')
+    def test_stuck_rows_across_two_accounts_dispatch_once_each(self, mock_apply_async):
+        other_bank_account = BankAccount.objects.create(
+            bank=self.bank_account.bank, account_number='0000004',
+            account_name='Second Watchdog Account',
+            gl_account=Account.objects.create(
+                code='1399', name='Second Watchdog GL', account_level=Account.LEVEL_PARENT,
+            ),
+            account_manager=self.user,
+        )
+        from banks.tasks import requeue_stuck_reconciliations
+
+        self._make_recon('2026-07-01', 'processing', minutes_ago=30)
+        DailyReconciliation.objects.create(
+            bank_account=other_bank_account, reconciliation_date='2026-07-01',
+            uploaded_by=self.user, statement_file='bank_statements/watchdog2.csv',
+            status='processing',
+        )
+        DailyReconciliation.objects.filter(bank_account=other_bank_account).update(
+            updated_at=timezone.now() - timedelta(minutes=30),
+        )
+
+        count = requeue_stuck_reconciliations()
+
+        self.assertEqual(count, 2)
+        dispatched_account_ids = {call.kwargs['args'][0] for call in mock_apply_async.call_args_list}
+        self.assertEqual(dispatched_account_ids, {self.bank_account.id, other_bank_account.id})
 
 
 class EscalateAgingReconciliationExceptionsTests(TestCase):

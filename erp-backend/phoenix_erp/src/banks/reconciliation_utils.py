@@ -14,7 +14,7 @@ from decimal import Decimal
 
 from django.db.models import F
 
-from .tasks import run_reconciliation_match
+from .tasks import run_pool_reconciliation_match
 
 _LOAN_NUMBER_RE = re.compile(r'Loan repayment\s*[–-]\s*([^|]+)')
 _BANK_REFERENCE_RE = re.compile(r'\|\s*Ref:\s*(.+)$')
@@ -695,8 +695,8 @@ def find_same_amount_erp_candidates(tx, window_days=None):
     Returns ERP payments with EXACTLY tx.amount, within ±window_days of
     tx.value_date on tx.bank_account, excluding payments some OTHER
     currently-matched bank line already claims — i.e. the same candidate
-    pool run_reconciliation_match would offer Java for this line, filtered
-    down to an exact amount match.
+    pool run_pool_reconciliation_match would offer Java for this line,
+    filtered down to an exact amount match.
 
     Shared by audit_unattached_statement_lines (report-only) and
     confirm_unambiguous_ghost_matches (which acts on a len()==1 result) so
@@ -706,7 +706,7 @@ def find_same_amount_erp_candidates(tx, window_days=None):
     could disagree about which lines are actually unambiguous.
 
     window_days defaults to RECONCILIATION_MATCH_WINDOW_DAYS (the same
-    window run_reconciliation_match itself uses) when not given.
+    setting run_pool_reconciliation_match itself uses) when not given.
     """
     from datetime import timedelta
 
@@ -861,9 +861,14 @@ def ingest_reconciliation_transactions(bank_account, statement_file, parsed_tran
     """
     Store `parsed_transactions` into ReconciliationBankTransaction (deduped
     by bank_ref), then create or re-run one DailyReconciliation per distinct
-    date present in the transactions, dispatching
-    banks.tasks.run_reconciliation_match for each — used by
-    StatementUploadView.post after it has parsed the uploaded file.
+    date present in the transactions — used by StatementUploadView.post
+    after it has parsed the uploaded file. Every touched row flips to
+    status='processing' synchronously here (the frontend polls on this),
+    but only ONE banks.tasks.run_pool_reconciliation_match is dispatched
+    for the whole upload (this function is already scoped to a single
+    bank_account) rather than one per date — the pool task re-queries
+    which rows are actually processing once it holds that account's lock,
+    so it doesn't matter that multiple dates were flipped before it runs.
 
     Returns (created, rerun, skipped_dates):
       created       — list of newly-created DailyReconciliation instances
@@ -942,7 +947,6 @@ def ingest_reconciliation_transactions(bank_account, statement_file, parsed_tran
                 # (including the list/detail views) forever.
                 tenant=getattr(user, 'tenant', None),
             )
-            run_reconciliation_match.delay(recon.id, include_debits)
             created.append(recon)
         elif existing.status == 'processing':
             skipped_dates.append(str(d))
@@ -957,9 +961,11 @@ def ingest_reconciliation_transactions(bank_account, statement_file, parsed_tran
                 'uploaded_by', 'statement_file', 'status',
                 'total_bank_transactions', 'include_debits', 'rerun_count', 'updated_at',
             ])
-            run_reconciliation_match.delay(existing.id, include_debits)
             existing.refresh_from_db()
             rerun.append(existing)
+
+    if created or rerun:
+        run_pool_reconciliation_match.delay(bank_account.id)
 
     return created, rerun, skipped_dates
 

@@ -237,18 +237,18 @@ class ReconciliationViewTests(TestCase):
 
     # ── Manual rerun endpoint ────────────────────────────────────────────────
 
-    @patch('banks.views.run_reconciliation_match')
+    @patch('banks.views.run_pool_reconciliation_match')
     def test_rerun_endpoint_triggers_task_and_increments_count(self, mock_task):
         self.client.force_authenticate(user=self.branch_manager)
         resp = self.client.post(f'/api/banks/reconciliations/{self.recon_a.id}/rerun/', {}, format='json')
 
         self.assertEqual(resp.status_code, 202)
-        mock_task.delay.assert_called_once_with(self.recon_a.id, False)
+        mock_task.delay.assert_called_once_with(self.recon_a.bank_account_id)
         self.recon_a.refresh_from_db()
         self.assertEqual(self.recon_a.rerun_count, 1)
         self.assertEqual(self.recon_a.status, 'processing')
 
-    @patch('banks.views.run_reconciliation_match')
+    @patch('banks.views.run_pool_reconciliation_match')
     def test_rerun_endpoint_conflicts_when_already_processing(self, mock_task):
         self.recon_a.status = 'processing'
         self.recon_a.save(update_fields=['status'])
@@ -260,6 +260,7 @@ class ReconciliationViewTests(TestCase):
         mock_task.delay.assert_not_called()
 
     # ── Tenant on create (regression) ───────────────────────────────────────
+
     # DailyReconciliation.tenant only auto-fills from a thread-local set by
     # middleware, which isn't reliably populated in time for a DRF-
     # authenticated request. A row created without tenant= explicitly set
@@ -267,7 +268,7 @@ class ReconciliationViewTests(TestCase):
     # views (both go through the tenant-scoped manager) even though it was
     # reconciled successfully — this is exactly what StatementUploadView.post()
     # must never do again.
-    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    @patch('banks.reconciliation_utils.run_pool_reconciliation_match')
     def test_uploaded_reconciliation_has_tenant_set_and_is_listable(self, mock_task):
         # A date distinct from self.recon_a/self.recon_b's dates (2026-07-01,
         # 2026-07-02) so this exercises the "brand new reconciliation"
@@ -305,7 +306,7 @@ class ReconciliationViewTests(TestCase):
     # reconciliation branch was covered, by the tenant regression test
     # above).
 
-    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    @patch('banks.reconciliation_utils.run_pool_reconciliation_match')
     def test_upload_reruns_existing_non_processing_reconciliation_for_same_date(self, mock_task):
         # self.recon_a is status='completed' for 2026-07-01 — a statement
         # covering that same date should re-run it, not create a duplicate.
@@ -331,9 +332,9 @@ class ReconciliationViewTests(TestCase):
         self.assertEqual(self.recon_a.status, 'processing')
         self.assertEqual(self.recon_a.rerun_count, 1)
         self.assertEqual(self.recon_a.uploaded_by_id, self.branch_manager.id)
-        mock_task.delay.assert_called_once_with(self.recon_a.id, False)
+        mock_task.delay.assert_called_once_with(self.bank_account.id)
 
-    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    @patch('banks.reconciliation_utils.run_pool_reconciliation_match')
     def test_upload_skips_date_currently_processing(self, mock_task):
         self.recon_a.status = 'processing'
         self.recon_a.save(update_fields=['status'])
@@ -358,7 +359,7 @@ class ReconciliationViewTests(TestCase):
         self.recon_a.refresh_from_db()
         self.assertEqual(self.recon_a.rerun_count, 0)
 
-    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    @patch('banks.reconciliation_utils.run_pool_reconciliation_match')
     def test_upload_dedupes_bank_transactions_by_bank_ref(self, mock_task):
         csv_content = (
             b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
@@ -389,7 +390,7 @@ class ReconciliationViewTests(TestCase):
             1,
         )
 
-    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    @patch('banks.reconciliation_utils.run_pool_reconciliation_match')
     def test_upload_multi_date_statement_creates_one_reconciliation_per_date(self, mock_task):
         csv_content = (
             b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
@@ -407,9 +408,14 @@ class ReconciliationViewTests(TestCase):
 
         self.assertEqual(resp.status_code, 202, resp.data)
         self.assertEqual(len(resp.data['reconciliations']), 2)
-        self.assertEqual(mock_task.delay.call_count, 2)
+        # One DailyReconciliation row per date, but a SINGLE pool task
+        # dispatch for the whole upload (it's already scoped to one
+        # bank_account) — not one per date, which is the entire point of
+        # the pool redesign: run_pool_reconciliation_match re-queries which
+        # rows are actually processing once it holds the account's lock.
+        mock_task.delay.assert_called_once_with(self.bank_account.id)
 
-    @patch('banks.reconciliation_utils.run_reconciliation_match')
+    @patch('banks.reconciliation_utils.run_pool_reconciliation_match')
     def test_upload_include_debits_flag_passed_through(self, mock_task):
         csv_content = (
             b"Transaction Date,Narration,Reference,Debit,Credit,Balance\r\n"
@@ -428,7 +434,7 @@ class ReconciliationViewTests(TestCase):
         new_id = resp.data['reconciliations'][0]['id']
         recon = DailyReconciliation.objects.get(pk=new_id)
         self.assertTrue(recon.include_debits)
-        mock_task.delay.assert_called_once_with(recon.id, True)
+        mock_task.delay.assert_called_once_with(recon.bank_account_id)
 
     def test_upload_requires_bank_account_id(self):
         upload = SimpleUploadedFile('statement.csv', b'irrelevant', content_type='text/csv')
@@ -480,6 +486,120 @@ class ReconciliationViewTests(TestCase):
             format='multipart',
         )
         self.assertEqual(resp.status_code, 400)
+
+
+class BulkRerunReconciliationViewTests(TestCase):
+    """
+    BulkRerunReconciliationView used to dispatch one run_reconciliation_match
+    per DailyReconciliation row — "rerun everything for account X" could
+    fire N tasks that all raced each other over the same account's
+    candidate pool (the root cause of the confirmed double-claim bug this
+    session fixed). It must now dispatch at most one
+    run_pool_reconciliation_match per DISTINCT bank_account touched, no
+    matter how many date rows that spans — this had zero test coverage
+    before.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Bulk Rerun Org', slug='bulk-rerun-org')
+        self.director = User.objects.create_user(
+            username='bulk_director', password='test123',
+            tenant=self.tenant, is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+
+        bank = Bank.objects.create(bank_name='Bulk Rerun Bank', bank_code='990')
+        self.account_a = BankAccount.objects.create(
+            bank=bank, account_number='0000010', account_name='Bulk Rerun Account A',
+            gl_account=Account.objects.create(
+                code='1699', name='Bulk Rerun GL A', account_level=Account.LEVEL_PARENT,
+            ),
+            account_manager=self.director,
+        )
+        self.account_b = BankAccount.objects.create(
+            bank=bank, account_number='0000011', account_name='Bulk Rerun Account B',
+            gl_account=Account.objects.create(
+                code='1698', name='Bulk Rerun GL B', account_level=Account.LEVEL_PARENT,
+            ),
+            account_manager=self.director,
+        )
+
+        # Two dates on account_a (should collapse to ONE dispatch), one date
+        # on account_b (a second, separate dispatch), and one already-
+        # processing row (must be skipped, not re-dispatched).
+        self.recon_a1 = DailyReconciliation.objects.create(
+            bank_account=self.account_a, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/a1.csv',
+            status='completed', owner=self.director, tenant=self.tenant,
+        )
+        self.recon_a2 = DailyReconciliation.objects.create(
+            bank_account=self.account_a, reconciliation_date='2026-07-02',
+            uploaded_by=self.director, statement_file='bank_statements/a2.csv',
+            status='completed', owner=self.director, tenant=self.tenant,
+        )
+        self.recon_b1 = DailyReconciliation.objects.create(
+            bank_account=self.account_b, reconciliation_date='2026-07-01',
+            uploaded_by=self.director, statement_file='bank_statements/b1.csv',
+            status='completed', owner=self.director, tenant=self.tenant,
+        )
+        self.already_processing = DailyReconciliation.objects.create(
+            bank_account=self.account_b, reconciliation_date='2026-07-02',
+            uploaded_by=self.director, statement_file='bank_statements/b2.csv',
+            status='processing', owner=self.director, tenant=self.tenant,
+        )
+
+    @patch('banks.views.run_pool_reconciliation_match')
+    def test_dispatches_once_per_distinct_account_not_per_row(self, mock_task):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post('/api/banks/reconciliations/bulk-rerun/', {}, format='json')
+
+        self.assertEqual(resp.status_code, 202, resp.data)
+        self.assertEqual(resp.data['queued'], 3)  # a1, a2, b1
+        # The already-processing row is excluded by the queryset itself
+        # (.exclude(status='processing')) before the loop ever sees it, so
+        # it never reaches the in-loop 'skipped' branch either — that branch
+        # only fires on the TOCTOU race where a row flips to processing
+        # between the queryset evaluating and the loop reaching it.
+        self.assertEqual(resp.data['skipped'], 0)
+
+        # Every touched row still flips to 'processing' synchronously —
+        # the frontend polls on this and must see it immediately, not
+        # deferred into the async pool task.
+        for recon in (self.recon_a1, self.recon_a2, self.recon_b1):
+            recon.refresh_from_db()
+            self.assertEqual(recon.status, 'processing')
+            self.assertEqual(recon.rerun_count, 1)
+
+        # 2 rows on account_a + 1 row on account_b == 2 distinct accounts,
+        # so exactly 2 dispatches, not 3.
+        self.assertEqual(mock_task.delay.call_count, 2)
+        dispatched_ids = {call.args[0] for call in mock_task.delay.call_args_list}
+        self.assertEqual(dispatched_ids, {self.account_a.id, self.account_b.id})
+
+    @patch('banks.views.run_pool_reconciliation_match')
+    def test_already_processing_row_is_skipped_and_not_redispatched(self, mock_task):
+        self.client.force_authenticate(user=self.director)
+        self.client.post('/api/banks/reconciliations/bulk-rerun/', {}, format='json')
+
+        self.already_processing.refresh_from_db()
+        self.assertEqual(self.already_processing.rerun_count, 0)
+
+    @patch('banks.views.run_pool_reconciliation_match')
+    def test_bank_account_filter_narrows_dispatch_to_one_account(self, mock_task):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.post(
+            '/api/banks/reconciliations/bulk-rerun/',
+            {'bank_account_id': self.account_a.id}, format='json',
+        )
+
+        self.assertEqual(resp.status_code, 202, resp.data)
+        self.assertEqual(resp.data['queued'], 2)  # a1, a2 only
+        mock_task.delay.assert_called_once_with(self.account_a.id)
+
+        self.recon_b1.refresh_from_db()
+        self.assertEqual(self.recon_b1.status, 'completed')  # untouched
 
 
 class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
@@ -819,7 +939,7 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
     @patch('banks.reconciliation_utils.fetch_erp_payments', return_value=[])
     @patch('banks.tasks.http_requests.post')
     def test_resolve_to_expense_full_loop_auto_resolves_on_match(self, mock_post, mock_fetch):
-        from banks.tasks import run_reconciliation_match
+        from banks.tasks import run_pool_reconciliation_match
 
         tx = ReconciliationBankTransaction.objects.create(
             bank_account=self.bank_account, bank_ref='FRA-LOOP', value_date='2026-07-01',
@@ -845,7 +965,8 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         self.assertIsNotNone(journal_entry_id)
 
         self.recon.status = 'processing'
-        self.recon.save(update_fields=['status'])
+        self.recon.include_debits = True
+        self.recon.save(update_fields=['status', 'include_debits'])
 
         mock_response = MagicMock()
         mock_response.json.return_value = {
@@ -859,7 +980,7 @@ class ResolveToExpenseUnmatchAndLinkResolveTests(TestCase):
         mock_response.raise_for_status = MagicMock()
         mock_post.return_value = mock_response
 
-        run_reconciliation_match(self.recon.id, include_debits=True)
+        run_pool_reconciliation_match(self.bank_account.id)
 
         exc.refresh_from_db()
         self.assertTrue(exc.resolved)

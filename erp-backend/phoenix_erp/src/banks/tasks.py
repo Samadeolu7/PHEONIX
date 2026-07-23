@@ -2,12 +2,19 @@
 """
 Celery tasks for the banks application.
 
+run_pool_reconciliation_match
+    Async wrapper around the Bank-Recon (Java) matching call — one run per
+    bank_account (not per DailyReconciliation row), serialized with a
+    Postgres advisory lock so only one Java call can ever be in flight for
+    a given account at a time. Moved out of StatementUploadView so the
+    upload request returns immediately instead of blocking the HTTP thread
+    for up to ~90 seconds on a synchronous cross-service call — see
+    banks/views.py's StatementUploadView for the (now fast) parse/store/
+    enqueue half of this flow.
+
 run_reconciliation_match
-    Async wrapper around the Bank-Recon (Java) matching call. Moved out of
-    StatementUploadView so the upload request returns immediately instead of
-    blocking the HTTP thread for up to ~90 seconds on a synchronous
-    cross-service call — see banks/views.py's StatementUploadView for the
-    (now fast) parse/store/enqueue half of this flow.
+    Compatibility shim for the old per-row task name — see its own
+    docstring.
 """
 import logging
 from datetime import date, timedelta
@@ -35,86 +42,169 @@ AUTO_RESOLVE_NOTE = 'Auto-resolved: matched in a later re-run.'
 # auto-match.
 AUTO_MATCH_MIN_CONFIDENCE = 'HIGH'
 
+# Arbitrary fixed constant namespacing the pool-reconciliation advisory lock
+# (see run_pool_reconciliation_match) — the second pg_try_advisory_xact_lock
+# argument is the actual bank_account_id, so this classid just keeps this
+# lock's key space from ever colliding with any other advisory-lock user in
+# the codebase. Do not reuse accounts/signals.py's hash()-based _lock_key()
+# helper for anything like this — hash() on a str is salted by
+# PYTHONHASHSEED, which is randomized per-process by default and unpinned in
+# this project's deploy config, so two prefork worker children would very
+# likely compute different integers for "the same" logical key, silently
+# defeating cross-process serialization.
+RECONCILIATION_POOL_LOCK_CLASSID = 911001
+
+
+def _mark_recons_failed(recons, detail):
+    """
+    bulk_update() bypasses save()'s auto_now handling — updated_at must be
+    set explicitly here or these rows silently keep a stale updated_at.
+    """
+    from .models import DailyReconciliation
+
+    ts = tz.now()
+    for r in recons:
+        r.status = 'failed'
+        r.error_detail = detail
+        r.updated_at = ts
+    DailyReconciliation.objects.bulk_update(recons, ['status', 'error_detail', 'updated_at'])
+
 
 @shared_task(
     bind=True,
-    name='banks.tasks.run_reconciliation_match',
-    max_retries=3,
-    default_retry_delay=30,
+    name='banks.tasks.run_pool_reconciliation_match',
+    max_retries=12,
+    default_retry_delay=20,
     acks_late=True,
 )
-def run_reconciliation_match(self, reconciliation_id, include_debits=False):
-    from .models import DailyReconciliation, ReconciliationBankTransaction, ReconciliationException
+def run_pool_reconciliation_match(self, bank_account_id):
+    """
+    One matching run per bank_account, not per DailyReconciliation row —
+    replaces run_reconciliation_match (kept below as a compatibility shim
+    for any message already queued from before this deploy).
+
+    Why: two DailyReconciliation rows for the SAME bank_account, with
+    overlapping ±window_days candidate windows, used to be able to run
+    concurrently and each independently "claim" the same ERP payment —
+    confirmed live in production (21 payments simultaneously matched to
+    2-3 different bank lines; a persist-time recheck in _persist_outcome
+    and a partial-unique-index migration catch this as defense-in-depth,
+    but the root cause was the concurrency model itself). A
+    pg_try_advisory_xact_lock keyed on bank_account_id (not a
+    DailyReconciliation row) makes it impossible for two of these to ever
+    be mid-flight for the same account at once, and every call site now
+    dispatches at most one of these per account instead of one per date —
+    so Java always sees the account's whole current backlog in a single
+    call rather than a racing fragment of it, which also fixes wrong
+    matches that weren't literal double-claims (two racing fragments can
+    each look locally correct to Java while the union view would have
+    matched differently).
+
+    IMPORTANT: this depends on celery_worker running the default prefork
+    pool (verified in docker-compose.yml — no --pool= flag). A
+    transaction-scoped advisory lock is a Postgres *session*-scoped
+    concept tied to one DB connection; prefork gives every concurrent task
+    its own OS process and connection, so locks correctly contend across
+    them. Under --pool=gevent/eventlet, many logical tasks can multiplex
+    one real DB session, which would let a second "concurrent" task see
+    the lock as already held by itself and slip through. Do not change
+    the worker pool type without revisiting this.
+
+    Never trusts bank_account_id for anything beyond which account to
+    lock — everything actually processed (which DailyReconciliation rows,
+    which window, which include_debits) is re-queried fresh once the lock
+    is held, never taken from whichever call site happened to dispatch
+    this particular message. That's what lets two dispatches queued
+    moments apart for the same account collapse safely into one real run:
+    whoever wins the lock picks up every row currently status='processing'
+    for the account at that instant; the loser re-checks, finds nothing
+    left, and no-ops. A third dispatch landing in the small gap after the
+    winner's own SELECT but before it releases the lock isn't lost — its
+    own task just retries against the held lock until its turn.
+    """
+    from django.db import connection
+
+    from .models import DailyReconciliation, ReconciliationBankTransaction
     from .reconciliation_utils import fetch_erp_payments
 
-    # select_for_update(nowait=True) locks the row immediately and raises
-    # OperationalError if another worker already holds it, rather than
-    # blocking indefinitely. This closes the race where a retry arrives
-    # while the original is still running — both would otherwise see
-    # status='processing' and proceed to call Java and persist outcomes.
-    # of=('self',) restricts the lock to DailyReconciliation's own row —
-    # without it, Postgres rejects the query outright ("FOR UPDATE cannot
-    # be applied to the nullable side of an outer join") because owner and
-    # branch are nullable FKs and select_related turns those into LEFT
-    # OUTER JOINs.
-    #
-    # select_for_update() requires an open transaction — outside one it
-    # raises TransactionManagementError. The whole body runs inside this
-    # one atomic() block (including the Java HTTP call) precisely so the
-    # lock stays held for as long as the comment above promises; a plain
-    # early return commits normally, and self.retry()/an uncaught
-    # exception rolls back cleanly since nothing here is meant to be
-    # partially visible to a concurrent attempt.
+    # select_for_update() requires an open transaction — the whole body
+    # (including the Java HTTP call) runs inside this one atomic() block so
+    # both the advisory lock (transaction-scoped — auto-releases at commit/
+    # rollback/connection loss, no manual unlock needed) and the row lock
+    # stay held for exactly as long as this run is doing real work.
     with transaction.atomic():
-        try:
-            recon = (
-                DailyReconciliation.objects
-                .select_related('bank_account', 'owner__tenant', 'branch')
-                .select_for_update(nowait=True, of=('self',))
-                .get(pk=reconciliation_id)
+        with connection.cursor() as cur:
+            cur.execute(
+                'SELECT pg_try_advisory_xact_lock(%s, %s)',
+                [RECONCILIATION_POOL_LOCK_CLASSID, bank_account_id],
             )
-        except DailyReconciliation.DoesNotExist:
-            logger.error("run_reconciliation_match: DailyReconciliation %s not found", reconciliation_id)
-            return
-        except OperationalError as exc:
-            # Row is locked by another worker — back off and let Celery retry.
-            logger.warning(
-                "run_reconciliation_match: recon %s locked by another worker, retrying",
-                reconciliation_id,
-            )
-            raise self.retry(exc=exc, countdown=10)
-
-        if recon.status != 'processing':
-            # Already completed/failed by a prior run of this task (e.g. a retry
-            # that fired after an earlier attempt actually succeeded) — no-op.
+            (got_lock,) = cur.fetchone()
+        if not got_lock:
             logger.info(
-                "run_reconciliation_match: reconciliation %s already %s, skipping",
-                reconciliation_id, recon.status,
+                "run_pool_reconciliation_match: bank_account %s pool lock busy, retrying",
+                bank_account_id,
             )
-            return
+            raise self.retry(countdown=20)
 
-        bank_account = recon.bank_account
-        reconciliation_date = recon.reconciliation_date
+        # Re-query LIVE state now that the lock is held — see the docstring
+        # above for why this, not the dispatch-time argument, is the actual
+        # source of truth for what this run is responsible for. bank_account
+        # is a required (non-nullable) FK so joining it alongside the
+        # nullable owner/branch (of=('self',) already restricts the row
+        # lock to DailyReconciliation itself, same as before) is safe.
+        recons = list(
+            DailyReconciliation.objects
+            .select_related('bank_account', 'owner__tenant', 'branch')
+            .select_for_update(nowait=True, of=('self',))
+            .filter(bank_account_id=bank_account_id, status='processing')
+            .order_by('reconciliation_date')
+        )
+        if not recons:
+            logger.info(
+                "run_pool_reconciliation_match: no processing rows for bank_account %s, nothing to do",
+                bank_account_id,
+            )
+            return 0
 
-        # Widen the candidate pool to a window around the reconciliation date —
-        # postings lag in both directions: an officer may log a repayment a day
-        # or two before it settles, and the bank may not post a transaction for
-        # several days after it was actually collected.
+        bank_account = recons[0].bank_account
+
+        # Widen the candidate pool to the union of every date this run is
+        # responsible for, ± the same window used per-date before — postings
+        # lag in both directions: an officer may log a repayment a day or
+        # two before it settles, and the bank may not post a transaction
+        # for several days after it was actually collected.
+        dates = [r.reconciliation_date for r in recons]
         window_days = getattr(django_settings, 'RECONCILIATION_MATCH_WINDOW_DAYS', 7)
-        window_start = reconciliation_date - timedelta(days=window_days)
-        window_end = reconciliation_date + timedelta(days=window_days)
+        window_start = min(dates) - timedelta(days=window_days)
+        window_end = max(dates) + timedelta(days=window_days)
 
-        # Re-query the candidate pool fresh (not whatever the view saw at upload
-        # time) — it must reflect the current unmatched state at the moment this
-        # task actually runs, since queueing and execution aren't instantaneous.
+        # Different dates in this batch may have asked for different
+        # include_debits — over-including is safe (more candidates offered,
+        # never fewer), so the effective value is "any of them wanted it,"
+        # and every row's own stored value is corrected to match so it
+        # never lies about what actually ran against it.
+        effective_include_debits = any(r.include_debits for r in recons)
+        to_bump = [r for r in recons if r.include_debits != effective_include_debits]
+        if to_bump:
+            for r in to_bump:
+                r.include_debits = effective_include_debits
+            DailyReconciliation.objects.bulk_update(to_bump, ['include_debits'])
+
+        # Re-query the candidate pool fresh (not whatever the view saw at
+        # upload time) — it must reflect the current unmatched state at the
+        # moment this task actually runs, since queueing and execution
+        # aren't instantaneous.
         candidates = list(ReconciliationBankTransaction.objects.filter(
             bank_account=bank_account,
             value_date__range=(window_start, window_end),
             matched=False,
         ))
 
-        # ERP payments another date's run within this same window already
-        # claimed must not be offered again.
+        # ERP payments already claimed within this window must not be
+        # offered again. With the pool lock in place this is no longer
+        # racing a concurrent run for the same account, but is still the
+        # correct exclusion against matches this same account committed on
+        # a previous (non-overlapping-in-time) run.
         already_matched_erp_ids = list(ReconciliationBankTransaction.objects.filter(
             bank_account=bank_account,
             matched=True,
@@ -131,7 +221,7 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
                 bank_account, window_start, window_end, direction='DEBIT',
                 exclude_payment_ids=already_matched_erp_ids,
             )
-            if include_debits else None
+            if effective_include_debits else None
         )
 
         # Keyed lookup so a confirmed match can be traced back to the ERP
@@ -142,10 +232,14 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
         }
 
         payload = {
-            'reconciliationId': recon.id,
+            # Diagnostic/log-correlation only on Java's side — it's
+            # stateless (see ReconciliationBankTransaction's own docstring)
+            # and its response is keyed by bank/ERP ids and dates, not by
+            # this field.
+            'reconciliationId': recons[0].id,
             'bankAccountId': bank_account.id,
-            'reconciliationDate': reconciliation_date.isoformat(),
-            'includeDebits': include_debits,
+            'reconciliationDate': dates[0].isoformat(),
+            'includeDebits': effective_include_debits,
             'bankTransactions': [
                 {
                     'id':            str(tx.id),
@@ -160,7 +254,7 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
             ],
             'erpCreditPayments': erp_credit_payments,
         }
-        if include_debits:
+        if effective_include_debits:
             payload['erpDebitPayments'] = erp_debit_payments
 
         java_base_url = getattr(django_settings, 'BANK_RECON_SERVICE_URL', 'http://localhost:8081')
@@ -182,69 +276,90 @@ def run_reconciliation_match(self, reconciliation_id, include_debits=False):
             # giving up — avoids permanent failure on an innocent cold-start.
             if self.request.retries < 1:
                 logger.warning(
-                    "run_reconciliation_match: Java timeout for recon %s — retrying once after 120s",
-                    recon.id,
+                    "run_pool_reconciliation_match: Java timeout for bank_account %s — retrying once after 120s",
+                    bank_account_id,
                 )
                 raise self.retry(countdown=120)
-            recon.status = 'failed'
-            recon.error_detail = 'Java matching service timed out after 90 seconds (retry also timed out).'
-            recon.save(update_fields=['status', 'error_detail', 'updated_at'])
-            logger.error("run_reconciliation_match: Java timeout for recon %s (retry exhausted)", recon.id)
-            return
+            _mark_recons_failed(recons, 'Java matching service timed out after 90 seconds (retry also timed out).')
+            logger.error("run_pool_reconciliation_match: Java timeout for bank_account %s (retry exhausted)", bank_account_id)
+            return 0
         except http_requests.exceptions.RequestException as exc:
             # Connection refused / DNS / transient network errors are more
             # likely to resolve on retry than a timeout is.
             try:
                 raise self.retry(exc=exc, countdown=30)
             except self.MaxRetriesExceededError:
-                recon.status = 'failed'
-                recon.error_detail = str(exc)
-                recon.save(update_fields=['status', 'error_detail', 'updated_at'])
+                _mark_recons_failed(recons, str(exc))
                 logger.error(
-                    "run_reconciliation_match: Java Bank-Recon service error for recon %s after retries: %s",
-                    recon.id, exc,
+                    "run_pool_reconciliation_match: Java Bank-Recon service error for bank_account %s after retries: %s",
+                    bank_account_id, exc,
                 )
-                return
+                return 0
 
         # Single timestamp for all audit fields written this run — matched_at,
         # resolved_at, etc. are consistent rather than drifting across calls.
         now = tz.now()
 
         try:
-            _persist_outcome(recon, bank_account, reconciliation_date, candidates, outcome, now, erp_payments_by_id)
+            _persist_outcome(recons, bank_account, candidates, outcome, now, erp_payments_by_id)
         except Exception as exc:
-            # Anything unexpected here (most plausibly database contention from
-            # several same-account tasks with heavily overlapping ±7-day
-            # windows touching the same rows concurrently) must never leave the
-            # row silently stuck at 'processing' forever with no trace — that's
-            # strictly worse than a visible failure, since nothing would ever
-            # retry it and a director has no way to know it needs attention.
-            # The task re-queries current state fresh and dedups exceptions by
+            # Anything unexpected here must never leave these rows silently
+            # stuck at 'processing' forever with no trace — that's strictly
+            # worse than a visible failure, since nothing would ever retry
+            # it and a director has no way to know it needs attention. The
+            # task re-queries current state fresh and dedups exceptions by
             # natural key, so it's safe to retry rather than fail outright.
             logger.exception(
-                "run_reconciliation_match: unexpected error persisting outcome for recon %s", recon.id,
+                "run_pool_reconciliation_match: unexpected error persisting outcome for bank_account %s", bank_account_id,
             )
             try:
                 raise self.retry(exc=exc, countdown=30)
             except self.MaxRetriesExceededError:
-                recon.status = 'failed'
-                recon.error_detail = f'{type(exc).__name__}: {exc}'[:2000]
-                recon.save(update_fields=['status', 'error_detail', 'updated_at'])
-                return
+                _mark_recons_failed(recons, f'{type(exc).__name__}: {exc}'[:2000])
+                return 0
 
         logger.info(
-            "run_reconciliation_match: recon %s completed — %d matched, %d bank-only, %d erp-only",
-            recon.id, recon.matched_count, recon.unmatched_bank_count, recon.unmatched_erp_count,
+            "run_pool_reconciliation_match: bank_account %s completed — %d date(s) processed",
+            bank_account_id, len(recons),
         )
+        return len(recons)
 
 
-def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outcome, now, erp_payments_by_id):
+@shared_task(name='banks.tasks.run_reconciliation_match')
+def run_reconciliation_match(reconciliation_id, include_debits=False):
+    """
+    Compatibility shim for the old per-DailyReconciliation-row task name —
+    kept only so a message already sitting in Redis from before the
+    pool-first deploy (acks_late=True means an in-flight message survives
+    a worker restart and gets redelivered) is absorbed safely instead of
+    crashing or resurrecting the old racy per-date path. `include_debits`
+    is accepted but ignored — run_pool_reconciliation_match re-derives it
+    from the DB rows it finds, never trusting a dispatch-time argument.
+    Safe to delete once confident nothing old is still queued (check
+    Flower/Redis for the old task name before removing).
+    """
+    from .models import DailyReconciliation
+
+    recon = DailyReconciliation.objects.filter(pk=reconciliation_id).only('id', 'bank_account_id', 'status').first()
+    if recon is None or recon.status != 'processing':
+        return
+    run_pool_reconciliation_match.delay(recon.bank_account_id)
+
+
+def _persist_outcome(recons, bank_account, candidates, outcome, now, erp_payments_by_id):
     """
     Everything after a successful Java response: persist matches, auto-
     resolve superseded exceptions, save new exceptions, and recompute
     summary counts for every reconciliation touched. Split out from the
     task body so the whole phase can be wrapped in one retry/failure
     boundary — see the try/except around this call.
+
+    `recons` is every DailyReconciliation row this pool run is responsible
+    for (every row that was status='processing' for this bank_account when
+    run_pool_reconciliation_match acquired its lock) — not just one date.
+    Ordered by reconciliation_date; `recons[0]` (the earliest) stands in
+    wherever a single representative row is needed (director/tenant
+    lookup, an exception with no derivable date).
 
     `now` is the single timestamp captured by the task before this call so
     all audit fields (matched_at, resolved_at) are consistent across rows.
@@ -263,16 +378,17 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
     )
 
     # A windowed run can surface an exception whose own date differs from
-    # reconciliation_date. It's only persisted against the DailyReconciliation
-    # for THAT date, and only if one already exists — otherwise it's skipped
-    # for now and will surface naturally once that date gets its own run.
-    # Defined before the matches block below (not just the exceptions_data
-    # loop it originally served) since the confidence gate needs it too.
-    recon_by_date = {reconciliation_date: recon}
+    # any date in this run's own batch. It's only persisted against the
+    # DailyReconciliation for THAT date, and only if one already exists —
+    # otherwise it's skipped for now and will surface naturally once that
+    # date gets its own run. Defined before the matches block below (not
+    # just the exceptions_data loop it originally served) since the
+    # confidence gate needs it too.
+    recon_by_date = {r.reconciliation_date: r for r in recons}
 
     def get_target_recon(own_date):
         if own_date is None:
-            return recon
+            return recons[0]
         if own_date not in recon_by_date:
             recon_by_date[own_date] = DailyReconciliation.objects.filter(
                 bank_account=bank_account, reconciliation_date=own_date,
@@ -301,10 +417,10 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
     for m in all_matches_data:
         if (m.get('confidence') or '').upper() == AUTO_MATCH_MIN_CONFIDENCE and m.get('erpPaymentId') is None:
             logger.warning(
-                "run_reconciliation_match: recon %s — Java reported a %s-confidence "
+                "run_pool_reconciliation_match: bank_account %s — Java reported a %s-confidence "
                 "match for bank tx %s with NO erpPaymentId — malformed response, "
                 "treating as unmatched instead of committing.",
-                recon.id, AUTO_MATCH_MIN_CONFIDENCE, m.get('bankTransactionId'),
+                bank_account.id, AUTO_MATCH_MIN_CONFIDENCE, m.get('bankTransactionId'),
             )
 
     # --- guard against the same ERP payment being claimed twice ---
@@ -331,10 +447,10 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
         erp_id = m.get('erpPaymentId')
         if erp_id in claimed_this_batch:
             logger.warning(
-                "run_reconciliation_match: recon %s — Java returned erpPaymentId %s "
+                "run_pool_reconciliation_match: bank_account %s — Java returned erpPaymentId %s "
                 "for more than one bank transaction in the same response; keeping "
                 "only the first, demoting the rest to manual review.",
-                recon.id, erp_id,
+                bank_account.id, erp_id,
             )
             low_confidence_matches.append(m)
             continue
@@ -350,10 +466,10 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
         )
         if already_claimed_elsewhere:
             logger.warning(
-                "run_reconciliation_match: recon %s — %d ERP payment(s) already "
+                "run_pool_reconciliation_match: bank_account %s — %d ERP payment(s) already "
                 "claimed by another matched bank line (cross-run race), demoting "
                 "to manual review instead of double-claiming: %s",
-                recon.id, len(already_claimed_elsewhere), sorted(already_claimed_elsewhere),
+                bank_account.id, len(already_claimed_elsewhere), sorted(already_claimed_elsewhere),
             )
             low_confidence_matches.extend(
                 m for m in matches_data if m.get('erpPaymentId') in already_claimed_elsewhere
@@ -462,7 +578,7 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
     # Directors are stable within a single task run — load them once and
     # pass the list into the notification helper rather than re-querying
     # per bank_only/erp_only exception.
-    directors = _load_directors(recon)
+    directors = _load_directors(recons[0])
 
     for exc_item in exceptions_data:
         exc_type = exc_item.get('exceptionType', 'bank_only')
@@ -568,9 +684,16 @@ def _persist_outcome(recon, bank_account, reconciliation_date, candidates, outco
     # trusted verbatim for any single date's summary.
     from .reconciliation_utils import recompute_reconciliation_counts
 
+    # Only a row that was actually part of THIS run's own live-fetched batch
+    # (i.e. was status='processing' when the pool lock was acquired) gets
+    # marked 'completed' here — a neighboring date's row merely touched via
+    # the window (an exception dated outside the batch) gets its counts
+    # recomputed but is left for its own run to complete it, exactly as
+    # before this was generalized from a single recon to a batch.
+    batch_recon_ids = {r.id for r in recons}
     for touched_recon in {r for r in recon_by_date.values() if r is not None}:
         recompute_reconciliation_counts(touched_recon)
-        if touched_recon.id == recon.id:
+        if touched_recon.id in batch_recon_ids:
             touched_recon.status = 'completed'
             touched_recon.save(update_fields=['status', 'updated_at'])
 
@@ -713,42 +836,49 @@ def requeue_stuck_reconciliations():
     rows left at status='processing' well past any realistic run time and
     re-queues them.
 
-    run_reconciliation_match now marks a row 'failed' with a real
-    error_detail on any exception it catches, but a task can still vanish
-    with zero trace if the worker process itself gets replaced mid-flight —
-    most commonly, a deploy recreating the celery_worker container while a
-    just-uploaded statement's tasks are still being dispatched or run. That
-    isn't something any exception handler inside the task can catch, since
-    the process disappears out from under it. This is the only mechanism
-    that recovers from that specific failure mode, which is why the
-    threshold is deliberately generous — every real run so far has
-    completed in well under a minute, even for statements with 60+ rows and
-    heavily overlapping ±7-day windows (see banks/test_tasks.py for the
-    window-widening design this pool size follows from).
+    run_pool_reconciliation_match now marks every row in its batch 'failed'
+    with a real error_detail on any exception it catches, but a task can
+    still vanish with zero trace if the worker process itself gets
+    replaced mid-flight — most commonly, a deploy recreating the
+    celery_worker container while a just-uploaded statement's tasks are
+    still being dispatched or run. That isn't something any exception
+    handler inside the task can catch, since the process disappears out
+    from under it. This is the only mechanism that recovers from that
+    specific failure mode, which is why the threshold is deliberately
+    generous — every real run so far has completed in well under a
+    minute, even for statements with 60+ rows and heavily overlapping
+    ±7-day windows (see banks/test_tasks.py for the window-widening design
+    this pool size follows from).
 
-    include_debits is read from the persisted model field so a watchdog
-    re-run honours the original upload intent rather than silently
-    downgrading to credit-only. Tasks are staggered 15 seconds apart to
-    avoid a thundering herd hitting Java simultaneously when several
-    statements were in-flight during a worker restart.
+    Dispatches one run_pool_reconciliation_match per distinct bank_account
+    among the stuck rows, not one per row — include_debits is no longer
+    passed here at all, since the pool task re-derives it fresh from
+    whatever rows it actually finds still processing. Tasks are staggered
+    15 seconds apart (per account, not per row) to avoid a thundering herd
+    hitting Java simultaneously when several accounts were in-flight
+    during a worker restart.
     """
     from .models import DailyReconciliation
 
     cutoff = tz.now() - timedelta(minutes=STUCK_RECONCILIATION_THRESHOLD_MINUTES)
     stuck = list(DailyReconciliation.objects.filter(status='processing', updated_at__lt=cutoff))
+    stuck_account_ids = sorted({r.bank_account_id for r in stuck})
 
-    for i, recon in enumerate(stuck):
+    for i, bank_account_id in enumerate(stuck_account_ids):
         logger.warning(
-            "requeue_stuck_reconciliations: recon %s stuck at 'processing' since %s — re-queuing",
-            recon.id, recon.updated_at,
+            "requeue_stuck_reconciliations: bank_account %s has stuck row(s), re-queuing pool task",
+            bank_account_id,
         )
-        run_reconciliation_match.apply_async(
-            args=[recon.id, recon.include_debits],
+        run_pool_reconciliation_match.apply_async(
+            args=[bank_account_id],
             countdown=i * 15,
         )
 
     if stuck:
-        logger.info("requeue_stuck_reconciliations: re-queued %d stuck reconciliation(s)", len(stuck))
+        logger.info(
+            "requeue_stuck_reconciliations: re-queued %d stuck reconciliation(s) across %d bank account(s)",
+            len(stuck), len(stuck_account_ids),
+        )
     return len(stuck)
 
 
