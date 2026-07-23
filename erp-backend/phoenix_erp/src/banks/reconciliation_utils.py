@@ -72,6 +72,42 @@ def _normalized_for_reference_compare(text):
     return re.sub(r'\s+', ' ', (text or '')).upper()
 
 
+# Words that appear in the reference/narration of nearly every transaction
+# on these bank feeds — channel prefixes, the institution's own name,
+# transfer-speak. Never evidence that two specific transactions correspond.
+# Mirrors Bank-Recon's BankReferenceMatcher.STRUCTURAL_TOKENS.
+_REF_STRUCTURAL_TOKENS = frozenset({
+    'CPWINWARD', 'INWARD', 'TRANSFER', 'KRYSTAR', 'TRUST', 'INVESTMENT',
+    'INVESTMEN', 'LIMITED', 'CUSTO', 'CUSTOM', 'CUSTOMER', 'MONIEPOINT',
+    'USSD', 'MOBILE', 'PAYMENT', 'REPAYMENT', 'KRYSTA', 'FROM',
+})
+_REF_WORD_RE = re.compile(r'[A-Za-z0-9]{4,}')
+
+
+def _reference_found_in(embedded_ref, haystack):
+    """
+    True if `embedded_ref` corresponds to `haystack` (both already
+    whitespace-normalized/uppercased by the callers below): either as a
+    verbatim substring, or — failing that — every meaningful word of the
+    reference individually present. The fallback exists because officers
+    often type the customer's name as the reference in a different order
+    than the bank prints it ("Adewola Adeife Roseline" vs narration
+    "ROSELINE ADEIFE ADEWOLA") or with connective prefixes the bank
+    doesn't use ("TRF FRM MAMUDU TAIBAT" vs "FROM MAMUDU TAIBAT") — the
+    same customer, not a mismatch. Structural boilerplate words are
+    excluded so a reference consisting of nothing but them never matches.
+    """
+    if embedded_ref in haystack:
+        return True
+    meaningful = [
+        w for w in _REF_WORD_RE.findall(embedded_ref)
+        if w not in _REF_STRUCTURAL_TOKENS
+    ]
+    if not meaningful:
+        return False
+    return all(w in haystack for w in meaningful)
+
+
 def reference_mismatches_bank_line(tx, payment):
     """
     True if `payment` (a transactions.Transaction) has an explicit embedded
@@ -90,7 +126,7 @@ def reference_mismatches_bank_line(tx, payment):
     if not embedded_ref:
         return False
     haystack = _normalized_for_reference_compare(f'{tx.bank_ref or ""} {tx.narration or ""}')
-    return _normalized_for_reference_compare(embedded_ref) not in haystack
+    return not _reference_found_in(_normalized_for_reference_compare(embedded_ref), haystack)
 
 
 def reference_confirms_bank_line(tx, payment):
@@ -111,7 +147,7 @@ def reference_confirms_bank_line(tx, payment):
     if not embedded_ref:
         return False
     haystack = _normalized_for_reference_compare(f'{tx.bank_ref or ""} {tx.narration or ""}')
-    return _normalized_for_reference_compare(embedded_ref) in haystack
+    return _reference_found_in(_normalized_for_reference_compare(embedded_ref), haystack)
 
 
 def find_duplicate_claimed_payments():

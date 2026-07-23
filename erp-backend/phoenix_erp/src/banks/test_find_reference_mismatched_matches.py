@@ -107,6 +107,62 @@ class FindReferenceMismatchedMatchesTests(TestCase):
         output = self._run()
         self.assertIn('No reference mismatches found', output)
 
+    def test_name_reference_in_different_word_order_is_not_a_mismatch(self):
+        # Officers often type the customer's name as the reference in a
+        # different order than the bank prints it — same customer, not a
+        # mismatch. Found live: 'Adewola Adeife Roseline' flagged against
+        # narration 'Transfer from ROSELINE ADEIFE ADEWOLA'.
+        payment = self._make_payment(
+            'Loan repayment – LN-1042 | Ref: Adewola Adeife Roseline'
+        )
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='ORDER-1', value_date='2026-07-20',
+            direction='CREDIT', amount=Decimal('1000.00'),
+            narration='Transfer from ROSELINE ADEIFE ADEWOLA',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+
+        output = self._run()
+        self.assertIn('No reference mismatches found', output)
+
+    def test_trf_frm_prefix_difference_is_not_a_mismatch(self):
+        # 'TRF FRM MAMUDU TAIBAT' vs bank narration '... FROM MAMUDU
+        # TAIBAT' — connective prefixes differ, the customer tokens all
+        # match. TRF/FRM are under the 4-char word floor, FROM is
+        # structural; only MAMUDU + TAIBAT count and both are present.
+        payment = self._make_payment(
+            'Loan repayment – LN-726 | Ref: TRF FRM MAMUDU TAIBAT'
+        )
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='PREFIX-1', value_date='2026-07-20',
+            direction='CREDIT', amount=Decimal('20000.00'),
+            narration='USSD-NIP/To KRYSTAR L./23470XXXX6885 - FROM MAMUDU TAIBAT',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+
+        output = self._run()
+        self.assertIn('No reference mismatches found', output)
+
+    def test_reference_of_only_structural_words_never_matches_by_tokens(self):
+        # A reference like 'Transfer from Krystar customer' is pure
+        # boilerplate — every word is structural, so the token fallback
+        # has nothing meaningful to match on and must NOT let it
+        # "correspond" to an arbitrary narration sharing those words.
+        # Correspondence then depends solely on the verbatim check, which
+        # also fails here — so this IS flagged as a mismatch.
+        from banks.models import ReconciliationBankTransaction as RBT
+        from banks.reconciliation_utils import reference_mismatches_bank_line
+
+        payment = self._make_payment(
+            'Loan repayment – LN-1 | Ref: Transfer from Krystar customer'
+        )
+        line = RBT(
+            bank_account=self.bank_account, bank_ref='BOILER-1', value_date='2026-07-20',
+            direction='CREDIT', amount=Decimal('500.00'),
+            narration='KRYSTAR TRUST transfer from customer JOHN',
+        )
+        self.assertTrue(reference_mismatches_bank_line(line, payment))
+
     def test_whitespace_normalization_also_applies_to_confirmation(self):
         # The positive-confirmation helper used by
         # unmatch_duplicate_claimed_payments must agree: a double-space
