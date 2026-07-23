@@ -137,3 +137,112 @@ class FixUnmatchedStaleResolvedExceptionsTests(TestCase):
         output = self._run()
         self.assertIn('no DailyReconciliation exists', output)
         self.assertFalse(ReconciliationException.objects.filter(loan_payment_id=88).exists())
+
+    # ── Phase 2: auto-resolutions with no live match behind them ──────────
+
+    AUTO_NOTE = 'Auto-resolved: matched in a later re-run.'
+
+    def test_auto_resolved_erp_only_with_no_live_claimant_is_reopened(self):
+        # The exact production stray: payment auto-resolved when a (wrong)
+        # match was committed; the claimant was later freed and re-matched
+        # to a DIFFERENT payment, so no ghost line points here anymore —
+        # phase 1's ghost walk can't see it, phase 2 must.
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=1880, erp_amount=Decimal('1000.00'),
+            erp_narration='Loan repayment – LN-1061', erp_date='2026-07-01',
+            resolved=True, resolution_notes=self.AUTO_NOTE,
+        )
+        # A line whose pointer was overwritten to another payment entirely.
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='OVERWRITTEN-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1000.00'), narration='now claims another payment',
+            matched=True, matched_erp_payment_id=999, match_confidence='HIGH',
+        )
+
+        output = self._run()
+
+        exc.refresh_from_db()
+        self.assertFalse(exc.resolved)
+        self.assertIn('no live match', output)
+
+    def test_auto_resolved_bank_only_with_unmatched_line_is_reopened(self):
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='STALE-BANK-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('500.00'), narration='test',
+            matched=False,
+        )
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_transaction_id=tx.id, bank_amount=Decimal('500.00'),
+            bank_narration='test', bank_date='2026-07-01',
+            resolved=True, resolution_notes=self.AUTO_NOTE,
+        )
+
+        self._run()
+
+        exc.refresh_from_db()
+        self.assertFalse(exc.resolved)
+
+    def test_auto_resolved_with_live_match_stays_resolved(self):
+        live_tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='LIVE-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('700.00'), narration='test',
+            matched=True, matched_erp_payment_id=777, match_confidence='HIGH',
+        )
+        erp_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=777, erp_amount=Decimal('700.00'),
+            erp_narration='live', erp_date='2026-07-01',
+            resolved=True, resolution_notes=self.AUTO_NOTE,
+        )
+        bank_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='bank_only', direction='CREDIT',
+            bank_transaction_id=live_tx.id, bank_amount=Decimal('700.00'),
+            bank_narration='live', bank_date='2026-07-01',
+            resolved=True, resolution_notes=self.AUTO_NOTE,
+        )
+
+        self._run()
+
+        erp_exc.refresh_from_db()
+        bank_exc.refresh_from_db()
+        self.assertTrue(erp_exc.resolved)
+        self.assertTrue(bank_exc.resolved)
+
+    def test_human_resolution_is_never_reopened(self):
+        # resolved_by set, or any note other than the auto-resolve marker —
+        # a director's decision is permanent even with no live match.
+        human_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=555, erp_amount=Decimal('900.00'),
+            erp_narration='human resolved', erp_date='2026-07-01',
+            resolved=True, resolved_by=self.user, resolution_notes='Payment resolved',
+        )
+        other_note_exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=556, erp_amount=Decimal('901.00'),
+            erp_narration='bank fee, no ERP entry needed', erp_date='2026-07-01',
+            resolved=True, resolution_notes='this is a bank fee',
+        )
+
+        self._run()
+
+        human_exc.refresh_from_db()
+        other_note_exc.refresh_from_db()
+        self.assertTrue(human_exc.resolved)
+        self.assertTrue(other_note_exc.resolved)
+
+    def test_phase2_dry_run_does_not_mutate(self):
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=444, erp_amount=Decimal('300.00'),
+            erp_narration='stale', erp_date='2026-07-01',
+            resolved=True, resolution_notes=self.AUTO_NOTE,
+        )
+
+        output = self._run(dry_run=True)
+
+        exc.refresh_from_db()
+        self.assertTrue(exc.resolved)
+        self.assertIn('Would reopen', output)

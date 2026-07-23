@@ -34,9 +34,26 @@ the bank transaction, erp_only against matched_erp_payment_id), CREATES the
 exception if it doesn't exist and REOPENS it if it's resolved — using the
 same get_or_create_bank_only_exception/get_or_create_erp_only_exception
 helpers unmatch() itself uses (reconciliation_utils.py), so the end state
-is identical to what a correct unmatch() would have produced. Never
-touches the underlying GL Transaction/TransactionEntry — only reconciliation-
-side bookkeeping. Safe to re-run — a second pass finds nothing left to do.
+is identical to what a correct unmatch() would have produced.
+
+A second phase enforces the general invariant directly, catching strays
+the ghost walk can't see: an "Auto-resolved: matched in a later re-run"
+resolution may only stand while a LIVE match actually exists. Found in
+production: a payment's own-date exception was auto-resolved when a
+(wrong) match was committed, the wrong claimants were later freed by the
+cleanup tools, and those claimant lines were then re-matched to OTHER
+payments — overwriting their pointers, so no ghost line referenced the
+payment anymore and phase 1 never examined it, leaving the exception
+closed with no match behind it. Phase 2 scans every exception still
+carrying the auto-resolve note and reopens any whose bank line isn't
+currently matched (bank_only) / whose payment isn't currently claimed by
+any matched line (erp_only). Resolutions made by a human (resolved_by
+set, or any other note) are never touched — a director's decision is
+permanent.
+
+Never touches the underlying GL Transaction/TransactionEntry — only
+reconciliation-side bookkeeping. Safe to re-run — a second pass finds
+nothing left to do.
 
 Usage:
     python manage.py fix_unmatched_stale_resolved_exceptions --dry-run
@@ -143,6 +160,60 @@ class Command(BaseCommand):
                         existing_erp_exc.resolved = False
                         existing_erp_exc.save(update_fields=['resolved'])
                         touched_recon_ids.add(existing_erp_exc.reconciliation_id)
+
+        # --- phase 2: auto-resolutions with no live match behind them ---
+        # The ghost walk above only reaches exceptions some unmatched line
+        # still points at; an auto-resolved exception whose former claimant
+        # has since been re-matched ELSEWHERE (pointer overwritten) is
+        # invisible to it. The invariant is checked directly instead: the
+        # "matched in a later re-run" note may only stand while that match
+        # still exists. Human resolutions (resolved_by set, or any other
+        # note) are never touched.
+        from banks.tasks import AUTO_RESOLVE_NOTE
+
+        stale_auto = 0
+        for exc in ReconciliationException.objects.filter(
+            resolved=True,
+            resolved_by__isnull=True,
+            resolution_notes=AUTO_RESOLVE_NOTE,
+            exception_type__in=('bank_only', 'erp_only'),
+        ).select_related('reconciliation'):
+            if exc.exception_type == 'bank_only':
+                if not exc.bank_transaction_id:
+                    continue
+                live = ReconciliationBankTransaction.objects.filter(
+                    pk=exc.bank_transaction_id, matched=True,
+                ).exists()
+            else:
+                if not exc.loan_payment_id:
+                    continue
+                live = ReconciliationBankTransaction.objects.filter(
+                    matched=True, matched_erp_payment_id=exc.loan_payment_id,
+                ).exists()
+            if live:
+                continue
+
+            stale_auto += 1
+            fix_count += 1
+            touched_recon_ids.add(exc.reconciliation_id)
+            subject = (
+                f'bank tx {exc.bank_transaction_id}' if exc.exception_type == 'bank_only'
+                else f'ERP payment {exc.loan_payment_id}'
+            )
+            self.stdout.write(
+                f'  {"[DRY RUN] " if dry_run else ""}{exc.exception_type} exception {exc.id} '
+                f'(recon {exc.reconciliation_id}) says "matched in a later re-run" but '
+                f'{subject} has no live match — {"would reopen" if dry_run else "reopening"}'
+            )
+            if not dry_run:
+                exc.resolved = False
+                exc.save(update_fields=['resolved'])
+
+        if stale_auto:
+            self.stdout.write(
+                f'\n{"Would reopen" if dry_run else "Reopened"} {stale_auto} auto-resolved '
+                f'exception(s) whose match no longer exists.'
+            )
 
         if fix_count == 0:
             self.stdout.write(self.style.SUCCESS('\nNo corrupted exception bookkeeping found.'))
