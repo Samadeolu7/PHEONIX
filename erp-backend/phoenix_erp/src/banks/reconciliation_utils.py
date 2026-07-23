@@ -186,11 +186,16 @@ def match_is_reference_and_amount_verified(tx, payment):
         reference must appear in the line (reference_confirms_bank_line,
         whitespace-normalized with token-subset fallback);
       - if it doesn't (savings deposits/transfers whose description IS the
-        raw narration, or a name-only description), either the payment's
-        own description corresponds to the line the same way, or — the
-        reverse direction — a digit-dominant id token from the LINE's own
-        narration appears verbatim inside the payment's description (see
-        _bank_line_reference_token_in_erp_text).
+        raw narration, or a name-only description), any of: the payment's
+        own description corresponds to the line the same way; one of them
+        is a literal, contiguous substring of the other (either direction —
+        e.g. BankPayment.post_payment() builds an expense description as
+        "Bank Payment: {ref} - " + the bank narration verbatim, so the
+        line's whole narration is embedded in the payment's, not the other
+        way the word-subset check above assumes); or — a further fallback —
+        a digit-dominant id token from the LINE's own narration appears
+        verbatim inside the payment's description
+        (_bank_line_reference_token_in_erp_text).
 
     Anything else — amount+date coincidences, tolerance matches, fuzzy
     guesses — is unverified: Bank-Recon no longer auto-commits such pairs
@@ -208,6 +213,15 @@ def match_is_reference_and_amount_verified(tx, payment):
         return False
     haystack = _normalized_for_reference_compare(f'{tx.bank_ref or ""} {tx.narration or ""}')
     if _reference_found_in(description, haystack):
+        return True
+    # Reverse containment — mirrors Bank-Recon's FuzzyReferenceMatcher
+    # containment check (MIN_CONTAINMENT_LENGTH=10 there too). Narration
+    # only, not narration+bank_ref like `haystack` above: bank_ref is a
+    # separate identifier field that was never part of the descriptive
+    # text a director's post_payment() copies verbatim, so including it
+    # here would break the containment check on its own prefix.
+    narration_only = _normalized_for_reference_compare(tx.narration or '')
+    if len(narration_only) >= 10 and narration_only in description:
         return True
     return _bank_line_reference_token_in_erp_text(tx, payment.description)
 

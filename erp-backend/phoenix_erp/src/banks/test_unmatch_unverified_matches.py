@@ -168,6 +168,23 @@ class UnmatchUnverifiedMatchesTests(TestCase):
         line.refresh_from_db()
         self.assertFalse(line.matched)
 
+    def test_erp_description_wrapping_the_bank_narration_verbatim_is_kept(self):
+        # Full production shape: BankPayment.post_payment() builds the ERP
+        # description as "Bank Payment: {ref} - " + bank narration
+        # verbatim — the line's whole narration is embedded in the (much
+        # longer) payment description, the opposite direction from what
+        # the word-subset fallback checks. Must be verified, not freed.
+        bank_narration = 'Stamp Duty Charge on 2 TXNS FRM 30-06-2026 to 30-0 Ref2 TRANSACTION(S)'
+        payment = self._payment(
+            Decimal('100.00'), f'Bank Payment: EXP-2026-000014 - {bank_narration}',
+        )
+        line = self._line('FEE-3', Decimal('100.00'), bank_narration, payment)
+
+        self._run(user_id=self.user.id, apply=True)
+
+        line.refresh_from_db()
+        self.assertTrue(line.matched)
+
     def test_helper_rejects_missing_payment(self):
         payment = self._payment(Decimal('7000.00'), 'Loan repayment – LN-2 | Ref: GONE88888')
         line = self._line('GONE-1', Decimal('7000.00'), 'GONE88888 present here', payment)
