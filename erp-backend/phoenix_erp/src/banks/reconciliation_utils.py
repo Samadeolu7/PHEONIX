@@ -150,6 +150,40 @@ def reference_confirms_bank_line(tx, payment):
     return _reference_found_in(_normalized_for_reference_compare(embedded_ref), haystack)
 
 
+def match_is_reference_and_amount_verified(tx, payment):
+    """
+    The director's auto-match acceptance policy, checkable after the fact:
+    a committed match only counts as verified when the AMOUNT genuinely
+    corresponds (the claimed payment is approved, not deleted, and has an
+    entry on this line's own GL account at exactly this line's amount —
+    claimed_payment_visible_in_trace) AND the REFERENCE genuinely
+    corresponds:
+
+      - if the payment embeds an explicit "| Ref:" reference, that
+        reference must appear in the line (reference_confirms_bank_line,
+        whitespace-normalized with token-subset fallback);
+      - if it doesn't (savings deposits/transfers whose description IS the
+        raw narration, or a name-only description), the payment's own
+        description must correspond to the line the same way.
+
+    Anything else — amount+date coincidences, tolerance matches, fuzzy
+    guesses — is unverified: Bank-Recon no longer auto-commits such pairs
+    (MatchScorer's autoCommitEligible), and unmatch_unverified_matches
+    frees the historical ones so only reference+amount-verified matches
+    remain in the books.
+    """
+    if payment is None or not claimed_payment_visible_in_trace(tx):
+        return False
+    embedded_ref = extract_embedded_reference(payment.description)
+    if embedded_ref:
+        return reference_confirms_bank_line(tx, payment)
+    description = _normalized_for_reference_compare(payment.description)
+    if not description:
+        return False
+    haystack = _normalized_for_reference_compare(f'{tx.bank_ref or ""} {tx.narration or ""}')
+    return _reference_found_in(description, haystack)
+
+
 def find_duplicate_claimed_payments():
     """
     Returns {payment_id: [ReconciliationBankTransaction, ...]} for every ERP
