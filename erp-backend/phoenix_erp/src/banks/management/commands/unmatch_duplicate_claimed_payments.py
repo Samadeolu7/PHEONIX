@@ -54,12 +54,24 @@ class Command(BaseCommand):
         parser.add_argument('--user-id', type=int, required=True, help='User to attribute the unmatch action to.')
         parser.add_argument('--apply', action='store_true', help='Actually unmatch (default is a dry-run report).')
         parser.add_argument('--dry-run', action='store_true', help='Preview only — the default behaviour; accepted for explicitness.')
+        parser.add_argument(
+            '--free-unconfirmed-groups', action='store_true',
+            help='When the payment HAS an explicit embedded reference and ZERO claimants '
+                 'contain it, every claimant is individually reference-contradicted — free '
+                 'them ALL (keep none) instead of reporting the group as ambiguous. Groups '
+                 'whose payment has no reference to check, and groups with 2+ reference-'
+                 'confirmed claimants, still always require a human.',
+        )
 
     def handle(self, *args, **options):
         from django.contrib.auth import get_user_model
         from django.core.exceptions import ValidationError
 
-        from banks.reconciliation_utils import find_duplicate_claimed_payments, reference_confirms_bank_line
+        from banks.reconciliation_utils import (
+            extract_embedded_reference,
+            find_duplicate_claimed_payments,
+            reference_confirms_bank_line,
+        )
         from transactions.models import Transaction
 
         User = get_user_model()
@@ -69,6 +81,7 @@ class Command(BaseCommand):
             raise CommandError(f"No user with id={options['user_id']}")
 
         apply_changes = options['apply']
+        free_unconfirmed = options['free_unconfirmed_groups']
 
         groups = find_duplicate_claimed_payments()
         if not groups:
@@ -119,6 +132,22 @@ class Command(BaseCommand):
                 if len(confirmed) == 1:
                     keep = confirmed[0]
                     reason_label = 'reference-confirmed'
+                elif (
+                    len(confirmed) == 0
+                    and free_unconfirmed
+                    and extract_embedded_reference(payment.description)
+                ):
+                    # The payment names an explicit reference and NOT ONE
+                    # claimant contains it — every claimant is individually
+                    # reference-contradicted, so there is no "right one" to
+                    # keep. Free them all; the payment's true owner (if its
+                    # line exists) gets paired on rerun.
+                    keep = None
+                    reason_label = None
+                    self.stdout.write(
+                        '    -> payment has an explicit reference and NO claimant contains it '
+                        '— every claimant is wrong, freeing all (--free-unconfirmed-groups)'
+                    )
                 else:
                     self.stdout.write(self.style.WARNING(
                         f'    -> AMBIGUOUS: {len(confirmed)} reference-confirmed claimant(s) — needs a human decision.'
@@ -127,9 +156,10 @@ class Command(BaseCommand):
                     self.stdout.write('')
                     continue
 
-            self.stdout.write(f'    -> keeping tx={keep.id} ({reason_label}), freeing the rest')
+            if keep is not None:
+                self.stdout.write(f'    -> keeping tx={keep.id} ({reason_label}), freeing the rest')
             for tx in claimants:
-                if tx.id == keep.id:
+                if keep is not None and tx.id == keep.id:
                     continue
                 self.stdout.write(
                     f'    {"[DRY RUN] " if not apply_changes else ""}unmatching tx={tx.id}'

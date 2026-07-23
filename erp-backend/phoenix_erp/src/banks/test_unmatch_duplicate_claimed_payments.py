@@ -225,3 +225,115 @@ class DuplicateClaimedPaymentsTests(TestCase):
     def test_no_duplicates_reports_success(self):
         output = self._run(user_id=self.user.id)
         self.assertIn('No duplicate-claimed payments found', output)
+
+    def test_zero_confirmed_group_stays_ambiguous_without_flag(self):
+        payment = self._make_erp_payment(
+            Decimal('4000.00'), date(2026, 7, 16),
+            description='Loan repayment – LN-1082 | Ref: CPWInward:100004260716075753165484486486/EPHRAIM O',
+        )
+        tx1 = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='WRONG-A', value_date='2026-07-03',
+            direction='CREDIT', amount=Decimal('4000.00'),
+            narration='CPWInward:100004260703150758164325151195/GOD IS GO Ref100214786952',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+        tx2 = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='WRONG-B', value_date='2026-07-08',
+            direction='CREDIT', amount=Decimal('4000.00'),
+            narration='CPWInward:100004260708103449164774716409/MARIAM RA Ref100220128015',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+
+        output = self._run(user_id=self.user.id, apply=True)
+
+        tx1.refresh_from_db()
+        tx2.refresh_from_db()
+        self.assertTrue(tx1.matched)
+        self.assertTrue(tx2.matched)
+        self.assertIn('AMBIGUOUS', output)
+
+    def test_flag_frees_all_claimants_when_payment_ref_contradicts_every_one(self):
+        # The exact live shape: payment 1782's reference names EPHRAIM,
+        # while all claimants are GOD IS GO / MARIAM / INEMESIT lines —
+        # every claimant is individually wrong, no "right one" to keep.
+        payment = self._make_erp_payment(
+            Decimal('4000.00'), date(2026, 7, 16),
+            description='Loan repayment – LN-1082 | Ref: CPWInward:100004260716075753165484486486/EPHRAIM O',
+        )
+        tx1 = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='WRONG-A', value_date='2026-07-03',
+            direction='CREDIT', amount=Decimal('4000.00'),
+            narration='CPWInward:100004260703150758164325151195/GOD IS GO Ref100214786952',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+        tx2 = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='WRONG-B', value_date='2026-07-08',
+            direction='CREDIT', amount=Decimal('4000.00'),
+            narration='CPWInward:100004260708103449164774716409/MARIAM RA Ref100220128015',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+
+        output = self._run(user_id=self.user.id, apply=True, free_unconfirmed_groups=True)
+
+        tx1.refresh_from_db()
+        tx2.refresh_from_db()
+        self.assertFalse(tx1.matched)
+        self.assertFalse(tx2.matched)
+        self.assertIn('freeing all', output)
+        self.assertIn('Freed 2', output)
+
+    def test_flag_does_not_touch_group_whose_payment_has_no_reference(self):
+        # Payment 481's shape: 'Transfer: Oladele Tayo' — no '| Ref:'
+        # segment at all, so nothing is provable about either claimant.
+        payment = self._make_erp_payment(
+            Decimal('4000.00'), date(2026, 7, 1), description='Transfer: Oladele Tayo',
+        )
+        tx1 = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='NOREF-A', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('4000.00'),
+            narration='CPWInward:100004260701162053164133575513/ZAINAB TI Ref100212362625',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+        tx2 = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='NOREF-B', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('4000.00'),
+            narration='CPWInward:100004260701134923164118232286/GOD IS GO Ref100212166504',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+
+        output = self._run(user_id=self.user.id, apply=True, free_unconfirmed_groups=True)
+
+        tx1.refresh_from_db()
+        tx2.refresh_from_db()
+        self.assertTrue(tx1.matched)
+        self.assertTrue(tx2.matched)
+        self.assertIn('AMBIGUOUS', output)
+
+    def test_flag_does_not_touch_group_with_two_confirmed_claimants(self):
+        # Recurring-customer shape (payment 1380/1548): identical narration
+        # on both claimants, both contain the reference — still a human call
+        # even with the flag.
+        payment = self._make_erp_payment(
+            Decimal('3000.00'), date(2026, 7, 13),
+            description='Loan repayment – LN-20260708-9C114F | Ref: FIP:ZIB/UCHENNA/ ussd transfer',
+        )
+        tx1 = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='RECUR-A', value_date='2026-07-13',
+            direction='CREDIT', amount=Decimal('3000.00'),
+            narration='FIP:ZIB/UCHENNA/ ussd transfer Ref011416062075',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+        tx2 = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='RECUR-B', value_date='2026-07-16',
+            direction='CREDIT', amount=Decimal('3000.00'),
+            narration='FIP:ZIB/UCHENNA/ ussd transfer Ref011419892865',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+
+        output = self._run(user_id=self.user.id, apply=True, free_unconfirmed_groups=True)
+
+        tx1.refresh_from_db()
+        tx2.refresh_from_db()
+        self.assertTrue(tx1.matched)
+        self.assertTrue(tx2.matched)
+        self.assertIn('AMBIGUOUS', output)
