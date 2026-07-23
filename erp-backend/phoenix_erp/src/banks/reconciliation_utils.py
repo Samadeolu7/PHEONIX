@@ -25,11 +25,25 @@ _BANK_REFERENCE_RE = re.compile(r'\|\s*Ref:\s*(.+)$')
 # shared transaction id / reference number (mirrors Bank-Recon's own
 # BankReferenceMatcher.TOKEN, minus its 5-char floor, which is too loose for
 # this narration-vs-narration comparison rather than reference-vs-narration).
+#
+# Length alone isn't enough, though: found in production generating exactly
+# the noise this exists to avoid — "CPWInward" (9 chars) and "repayment"
+# (9 chars) are structural boilerplate that recurs across every inward-
+# transfer narration or every loan-repayment description respectively, not
+# a genuine shared identifier between two specific transactions. A real
+# bank transaction id/reference number is overwhelmingly digits (the
+# examples that DID matter — "166034176614", "100004260722085236..." — are
+# all-digit or digit-dominant), so a token only counts as a shared
+# identifier if most of it is digits.
 _LONG_TOKEN_RE = re.compile(r'[A-Za-z0-9]{8,}')
+_MIN_DIGITS_IN_TOKEN = 6
 
 
 def _long_tokens(text):
-    return {t.upper() for t in _LONG_TOKEN_RE.findall(text or '')}
+    return {
+        t.upper() for t in _LONG_TOKEN_RE.findall(text or '')
+        if sum(c.isdigit() for c in t) >= _MIN_DIGITS_IN_TOKEN
+    }
 
 
 def extract_embedded_reference(description):

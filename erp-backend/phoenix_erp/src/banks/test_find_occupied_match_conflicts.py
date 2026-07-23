@@ -110,6 +110,36 @@ class FindOccupiedMatchConflictsTests(TestCase):
         output = self._run()
         self.assertIn('No occupied-candidate conflicts found', output)
 
+    def test_no_conflict_from_shared_structural_boilerplate(self):
+        # Regression test for the exact false-positive found live: "CPWInward"
+        # (9 chars) is the generic bank-channel prefix on EVERY inward
+        # transfer narration, and "repayment" (9 chars) recurs in every loan
+        # repayment description — neither is a genuine shared identifier
+        # just because both happen to be 8+ characters. Only a token with
+        # enough digits in it (a real transaction id/reference number)
+        # should count.
+        payment = self._make_erp_payment(
+            Decimal('2000.00'), date(2026, 7, 14),
+            description='Loan repayment – LN-1045 | Ref: CPWInward:100004260714063402165294118580/KEHINDE Y',
+        )
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='BOILERPLATE-A', value_date='2026-07-14',
+            direction='CREDIT', amount=Decimal('2000.00'),
+            narration='CPWInward:100004260714063402165294118580/KEHINDE Y Ref100226645639',
+            matched=True, matched_erp_payment_id=payment.id, match_confidence='HIGH',
+        )
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='BOILERPLATE-B', value_date='2026-07-15',
+            direction='CREDIT', amount=Decimal('2000.00'),
+            # Completely unrelated transaction — shares only "CPWInward" and
+            # nothing else with the payment's own embedded reference.
+            narration='CPWInward:100004260715095540165402293497/MUTIYAT A Ref100228062802',
+            matched=False,
+        )
+
+        output = self._run()
+        self.assertIn('No occupied-candidate conflicts found', output)
+
     def test_helper_returns_empty_for_matched_line(self):
         # find_occupied_erp_candidates is only meaningful for a currently-
         # unattached line; sanity-check it doesn't blow up if called on one
