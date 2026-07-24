@@ -46,15 +46,20 @@ SAFETY:
     repayments stop adding to this gap while you're reviewing it.
   - Every posted correction is logged via FinancialAuditLog
     (LOAN_BALANCE_CORRECTION) with the loan, amount, and before/after figures.
-  - ONE-TIME catch-up, not something to schedule or re-run casually: it sums
+  - IDEMPOTENT across re-runs (including a Ctrl-C'd or crashed attempt): each
+    correction is checked against its own FinancialAuditLog(LOAN_BALANCE_CORRECTION,
+    source_command='draft_penalty_income_reclass') entry first, so an already-
+    corrected loan is skipped rather than re-posted.
+  - Still meant as a prompt one-time catch-up, not a recurring job: it sums
     EVERY FinancialAuditLog(LOAN_REPAY) entry's 'penalty' value per loan,
     regardless of whether penalty_income_account was configured at the time
-    of that payment. Once fix_loan_penalty_account_mapping is applied, new
-    repayments post penalty income correctly AND still log a LOAN_REPAY entry
-    with the same nonzero 'penalty' — so running this command again later
-    would double-count those already-correctly-posted amounts. Run it once,
-    promptly, to close out the historical gap; do not re-run after new
-    properly-routed penalty payments have occurred.
+    of that payment. If you let significant time pass after running
+    fix_loan_penalty_account_mapping — during which a loan that was NEVER
+    corrected here receives a new, already-correctly-routed penalty payment —
+    that loan's first correction run would over-count (the idempotency guard
+    only protects against re-running on an ALREADY-corrected loan, not against
+    mixing pre-fix and post-fix payments within one loan's first correction).
+    Run promptly after the config fix to avoid that edge case.
   - Skips (with an ERROR line, not silently) any loan whose computed penalty
     total exceeds its receivable account's entire lifetime credits — the
     exact check that caught the first version's bug on LN-659.
@@ -163,6 +168,17 @@ class Command(BaseCommand):
             for loan in loans.iterator():
                 target_account = resolve_account(loan.branch_id)
                 if target_account is None:
+                    continue
+
+                # Idempotency guard: skip any loan this command already corrected
+                # (tracked via its own FinancialAuditLog entry) so re-running --apply
+                # after a completed run can't double-post the same reclass.
+                already_corrected = FinancialAuditLog.objects.filter(
+                    event_type=FinancialAuditLog.LOAN_BALANCE_CORRECTION,
+                    extra__source_command='draft_penalty_income_reclass',
+                    extra__loan_number=loan.loan_number,
+                ).exists()
+                if already_corrected:
                     continue
 
                 logs = FinancialAuditLog.objects.filter(
