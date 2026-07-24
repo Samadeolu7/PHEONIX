@@ -7,6 +7,7 @@ import { roleService } from '../services/roleService';
 import { tokenManager } from '../services/tokenManager';
 import { permissionService } from '@/services/permissionService';
 import { navConfigService } from '../services/navConfigService';
+import { queryClient } from '../lib/queryClient';
 
 // Use the real User type from authService
 type User = RealUser;
@@ -26,8 +27,6 @@ export interface ActiveBranch {
 }
 
 const ACTIVE_BRANCH_KEY = 'activeBranch';
-
-const DIRECTOR_ROLES = new Set(['director', 'admin', 'operations']);
 
 interface AuthContextType {
   user: User | null;
@@ -332,10 +331,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setRole = (role: UserRole) => {
     roleService.setSelectedRole(role);
     setSelectedRole(role);
-    // If switching to a non-director role, clear the active branch
-    if (!DIRECTOR_ROLES.has(role.toLowerCase())) {
-      setActiveBranch(null);
-    }
   };
 
   const clearRole = () => {
@@ -351,12 +346,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem(ACTIVE_BRANCH_KEY);
     }
     setActiveBranchState(branch);
+    // The <main key={activeBranch?.id}> remount alone doesn't force React
+    // Query to refetch (refetchOnMount is false), so cached data from the
+    // previous branch could otherwise linger silently after switching.
+    queryClient.invalidateQueries();
   };
 
-  const isDirectorPlus =
-    DIRECTOR_ROLES.has((selectedRole ?? '').toLowerCase()) ||
-    (user?.is_owner ?? false) ||
-    (user?.is_system_admin ?? false);
+  // Mirrors the backend's actual elevated-user check (common.views's
+  // _is_elevated_user / users.auth's _has_global_scope) instead of matching
+  // selectedRole against a hardcoded set of role names — a role like
+  // "MD / CEO" or "Auditor" is global-scope on the backend regardless of
+  // what it's literally named, so this can't drift out of sync with it.
+  const isDirectorPlus = user?.has_global_scope ?? false;
 
   const hasRole = (role: UserRole) => {
     return selectedRole === role;

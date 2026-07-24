@@ -58,6 +58,13 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     (plus records where the officer field is NULL/unassigned).
     ``supervisor`` users additionally see records belonging to their direct
     reports.  All higher roles are unaffected.
+
+    Pages without a client concept (GL accounts, budgets, reports, ...) can
+    override ``get_narrow_scope_q()`` to define their own meaning for a narrow
+    scope tier (e.g. "payments made by or to this user"), instead of relying
+    on ``officer_client_lookup``. If neither is set, a narrow scope tier
+    falls back to ``created_by == user`` rather than silently granting full
+    branch-wide access.
     """
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
 
@@ -97,6 +104,24 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # Officer-scope helper
     # ------------------------------------------------------------------
 
+    def get_narrow_scope_q(self, scope, user, staff):
+        """
+        Override per-viewset to redefine what a narrow scope tier ('own_records',
+        'assigned_clients', 'ajo_group') means for THIS page's domain. Return a
+        Q object to use it, or None to fall through to the default
+        officer_client_lookup-based behavior (or the created_by fallback below
+        if no lookup is configured either).
+
+        Example — a payments viewset giving 'own_records' its own meaning
+        instead of the generic client-officer relationship::
+
+            def get_narrow_scope_q(self, scope, user, staff):
+                if scope == 'own_records':
+                    return Q(payer=user) | Q(recipient=user)
+                return None
+        """
+        return None
+
     def _apply_officer_scope(self, qs):
         """
         Restrict queryset to the records this user may see, based on the
@@ -107,10 +132,6 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         Scope dropdown never actually controlled. Fails closed for restricted
         users who have no linked Staff record.
         """
-        lookup = self.officer_client_lookup
-        if not lookup:
-            return qs
-
         user = self.request.user
 
         if getattr(user, 'is_system_admin', False):
@@ -131,12 +152,29 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         if scope in ('own_branch', 'global'):
             return qs
 
-        # assigned_clients / own_records / ajo_group all require a Staff record.
         staff = None
         try:
             staff = user.staff_profile
         except Exception:
             pass
+
+        # 1. Page-specific override wins — lets a page redefine what "mine"
+        #    means for its own domain, for any narrow scope tier.
+        custom_q = self.get_narrow_scope_q(scope, user, staff)
+        if custom_q is not None:
+            return qs.filter(custom_q).distinct()
+
+        lookup = self.officer_client_lookup
+
+        # 2. No client-officer concept configured for this page and no custom
+        #    override — the one notion of "mine" every model supports is "I
+        #    created it." Fail toward more restriction, never toward the
+        #    unscoped branch-wide access this used to silently return.
+        if not lookup:
+            return qs.filter(created_by=user)
+
+        # 3. Client-officer-based narrowing (assigned_clients / ajo_group /
+        #    own_records) — all require a Staff record.
         if not staff:
             return qs.none()
 

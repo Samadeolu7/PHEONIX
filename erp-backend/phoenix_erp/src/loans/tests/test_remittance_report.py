@@ -309,3 +309,92 @@ class RemittanceReportTestCase(TestCase):
         data = response.json()
         collected_clients = {row["client_name"] for row in data["loan_collections"]}
         self.assertIn(self.cathy.full_name, collected_clients)
+
+    def test_own_branch_scope_user_does_not_see_other_branches_collections(self):
+        """
+        Regression test: `clients_qs` used to start from `Client.objects.all()`
+        with no branch filter at all, so an own_branch-scope user viewing the
+        report in Branch A could see "collected today" entries for clients in
+        a completely different branch of the same tenant — the previous test
+        above only proves the *officer* dimension (own_branch bypasses the
+        assigned-officer restriction within one branch); this proves the
+        *branch* dimension is enforced too.
+        """
+        other_branch = Branch.objects.create(
+            name="Other Branch", code="OTHR", tenant=self.tenant, owner=self.owner,
+        )
+        other_loan_parent = _make_account(
+            self.owner, other_branch, "Other Loans Receivable", "9300", Account.LOAN,
+        )
+        other_cash_parent = _make_account(
+            self.owner, other_branch, "Other Cash", "9000", Account.ASSET,
+        )
+        other_cashier_gl = _make_account(
+            self.owner, other_branch, "Other Till", "9001", Account.ASSET,
+            account_level=Account.LEVEL_CHILD, parent=other_cash_parent,
+        )
+        other_interest_income_account = _make_account(
+            self.owner, other_branch, "Other Interest Income", "9400", Account.INCOME,
+        )
+        other_product = Product.objects.create(
+            name="Other Branch Loan", code="LOAN-OTHR", product_type="LOAN",
+            owner=self.owner, branch=other_branch,
+        )
+        other_loan_product = LoanProduct.objects.create(
+            product=other_product,
+            parent_account=other_loan_parent,
+            disbursement_account=other_cashier_gl,
+            interest_income_account=other_interest_income_account,
+            default_interest_rate=Decimal("10.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            owner=self.owner, branch=other_branch,
+        )
+        other_client = Client.objects.create(
+            client_id="CLI-OTHR", first_name="Uche", last_name="Faraway",
+            gender="male", phone_primary="08010000099",
+            tenant=self.tenant, owner=self.owner, branch=other_branch,
+        )
+        other_loan_account = Account.objects.create(
+            name="Uche Loan Account", code="93001", account_type=Account.LOAN,
+            account_level=Account.LEVEL_CHILD, parent=other_loan_parent,
+            owner=self.owner, created_by=self.owner, branch=other_branch,
+        )
+        other_loan = LoanAccount.objects.create(
+            client=other_client, product=other_loan_product, account=other_loan_account,
+            loan_number="LN-OTHR-1", requested_amount=Decimal("10000.00"),
+            interest_rate=Decimal("10.00"), term_months=2,
+            repayment_frequency="monthly", status="pending",
+            owner=self.owner, branch=other_branch,
+        )
+        other_loan.approve(user=self.approver)
+        other_loan.disburse(disbursement_account=other_cashier_gl, disbursed_by=self.approver)
+        other_schedule = other_loan.repayment_schedule.order_by("due_date").first()
+        other_loan.record_payment(
+            amount=other_schedule.interest_due,
+            payment_date=self.today,
+            payment_account=other_cashier_gl,
+            received_by=self.owner,
+        )
+
+        branch_manager = User.objects.create_user(username="remit_bm2", password="pass")
+        branch_manager.tenant = self.tenant
+        branch_manager.branch = self.branch
+        branch_manager.save()
+        role = Role.objects.create(
+            tenant=self.tenant, name="Branch Manager 2",
+            default_scope=Role.SCOPE_OWN_BRANCH,
+        )
+        branch_manager.roles.add(role)
+
+        client = APIClient()
+        client.force_authenticate(user=branch_manager)
+        response = client.get(
+            "/api/loans/accounts/remittance-report/", {"date": str(self.today)}
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
+        collected_clients = {row["client_name"] for row in data["loan_collections"]}
+        self.assertNotIn(other_client.full_name, collected_clients)

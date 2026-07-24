@@ -381,7 +381,11 @@ class LoanAccountViewSet(ScopedModelViewSet):
         # "collected" silently narrowed to only their own directly-assigned
         # clients, making same-day collections by colleagues disappear.
         user = request.user
-        clients_qs = Client.objects.all()
+        # Client.objects is branch/tenant-scoped via OwnerBranchManager.for_user()
+        # — starting from .all() here used to leak every branch's clients (and
+        # therefore every branch's "collected today" figures below) into an
+        # own_branch-scope user's report.
+        clients_qs = Client.objects.for_user(user)
         is_unrestricted = (
             getattr(user, 'is_system_admin', False)
             or (callable(getattr(user, 'is_owner', None)) and user.is_owner())

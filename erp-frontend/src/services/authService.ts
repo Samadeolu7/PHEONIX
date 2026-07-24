@@ -33,6 +33,7 @@ export interface User {
   is_owner: boolean;
   is_staff: boolean;
   is_system_admin: boolean; // System-wide admin flag
+  has_global_scope: boolean; // True if the user (or one of their active roles) has default_scope='global' — can see across every branch
   is_active_user: boolean; // New field from migration
   branch_id: number | null;
   branch_name?: string | null;

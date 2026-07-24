@@ -8,6 +8,22 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
 
+def _has_global_scope(user):
+    """
+    True when the user can see across every branch — mirrors
+    common.views.ScopedModelViewSet._is_elevated_user exactly, so the
+    frontend's branch-switcher visibility never drifts from what the
+    backend actually treats as elevated (e.g. custom global-scope roles
+    like "MD / CEO" or "Auditor", not just a hardcoded set of role names).
+    """
+    if user.is_system_admin or user.is_owner():
+        return True
+    try:
+        return user.roles.filter(is_active=True, default_scope='global').exists()
+    except Exception:
+        return False
+
+
 class LoginRateThrottle(AnonRateThrottle):
     scope = 'login'
 
@@ -80,6 +96,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'is_owner': self.user.is_owner(),
             'is_staff': self.user.is_staff,
             'is_system_admin': self.user.is_system_admin,
+            'has_global_scope': _has_global_scope(self.user),
             'branch_id': self.user.branch.id if self.user.branch else None,
             'assigned_dashboard_id': self.user.assigned_dashboard.id if hasattr(self.user, 'assigned_dashboard') and self.user.assigned_dashboard else None,
             'assigned_dashboard_slug': self.user.assigned_dashboard.slug if hasattr(self.user, 'assigned_dashboard') and self.user.assigned_dashboard else None,
@@ -165,6 +182,7 @@ def get_current_user(request):
         'is_owner': user.is_owner(),
         'is_staff': user.is_staff,
         'is_system_admin': user.is_system_admin,
+        'has_global_scope': _has_global_scope(user),
         'branch_id': user.branch.id if user.branch else None,
         'branch_name': user.branch.name if user.branch else None,
         'assigned_dashboard_id': user.assigned_dashboard.id if hasattr(user, 'assigned_dashboard') and user.assigned_dashboard else None,

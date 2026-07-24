@@ -1842,7 +1842,10 @@ class CollectionSheetItemViewSet(ScopedModelViewSet):
     officer_client_lookup = 'client__assigned_officer'
 
     def get_queryset(self):
-        qs = CollectionSheetItem.objects.select_related(
+        # for_user() applies branch/tenant scoping — without it, own_branch-
+        # scope users saw every branch's collection sheet items, since
+        # _apply_officer_scope below assumes that scoping already happened.
+        qs = CollectionSheetItem.objects.for_user(self.request.user).select_related(
             'sheet__credit_officer', 'client',
             'loan_account', 'loan_installment',
             'savings_account', 'bank_account_credited',

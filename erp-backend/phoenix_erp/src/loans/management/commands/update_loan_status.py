@@ -80,10 +80,17 @@ class Command(BaseCommand):
                     # a percentage penalty keeps growing as more repayment periods
                     # (weeks/months, per the loan's frequency) elapse overdue,
                     # instead of freezing at its first-assessed value.
-                    # Only the delta is applied to outstanding_penalties since
-                    # penalty_due is an absolute (not incremental) figure.
+                    #
+                    # penalty_due is always set to the freshly recalculated figure
+                    # (not just raised when higher) so this stays self-correcting:
+                    # if a stored value was ever inflated — stale data, a prior
+                    # formula bug, or simply base_amount shrinking after a partial
+                    # payment — the next run brings it back in line with
+                    # calculate_late_penalty() instead of leaving it stuck. Only the
+                    # (possibly negative) delta is applied to outstanding_penalties,
+                    # since penalty_due is an absolute (not incremental) figure.
                     overdue_schedules = loan.repayment_schedule.filter(status='overdue')
-                    penalty_total = Decimal('0.00')
+                    penalty_delta_total = Decimal('0.00')
                     for sched in overdue_schedules:
                         days_late = (today - sched.due_date).days
                         new_penalty = loan.product.calculate_late_penalty(
@@ -91,13 +98,15 @@ class Command(BaseCommand):
                             loan.repayment_frequency,
                         )
                         delta = new_penalty - sched.penalty_due
-                        if delta > 0:
+                        if delta != 0:
                             sched.penalty_due = new_penalty
                             sched.save(update_fields=['penalty_due', 'updated_at'])
-                            penalty_total += delta
+                            penalty_delta_total += delta
 
-                    if penalty_total > 0:
-                        loan.outstanding_penalties += penalty_total
+                    if penalty_delta_total != 0:
+                        loan.outstanding_penalties = max(
+                            Decimal('0.00'), loan.outstanding_penalties + penalty_delta_total,
+                        )
                         stats['penalised'] += 1
 
                     # 4. Mark defaulted at threshold
