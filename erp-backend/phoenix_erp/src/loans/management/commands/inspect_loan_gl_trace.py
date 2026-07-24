@@ -75,8 +75,13 @@ class Command(BaseCommand):
         self.stdout.write(self.style.MIGRATE_HEADING('Repayment schedule (per installment)'))
         for sched in loan.repayment_schedule.order_by('due_date'):
             self.stdout.write(
-                f'  due={sched.due_date}  principal_due={sched.principal_due:>12}  '
-                f'interest_due={sched.interest_due:>12}  '
+                f'  due={sched.due_date}  principal_due={sched.principal_due:>10}  '
+                f'interest_due={sched.interest_due:>9}  '
+                f'total_paid={sched.total_paid:>10}  '
+                f'principal_paid={sched.principal_paid:>10}  '
+                f'interest_paid={sched.interest_paid:>9}  '
+                f'fees_paid={sched.fees_paid:>7}  '
+                f'penalty_paid={sched.penalty_paid:>7}  '
                 f'status={getattr(sched, "status", "?")}'
             )
 

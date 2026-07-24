@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404
 from decimal import Decimal
 import logging
 
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 
 from .models import (
     CashierAccount,
@@ -603,7 +603,9 @@ class SummaryViewSet(viewsets.ViewSet):
         date_str = request.query_params.get('date')
         date = timezone.datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else timezone.now().date()
 
-        branch = request.user.branch if hasattr(request.user, 'branch') else None
+        # Honor the branch-switcher's X-Branch-ID override for elevated users
+        # instead of always pinning the summary to the viewer's own branch.
+        branch = resolve_effective_branch(request)
 
         collections = CashCollection.objects.filter(
             collection_date=date,
@@ -672,7 +674,7 @@ class SummaryViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def cashiers(self, request):
         # Return a brief summary for each cashier account
-        branch = request.user.branch if hasattr(request.user, 'branch') else None
+        branch = resolve_effective_branch(request)
         qs = CashierAccount.objects.filter(is_active=True, is_suspended=False)
         if branch:
             qs = qs.filter(branch=branch)

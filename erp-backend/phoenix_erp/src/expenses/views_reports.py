@@ -14,6 +14,8 @@ from django.utils import timezone
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
+from common.views import resolve_effective_branch
+
 from .models import ResourceConsumption, Resource
 
 
@@ -31,11 +33,19 @@ def _parse_date(value, fallback):
 
 
 def _base_consumption_qs(request, resource_type='fuel'):
-    """Non-cancelled consumptions scoped to the requesting user's branch."""
+    """
+    Non-cancelled consumptions scoped to the requesting user's branch, or to
+    the branch-switcher's X-Branch-ID override for elevated users (falling
+    through to tenant-wide when they haven't picked one — "All Branches" mode).
+    """
     qs = ResourceConsumption.objects.filter(
-        branch=request.user.branch,
         resource__resource_type=resource_type,
     ).exclude(status='cancelled')
+    branch = resolve_effective_branch(request)
+    if branch:
+        qs = qs.filter(branch=branch)
+    elif hasattr(request.user, 'tenant') and request.user.tenant:
+        qs = qs.filter(tenant=request.user.tenant)
     return qs
 
 
