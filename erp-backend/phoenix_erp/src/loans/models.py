@@ -1070,38 +1070,58 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.penalties_paid += penalty_payment
         remaining -= penalty_payment
 
-        if self.interest_suspended:
-            # NPL priority: principal → fees → interest
-            principal_payment = min(remaining, self.outstanding_principal)
-            self.outstanding_principal -= principal_payment
-            self.principal_paid += principal_payment
-            remaining -= principal_payment
+        # Interest/fees/principal are allocated against unpaid installments in
+        # due-date order — NOT the loan's whole-term aggregate outstanding_*
+        # balances. Using the aggregate meant outstanding_interest started as
+        # the sum of EVERY future installment's interest, so a single payment
+        # got fully absorbed as "interest" for several installments running
+        # before any of it was ever recognized as principal collected — real
+        # cash sat entirely in Income while outstanding_principal never moved.
+        # (Found on LN-20260702-B91A43, 2026-07-15 — confirmed across 6 loans.)
+        interest_payment = Decimal('0.00')
+        fee_payment = Decimal('0.00')
+        principal_payment = Decimal('0.00')
 
-            fee_payment = min(remaining, self.outstanding_fees)
-            self.outstanding_fees -= fee_payment
-            self.fees_paid += fee_payment
-            remaining -= fee_payment
+        unpaid_installments = self.repayment_schedule.filter(
+            status__in=['pending', 'partial', 'overdue']
+        ).order_by('due_date')
 
-            interest_payment = min(remaining, self.outstanding_interest)
-            self.outstanding_interest -= interest_payment
-            self.interest_paid += interest_payment
-            remaining -= interest_payment
-        else:
-            # Normal priority: interest → fees → principal
-            interest_payment = min(remaining, self.outstanding_interest)
-            self.outstanding_interest -= interest_payment
-            self.interest_paid += interest_payment
-            remaining -= interest_payment
+        for installment in unpaid_installments:
+            if remaining <= 0:
+                break
+            installment_remaining = installment.total_due - installment.total_paid
+            if installment_remaining <= 0:
+                continue
+            to_apply = min(remaining, installment_remaining)
 
-            fee_payment = min(remaining, self.outstanding_fees)
-            self.outstanding_fees -= fee_payment
-            self.fees_paid += fee_payment
-            remaining -= fee_payment
+            if self.interest_suspended:
+                # NPL priority: principal → fees → interest
+                p = min(to_apply, installment.principal_due - installment.principal_paid)
+                f = min(to_apply - p, installment.fees_due - installment.fees_paid)
+                i = min(to_apply - p - f, installment.interest_due - installment.interest_paid)
+            else:
+                # Normal priority: interest → fees → principal
+                i = min(to_apply, installment.interest_due - installment.interest_paid)
+                f = min(to_apply - i, installment.fees_due - installment.fees_paid)
+                p = min(to_apply - i - f, installment.principal_due - installment.principal_paid)
 
-            principal_payment = min(remaining, self.outstanding_principal)
-            self.outstanding_principal -= principal_payment
-            self.principal_paid += principal_payment
-            remaining -= principal_payment
+            interest_payment += i
+            fee_payment += f
+            principal_payment += p
+            remaining -= to_apply
+
+        # Defensive fallback: if unpaid installments don't fully absorb the
+        # remainder (e.g. schedule/aggregate drift), put it toward principal
+        # rather than inventing income.
+        principal_payment += remaining
+        remaining = Decimal('0.00')
+
+        self.outstanding_interest -= interest_payment
+        self.interest_paid += interest_payment
+        self.outstanding_fees -= fee_payment
+        self.fees_paid += fee_payment
+        self.outstanding_principal -= principal_payment
+        self.principal_paid += principal_payment
 
         self.total_paid += amount
 
