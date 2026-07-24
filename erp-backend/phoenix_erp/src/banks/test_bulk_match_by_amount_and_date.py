@@ -56,17 +56,76 @@ class NarrationRelationshipTests(TestCase):
     def test_shared_digit_blob_alone_never_causes_a_false_contradiction(self):
         # Regression: bank narrations on this feed embed a long,
         # transaction-timestamp-derived digit run (varying length,
-        # multiple channel prefixes — CPWInward/ISW/FIP/QS894). Before the
-        # fix, that digit blob got treated as "a meaningful word" on the
-        # bank side with nothing to match on a short ERP description,
-        # forcing a false CONTRADICTED verdict for what was actually a
-        # genuine same-customer pair with no name in common in the
-        # extracted text at all — should be NEUTRAL (not enough
-        # identifiable name text), never CONTRADICTED.
+        # multiple channel prefixes — CPWInward/ISW/FIP/QS894). The first
+        # fix (excluding digits from the name-comparison words) alone
+        # left "GOD"/"IS"/"GO" all under the original 4-char floor, so
+        # this still read as an empty name-set on the bank side —
+        # correctly no longer CONTRADICTED, but not yet recognizing the
+        # actual match either. With the 3-char floor + fuzzy word
+        # comparison, "GOD" is captured and fuzzy-matches "GOOD" —
+        # CONFIRMED, the fully correct outcome.
         self.assertEqual(
             narration_relationship(
                 'CPWInward:100004260720134408165871030330/GOD IS GO Ref100233721315',
                 'Transfer: God is good',
+            ),
+            'CONFIRMED',
+        )
+
+    def test_lowered_floor_still_catches_the_conflict_it_used_to_hide(self):
+        # Regression for the SECOND bug the floor change introduced: with
+        # only the 4-char floor, "GOD"/"IS"/"GO" being too short produced
+        # an EMPTY erp-side name-set against KAFILAT, so a Kafilat bank
+        # line got silently paired with an unrelated "GOD IS GO" customer's
+        # payment. The 3-char floor makes "GOD" a real name-set member
+        # again, correctly restoring the contradiction.
+        self.assertEqual(
+            narration_relationship(
+                'CPWInward:100004260716190817165549851580/KAFILAT A Ref100229919329',
+                'Transfer: CPWInward:100004260723153628166163617828/GOD IS GO',
+            ),
+            'CONTRADICTED',
+        )
+
+    def test_spelling_variants_of_the_same_name_are_confirmed(self):
+        # Real names typed differently by different people — an officer's
+        # "muyeed" for a bank statement's "MUYIDEEN" — must not read as a
+        # conflict just because the strings aren't identical.
+        self.assertEqual(
+            narration_relationship(
+                'CPWInward:100004260720163020165890014710/MUYIDEEN Ref1002340',
+                'Transfer: Thrift by muyeed',
+            ),
+            'CONFIRMED',
+        )
+        self.assertEqual(
+            narration_relationship(
+                'ISW:MMB/OLUWAKEMI KAZEE/Transfer from OLUWAKEMI KA Ref020675',
+                'Transfer: Kemi kazeem',
+            ),
+            'CONFIRMED',
+        )
+
+    def test_genuinely_different_names_still_contradict_despite_fuzzy_matching(self):
+        # The fuzzy threshold must not blur into "anything vaguely
+        # name-shaped counts" — these are real, different Yoruba names,
+        # not spelling variants of one name.
+        self.assertEqual(
+            narration_relationship(
+                'FIP:UBA/FUNMILAYO MARY AKI/USSD-NIP/To KRYSTAR O./ Ref011426',
+                'Transfer: Musbau Ajoke',
+            ),
+            'CONTRADICTED',
+        )
+
+    def test_transaction_type_language_is_not_a_name_and_cannot_contradict(self):
+        # "own account transfer" vs "Interbank transfer" describe a
+        # transaction TYPE, not who it belongs to — both can describe the
+        # exact same real movement of money worded two different ways.
+        self.assertEqual(
+            narration_relationship(
+                'ISW:MMB/Krystar Trust I/own account transfer /AT11 Ref037378',
+                'Transfer: Interbank transfer',
             ),
             'NEUTRAL',
         )

@@ -183,13 +183,11 @@ class Command(BaseCommand):
                         total_matched += 1
                         if not apply_changes:
                             continue
-                        recon_id = self._commit_match(
+                        touched_recon_ids.update(self._commit_match(
                             tx, payment, now, start, end,
                             Transaction, ReconciliationException, DailyReconciliation,
                             _BANK_REFERENCE_RE, CONFIRM_NOTE,
-                        )
-                        if recon_id:
-                            touched_recon_ids.add(recon_id)
+                        ))
 
                     # `contradicted` is the full remaining cross-product after
                     # pairing stopped early (every combination among what's
@@ -296,6 +294,20 @@ class Command(BaseCommand):
     @staticmethod
     def _commit_match(tx, payment, now, start, end, Transaction, ReconciliationException, DailyReconciliation,
                        bank_reference_re, note_template):
+        """
+        Returns the SET of DailyReconciliation ids touched (never a single
+        id) — an erp_only exception for the same loan_payment_id can exist
+        as SEPARATE rows on multiple different reconciliation dates (the
+        ±window_days matching lets the same unresolved ERP payment surface
+        on more than one date's page over its history; natural key is
+        (reconciliation, exception_type, loan_payment_id), so each date
+        gets its own row, not one shared row). Resolving only the first
+        one found (.first()) left every other date's copy silently open —
+        found live: the UI's exception counts stayed far higher than any
+        command-line report after applying matches, because those other
+        rows never got closed. .update() on the full filtered queryset
+        closes every row, not just one.
+        """
         new_payment_id = payment['paymentId']
         txn = Transaction.objects.filter(id=new_payment_id).select_related('created_by').first()
 
@@ -313,32 +325,25 @@ class Command(BaseCommand):
         ])
 
         note = note_template.format(start=start, end=end)
-        recon_id = None
+        touched_recon_ids = set()
 
-        bank_exc = ReconciliationException.objects.filter(
+        bank_excs = ReconciliationException.objects.filter(
             exception_type='bank_only', bank_transaction_id=tx.id, resolved=False,
-        ).first()
-        if bank_exc:
-            bank_exc.resolved = True
-            bank_exc.resolved_at = now
-            bank_exc.resolution_notes = note
-            bank_exc.save(update_fields=['resolved', 'resolved_at', 'resolution_notes'])
-            recon_id = bank_exc.reconciliation_id
+        )
+        touched_recon_ids.update(bank_excs.values_list('reconciliation_id', flat=True))
+        bank_excs.update(resolved=True, resolved_at=now, resolution_notes=note)
 
-        erp_exc = ReconciliationException.objects.filter(
+        erp_excs = ReconciliationException.objects.filter(
             exception_type='erp_only', loan_payment_id=new_payment_id, resolved=False,
-        ).first()
-        if erp_exc:
-            erp_exc.resolved = True
-            erp_exc.resolved_at = now
-            erp_exc.resolution_notes = note
-            erp_exc.save(update_fields=['resolved', 'resolved_at', 'resolution_notes'])
-            recon_id = recon_id or erp_exc.reconciliation_id
+        )
+        touched_recon_ids.update(erp_excs.values_list('reconciliation_id', flat=True))
+        erp_excs.update(resolved=True, resolved_at=now, resolution_notes=note)
 
-        if recon_id is None:
+        if not touched_recon_ids:
             recon = DailyReconciliation.objects.filter(
                 bank_account=tx.bank_account, reconciliation_date=tx.value_date,
             ).first()
-            recon_id = recon.id if recon else None
+            if recon:
+                touched_recon_ids.add(recon.id)
 
-        return recon_id
+        return touched_recon_ids

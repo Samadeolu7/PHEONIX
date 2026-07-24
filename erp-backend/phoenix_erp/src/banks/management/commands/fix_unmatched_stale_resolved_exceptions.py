@@ -51,6 +51,25 @@ any matched line (erp_only). Resolutions made by a human (resolved_by
 set, or any other note) are never touched — a director's decision is
 permanent.
 
+A third phase runs the invariant in the OPPOSITE direction, closing the
+damage left behind by a separate, now-fixed bug: the natural key for an
+exception is (reconciliation, exception_type, loan_payment_id/
+bank_transaction_id), and the ±window_days matching lets the SAME bank
+line or ERP payment surface an exception row on more than one date's
+reconciliation over its history. Both bulk_match_by_amount_and_date and
+confirm_unambiguous_ghost_matches used to resolve only the FIRST such row
+(`.filter(...).first()` + single save()) when committing a match, leaving
+every duplicate row on other dates silently stuck open even though the
+match that would explain them already exists. Both commands now bulk-
+resolve every unresolved row via `.update()`, but that only prevents NEW
+orphans — it does nothing for rows already left open by earlier runs.
+Phase 3 finds exactly that: any bank_only exception still unresolved
+whose bank transaction is already matched=True, or any erp_only exception
+still unresolved whose loan_payment_id is already claimed by some
+matched=True line, and resolves it. This is the direct fix for "the UI's
+erp_only/bank_only counts are higher than the command-line match report"
+— those counts were the duplicate rows this phase closes.
+
 Never touches the underlying GL Transaction/TransactionEntry — only
 reconciliation-side bookkeeping. Safe to re-run — a second pass finds
 nothing left to do.
@@ -62,13 +81,16 @@ Usage:
 from __future__ import annotations
 
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 
 class Command(BaseCommand):
     help = (
         "Creates or reopens bank_only/erp_only exceptions for every ghost match "
         "(matched=False with matched_erp_payment_id still set) whose exception "
-        "bookkeeping is missing or stuck resolved."
+        "bookkeeping is missing or stuck resolved. Also reopens auto-resolutions "
+        "whose match no longer exists, and resolves exceptions left orphaned open "
+        "by a duplicate-row bug in earlier bulk-resolve commands."
     )
 
     def add_arguments(self, parser):
@@ -85,6 +107,8 @@ class Command(BaseCommand):
         dry_run = options['dry_run']
         if dry_run:
             self.stdout.write(self.style.WARNING('DRY RUN — no changes will be saved.\n'))
+
+        now = timezone.now()
 
         ghost_txs = ReconciliationBankTransaction.objects.filter(
             matched=False,
@@ -213,6 +237,76 @@ class Command(BaseCommand):
             self.stdout.write(
                 f'\n{"Would reopen" if dry_run else "Reopened"} {stale_auto} auto-resolved '
                 f'exception(s) whose match no longer exists.'
+            )
+
+        # --- phase 3: exceptions still open despite a live match already
+        # existing (the opposite direction of phase 2) ---
+        # Damage left behind by a now-fixed bug: bulk_match_by_amount_and_date
+        # and confirm_unambiguous_ghost_matches used to resolve only the
+        # FIRST unresolved exception row found for a given bank_transaction_id
+        # / loan_payment_id (`.first()`), but the natural key allows separate
+        # rows across multiple reconciliation dates for the same line/payment
+        # (the ±window_days matching surfaces one unresolved item on more
+        # than one date's page). Every duplicate row past the first was left
+        # open even though the match resolving it already exists. Both
+        # commands now bulk-.update() every unresolved row, which prevents
+        # NEW orphans, but does nothing for rows already orphaned by earlier
+        # runs — this phase closes those directly.
+        SWEEP_NOTE = (
+            'Auto-resolved: a live match already exists for this bank line/ERP '
+            'payment — this row was left open by a bug in earlier bulk-resolve '
+            'commands that only closed the first duplicate exception row when '
+            'the same line/payment had one on multiple reconciliation dates '
+            '(see fix_unmatched_stale_resolved_exceptions, phase 3).'
+        )
+
+        orphaned_open = 0
+        open_qs = ReconciliationException.objects.filter(
+            resolved=False,
+            exception_type__in=('bank_only', 'erp_only'),
+        )
+
+        open_bank_excs = open_qs.filter(
+            exception_type='bank_only',
+            bank_transaction_id__in=ReconciliationBankTransaction.objects.filter(
+                matched=True,
+            ).values_list('id', flat=True),
+        )
+        for exc in open_bank_excs.select_related('reconciliation'):
+            orphaned_open += 1
+            fix_count += 1
+            touched_recon_ids.add(exc.reconciliation_id)
+            self.stdout.write(
+                f'  {"[DRY RUN] " if dry_run else ""}bank_only exception {exc.id} '
+                f'(recon {exc.reconciliation_id}, tx {exc.bank_transaction_id}) is still open '
+                f'but that line is already matched — {"would resolve" if dry_run else "resolving"}'
+            )
+        if not dry_run:
+            open_bank_excs.update(resolved=True, resolved_at=now, resolution_notes=SWEEP_NOTE)
+
+        matched_payment_ids = ReconciliationBankTransaction.objects.filter(
+            matched=True, matched_erp_payment_id__isnull=False,
+        ).values_list('matched_erp_payment_id', flat=True)
+        open_erp_excs = open_qs.filter(
+            exception_type='erp_only',
+            loan_payment_id__in=matched_payment_ids,
+        )
+        for exc in open_erp_excs.select_related('reconciliation'):
+            orphaned_open += 1
+            fix_count += 1
+            touched_recon_ids.add(exc.reconciliation_id)
+            self.stdout.write(
+                f'  {"[DRY RUN] " if dry_run else ""}erp_only exception {exc.id} '
+                f'(recon {exc.reconciliation_id}, payment {exc.loan_payment_id}) is still open '
+                f'but that payment is already claimed — {"would resolve" if dry_run else "resolving"}'
+            )
+        if not dry_run:
+            open_erp_excs.update(resolved=True, resolved_at=now, resolution_notes=SWEEP_NOTE)
+
+        if orphaned_open:
+            self.stdout.write(
+                f'\n{"Would resolve" if dry_run else "Resolved"} {orphaned_open} exception(s) '
+                f'orphaned open by the earlier duplicate-row bug.'
             )
 
         if fix_count == 0:

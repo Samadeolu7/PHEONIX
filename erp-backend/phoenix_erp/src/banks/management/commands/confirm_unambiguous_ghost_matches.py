@@ -146,31 +146,35 @@ class Command(BaseCommand):
                     'posting_lag_days', 'matched_erp_had_reference', 'matched_erp_officer',
                 ])
 
-                bank_exc = ReconciliationException.objects.filter(
+                # .update() on the full filtered queryset, not .first() +
+                # single save() — the SAME loan_payment_id can have SEPARATE
+                # erp_only exception rows on multiple different
+                # reconciliation dates (natural key is (reconciliation,
+                # exception_type, loan_payment_id); the ±window_days
+                # matching lets one unresolved ERP payment surface on more
+                # than one date's page over its history). Resolving only
+                # the first one found left every other date's copy silently
+                # open — found live: the UI's exception counts stayed far
+                # higher than any command-line report after applying
+                # confirmations, because those other rows never closed.
+                bank_excs = ReconciliationException.objects.filter(
                     exception_type='bank_only', bank_transaction_id=tx.id, resolved=False,
-                ).first()
-                if bank_exc:
-                    bank_exc.resolved = True
-                    bank_exc.resolved_at = now
-                    bank_exc.resolution_notes = CONFIRM_NOTE
-                    bank_exc.save(update_fields=['resolved', 'resolved_at', 'resolution_notes'])
-                    touched_recon_ids.add(bank_exc.reconciliation_id)
+                )
+                any_bank = bank_excs.exists()
+                touched_recon_ids.update(bank_excs.values_list('reconciliation_id', flat=True))
+                bank_excs.update(resolved=True, resolved_at=now, resolution_notes=CONFIRM_NOTE)
 
-                erp_exc = ReconciliationException.objects.filter(
+                erp_excs = ReconciliationException.objects.filter(
                     exception_type='erp_only', loan_payment_id=new_payment_id, resolved=False,
-                ).first()
-                if erp_exc:
-                    erp_exc.resolved = True
-                    erp_exc.resolved_at = now
-                    erp_exc.resolution_notes = CONFIRM_NOTE
-                    erp_exc.save(update_fields=['resolved', 'resolved_at', 'resolution_notes'])
-                    touched_recon_ids.add(erp_exc.reconciliation_id)
+                )
+                any_erp = erp_excs.exists()
+                touched_recon_ids.update(erp_excs.values_list('reconciliation_id', flat=True))
+                erp_excs.update(resolved=True, resolved_at=now, resolution_notes=CONFIRM_NOTE)
 
-                # bank_exc/erp_exc might not exist yet if the exception-
-                # bookkeeping repair hasn't run first — fall back to the
-                # bank line's own date so its reconciliation still gets its
-                # counts recomputed.
-                if not bank_exc and not erp_exc:
+                # Might not exist yet if the exception-bookkeeping repair
+                # hasn't run first — fall back to the bank line's own date
+                # so its reconciliation still gets its counts recomputed.
+                if not any_bank and not any_erp:
                     recon = DailyReconciliation.objects.filter(
                         bank_account=tx.bank_account, reconciliation_date=tx.value_date,
                     ).first()

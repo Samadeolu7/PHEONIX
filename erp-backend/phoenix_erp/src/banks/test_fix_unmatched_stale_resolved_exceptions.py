@@ -246,3 +246,106 @@ class FixUnmatchedStaleResolvedExceptionsTests(TestCase):
         exc.refresh_from_db()
         self.assertTrue(exc.resolved)
         self.assertIn('Would reopen', output)
+
+    # ── Phase 3: exceptions orphaned open despite a live match already
+    # existing — the damage left by the .first()-vs-bulk-update bug in
+    # bulk_match_by_amount_and_date / confirm_unambiguous_ghost_matches ──
+
+    def test_orphaned_open_bank_only_exception_with_live_match_is_resolved(self):
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='ORPHAN-BANK-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('1200.00'), narration='test',
+            matched=True, matched_erp_payment_id=321, match_confidence='MANUAL',
+        )
+        # A duplicate row on a DIFFERENT reconciliation date for the same
+        # bank_transaction_id — the shape the ±window_days matching + the
+        # old .first() bug left behind.
+        other_recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-06-25',
+            uploaded_by=self.user, statement_file='bank_statements/repair2.csv',
+            status='completed',
+        )
+        orphan_exc = ReconciliationException.objects.create(
+            reconciliation=other_recon, exception_type='bank_only', direction='CREDIT',
+            bank_transaction_id=tx.id, bank_amount=tx.amount,
+            bank_narration='test', bank_date='2026-06-25',
+            resolved=False,
+        )
+
+        output = self._run()
+
+        orphan_exc.refresh_from_db()
+        self.assertTrue(orphan_exc.resolved)
+        self.assertIsNotNone(orphan_exc.resolved_at)
+        self.assertIn('duplicate exception row', orphan_exc.resolution_notes)
+        self.assertIn('is already matched', output)
+
+    def test_orphaned_open_erp_only_exception_with_live_claim_is_resolved(self):
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='ORPHAN-ERP-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('850.00'), narration='test',
+            matched=True, matched_erp_payment_id=654, match_confidence='MANUAL',
+        )
+        other_recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-06-20',
+            uploaded_by=self.user, statement_file='bank_statements/repair3.csv',
+            status='completed',
+        )
+        orphan_exc = ReconciliationException.objects.create(
+            reconciliation=other_recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=654, erp_amount=Decimal('850.00'),
+            erp_narration='test', erp_date='2026-06-20',
+            resolved=False,
+        )
+
+        output = self._run()
+
+        orphan_exc.refresh_from_db()
+        self.assertTrue(orphan_exc.resolved)
+        self.assertIn('duplicate exception row', orphan_exc.resolution_notes)
+        self.assertIn('is already claimed', output)
+
+    def test_open_exception_with_no_live_match_is_untouched_by_phase3(self):
+        # Ordinary, genuinely-unresolved exception (no live match anywhere)
+        # must never be swept up by phase 3.
+        ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='GENUINE-OPEN-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('333.00'), narration='test',
+            matched=False,
+        )
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=333, erp_amount=Decimal('333.00'),
+            erp_narration='genuinely unmatched', erp_date='2026-07-01',
+            resolved=False,
+        )
+
+        output = self._run()
+
+        exc.refresh_from_db()
+        self.assertFalse(exc.resolved)
+        self.assertIn('No corrupted exception bookkeeping found', output)
+
+    def test_phase3_dry_run_does_not_mutate(self):
+        tx = ReconciliationBankTransaction.objects.create(
+            bank_account=self.bank_account, bank_ref='ORPHAN-DRY-1', value_date='2026-07-01',
+            direction='CREDIT', amount=Decimal('111.00'), narration='test',
+            matched=True, matched_erp_payment_id=222, match_confidence='MANUAL',
+        )
+        other_recon = DailyReconciliation.objects.create(
+            bank_account=self.bank_account, reconciliation_date='2026-06-15',
+            uploaded_by=self.user, statement_file='bank_statements/repair4.csv',
+            status='completed',
+        )
+        orphan_exc = ReconciliationException.objects.create(
+            reconciliation=other_recon, exception_type='bank_only', direction='CREDIT',
+            bank_transaction_id=tx.id, bank_amount=tx.amount,
+            bank_narration='test', bank_date='2026-06-15',
+            resolved=False,
+        )
+
+        output = self._run(dry_run=True)
+
+        orphan_exc.refresh_from_db()
+        self.assertFalse(orphan_exc.resolved)
+        self.assertIn('would resolve', output)

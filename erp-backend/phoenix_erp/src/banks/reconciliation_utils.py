@@ -9,6 +9,7 @@ this data itself and sends it to Java as part of the single ingest-and-match
 request. Kept as a plain function (not a view) so StatementUploadView can
 call it directly with no HTTP round-trip.
 """
+import difflib
 import re
 from decimal import Decimal
 
@@ -190,7 +191,49 @@ def _bank_line_reference_token_in_erp_text(tx, erp_text):
 # so no single fixed prefix could be stripped instead); excluding ALL
 # digits from the name-comparison words, generally, is what actually
 # closes this rather than special-casing one prefix string.
-_NAME_WORD_RE = re.compile(r'[A-Za-z]{4,}')
+#
+# 3+ chars, not 4+: found live, a bank line clearly reading "KAFILAT A"
+# got silently paired with an unrelated payment whose only identifying
+# text was "...GOD IS GO" — every word in "GOD"/"IS"/"GO" is under 4
+# characters, so the OLD 4+ floor produced an EMPTY name-set on that side,
+# and an empty set short-circuited the contradiction check to NEUTRAL
+# ("nothing to compare") instead of correctly seeing two specific, named,
+# different things. Real Nigerian given names/nicknames are routinely
+# this short (Ola, Tao, Ike, God-given names), so a same-length-floor
+# fix would keep reproducing this exact failure. Dropping to 3 lets "GOD"
+# register as a real name fragment — but 3-letter bank/channel prefix
+# codes (ISW, MMB, FIP, OPY, PLP, WEM, ZIB, UBA, KMB, NIP, MOB, UTO) would
+# otherwise start colliding between two totally unrelated customers who
+# just happen to use the same channel, so they're added to the stopword
+# set below rather than left to the shared _REF_STRUCTURAL_TOKENS (which
+# is tuned for the 4+ floor other callers use and shouldn't be touched).
+_NAME_WORD_RE = re.compile(r'[A-Za-z]{3,}')
+_NAME_STOPWORDS = _REF_STRUCTURAL_TOKENS | frozenset({
+    'ISW', 'MMB', 'FIP', 'OPY', 'PLP', 'WEM', 'ZIB', 'UBA', 'KMB', 'NIP',
+    'MOB', 'UTO', 'ALAT', 'AND', 'THE', 'FOR', 'REF', 'TRF', 'FRM', 'VIA',
+    'PER', 'LTD', 'INC', 'ATL',
+    # Transaction-TYPE language, not a customer's identity — "own account
+    # transfer" and "Interbank transfer" can both describe the exact same
+    # real movement of money worded two different ways; treating either as
+    # an identifying "name" produced a false CONTRADICTED between the only
+    # same-amount candidates on each side.
+    'OWN', 'ACCOUNT', 'INTERBANK', 'SELF',
+})
+
+# Same person's name is routinely typed differently by different people —
+# an officer typing "muyeed" for a bank statement's "MUYIDEEN", "Kemi
+# kazeem" for "OLUWAKEMI KAZEE" — so exact string equality between name
+# words misses genuine matches constantly. Empirically calibrated against
+# every real pair seen this session: genuine same-name variants scored
+# 0.615-0.947 similarity; true different-customer pairs scored 0.000-0.353
+# — 0.55 sits with a comfortable margin on both sides of that gap.
+_NAME_FUZZY_THRESHOLD = 0.55
+
+
+def _names_correspond(word_a, word_b):
+    if word_a == word_b:
+        return True
+    return difflib.SequenceMatcher(None, word_a, word_b).ratio() >= _NAME_FUZZY_THRESHOLD
 
 
 def narration_relationship(bank_text, erp_text):
@@ -201,17 +244,19 @@ def narration_relationship(bank_text, erp_text):
     look like the same real-world event, for callers that want a soft
     preference/safety-net rather than a hard verification gate:
 
-      'CONFIRMED'    — they share a meaningful NAME word or a digit-
-                       dominant id token (positive evidence of
+      'CONFIRMED'    — they share a corresponding NAME word (exact, or
+                       close enough by fuzzy similarity to be the same
+                       name typed differently — see _names_correspond) or
+                       a digit-dominant id token (positive evidence of
                        correspondence — either is enough on its own).
       'CONTRADICTED' — both sides have at least one identifiable NAME
-                       word, and they share NONE at all — positive
-                       evidence they name two different things (e.g. bank
-                       narration says "KAFILAT A", payment narration says
-                       "MARVELLOU" — different customers, different
-                       transactions). A shared/unshared digit token is
-                       NEVER enough on its own to call this — see
-                       _NAME_WORD_RE's docstring for why.
+                       word, and NONE of them correspond even loosely —
+                       positive evidence they name two different things
+                       (e.g. bank narration says "KAFILAT A", payment
+                       narration says "MARVELLOU" — different customers,
+                       different transactions). A shared/unshared digit
+                       token is NEVER enough on its own to call this —
+                       see _NAME_WORD_RE's docstring for why.
       'NEUTRAL'      — not enough identifiable name text on one or both
                        sides to say anything either way (e.g. one side is
                        blank, or all its words are structural boilerplate
@@ -226,14 +271,16 @@ def narration_relationship(bank_text, erp_text):
     """
     bank_norm = _normalized_for_reference_compare(bank_text)
     erp_norm = _normalized_for_reference_compare(erp_text)
-    bank_names = {w for w in _NAME_WORD_RE.findall(bank_norm) if w not in _REF_STRUCTURAL_TOKENS}
-    erp_names = {w for w in _NAME_WORD_RE.findall(erp_norm) if w not in _REF_STRUCTURAL_TOKENS}
+    bank_names = {w for w in _NAME_WORD_RE.findall(bank_norm) if w not in _NAME_STOPWORDS}
+    erp_names = {w for w in _NAME_WORD_RE.findall(erp_norm) if w not in _NAME_STOPWORDS}
     bank_tokens = _long_tokens(bank_text)
     erp_tokens = _long_tokens(erp_text)
 
-    if (bank_names & erp_names) or (bank_tokens & erp_tokens):
+    if bank_tokens & erp_tokens:
         return 'CONFIRMED'
     if bank_names and erp_names:
+        if any(_names_correspond(a, b) for a in bank_names for b in erp_names):
+            return 'CONFIRMED'
         return 'CONTRADICTED'
     return 'NEUTRAL'
 
