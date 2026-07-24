@@ -73,6 +73,18 @@ export function useDeleteBranch() {
   });
 }
 
+export function useCloneBranchConfigPreview() {
+  return useMutation({
+    mutationFn: ({
+      sourceBranchId,
+      targetBranchId,
+    }: {
+      sourceBranchId: number;
+      targetBranchId: number;
+    }) => branchService.cloneConfigPreview(sourceBranchId, targetBranchId),
+  });
+}
+
 export function useCloneBranchConfig() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -310,7 +310,13 @@ class BranchCloneService:
             self._upsert(
                 WorkflowTemplate,
                 lookup={'branch': self.target, 'name': obj.name},
-                create_kwargs={**self._base(), **self._scalars(obj)},
+                # run_sequence is a unique field WorkflowTemplate.save() derives from
+                # its own pk on creation — copying the source's value verbatim would
+                # collide with the source row itself on the very first insert.
+                create_kwargs={
+                    **self._base(),
+                    **self._scalars(obj, extra_skip={'run_sequence'}),
+                },
                 label=label,
                 old_pk=obj.pk,
             )

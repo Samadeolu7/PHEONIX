@@ -74,6 +74,9 @@ class BranchViewSet(ScopedModelViewSet):
         Request body:
             source_branch_id (int): branch to copy FROM
             target_branch_id (int): branch to copy INTO
+            dry_run (bool, optional): if true, computes the exact same
+                created/skipped/error summary without persisting anything —
+                use this to preview the clone before committing to it.
 
         Only directors, admins, operations managers, and owners may perform this.
         """
@@ -110,6 +113,8 @@ class BranchViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        dry_run = bool(request.data.get('dry_run', False))
+
         tenant = getattr(user, 'tenant', None)
         try:
             source = Branch.objects.get(pk=source_id, tenant=tenant, is_deleted=False)
@@ -121,15 +126,19 @@ class BranchViewSet(ScopedModelViewSet):
             )
 
         try:
-            result = BranchCloneService(source, target, user).clone()
+            result = BranchCloneService(source, target, user).clone(dry_run=dry_run)
             total_created = sum(result['created'].values())
             total_skipped = sum(result['skipped'].values())
+            if dry_run:
+                verb, exist_phrase = 'Would clone', 'already exist and would be skipped'
+            else:
+                verb, exist_phrase = 'Cloned', 'already existed and were skipped'
             return Response(
                 {
                     'success': True,
                     'message': (
-                        f'Cloned {total_created} records from "{source}" to "{target}". '
-                        f'{total_skipped} already existed and were skipped. '
+                        f'{verb} {total_created} records from "{source}" to "{target}". '
+                        f'{total_skipped} {exist_phrase}. '
                         f'{len(result["errors"])} warning(s).'
                     ),
                     **result,

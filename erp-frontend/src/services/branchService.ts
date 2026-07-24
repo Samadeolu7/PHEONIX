@@ -46,6 +46,7 @@ export interface CloneConfigResult {
   created: Record<string, number>;
   skipped: Record<string, number>;
   errors: string[];
+  dry_run: boolean;
 }
 
 export const branchService = {
@@ -79,11 +80,21 @@ export const branchService = {
     return api.delete(`/branches/${id}/`);
   },
 
+  // Preview what a clone would do, without writing anything (dry_run: true)
+  async cloneConfigPreview(sourceBranchId: number, targetBranchId: number): Promise<CloneConfigResult> {
+    return api.post('/branches/clone-config/', {
+      source_branch_id: sourceBranchId,
+      target_branch_id: targetBranchId,
+      dry_run: true,
+    });
+  },
+
   // Clone configuration data from one branch to another
   async cloneConfig(sourceBranchId: number, targetBranchId: number): Promise<CloneConfigResult> {
     return api.post('/branches/clone-config/', {
       source_branch_id: sourceBranchId,
       target_branch_id: targetBranchId,
+      dry_run: false,
     });
   },
 

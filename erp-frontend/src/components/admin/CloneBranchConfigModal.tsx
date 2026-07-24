@@ -9,7 +9,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { Branch, CloneConfigResult } from '../../services/branchService';
-import { useCloneBranchConfig } from '../../hooks/useBranches';
+import { useCloneBranchConfig, useCloneBranchConfigPreview } from '../../hooks/useBranches';
 
 interface Props {
   isOpen: boolean;
@@ -40,18 +40,193 @@ const LABEL_MAP: Record<string, string> = {
   loan_savings_requirements: 'Loan Savings Requirements',
   product_requirements: 'Product Requirements',
   fee_structure_components: 'Fee Structure Components',
+  hr_config: 'HR Configuration',
+  inventory_config: 'Inventory Configuration',
+  procurement_config: 'Procurement Configuration',
+  income_accounting_config: 'Income Accounting Configuration',
+  income_category_overrides: 'Income Category Account Overrides',
+  notification_templates: 'Notification Templates',
+  client_registration_config: 'Client Registration Config',
+  client_classifications: 'Client Classifications',
+  workflow_defaults: 'Workflow Defaults',
+  dashboard_themes: 'Dashboard Themes',
+  dashboard_templates: 'Dashboard Templates',
 };
 
 const label = (key: string) => LABEL_MAP[key] ?? key.replace(/_/g, ' ');
 
-type Step = 'form' | 'cloning' | 'result';
+type Step = 'form' | 'preview' | 'cloning' | 'result';
+
+interface BreakdownTableProps {
+  created: Record<string, number>;
+  skipped: Record<string, number>;
+  createdLabel: string;
+  skippedLabel: string;
+  createdColor: string;
+}
+
+const BreakdownTable: React.FC<BreakdownTableProps> = ({
+  created,
+  skipped,
+  createdLabel,
+  skippedLabel,
+  createdColor,
+}) => {
+  const allKeys = Array.from(new Set([...Object.keys(created), ...Object.keys(skipped)]));
+  if (allKeys.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        border: '1px solid #e5e7eb',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        marginBottom: '20px',
+      }}
+    >
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+        <thead>
+          <tr style={{ backgroundColor: '#f9fafb' }}>
+            <th
+              style={{
+                padding: '8px 12px',
+                textAlign: 'left',
+                fontWeight: 500,
+                color: '#6b7280',
+                borderBottom: '1px solid #e5e7eb',
+              }}
+            >
+              Category
+            </th>
+            <th
+              style={{
+                padding: '8px 12px',
+                textAlign: 'right',
+                fontWeight: 500,
+                color: createdColor,
+                borderBottom: '1px solid #e5e7eb',
+              }}
+            >
+              {createdLabel}
+            </th>
+            <th
+              style={{
+                padding: '8px 12px',
+                textAlign: 'right',
+                fontWeight: 500,
+                color: '#9ca3af',
+                borderBottom: '1px solid #e5e7eb',
+              }}
+            >
+              {skippedLabel}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {allKeys.map((key, idx) => (
+            <tr
+              key={key}
+              style={{
+                backgroundColor: idx % 2 === 0 ? 'white' : '#fafafa',
+              }}
+            >
+              <td style={{ padding: '7px 12px', color: '#374151' }}>{label(key)}</td>
+              <td
+                style={{
+                  padding: '7px 12px',
+                  textAlign: 'right',
+                  fontWeight: 500,
+                  color: (created[key] ?? 0) > 0 ? createdColor : '#d1d5db',
+                }}
+              >
+                {created[key] ?? 0}
+              </td>
+              <td
+                style={{
+                  padding: '7px 12px',
+                  textAlign: 'right',
+                  color: '#9ca3af',
+                }}
+              >
+                {skipped[key] ?? 0}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+interface WarningsListProps {
+  errors: string[];
+  show: boolean;
+  onToggle: () => void;
+}
+
+const WarningsList: React.FC<WarningsListProps> = ({ errors, show, onToggle }) => {
+  if (errors.length === 0) return null;
+  return (
+    <div
+      style={{
+        border: '1px solid #fde68a',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        marginBottom: '20px',
+      }}
+    >
+      <button
+        onClick={onToggle}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 14px',
+          backgroundColor: '#fffbeb',
+          border: 'none',
+          cursor: 'pointer',
+          fontSize: '13px',
+          fontWeight: 500,
+          color: '#92400e',
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <AlertTriangle size={14} style={{ color: '#d97706' }} />
+          {errors.length} warning{errors.length !== 1 ? 's' : ''} (items skipped due to missing
+          dependencies)
+        </span>
+        {show ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </button>
+      {show && (
+        <ul
+          style={{
+            margin: 0,
+            padding: '8px 14px 12px 32px',
+            listStyle: 'disc',
+            backgroundColor: '#fffbeb',
+          }}
+        >
+          {errors.map((e, i) => (
+            <li key={i} style={{ fontSize: '12px', color: '#78350f', marginBottom: '4px' }}>
+              {e}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
 
 const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) => {
-  const { mutateAsync: cloneConfig, isPending } = useCloneBranchConfig();
+  const { mutateAsync: previewConfig, isPending: isPreviewing } = useCloneBranchConfigPreview();
+  const { mutateAsync: cloneConfig, isPending: isCloning } = useCloneBranchConfig();
   const [step, setStep] = useState<Step>('form');
   const [sourceId, setSourceId] = useState<string>('');
   const [targetId, setTargetId] = useState<string>('');
+  const [preview, setPreview] = useState<CloneConfigResult | null>(null);
   const [result, setResult] = useState<CloneConfigResult | null>(null);
+  const [previewError, setPreviewError] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [showWarnings, setShowWarnings] = useState(false);
 
@@ -61,7 +236,9 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
       setStep('form');
       setSourceId('');
       setTargetId('');
+      setPreview(null);
       setResult(null);
+      setPreviewError('');
       setErrorMsg('');
       setShowWarnings(false);
     }
@@ -89,6 +266,24 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
   const sourceBranch = branches.find(b => b.id === activeSourceId);
   const targetBranch = branches.find(b => b.id === activeTargetId);
 
+  const handlePreview = async () => {
+    if (!activeSourceId || !activeTargetId) return;
+    setPreviewError('');
+    try {
+      const res = await previewConfig({
+        sourceBranchId: activeSourceId,
+        targetBranchId: activeTargetId,
+      });
+      setPreview(res);
+      setShowWarnings(false);
+      setStep('preview');
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.detail || err?.message || 'Preview failed. Please try again.';
+      setPreviewError(msg);
+    }
+  };
+
   const handleClone = async () => {
     if (!activeSourceId || !activeTargetId) return;
     setStep('cloning');
@@ -112,9 +307,13 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
 
   const totalCreated = result ? Object.values(result.created).reduce((a, b) => a + b, 0) : 0;
   const totalSkipped = result ? Object.values(result.skipped).reduce((a, b) => a + b, 0) : 0;
-  const allKeys = result
-    ? Array.from(new Set([...Object.keys(result.created), ...Object.keys(result.skipped)]))
-    : [];
+
+  const previewWillCreate = preview
+    ? Object.values(preview.created).reduce((a, b) => a + b, 0)
+    : 0;
+  const previewAlreadyExists = preview
+    ? Object.values(preview.skipped).reduce((a, b) => a + b, 0)
+    : 0;
 
   return (
     <div
@@ -214,11 +413,14 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
               >
                 <strong>What gets copied:</strong> chart of accounts, products, loan &amp; savings
                 products, fee structures, income/expense/inventory/asset categories, HR salary
-                components, leave types, and automation templates.
+                components &amp; leave types, HR/inventory/procurement approval workflow
+                configuration, income GL account mapping, notification templates, client
+                registration &amp; classification config, and automation templates.
                 <br />
                 <span style={{ color: '#6b7280' }}>
                   Transactions, clients, staff records, and account balances are never copied.
-                  Existing records in the target branch are skipped.
+                  Existing records in the target branch are skipped. You'll see an exact
+                  category-by-category breakdown before anything is written.
                 </span>
               </div>
 
@@ -327,6 +529,18 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
                 </p>
               )}
 
+              {previewError && (
+                <p
+                  style={{
+                    fontSize: '13px',
+                    color: '#dc2626',
+                    marginBottom: '16px',
+                  }}
+                >
+                  {previewError}
+                </p>
+              )}
+
               {/* Footer */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
                 <button
@@ -345,15 +559,15 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
                   Cancel
                 </button>
                 <button
-                  onClick={handleClone}
-                  disabled={!canSubmit}
+                  onClick={handlePreview}
+                  disabled={!canSubmit || isPreviewing}
                   style={{
                     padding: '9px 18px',
                     border: 'none',
                     borderRadius: '8px',
-                    background: canSubmit ? '#2563eb' : '#93c5fd',
+                    background: canSubmit && !isPreviewing ? '#2563eb' : '#93c5fd',
                     color: 'white',
-                    cursor: canSubmit ? 'pointer' : 'not-allowed',
+                    cursor: canSubmit && !isPreviewing ? 'pointer' : 'not-allowed',
                     fontSize: '14px',
                     fontWeight: 500,
                     display: 'flex',
@@ -362,7 +576,118 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
                   }}
                 >
                   <Copy size={15} />
-                  Clone Configuration
+                  {isPreviewing ? 'Checking…' : 'Preview Changes'}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── PREVIEW STEP ── */}
+          {step === 'preview' && preview && (
+            <>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  marginBottom: '20px',
+                }}
+              >
+                <div>
+                  <p style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#111827' }}>
+                    Nothing has been written yet
+                  </p>
+                  <p style={{ margin: 0, fontSize: '12px', color: '#6b7280' }}>
+                    {preview.source_branch} → {preview.target_branch} — review, then confirm
+                  </p>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '12px',
+                  marginBottom: '20px',
+                }}
+              >
+                <div
+                  style={{
+                    backgroundColor: '#eff6ff',
+                    borderRadius: '8px',
+                    padding: '14px 16px',
+                    textAlign: 'center',
+                  }}
+                >
+                  <p style={{ margin: '0 0 4px', fontSize: '28px', fontWeight: 700, color: '#2563eb' }}>
+                    {previewWillCreate}
+                  </p>
+                  <p style={{ margin: 0, fontSize: '12px', color: '#1e40af' }}>will be created</p>
+                </div>
+                <div
+                  style={{
+                    backgroundColor: '#f9fafb',
+                    borderRadius: '8px',
+                    padding: '14px 16px',
+                    textAlign: 'center',
+                  }}
+                >
+                  <p style={{ margin: '0 0 4px', fontSize: '28px', fontWeight: 700, color: '#6b7280' }}>
+                    {previewAlreadyExists}
+                  </p>
+                  <p style={{ margin: 0, fontSize: '12px', color: '#6b7280' }}>already exist</p>
+                </div>
+              </div>
+
+              <BreakdownTable
+                created={preview.created}
+                skipped={preview.skipped}
+                createdLabel="Will Create"
+                skippedLabel="Already Exists"
+                createdColor="#2563eb"
+              />
+
+              <WarningsList
+                errors={preview.errors}
+                show={showWarnings}
+                onToggle={() => setShowWarnings(v => !v)}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                <button
+                  onClick={() => setStep('form')}
+                  style={{
+                    padding: '9px 18px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '8px',
+                    background: 'white',
+                    color: '#374151',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                  }}
+                >
+                  Back
+                </button>
+                <button
+                  onClick={handleClone}
+                  disabled={isCloning}
+                  style={{
+                    padding: '9px 18px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    background: '#2563eb',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 500,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <Copy size={15} />
+                  Confirm &amp; Clone
                 </button>
               </div>
             </>
@@ -428,7 +753,7 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '24px' }}>
                     <button
-                      onClick={() => setStep('form')}
+                      onClick={() => setStep('preview')}
                       style={{
                         padding: '9px 18px',
                         border: '1px solid #d1d5db',
@@ -536,144 +861,19 @@ const CloneBranchConfigModal: React.FC<Props> = ({ isOpen, onClose, branches }) 
                     </div>
                   </div>
 
-                  {/* Per-category breakdown */}
-                  {allKeys.length > 0 && (
-                    <div
-                      style={{
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        overflow: 'hidden',
-                        marginBottom: '20px',
-                      }}
-                    >
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                        <thead>
-                          <tr style={{ backgroundColor: '#f9fafb' }}>
-                            <th
-                              style={{
-                                padding: '8px 12px',
-                                textAlign: 'left',
-                                fontWeight: 500,
-                                color: '#6b7280',
-                                borderBottom: '1px solid #e5e7eb',
-                              }}
-                            >
-                              Category
-                            </th>
-                            <th
-                              style={{
-                                padding: '8px 12px',
-                                textAlign: 'right',
-                                fontWeight: 500,
-                                color: '#16a34a',
-                                borderBottom: '1px solid #e5e7eb',
-                              }}
-                            >
-                              Created
-                            </th>
-                            <th
-                              style={{
-                                padding: '8px 12px',
-                                textAlign: 'right',
-                                fontWeight: 500,
-                                color: '#9ca3af',
-                                borderBottom: '1px solid #e5e7eb',
-                              }}
-                            >
-                              Skipped
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {allKeys.map((key, idx) => (
-                            <tr
-                              key={key}
-                              style={{
-                                backgroundColor: idx % 2 === 0 ? 'white' : '#fafafa',
-                              }}
-                            >
-                              <td
-                                style={{ padding: '7px 12px', color: '#374151' }}
-                              >
-                                {label(key)}
-                              </td>
-                              <td
-                                style={{
-                                  padding: '7px 12px',
-                                  textAlign: 'right',
-                                  fontWeight: 500,
-                                  color: (result.created[key] ?? 0) > 0 ? '#16a34a' : '#d1d5db',
-                                }}
-                              >
-                                {result.created[key] ?? 0}
-                              </td>
-                              <td
-                                style={{
-                                  padding: '7px 12px',
-                                  textAlign: 'right',
-                                  color: '#9ca3af',
-                                }}
-                              >
-                                {result.skipped[key] ?? 0}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  <BreakdownTable
+                    created={result.created}
+                    skipped={result.skipped}
+                    createdLabel="Created"
+                    skippedLabel="Skipped"
+                    createdColor="#16a34a"
+                  />
 
-                  {/* Warnings */}
-                  {result.errors.length > 0 && (
-                    <div
-                      style={{
-                        border: '1px solid #fde68a',
-                        borderRadius: '8px',
-                        overflow: 'hidden',
-                        marginBottom: '20px',
-                      }}
-                    >
-                      <button
-                        onClick={() => setShowWarnings(v => !v)}
-                        style={{
-                          width: '100%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '10px 14px',
-                          backgroundColor: '#fffbeb',
-                          border: 'none',
-                          cursor: 'pointer',
-                          fontSize: '13px',
-                          fontWeight: 500,
-                          color: '#92400e',
-                        }}
-                      >
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <AlertTriangle size={14} style={{ color: '#d97706' }} />
-                          {result.errors.length} warning{result.errors.length !== 1 ? 's' : ''}{' '}
-                          (items skipped due to missing dependencies)
-                        </span>
-                        {showWarnings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                      </button>
-                      {showWarnings && (
-                        <ul
-                          style={{
-                            margin: 0,
-                            padding: '8px 14px 12px 32px',
-                            listStyle: 'disc',
-                            backgroundColor: '#fffbeb',
-                          }}
-                        >
-                          {result.errors.map((e, i) => (
-                            <li key={i} style={{ fontSize: '12px', color: '#78350f', marginBottom: '4px' }}>
-                              {e}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
+                  <WarningsList
+                    errors={result.errors}
+                    show={showWarnings}
+                    onToggle={() => setShowWarnings(v => !v)}
+                  />
 
                   <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <button
