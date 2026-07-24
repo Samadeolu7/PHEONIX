@@ -380,13 +380,16 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     if len(self.workflow_reference) + len(_rev) > 50
                     else self.workflow_reference + _rev
                 )
-            # Create reversal transaction
+            # Create reversal transaction — defensively truncated (max_length=255),
+            # same reasoning as rev_ref/rev_wf above: self.description or reason can
+            # each independently be long enough to overflow once combined.
+            rev_description = f"REVERSAL: {self.description} - Reason: {reason}"[:255]
             reversal_txn = Transaction.objects.create(
                 series=self.series,
                 date=today,
                 reference_number=rev_ref,
                 workflow_reference=rev_wf,
-                description=f"REVERSAL: {self.description} - Reason: {reason}",
+                description=rev_description,
                 owner=self.owner,
                 branch=self.branch,
                 created_by=user,

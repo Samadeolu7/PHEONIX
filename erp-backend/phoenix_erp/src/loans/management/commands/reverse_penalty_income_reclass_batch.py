@@ -28,13 +28,10 @@ from django.core.management.base import BaseCommand
 
 
 SERIES_CODE = 'PENRC'
-REASON = (
-    "Reclass amount was computed from LoanRepaymentSchedule.penalty_paid, which "
-    "_update_schedule_with_payment() populates via a broken proportional allocation "
-    "unrelated to actual GL-posted penalty amounts (confirmed: reclass debit exceeded "
-    "the receivable account's entire lifetime credit total on LN-659). Reversing "
-    "pending a corrected calculation based on LoanAccount.penalties_paid."
-)
+# Kept short deliberately: Transaction.description is max_length=255 and reverse()
+# builds "REVERSAL: {original_description} - Reason: {reason}" — the original PENRC
+# descriptions already run ~100 chars, so this needs headroom, not just its own limit.
+REASON = "penalty_paid was a broken proportional split, not real GL amounts; reversing pending recompute from audit log"
 
 
 class Command(BaseCommand):
@@ -72,8 +69,14 @@ class Command(BaseCommand):
             return
 
         reversed_count = 0
+        errors = 0
         for t in txns:
-            t.reverse(user=None, reason=REASON)
-            reversed_count += 1
+            try:
+                t.reverse(user=None, reason=REASON)
+                reversed_count += 1
+                self.stdout.write(f"  reversed {t.reference_number}")
+            except Exception as exc:  # noqa: BLE001
+                errors += 1
+                self.stderr.write(self.style.ERROR(f"  [{t.reference_number}] FAILED: {exc}"))
 
-        self.stdout.write(self.style.SUCCESS(f'\nReversed {reversed_count} transaction(s).'))
+        self.stdout.write(self.style.SUCCESS(f'\nReversed {reversed_count}/{count} transaction(s). Errors: {errors}.'))
