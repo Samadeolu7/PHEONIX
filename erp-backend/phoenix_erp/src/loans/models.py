@@ -1341,9 +1341,16 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """
         Apply a payment across schedule installments in due-date order.
         Updates per-component paid fields (principal, interest, fees, penalty)
-        proportionally and records payment_date / days_late on fully settled rows.
+        using the actual penalty/interest/fees/principal split the caller
+        computed (record_payment()'s priority-order allocation against the
+        loan's aggregate outstanding_* balances) and records payment_date /
+        days_late on fully settled rows.
         """
         remaining = amount
+        remaining_penalty = penalty
+        remaining_interest = interest
+        remaining_fees = fees
+        remaining_principal = principal
 
         schedules = self.repayment_schedule.filter(
             status__in=['pending', 'partial', 'overdue']
@@ -1356,25 +1363,33 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             installment_remaining = schedule.total_due - schedule.total_paid
             payment_to_schedule = min(remaining, installment_remaining)
 
-            # Proportional breakdown within this installment
-            if schedule.total_due > 0 and payment_to_schedule > 0:
-                ratio = payment_to_schedule / schedule.total_due
-                schedule.principal_paid = min(
-                    schedule.principal_due,
-                    (schedule.principal_paid + schedule.principal_due * ratio).quantize(Decimal('0.01')),
+            # Apply the actual component split against each installment's own
+            # remaining due amounts, in the same priority order record_payment()
+            # used against the loan's aggregate balances (penalty, interest,
+            # fees, principal) — not a proportional-to-due estimate.
+            if payment_to_schedule > 0:
+                penalty_remaining_due = schedule.penalty_due - schedule.penalty_paid
+                penalty_applied = min(remaining_penalty, penalty_remaining_due, payment_to_schedule)
+                schedule.penalty_paid = (schedule.penalty_paid + penalty_applied).quantize(Decimal('0.01'))
+                remaining_penalty -= penalty_applied
+
+                interest_remaining_due = schedule.interest_due - schedule.interest_paid
+                interest_applied = min(remaining_interest, interest_remaining_due, payment_to_schedule - penalty_applied)
+                schedule.interest_paid = (schedule.interest_paid + interest_applied).quantize(Decimal('0.01'))
+                remaining_interest -= interest_applied
+
+                fees_remaining_due = schedule.fees_due - schedule.fees_paid
+                fees_applied = min(remaining_fees, fees_remaining_due, payment_to_schedule - penalty_applied - interest_applied)
+                schedule.fees_paid = (schedule.fees_paid + fees_applied).quantize(Decimal('0.01'))
+                remaining_fees -= fees_applied
+
+                principal_remaining_due = schedule.principal_due - schedule.principal_paid
+                principal_applied = min(
+                    remaining_principal, principal_remaining_due,
+                    payment_to_schedule - penalty_applied - interest_applied - fees_applied,
                 )
-                schedule.interest_paid = min(
-                    schedule.interest_due,
-                    (schedule.interest_paid + schedule.interest_due * ratio).quantize(Decimal('0.01')),
-                )
-                schedule.fees_paid = min(
-                    schedule.fees_due,
-                    (schedule.fees_paid + schedule.fees_due * ratio).quantize(Decimal('0.01')),
-                )
-                schedule.penalty_paid = min(
-                    schedule.penalty_due,
-                    (schedule.penalty_paid + schedule.penalty_due * ratio).quantize(Decimal('0.01')),
-                )
+                schedule.principal_paid = (schedule.principal_paid + principal_applied).quantize(Decimal('0.01'))
+                remaining_principal -= principal_applied
 
             schedule.total_paid += payment_to_schedule
 
