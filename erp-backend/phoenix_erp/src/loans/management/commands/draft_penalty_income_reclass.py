@@ -15,10 +15,21 @@ receivable balance is currently UNDER-stated by exactly its own misrouted
 penalty total — real principal collection and misrouted penalty collection
 got blended into one credit line.
 
+CORRECTED 2026-07-24: this originally summed LoanRepaymentSchedule.penalty_paid
+per loan, which turned out to be unreliable — _update_schedule_with_payment()
+populated it via a broken proportional allocation unrelated to actual GL-posted
+penalty amounts (now fixed; see loans/models.py). Confirmed wrong when the
+first run debited LN-659's receivable 671,599.91 against an account that had
+only ever received 97,333.32 in its entire history — that batch was reversed
+(see reverse_penalty_income_reclass_batch.py). This version instead sums the
+real per-payment penalty amount from FinancialAuditLog(event_type=LOAN_REPAY)
+extra['penalty'] — logged directly from record_payment()'s own computed split,
+untouched by the schedule bug (see report_penalty_paid_per_payment.py, which
+surfaces the same numbers read-only for review before this command runs).
+
 The fix is per loan, not one lump entry: for every loan with a nonzero
-misrouted total (LoanRepaymentSchedule.penalty_paid summed per loan, for
-loans under a product whose penalty_income_account was NULL), post one
-balanced Transaction:
+misrouted total (real penalty paid per loan, for loans under a product whose
+penalty_income_account was NULL), post one balanced Transaction:
 
     Dr. Loan Receivable (that loan's own account)   — restores the balance
     Cr. Penalty Income (--account-code, default 4211) — recognizes the income
@@ -35,12 +46,18 @@ SAFETY:
     repayments stop adding to this gap while you're reviewing it.
   - Every posted correction is logged via FinancialAuditLog
     (LOAN_BALANCE_CORRECTION) with the loan, amount, and before/after figures.
-  - Only considers LoanRepaymentSchedule rows already reflecting penalty_paid
-    at the time this runs — if new repayments post correctly after running
-    fix_loan_penalty_account_mapping, they won't be (and shouldn't be)
-    double-counted here on a re-run, since only pre-existing penalty_paid
-    that predates a correct posting created a gap. Re-running after posting
-    once will correctly show 0.00 remaining for already-corrected loans.
+  - ONE-TIME catch-up, not something to schedule or re-run casually: it sums
+    EVERY FinancialAuditLog(LOAN_REPAY) entry's 'penalty' value per loan,
+    regardless of whether penalty_income_account was configured at the time
+    of that payment. Once fix_loan_penalty_account_mapping is applied, new
+    repayments post penalty income correctly AND still log a LOAN_REPAY entry
+    with the same nonzero 'penalty' — so running this command again later
+    would double-count those already-correctly-posted amounts. Run it once,
+    promptly, to close out the historical gap; do not re-run after new
+    properly-routed penalty payments have occurred.
+  - Skips (with an ERROR line, not silently) any loan whose computed penalty
+    total exceeds its receivable account's entire lifetime credits — the
+    exact check that caught the first version's bug on LN-659.
 
 Usage:
     python manage.py draft_penalty_income_reclass                       # preview, all 3 products
@@ -81,7 +98,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from loans.models import LoanProduct, LoanAccount, LoanRepaymentSchedule
+        from loans.models import LoanProduct, LoanAccount
         from accounts.models import Account
         from transactions.models import Transaction as JournalEntry, TransactionEntry as JournalEntryLine, TransactionSeries
         from common.models import FinancialAuditLog, log_financial_event
@@ -117,12 +134,33 @@ class Command(BaseCommand):
             product_total = Decimal('0.00')
             product_lines = []
             for loan in loans.iterator():
-                paid = LoanRepaymentSchedule.all_objects.filter(loan=loan).aggregate(
-                    total=Sum('penalty_paid')
-                )['total'] or Decimal('0.00')
-                if paid > 0:
-                    product_lines.append((loan, paid))
-                    product_total += paid
+                logs = FinancialAuditLog.objects.filter(
+                    event_type=FinancialAuditLog.LOAN_REPAY,
+                    extra__loan_number=loan.loan_number,
+                )
+                paid = Decimal('0.00')
+                for log in logs.iterator():
+                    paid += Decimal((log.extra or {}).get('penalty', '0') or '0')
+
+                if paid <= 0:
+                    continue
+
+                # Safety guard — the exact check that caught the previous bug:
+                # the reclass debit can never exceed everything this receivable
+                # account has ever actually received.
+                from transactions.models import TransactionEntry
+                lifetime_credits = TransactionEntry.objects.filter(
+                    account=loan.account, side=TransactionEntry.CREDIT,
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+                if paid > lifetime_credits:
+                    self.stdout.write(self.style.ERROR(
+                        f"  [{loan.loan_number}] SKIPPED — computed penalty {paid:,.2f} exceeds "
+                        f"the account's lifetime credits {lifetime_credits:,.2f}; investigate before correcting."
+                    ))
+                    continue
+
+                product_lines.append((loan, paid))
+                product_total += paid
 
             if not product_lines:
                 self.stdout.write(f"[{product_name}] nothing to correct.")
