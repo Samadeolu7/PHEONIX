@@ -168,7 +168,7 @@ class Command(BaseCommand):
                 reversal_total += e.amount
                 reversal_entries.append(e)
 
-            self.stdout.write(f'\n  Account {acct.code} - {acct.name} (current balance={acct.current_balance:,.2f})')
+            self.stdout.write(f'\n  Account {acct.code} - {acct.name} (current balance={acct.balance:,.2f})')
             self.stdout.write(f'    Migration opening balance (OBMIG credits): {migration_total:,.2f}')
             self.stdout.write(f'    Organic repayment-time credits (LNPMT):    {organic_total:,.2f}')
             self.stdout.write(f'    Other credits (manual/reclass, non-LNPMT): {other_credit_total:,.2f}')
