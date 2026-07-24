@@ -53,6 +53,24 @@ class NarrationRelationshipTests(TestCase):
             'NEUTRAL',
         )
 
+    def test_shared_digit_blob_alone_never_causes_a_false_contradiction(self):
+        # Regression: bank narrations on this feed embed a long,
+        # transaction-timestamp-derived digit run (varying length,
+        # multiple channel prefixes — CPWInward/ISW/FIP/QS894). Before the
+        # fix, that digit blob got treated as "a meaningful word" on the
+        # bank side with nothing to match on a short ERP description,
+        # forcing a false CONTRADICTED verdict for what was actually a
+        # genuine same-customer pair with no name in common in the
+        # extracted text at all — should be NEUTRAL (not enough
+        # identifiable name text), never CONTRADICTED.
+        self.assertEqual(
+            narration_relationship(
+                'CPWInward:100004260720134408165871030330/GOD IS GO Ref100233721315',
+                'Transfer: God is good',
+            ),
+            'NEUTRAL',
+        )
+
     def test_blank_side_is_neutral(self):
         self.assertEqual(narration_relationship('', 'Loan repayment – LN-1 | Ref: something'), 'NEUTRAL')
         self.assertEqual(narration_relationship('CPWInward:.../SOMEONE', ''), 'NEUTRAL')

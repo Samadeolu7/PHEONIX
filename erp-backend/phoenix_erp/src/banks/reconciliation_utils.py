@@ -173,6 +173,26 @@ def _bank_line_reference_token_in_erp_text(tx, erp_text):
     return any(t in haystack for t in tokens)
 
 
+# Pure letters only (no digits at all) — deliberately a DIFFERENT
+# extraction from _REF_WORD_RE (which is alnum and feeds the existing,
+# already-deployed reference_confirms_bank_line/reference_mismatches_
+# bank_line — left untouched here to avoid touching their tested
+# behavior). A name-vs-name contradiction must be judged on actual name
+# text, never on a shared/unshared digit blob: found live, "CPWInward:
+# 100004260720134408165871030330/GOD IS GO" against "Transfer: God is
+# good" was wrongly ruled CONTRADICTED, because the only "words" the old
+# alnum extraction found on the bank side were the structural "CPWInward"
+# token and the long digit blob itself — neither is a name, but the digit
+# blob still counted as "a meaningful word" with nothing to match on the
+# erp side, forcing a false conflict verdict. Every bank narration on
+# this feed embeds a transaction-timestamp-derived digit run of this kind
+# (varying length, multiple channel prefixes — CPWInward/ISW/FIP/QS894 —
+# so no single fixed prefix could be stripped instead); excluding ALL
+# digits from the name-comparison words, generally, is what actually
+# closes this rather than special-casing one prefix string.
+_NAME_WORD_RE = re.compile(r'[A-Za-z]{4,}')
+
+
 def narration_relationship(bank_text, erp_text):
     """
     Tri-state read on whether two pieces of free text (a bank line's own
@@ -181,37 +201,39 @@ def narration_relationship(bank_text, erp_text):
     look like the same real-world event, for callers that want a soft
     preference/safety-net rather than a hard verification gate:
 
-      'CONFIRMED'    — they share a meaningful word or a digit-dominant id
-                       token (positive evidence of correspondence).
-      'CONTRADICTED' — both sides have at least one meaningful word, and
-                       they share NONE at all — positive evidence they
-                       name two different things (e.g. bank narration says
-                       "KAFILAT A", payment narration says "MARVELLOU" —
-                       different customers, different transactions).
-      'NEUTRAL'      — not enough distinguishing text on one or both sides
-                       to say anything either way (e.g. one side is blank,
-                       or all its words are structural boilerplate).
+      'CONFIRMED'    — they share a meaningful NAME word or a digit-
+                       dominant id token (positive evidence of
+                       correspondence — either is enough on its own).
+      'CONTRADICTED' — both sides have at least one identifiable NAME
+                       word, and they share NONE at all — positive
+                       evidence they name two different things (e.g. bank
+                       narration says "KAFILAT A", payment narration says
+                       "MARVELLOU" — different customers, different
+                       transactions). A shared/unshared digit token is
+                       NEVER enough on its own to call this — see
+                       _NAME_WORD_RE's docstring for why.
+      'NEUTRAL'      — not enough identifiable name text on one or both
+                       sides to say anything either way (e.g. one side is
+                       blank, or all its words are structural boilerplate
+                       or bare transaction-id digits).
 
     Built for bulk_match_by_amount_and_date: an amount+date-only bulk
     match is deliberately allowed to proceed on a NEUTRAL pair (that's the
     whole point of the tool), but a CONTRADICTED pair — two specific,
     named, different things — should never be silently paired just
     because they happen to share an amount and land near each other in
-    time. Not a verification gate on its own; reuses the same word/token
-    vocabulary as reference_confirms_bank_line and
-    _bank_line_reference_token_in_erp_text so the three don't disagree
-    about what counts as a genuine signal.
+    time.
     """
     bank_norm = _normalized_for_reference_compare(bank_text)
     erp_norm = _normalized_for_reference_compare(erp_text)
-    bank_words = {w for w in _REF_WORD_RE.findall(bank_norm) if w not in _REF_STRUCTURAL_TOKENS}
-    erp_words = {w for w in _REF_WORD_RE.findall(erp_norm) if w not in _REF_STRUCTURAL_TOKENS}
+    bank_names = {w for w in _NAME_WORD_RE.findall(bank_norm) if w not in _REF_STRUCTURAL_TOKENS}
+    erp_names = {w for w in _NAME_WORD_RE.findall(erp_norm) if w not in _REF_STRUCTURAL_TOKENS}
     bank_tokens = _long_tokens(bank_text)
     erp_tokens = _long_tokens(erp_text)
 
-    if (bank_words & erp_words) or (bank_tokens & erp_tokens):
+    if (bank_names & erp_names) or (bank_tokens & erp_tokens):
         return 'CONFIRMED'
-    if bank_words and erp_words:
+    if bank_names and erp_names:
         return 'CONTRADICTED'
     return 'NEUTRAL'
 
