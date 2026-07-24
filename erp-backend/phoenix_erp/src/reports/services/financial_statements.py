@@ -767,14 +767,17 @@ class FinancialStatementService:
         end_date = end_date or timezone.now().date()
         
         # Get cash accounts (typically code starting with 1010 or type=ASSET and name contains 'cash')
+        # Scope by branch/tenant, NOT owner (owner is audit only — see the
+        # same pattern in _get_accounts_by_type / generate_trial_balance).
         cash_accounts = Account.objects.filter(
-            owner=self.owner,
             is_deleted=False,
             code__startswith='1010'  # Cash and bank accounts
         )
-        
+
         if self.branch:
             cash_accounts = cash_accounts.filter(branch=self.branch)
+        elif hasattr(self.owner, 'tenant') and self.owner.tenant:
+            cash_accounts = cash_accounts.filter(tenant=self.owner.tenant)
         
         # Calculate beginning cash balance
         beginning_cash = self._get_cash_balance(cash_accounts, start_date - timedelta(days=1))

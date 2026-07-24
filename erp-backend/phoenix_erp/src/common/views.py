@@ -19,6 +19,68 @@ except ImportError:
     _HasActionPermission = None
     _HAS_ACTION_PERMISSION_AVAILABLE = False
 
+
+def is_elevated_user(user):
+    """
+    True when the user has global-scope access (can see across every branch).
+    Standalone version of ScopedModelViewSet._is_elevated_user for callers
+    that aren't a ScopedModelViewSet subclass (plain viewsets.ViewSet /
+    APIView) but still need to honor the branch-switcher's X-Branch-ID
+    override consistently with the rest of the app.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_system_admin', False):
+        return True
+    if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+        return True
+    try:
+        return user.roles.filter(is_active=True, default_scope='global').exists()
+    except Exception:
+        return False
+
+
+def resolve_effective_branch(request):
+    """
+    Return the Branch this request should be scoped to, for views that don't
+    go through ScopedModelViewSet's get_queryset/_scoped_queryset pipeline
+    (e.g. report endpoints that call a service directly instead of filtering
+    a queryset). Mirrors that pipeline's combined behavior exactly:
+
+      - Elevated user (director/owner/global-scope role) with a valid
+        X-Branch-ID header → that branch.
+      - Elevated user with no header (or an invalid one) → None, i.e.
+        tenant-wide / "All Branches" mode — NOT silently narrowed to their
+        own branch, matching for_user()'s branch-bypass for global-scope
+        roles.
+      - Everyone else → their own assigned branch.
+
+    Without this, a director switching branches in the topbar has no effect
+    on any view built this way — every branch renders identical data because
+    the view never looks past request.user.branch (or, worse, an attribute
+    that doesn't exist on this codebase's User model at all).
+    """
+    user = getattr(request, 'user', None)
+    if not user or not getattr(user, 'is_authenticated', False):
+        return None
+
+    if is_elevated_user(user):
+        header_val = request.META.get('HTTP_X_BRANCH_ID', '').strip()
+        if header_val:
+            try:
+                from branches.models import Branch
+                tenant = getattr(user, 'tenant', None)
+                qs = Branch.objects.filter(pk=int(header_val), is_deleted=False)
+                if tenant:
+                    qs = qs.filter(tenant=tenant)
+                return qs.get()
+            except Exception:
+                pass
+        return None
+
+    return getattr(user, 'branch', None)
+
+
 # Create your views here.
 @extend_schema_view(
     list=extend_schema(description="List all objects accessible to the current user."),
@@ -268,16 +330,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         """True when the user has global-scope access (can see across branches)."""
         if user is None:
             user = getattr(self.request, 'user', None)
-        if not user or not getattr(user, 'is_authenticated', False):
-            return False
-        if getattr(user, 'is_system_admin', False):
-            return True
-        if callable(getattr(user, 'is_owner', None)) and user.is_owner():
-            return True
-        try:
-            return user.roles.filter(is_active=True, default_scope='global').exists()
-        except Exception:
-            return False
+        return is_elevated_user(user)
 
     def _apply_director_branch_override(self, qs):
         """Apply the X-Branch-ID branch override if one is in effect."""

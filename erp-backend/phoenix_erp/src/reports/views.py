@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.http import HttpResponse, Http404
 
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 from .models import (
     ReportCategory, ReportTemplate, ReportParameter,
     ReportColumn, ReportChart, ReportExecution, ReportSchedule
@@ -877,7 +877,7 @@ class FinancialReportsViewSet(viewsets.ViewSet):
             # Generate report
             service = FinancialStatementService(
                 owner=request.user,
-                branch=getattr(request.user, 'branch', None)
+                branch=resolve_effective_branch(request)
             )
             
             report_data = service.generate_trial_balance(
@@ -995,7 +995,7 @@ class FinancialReportsViewSet(viewsets.ViewSet):
         try:
             service = FinancialStatementService(
                 owner=request.user,
-                branch=getattr(request.user, 'branch', None)
+                branch=resolve_effective_branch(request)
             )
             
             report_data = service.generate_profit_loss(
@@ -1108,7 +1108,7 @@ class FinancialReportsViewSet(viewsets.ViewSet):
         try:
             service = FinancialStatementService(
                 owner=request.user,
-                branch=getattr(request.user, 'branch', None)
+                branch=resolve_effective_branch(request)
             )
             
             report_data = service.generate_balance_sheet(
@@ -1212,8 +1212,8 @@ class FinancialReportsViewSet(viewsets.ViewSet):
             
             # Generate cash flow statement
             statement_service = FinancialStatementService(
-                owner=request.user.userprofile.owner,
-                branch=request.user.userprofile.branch
+                owner=request.user,
+                branch=resolve_effective_branch(request)
             )
             
             statement_data = statement_service.generate_cash_flow_statement(
