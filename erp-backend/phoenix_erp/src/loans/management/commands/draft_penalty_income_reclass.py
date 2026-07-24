@@ -58,6 +58,12 @@ SAFETY:
   - Skips (with an ERROR line, not silently) any loan whose computed penalty
     total exceeds its receivable account's entire lifetime credits — the
     exact check that caught the first version's bug on LN-659.
+  - Account.code is NOT globally unique — it's scoped per branch (confirmed:
+    two separate '4211' rows, one per branch, same tenant). Likewise
+    LoanProduct is branch-scoped, so a product name can have more than one
+    row. This command resolves BOTH per loan's own branch — never assumes a
+    single global product or account — and skips (loudly) any loan whose
+    branch has no matching account rather than guessing.
 
 Usage:
     python manage.py draft_penalty_income_reclass                       # preview, all 3 products
@@ -108,32 +114,57 @@ class Command(BaseCommand):
         account_code = options['account_code']
         apply_changes = options['apply']
 
-        try:
-            target_account = Account.objects.get(code=account_code)
-        except Account.DoesNotExist:
-            raise CommandError(f"Account with code '{account_code}' not found — aborting.")
+        # Resolved lazily per branch as loans are processed — never assume a
+        # single global account for this code (see module docstring).
+        account_cache = {}  # branch_id -> Account or None (None = lookup failed, already reported)
 
-        if target_account.account_type != Account.INCOME:
-            raise CommandError(
-                f"Account {target_account.code} - {target_account.name} is not an INCOME "
-                f"account (type={target_account.account_type}) — aborting."
-            )
+        def resolve_account(branch_id):
+            if branch_id in account_cache:
+                return account_cache[branch_id]
+            try:
+                acct = Account.objects.get(code=account_code, branch_id=branch_id)
+            except Account.DoesNotExist:
+                self.stdout.write(self.style.ERROR(
+                    f"  no Account with code '{account_code}' for branch_id={branch_id} — "
+                    f"loans in this branch will be skipped."
+                ))
+                acct = None
+            except Account.MultipleObjectsReturned:
+                self.stdout.write(self.style.ERROR(
+                    f"  multiple Account rows with code '{account_code}' for branch_id={branch_id} — "
+                    f"loans in this branch will be skipped, needs manual disambiguation."
+                ))
+                acct = None
+            else:
+                if acct.account_type != Account.INCOME:
+                    self.stdout.write(self.style.ERROR(
+                        f"  Account {acct.code} - {acct.name} (branch_id={branch_id}) is not INCOME "
+                        f"type — loans in this branch will be skipped."
+                    ))
+                    acct = None
+            account_cache[branch_id] = acct
+            return acct
 
         grand_total = Decimal('0.00')
-        loan_corrections = []  # (loan, amount)
+        loan_corrections = []  # (loan, amount, target_account)
 
         for product_name in product_names:
-            try:
-                lp = LoanProduct.objects.get(product__name=product_name, is_deleted=False)
-            except LoanProduct.DoesNotExist:
+            products = LoanProduct.objects.filter(product__name=product_name, is_deleted=False)
+            if not products.exists():
                 self.stdout.write(self.style.WARNING(f"No LoanProduct found for '{product_name}' — skipping."))
                 continue
 
-            loans = LoanAccount.all_objects.filter(product=lp, is_deleted=False).select_related('account')
+            loans = LoanAccount.all_objects.filter(
+                product_id__in=products.values_list('pk', flat=True), is_deleted=False,
+            ).select_related('account')
 
             product_total = Decimal('0.00')
             product_lines = []
             for loan in loans.iterator():
+                target_account = resolve_account(loan.branch_id)
+                if target_account is None:
+                    continue
+
                 logs = FinancialAuditLog.objects.filter(
                     event_type=FinancialAuditLog.LOAN_REPAY,
                     extra__loan_number=loan.loan_number,
@@ -159,7 +190,7 @@ class Command(BaseCommand):
                     ))
                     continue
 
-                product_lines.append((loan, paid))
+                product_lines.append((loan, paid, target_account))
                 product_total += paid
 
             if not product_lines:
@@ -169,10 +200,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.MIGRATE_HEADING(
                 f"[{product_name}] {len(product_lines)} loan(s), total={product_total:,.2f}"
             ))
-            for loan, amount in product_lines:
+            for loan, amount, target_account in product_lines:
                 acct = loan.account
                 self.stdout.write(
-                    f"    {loan.loan_number:20s} receivable={acct.code:10s} amount={amount:>12,.2f}"
+                    f"    {loan.loan_number:20s} receivable={acct.code:10s} amount={amount:>12,.2f}  "
+                    f"-> Cr. {target_account.code} (branch_id={loan.branch_id})"
                 )
             loan_corrections.extend(product_lines)
             grand_total += product_total
@@ -183,8 +215,7 @@ class Command(BaseCommand):
             return
 
         self.stdout.write(self.style.WARNING(
-            f'GRAND TOTAL to reclassify: {grand_total:,.2f} across {len(loan_corrections)} loan(s), '
-            f'Cr. {target_account.code} - {target_account.name}'
+            f'GRAND TOTAL to reclassify: {grand_total:,.2f} across {len(loan_corrections)} loan(s)'
         ))
 
         if not apply_changes:
@@ -201,7 +232,7 @@ class Command(BaseCommand):
 
         posted = 0
         with db_transaction.atomic():
-            for loan, amount in loan_corrections:
+            for loan, amount, target_account in loan_corrections:
                 journal_entry = JournalEntry.objects.create(
                     series=series,
                     date=timezone.now().date(),

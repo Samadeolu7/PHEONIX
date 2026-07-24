@@ -25,11 +25,22 @@ clients, just recognized on the wrong GL line.
 Repoints each product from today onward. New repayments will post penalty
 income to 4211; nothing already posted is corrected by this command.
 
+CORRECTED 2026-07-24: Account.code is NOT globally unique — it's scoped per
+branch (confirmed: two separate Account rows both with code '4211', one per
+branch, same tenant). LoanProduct is branch-scoped too (BranchScopedModel),
+so there can likewise be a separate "Monthly Loan" row per branch. The
+original version of this command assumed exactly one Account and one
+LoanProduct per product name and would either crash (Account.objects.get())
+or silently skip (LoanProduct.MultipleObjectsReturned) once a second branch
+existed. Now resolves BOTH per branch: for each LoanProduct row (whichever
+branch it belongs to), the target account is looked up by (code, that same
+branch) — never a different branch's account.
+
 Usage:
     python manage.py fix_loan_penalty_account_mapping              # dry-run
     python manage.py fix_loan_penalty_account_mapping --confirm    # apply
 """
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 
 
 TARGET_ACCOUNT_CODE = '4211'
@@ -39,7 +50,7 @@ PRODUCT_NAMES = ['Daily Collection Loan', 'Weekly Loan', 'Monthly Loan']
 class Command(BaseCommand):
     help = (
         'Repoint Daily/Weekly/Monthly LoanProduct.penalty_income_account from NULL '
-        'to the shared "Loan Penalty (2026)" account (4211).'
+        'to each branch\'s own "Loan Penalty (2026)" account (4211).'
     )
 
     def add_arguments(self, parser):
@@ -59,47 +70,57 @@ class Command(BaseCommand):
         confirm = options['confirm']
         account_code = options['account_code']
 
-        try:
-            target_account = Account.objects.get(code=account_code)
-        except Account.DoesNotExist:
-            raise CommandError(f"Account with code '{account_code}' not found — aborting, nothing changed.")
-
-        if target_account.account_type != Account.INCOME:
-            raise CommandError(
-                f"Account {target_account.code} - {target_account.name} is not an INCOME account "
-                f"(type={target_account.account_type}) — aborting, nothing changed."
-            )
-
         planned = []
         for product_name in PRODUCT_NAMES:
-            try:
-                lp = LoanProduct.objects.select_related(
-                    'product', 'penalty_income_account'
-                ).get(product__name=product_name, is_deleted=False)
-            except LoanProduct.DoesNotExist:
+            products = LoanProduct.objects.select_related(
+                'product', 'penalty_income_account', 'branch',
+            ).filter(product__name=product_name, is_deleted=False)
+
+            if not products.exists():
                 self.stdout.write(self.style.WARNING(
                     f"No LoanProduct found for product name '{product_name}' — skipping."
                 ))
                 continue
-            except LoanProduct.MultipleObjectsReturned:
-                self.stdout.write(self.style.ERROR(
-                    f"Multiple LoanProduct rows found for product name '{product_name}' — "
-                    f"skipping, needs manual disambiguation."
-                ))
-                continue
 
-            current = lp.penalty_income_account
-            current_str = f'{current.code} - {current.name}' if current else 'NONE'
-            if current and current.id == target_account.id:
-                self.stdout.write(self.style.SUCCESS(
-                    f"[{product_name}] already correctly set to {target_account.code} - {target_account.name}."
-                ))
-                continue
+            for lp in products:
+                branch_label = lp.branch.name if lp.branch_id else 'NO BRANCH'
 
-            self.stdout.write(
-                f"[{product_name}] {current_str} -> {target_account.code} - {target_account.name}"
-            )
-            planned.append((lp, target_account))
+                try:
+                    target_account = Account.objects.get(code=account_code, branch_id=lp.branch_id)
+                except Account.DoesNotExist:
+                    self.stdout.write(self.style.ERROR(
+                        f"[{product_name} / branch={branch_label}] no Account with code "
+                        f"'{account_code}' in this branch — skipping, needs manual setup."
+                    ))
+                    continue
+                except Account.MultipleObjectsReturned:
+                    self.stdout.write(self.style.ERROR(
+                        f"[{product_name} / branch={branch_label}] multiple Account rows with code "
+                        f"'{account_code}' in this branch — skipping, needs manual disambiguation."
+                    ))
+                    continue
+
+                if target_account.account_type != Account.INCOME:
+                    self.stdout.write(self.style.ERROR(
+                        f"[{product_name} / branch={branch_label}] account {target_account.code} - "
+                        f"{target_account.name} is not INCOME type — skipping."
+                    ))
+                    continue
+
+                current = lp.penalty_income_account
+                current_str = f'{current.code} - {current.name}' if current else 'NONE'
+                if current and current.id == target_account.id:
+                    self.stdout.write(self.style.SUCCESS(
+                        f"[{product_name} / branch={branch_label}] already correctly set to "
+                        f"{target_account.code} - {target_account.name}."
+                    ))
+                    continue
+
+                self.stdout.write(
+                    f"[{product_name} / branch={branch_label}] {current_str} -> "
+                    f"{target_account.code} - {target_account.name} (account id={target_account.pk})"
+                )
+                planned.append((lp, target_account))
 
         if not planned:
             self.stdout.write(self.style.SUCCESS('Nothing to change.'))
