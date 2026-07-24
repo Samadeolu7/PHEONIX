@@ -13,6 +13,7 @@ interest rather than just the one being paid.
 """
 from decimal import Decimal
 
+from django.core.management import call_command
 from django.test import TestCase
 
 from common.managers import set_current_tenant
@@ -22,6 +23,7 @@ from accounts.models import Account
 from products.models import Product
 from clients.models import Client
 from loans.models import LoanProduct, LoanAccount
+from transactions.models import Transaction, TransactionEntry, TransactionSeries
 
 from .test_deferred_interest import _make_env, _make_account
 
@@ -126,3 +128,139 @@ class PaymentAllocationFollowsScheduleTestCase(TestCase):
         self.assertEqual(second.status, "pending")
         self.assertEqual(second.principal_paid, Decimal("0.00"))
         self.assertEqual(second.interest_paid, Decimal("0.00"))
+
+
+class CorrectFrontloadedInterestAllocationTestCase(TestCase):
+    """
+    Reproduces the pre-fix historical state directly (rather than via
+    record_payment(), which is now fixed and can't produce this state
+    anymore) to verify correct_frontloaded_interest_allocation repairs it:
+    schedule row principal_paid, loan aggregates, and a balanced correcting
+    journal entry that pulls the over-recognized amount back out of Income
+    and into the loan's own receivable account.
+    """
+
+    def setUp(self):
+        self.owner, self.tenant, self.branch = _make_env("correctfront")
+        self.approver = User.objects.create_user(username="correctfront_apr", password="pass")
+        self.approver.tenant = self.tenant
+        self.approver.branch = self.branch
+        self.approver.save()
+
+        self.loan_parent = _make_account(self.owner, self.branch, "Loans Receivable", "1300", Account.LOAN)
+        self.cash_account = _make_account(self.owner, self.branch, "Bank", "1001", Account.ASSET)
+        self.interest_income_account = _make_account(self.owner, self.branch, "Interest Income", "4100", Account.INCOME)
+
+        product_gl = Product.objects.create(
+            name="Weekly Loan", code="LOAN-WK", product_type="LOAN",
+            owner=self.owner, branch=self.branch,
+        )
+        # No interest_income_account yet — disburse() will take neither GL
+        # branch, so interest_recognized_at_disbursement/interest_deferral_active
+        # stay False naturally, matching production (loan disbursed before its
+        # product had an income account configured).
+        self.product = LoanProduct.objects.create(
+            product=product_gl,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            default_interest_rate=Decimal("15.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            owner=self.owner, branch=self.branch,
+        )
+
+        self.client = Client.objects.create(
+            client_id="CLI-CORRECTFRONT", first_name="Ada", last_name="Lovelace",
+            gender="female", phone_primary="08010000000",
+            tenant=self.tenant, owner=self.owner, branch=self.branch,
+        )
+
+    def tearDown(self):
+        set_current_tenant(None)
+
+    def test_correction_fixes_schedule_loan_and_posts_reversing_entry(self):
+        account = Account.objects.create(
+            name="LN-TEST-2 Loan Account", code="139002",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        loan = LoanAccount.objects.create(
+            client=self.client,
+            product=self.product,
+            account=account,
+            loan_number="LN-TEST-2",
+            requested_amount=Decimal("100000.00"),
+            interest_rate=Decimal("15.00"),
+            term_months=6,
+            repayment_frequency="monthly",
+            status="pending",
+            owner=self.owner,
+            branch=self.branch,
+        )
+        loan.approve(user=self.approver)
+        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        self.assertFalse(loan.interest_recognized_at_disbursement)
+        self.assertFalse(loan.interest_deferral_active)
+
+        # Production fix event: the product's income account gets configured
+        # AFTER the loan was already disbursed.
+        self.product.interest_income_account = self.interest_income_account
+        self.product.save(update_fields=["interest_income_account"])
+
+        first = loan.repayment_schedule.order_by("due_date").first()
+
+        # Manually reproduce exactly what the buggy record_payment() used to
+        # produce: the whole installment payment landed in interest_paid,
+        # principal_paid stayed at 0, even though total_paid/status are
+        # otherwise correct (matches production: interest_paid was always
+        # capped correctly per-installment by _update_schedule_with_payment,
+        # only principal_paid was never touched).
+        first.total_paid = first.total_due
+        first.interest_paid = first.interest_due
+        first.principal_paid = Decimal("0.00")
+        first.status = "paid"
+        first.save()
+
+        loan.total_paid = first.total_due
+        loan.interest_paid = first.total_due
+        loan.principal_paid = Decimal("0.00")
+        loan.outstanding_interest -= first.total_due
+        loan.save(update_fields=["total_paid", "interest_paid", "principal_paid", "outstanding_interest"])
+
+        series, _ = TransactionSeries.objects.get_or_create(code="LNPMT", defaults={"description": "Loan Repayments"})
+        txn = Transaction.objects.create(
+            series=series, date=first.due_date,
+            description=f"Loan repayment – {loan.loan_number}",
+            owner=self.owner, branch=self.branch, tenant=self.tenant,
+        )
+        TransactionEntry.objects.create(transaction=txn, account=self.cash_account, side=TransactionEntry.DEBIT, amount=first.total_due)
+        TransactionEntry.objects.create(transaction=txn, account=self.interest_income_account, side=TransactionEntry.CREDIT, amount=first.total_due)
+        txn.post()
+
+        self.interest_income_account.refresh_from_db()
+        account.refresh_from_db()
+        income_balance_before = self.interest_income_account.balance
+        receivable_balance_before = account.balance
+
+        call_command("correct_frontloaded_interest_allocation", confirm=True)
+
+        first.refresh_from_db()
+        loan.refresh_from_db()
+        self.interest_income_account.refresh_from_db()
+        account.refresh_from_db()
+
+        shortfall = first.principal_due
+
+        self.assertEqual(first.principal_paid, first.principal_due)
+        self.assertEqual(loan.principal_paid, first.principal_due)
+        self.assertEqual(loan.interest_paid, first.interest_due)
+        self.assertEqual(loan.total_paid, first.total_due)  # untouched — was already correct
+
+        self.assertEqual(self.interest_income_account.balance, income_balance_before - shortfall)
+        self.assertEqual(account.balance, receivable_balance_before - shortfall)
+
+        # Idempotent: running again finds nothing left to correct.
+        call_command("correct_frontloaded_interest_allocation", confirm=True)
+        first.refresh_from_db()
+        self.assertEqual(first.principal_paid, first.principal_due)
