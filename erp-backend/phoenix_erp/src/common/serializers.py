@@ -84,6 +84,24 @@ class IsTenantUser(permissions.BasePermission):
         if hasattr(request.user, 'branch') and hasattr(obj, 'branch'):
             if obj.branch is None:
                 return True
+
+            # Elevated users (director/owner/global-scope role) switching
+            # branches via the topbar send X-Branch-ID — the queryset-level
+            # scoping (ScopedModelViewSet._apply_director_branch_override)
+            # already honors that, so LIST correctly shows the selected
+            # branch's records. Without this, RETRIEVE/UPDATE/DELETE on one
+            # of those same records 403'd here instead, because this check
+            # only ever compared against the user's own home branch — list
+            # worked, clicking into a single record didn't.
+            from common.views import is_elevated_user, resolve_effective_branch
+            if is_elevated_user(request.user):
+                effective_branch = resolve_effective_branch(request)
+                if effective_branch is None:
+                    # "All Branches" mode — elevated users already see every
+                    # branch's records at the queryset level; match that.
+                    return True
+                return obj.branch_id == effective_branch.id
+
             return obj.branch == request.user.branch
 
         # If no branch on either, allow (shouldn't happen for BranchScopedModel)

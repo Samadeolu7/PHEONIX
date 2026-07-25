@@ -13,6 +13,7 @@ import {
   ExportFormat,
 } from '../types/financialReports';
 import { tokenManager } from './tokenManager';
+import { getHeaders } from './api';
 
 class FinancialReportsService {
   private baseUrl = '/api/reports/financial';
@@ -21,29 +22,23 @@ class FinancialReportsService {
    * Makes an authenticated request to the API
    */
   private async makeAuthenticatedRequest<T>(url: string): Promise<ApiResponse<T>> {
-    const { accessToken } = tokenManager.getTokens();
-
     try {
+      // getHeaders() also injects X-Branch-ID from the branch switcher for
+      // elevated users — these reports used to hand-roll just Authorization/
+      // Content-Type, so switching branches never reached the backend and
+      // every report silently fell back to "all branches" / the viewer's
+      // own home branch regardless of what was selected in the topbar.
       const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
+        headers: getHeaders(),
       });
 
       if (response.status === 401) {
         // Token expired or invalid - try to refresh
         const refreshSuccess = await tokenManager.refreshToken();
         if (refreshSuccess) {
-          // Get fresh token after refresh
-          const { accessToken: newToken } = tokenManager.getTokens();
-
-          // Retry the original request with new token
+          // Retry the original request with fresh headers (new token + branch)
           const retryResponse = await fetch(url, {
-            headers: {
-              Authorization: `Bearer ${newToken}`,
-              'Content-Type': 'application/json',
-            },
+            headers: getHeaders(),
           });
 
           if (!retryResponse.ok) {
@@ -210,9 +205,7 @@ class FinancialReportsService {
 
     try {
       const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: getHeaders(),
       });
 
       if (!response.ok) {

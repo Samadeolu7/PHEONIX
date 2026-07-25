@@ -9,7 +9,7 @@ const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string) || '/api';
 
 const ACTIVE_BRANCH_KEY = 'activeBranch';
 
-const getHeaders = () => {
+export const getHeaders = () => {
   const { accessToken } = tokenManager.getTokens();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
