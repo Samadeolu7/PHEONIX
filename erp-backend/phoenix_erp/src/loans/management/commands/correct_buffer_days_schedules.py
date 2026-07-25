@@ -37,15 +37,25 @@ Safety by construction:
     against it is a judgment call, not something to script blindly.
   - --apply requires either --loan <loan_number> (single loan) or
     --all-safe (every loan in the safe bucket) — never both silently
-    combined, and there is no flag to force-apply to the unsafe bucket.
+    combined, and there is no flag to force-apply to the unsafe bucket
+    without also passing --unpaid-only (see below).
+  - --loan on a manual-review loan additionally requires --unpaid-only,
+    which restricts the shift to installments that are NOT status='paid'
+    — every already-paid installment's due_date/status/days_late is left
+    exactly as historically recorded. This is for cases like a currently
+    'overdue'/'partial' installment that, under the fixed logic, isn't
+    actually due yet — the paid installments before it are frozen history,
+    only the still-open ones move.
   - Writes a FinancialAuditLog(LOAN_BALANCE_CORRECTION) entry per
-    corrected loan recording the shift applied.
+    corrected loan recording the shift applied (and, for --unpaid-only,
+    which installments were left untouched).
 
 Usage:
-    python manage.py correct_buffer_days_schedules                       # report only
-    python manage.py correct_buffer_days_schedules --loan LN-770         # preview one loan
-    python manage.py correct_buffer_days_schedules --loan LN-770 --apply # apply to one loan
-    python manage.py correct_buffer_days_schedules --all-safe --apply    # apply to every safe loan
+    python manage.py correct_buffer_days_schedules                                  # report only
+    python manage.py correct_buffer_days_schedules --loan LN-770                    # preview one loan
+    python manage.py correct_buffer_days_schedules --loan LN-770 --apply            # apply (safe loan)
+    python manage.py correct_buffer_days_schedules --loan LN-770 --apply --unpaid-only  # apply (manual-review loan, paid rows frozen)
+    python manage.py correct_buffer_days_schedules --all-safe --apply               # apply to every safe loan
 """
 from datetime import timedelta
 
@@ -95,6 +105,12 @@ class Command(BaseCommand):
             '--apply',
             action='store_true',
             help='Actually write the correction. Without this, only reports what would happen.',
+        )
+        parser.add_argument(
+            '--unpaid-only',
+            action='store_true',
+            help='Required to --apply --loan on a manual-review loan. Shifts only installments '
+                 'that are not status=paid, leaving already-paid installments completely untouched.',
         )
 
     def handle(self, *args, **options):
@@ -184,22 +200,46 @@ class Command(BaseCommand):
             ))
             return
 
-        targets = safe if all_safe else [e for e in safe if e[0].loan_number == loan_number]
-        if loan_number and not targets:
-            matched_unsafe = [e for e in unsafe if e[0].loan_number == loan_number]
-            if matched_unsafe:
-                raise CommandError(
-                    f"{loan_number} has payment/GL activity recorded against it — refusing to "
-                    f"auto-correct. This needs a manual, individually-reviewed fix."
-                )
-            raise CommandError(f"{loan_number} is not in the safe-to-correct set.")
+        unpaid_only = options['unpaid_only']
+        unpaid_only_loan = None
+
+        if all_safe:
+            targets = safe
+        elif loan_number:
+            safe_match = [e for e in safe if e[0].loan_number == loan_number]
+            unsafe_match = [e for e in unsafe if e[0].loan_number == loan_number]
+            if safe_match:
+                targets = safe_match
+            elif unsafe_match:
+                if not unpaid_only:
+                    raise CommandError(
+                        f"{loan_number} has payment/GL activity recorded against it — refusing to "
+                        f"auto-correct without --unpaid-only (which shifts only the not-yet-paid "
+                        f"installments and leaves paid ones untouched)."
+                    )
+                targets = unsafe_match
+                unpaid_only_loan = loan_number
+            else:
+                raise CommandError(f"{loan_number} is not affected by the buffer bug.")
+        else:
+            targets = []
 
         corrected = []
         with db_transaction.atomic():
             for loan, schedule, shift_days, old_first_due, new_first_due in targets:
+                only_unpaid = (unpaid_only_loan == loan.loan_number)
+                rows_to_shift = [r for r in schedule if not only_unpaid or r.status != 'paid']
+                skipped_rows = [r.installment_number for r in schedule if r not in rows_to_shift]
+
+                if not rows_to_shift:
+                    self.stdout.write(self.style.WARNING(
+                        f"  {loan.loan_number}: every installment already paid, nothing to shift."
+                    ))
+                    continue
+
                 delta = timedelta(days=shift_days)
                 installment_numbers = []
-                for row in schedule:
+                for row in rows_to_shift:
                     due_before = row.due_date
                     row.due_date = row.due_date + delta
                     if row.status == 'overdue' and row.due_date >= today:
@@ -220,8 +260,10 @@ class Command(BaseCommand):
                     record_id=str(loan.pk),
                     description=(
                         f'Buffer-days schedule correction — {loan.loan_number}: shifted '
-                        f'{len(schedule)} installment(s) forward by {shift_days} day(s) to match '
+                        f'{len(rows_to_shift)} installment(s) forward by {shift_days} day(s) to match '
                         f'the fixed first_repayment_buffer_days (additive) logic.'
+                        + (f' {len(skipped_rows)} already-paid installment(s) left untouched.'
+                           if only_unpaid else '')
                     ),
                     extra={
                         'loan_number': loan.loan_number,
@@ -230,7 +272,9 @@ class Command(BaseCommand):
                         'shift_days': shift_days,
                         'old_first_due': str(old_first_due),
                         'new_first_due': str(new_first_due),
+                        'unpaid_only': only_unpaid,
                         'installments_shifted': installment_numbers,
+                        'installments_left_untouched_paid': skipped_rows,
                         'first_payment_date_before': str(old_first_payment_date),
                         'first_payment_date_after': str(loan.first_payment_date),
                         'maturity_date_before': str(old_maturity_date),
