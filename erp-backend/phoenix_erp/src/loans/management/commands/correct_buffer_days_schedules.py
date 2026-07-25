@@ -160,6 +160,17 @@ class Command(BaseCommand):
                 f"  [MANUAL REVIEW] {loan.loan_number}: first_due {old_first_due} -> {new_first_due} "
                 f"(+{shift_days}d) — has payment/GL activity on at least one installment, skipped."
             ))
+            for row in schedule:
+                if row.total_paid > 0 or row.interest_recognized:
+                    flags = []
+                    if row.interest_recognized:
+                        flags.append('interest_recognized')
+                    self.stdout.write(
+                        f"      #{row.installment_number} due={row.due_date} status={row.status} "
+                        f"total_due={row.total_due:,.2f} total_paid={row.total_paid:,.2f} "
+                        f"payment_date={row.payment_date} days_late={row.days_late}"
+                        + (f" [{', '.join(flags)}]" if flags else '')
+                    )
 
         for loan, schedule, shift_days, old_first_due, new_first_due in safe:
             self.stdout.write(
