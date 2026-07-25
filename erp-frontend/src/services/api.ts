@@ -5,7 +5,7 @@ import { ErrorHandler } from '../utils/errorHandler';
 // Base URL — set VITE_API_BASE_URL in the appropriate .env file.
 // Dev:  /api  (Vite dev-server proxy, or point directly to localhost backend)
 // Prod: https://api.erp.krystartrust.ng/api  (direct CORS request — no proxy needed)
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string) || '/api';
+export const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string) || '/api';
 
 const ACTIVE_BRANCH_KEY = 'activeBranch';
 

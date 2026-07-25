@@ -13,10 +13,17 @@ import {
   ExportFormat,
 } from '../types/financialReports';
 import { tokenManager } from './tokenManager';
-import { getHeaders } from './api';
+import { getHeaders, BASE_URL } from './api';
 
 class FinancialReportsService {
-  private baseUrl = '/api/reports/financial';
+  // BASE_URL already carries the environment-specific origin + /api prefix
+  // (e.g. https://api.erp.krystartrust.ng/api in production, where the
+  // frontend and backend are on different domains) — this service used to
+  // hardcode a bare relative "/api/reports/financial" path instead, which
+  // in production resolved against the *frontend's* own origin, not the
+  // backend, silently returning nothing for every report regardless of
+  // branch.
+  private baseUrl = `${BASE_URL}/reports/financial`;
 
   /**
    * Makes an authenticated request to the API
