@@ -18,25 +18,45 @@ BranchCloneService now excludes these by actual usage (see
 _in_use_account_ids), so this bug can't recur. This command finds and
 removes the accounts a *previous*, already-run clone left behind.
 
-Detection (conservative, three buckets — only the first is ever auto-cleaned):
+An earlier version of this command tried to corroborate leftovers only via
+the per-entity models (loan/savings/cashier/bank/petty-cash). That's correct
+for the person-named accounts, but the target branch's chart of accounts
+also contains genuine, correctly-cloned category-level GL accounts (e.g.
+"4211 - Loan Penalty (2026)", "4201 - Registration Fee (2026)") that are
+still the actual penalty_income_account / income_account / etc. of a
+LoanProduct, SavingsProduct, IncomeCategory, etc. that was legitimately
+cloned into this branch. Those must never be touched even though they don't
+corroborate via the per-entity check — deleting them would silently break
+that product's GL posting, the exact class of bug documented in
+loans/management/commands/audit_penalty_income_gl_mapping.py. This version
+adds that check (see config_referenced_account_ids) as an equally strong
+"never touch" signal, checked before anything else.
 
-  1. CONFIRMED LEFTOVER — safe to remove. The account in the target branch is
-     NOT referenced by any LoanAccount/SavingsAccount/CashierAccount/
-     BankAccount/PettyCashFund in that branch, has never had a single
-     TransactionEntry posted to it, AND another branch in the same tenant has
-     an account with the exact same code that IS genuinely in use by one of
-     those per-entity links. That combination is the specific signature of a
-     clone leftover — a real, still-in-use original exists elsewhere, and
+Detection (conservative, four buckets — only "confirmed leftover" is ever
+auto-cleaned):
+
+  1. REFERENCED BY BRANCH CONFIG — never touched. The account is the GL
+     mapping of a real LoanProduct / SavingsProduct / LoanProductFee /
+     IncomeCategory / ExpenseCategory / AssetCategory / InventoryCategory /
+     IncomeAccountingConfig (+ overrides) / ClientRegistrationConfig
+     actually configured in this branch. This is real, in-use chart-of-
+     accounts structure regardless of what its code/name looks like.
+
+  2. HAS REAL ACTIVITY — never touched. Any account with a posted
+     TransactionEntry is left alone regardless of anything else.
+
+  3. CONFIRMED LEFTOVER — safe to remove. Not referenced by branch config,
+     not referenced by any per-entity model (LoanAccount/SavingsAccount/
+     CashierAccount/BankAccount/PettyCashFund) in this branch, has never had
+     a TransactionEntry, AND another branch in the same tenant has an
+     account with the exact same code that IS genuinely in use by one of
+     those per-entity links. That combination is the specific signature of
+     a clone leftover — a real, still-in-use original exists elsewhere, and
      this copy has never done anything.
 
-  2. HAS REAL ACTIVITY — never touched, always reported. Any account with a
-     posted TransactionEntry is left alone regardless of anything else,
-     even if it looks orphaned by every other signal.
-
-  3. ORPHANED BUT UNCONFIRMED — reported only, never auto-deleted. An unused
-     account with no matching in-use account elsewhere to corroborate it as
-     a leftover. Could be a genuinely unused account created some other way;
-     needs a human to decide.
+  4. ORPHANED BUT UNCONFIRMED — reported only, never auto-deleted. Unused,
+     unreferenced, but with no matching in-use account elsewhere to
+     corroborate it as a leftover. Needs a human to decide.
 
 Soft-deletes (sets is_deleted=True) rather than hard-deleting, consistent
 with every other model in this codebase, and consistent with how the clone
@@ -75,6 +95,75 @@ def in_use_account_ids(tenant):
     return ids
 
 
+def _ids_from(queryset, *fields):
+    ids = set()
+    for f in fields:
+        ids.update(
+            queryset.filter(**{f'{f}__isnull': False}).values_list(f'{f}_id', flat=True)
+        )
+    return ids
+
+
+def config_referenced_account_ids(branch):
+    """
+    Account ids referenced by real branch configuration in `branch` — GL
+    mappings on LoanProduct, SavingsProduct, LoanProductFee, IncomeCategory,
+    ExpenseCategory, AssetCategory, InventoryCategory, IncomeAccountingConfig
+    (+ category overrides), and ClientRegistrationConfig. If an account is
+    still wired into one of these, it's real, correctly-cloned branch
+    config — never a clone leftover, regardless of any other signal.
+    """
+    from loans.models import LoanProduct, LoanProductFee
+    from savings.models import SavingsProduct
+    from incomes.models import IncomeCategory
+    from expenses.models import ExpenseCategory
+    from assets.models import AssetCategory
+    from inventory.models import InventoryCategory
+    from incomes.models_config import IncomeAccountingConfig, IncomeCategoryAccountOverride
+    from clients.models import ClientRegistrationConfig
+
+    ids = set()
+    ids |= _ids_from(
+        LoanProduct.objects.filter(branch=branch),
+        'parent_account', 'disbursement_account', 'interest_income_account',
+        'fee_income_account', 'penalty_income_account', 'insurance_income_account',
+        'restructure_interest_income_account', 'provision_expense_account',
+        'allowance_account', 'interest_suspense_account', 'accrued_interest_account',
+        'unearned_interest_income_account', 'interest_writeoff_expense_account',
+    )
+    ids |= _ids_from(
+        SavingsProduct.objects.filter(branch=branch),
+        'interest_expense_account', 'penalty_income_account', 'first_deposit_income_account',
+    )
+    ids |= _ids_from(LoanProductFee.objects.filter(branch=branch), 'gl_income_account')
+    ids |= _ids_from(IncomeCategory.objects.filter(branch=branch), 'income_account')
+    ids |= _ids_from(ExpenseCategory.objects.filter(branch=branch), 'expense_account', 'prepaid_account')
+    ids |= _ids_from(
+        AssetCategory.objects.filter(branch=branch),
+        'asset_account', 'depreciation_account', 'accumulated_depreciation_account',
+        'maintenance_expense_account',
+    )
+    ids |= _ids_from(
+        InventoryCategory.objects.filter(branch=branch),
+        'inventory_account', 'cogs_account', 'sales_account',
+    )
+    ids |= _ids_from(
+        IncomeAccountingConfig.objects.filter(branch=branch),
+        'default_cash_account', 'default_ar_account', 'bank_transfer_account',
+        'mobile_money_account', 'credit_card_account', 'discount_allowed_account',
+        'bad_debt_account',
+    )
+    ids |= _ids_from(
+        IncomeCategoryAccountOverride.objects.filter(branch=branch), 'cash_account', 'ar_account',
+    )
+    ids |= _ids_from(
+        ClientRegistrationConfig.objects.filter(branch=branch),
+        'registration_income_account', 'id_fee_income_account',
+    )
+    ids.discard(None)
+    return ids
+
+
 class Command(BaseCommand):
     help = (
         'Find and remove GL accounts a previous branch-config clone incorrectly copied '
@@ -105,6 +194,8 @@ class Command(BaseCommand):
 
         tenant = target_branch.tenant
         in_use_ids = in_use_account_ids(tenant)
+        config_ids = config_referenced_account_ids(target_branch)
+        never_touch_ids = in_use_ids | config_ids
 
         # code -> set of branch ids where an account with that code is genuinely in use
         used_codes = (
@@ -115,6 +206,7 @@ class Command(BaseCommand):
         for code, branch_id in used_codes:
             code_to_using_branches.setdefault(code, set()).add(branch_id)
 
+        referenced_by_config = []
         confirmed_leftovers = []
         has_activity = []
         unconfirmed_orphans = []
@@ -123,8 +215,11 @@ class Command(BaseCommand):
             branch=target_branch, is_deleted=False, account_level=Account.LEVEL_CHILD,
         )
         for acct in target_accounts:
+            if acct.id in config_ids:
+                referenced_by_config.append(acct)
+                continue
             if acct.id in in_use_ids:
-                continue  # genuinely in use in this branch — never touch
+                continue  # genuinely in use as a per-entity account in this branch — never touch
 
             has_posted_entries = TransactionEntry.objects.filter(account=acct).exists()
             using_branches = code_to_using_branches.get(acct.code, set())
@@ -138,6 +233,14 @@ class Command(BaseCommand):
                 unconfirmed_orphans.append(acct)
 
         self.stdout.write(f"Target branch: {target_branch} (tenant={tenant})")
+
+        self.stdout.write('')
+        self.stdout.write(self.style.HTTP_INFO(
+            f"Referenced by real branch config (never touched): {len(referenced_by_config)}"
+        ))
+        for acct in referenced_by_config:
+            self.stdout.write(f"    {acct.code} - {acct.name} (id={acct.pk})")
+
         self.stdout.write('')
         self.stdout.write(self.style.SUCCESS(
             f"Confirmed clone leftovers (safe to remove): {len(confirmed_leftovers)}"

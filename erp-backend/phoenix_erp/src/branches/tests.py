@@ -284,6 +284,48 @@ class CleanUpBranchCloneOrphanedAccountsCommandTests(TestCase):
             account_level=Account.LEVEL_CHILD, account_type=Account.ASSET, parent=asset_parent,
         )
 
+        # ── A real, correctly-cloned category-level GL account: looks just
+        #    like a leftover by code/name (matches _in_use_ids for a fake
+        #    same-code LoanAccount elsewhere), but is still an IncomeCategory's
+        #    income_account in the target branch — must never be touched. ──
+        from incomes.models import IncomeCategory
+
+        # Force the old (pre-config-check) corroboration signal to also fire
+        # for code '4211', proving the config-reference check is what
+        # actually protects this account, not just an absence of corroboration.
+        corroborating_client = Client.objects.create(
+            client_id='CLI-COR', first_name='Cor', last_name='Roboration',
+            gender='male', phone_primary='08010000006',
+            tenant=self.tenant, owner=self.user, branch=self.source,
+        )
+        corroborating_account = Account.objects.create(
+            branch=self.source, tenant=self.tenant, owner=self.user, created_by=self.user,
+            code='4211', name='Loan Penalty (2026) - source copy',
+            account_level=Account.LEVEL_CHILD, account_type=Account.LOAN, parent=loan_parent,
+        )
+        LoanAccount.objects.create(
+            client=corroborating_client, product=loan_product, account=corroborating_account,
+            loan_number='LN-COR-1', requested_amount=Decimal('5000.00'),
+            interest_rate=Decimal('10.00'), term_months=2,
+            repayment_frequency='monthly', status='pending',
+            owner=self.user, branch=self.source,
+        )
+
+        income_parent = Account.objects.create(
+            branch=self.target, tenant=self.tenant, owner=self.user, created_by=self.user,
+            code='4200', name='Penalty Income',
+            account_level=Account.LEVEL_PARENT, account_type=Account.INCOME,
+        )
+        self.config_referenced_account = Account.objects.create(
+            branch=self.target, tenant=self.tenant, owner=self.user, created_by=self.user,
+            code='4211', name='Loan Penalty (2026)',
+            account_level=Account.LEVEL_CHILD, account_type=Account.INCOME, parent=income_parent,
+        )
+        IncomeCategory.objects.create(
+            branch=self.target, tenant=self.tenant, owner=self.user, created_by=self.user,
+            name='Loan Penalty', code='PEN', income_account=self.config_referenced_account,
+        )
+
     def _run_command(self, *args):
         from io import StringIO
         from django.core.management import call_command
@@ -297,12 +339,15 @@ class CleanUpBranchCloneOrphanedAccountsCommandTests(TestCase):
         output = self._run_command('--target-branch', str(self.target.pk))
 
         self.assertIn('1193', output)
+        self.assertIn('4211', output)
         self.assertIn('Dry run only', output)
 
         self.leftover_account.refresh_from_db()
         self.unconfirmed_account.refresh_from_db()
+        self.config_referenced_account.refresh_from_db()
         self.assertFalse(self.leftover_account.is_deleted)
         self.assertFalse(self.unconfirmed_account.is_deleted)
+        self.assertFalse(self.config_referenced_account.is_deleted)
 
     def test_apply_removes_only_the_confirmed_leftover(self):
         self._run_command('--target-branch', str(self.target.pk), '--apply')
@@ -310,10 +355,14 @@ class CleanUpBranchCloneOrphanedAccountsCommandTests(TestCase):
         self.leftover_account.refresh_from_db()
         self.unconfirmed_account.refresh_from_db()
         self.real_account.refresh_from_db()
+        self.config_referenced_account.refresh_from_db()
 
         self.assertTrue(self.leftover_account.is_deleted)
         self.assertFalse(self.unconfirmed_account.is_deleted)
         self.assertFalse(self.real_account.is_deleted)  # source branch's real account untouched
+        # Real branch config (IncomeCategory.income_account) protects this
+        # even though its code isn't corroborated by any per-entity model.
+        self.assertFalse(self.config_referenced_account.is_deleted)
 
     def test_lookup_by_branch_code_also_works(self):
         output = self._run_command('--target-branch', self.target.code, '--apply')
