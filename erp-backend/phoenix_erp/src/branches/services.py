@@ -20,7 +20,11 @@ dashboard themes/templates — plus all their child/dependent rows.
 
 What is NOT cloned
 ------------------
-- Sub-ledger accounts (PPPP-NNNNN format — per client/loan)
+- Sub-ledger accounts (PPPP-NNNNN format — per client/loan), AND any GL
+  account actually in use as an individual LoanAccount/SavingsAccount/
+  CashierAccount/BankAccount/PettyCashFund ledger account, even when it
+  has a plain 4-digit code indistinguishable from real GL structure by
+  format alone (see _in_use_account_ids).
 - Transactions, journal entries, transaction entries
 - Client accounts (LoanAccount, SavingsAccount)
 - Client, staff or user data
@@ -335,19 +339,61 @@ class BranchCloneService:
 
     # ── Phase 2 ───────────────────────────────────────────────────────────────
 
+    def _in_use_account_ids(self):
+        """
+        Account ids that are the dedicated ledger account of one specific
+        operational entity in the source branch — an individual client's
+        loan or savings account, a specific cashier's till, a specific bank
+        account, or a petty cash fund. These must never be treated as
+        shared chart-of-accounts structure, no matter what their code looks
+        like: this system allocates plain sequential 4-digit codes to these
+        per-entity accounts too (e.g. "1193 – Jane Doe – Monthly Loan"), so
+        the 4-digit/PPPP-NNNNN code-format distinction alone cannot tell a
+        real GL child account apart from someone's individual loan, savings,
+        or cashier account. Only actual usage can.
+        """
+        from loans.models import LoanAccount
+        from savings.models import SavingsAccount
+        from cash_management.models import CashierAccount, PettyCashFund
+        from banks.models import BankAccount
+
+        ids = set()
+        ids.update(
+            LoanAccount.objects.filter(branch=self.source).values_list('account_id', flat=True)
+        )
+        ids.update(
+            SavingsAccount.objects.filter(branch=self.source).values_list('account_id', flat=True)
+        )
+        ids.update(
+            CashierAccount.objects.filter(branch=self.source).values_list('account_id', flat=True)
+        )
+        ids.update(
+            BankAccount.objects.filter(branch=self.source).values_list('gl_account_id', flat=True)
+        )
+        ids.update(
+            PettyCashFund.objects.filter(branch=self.source).values_list('petty_cash_account_id', flat=True)
+        )
+        ids.discard(None)
+        return ids
+
     def _clone_accounts(self):
         """
         Clone GL PARENT accounts, then GL CHILD accounts with 4-digit codes.
-        Sub-ledger (per-client) accounts in PPPP-NNNNN format are intentionally skipped.
-        Balances are NOT copied — cloned accounts start at zero.
+        Sub-ledger (per-client) accounts in PPPP-NNNNN format, and any
+        account actually in use as an individual loan/savings/cashier/bank/
+        petty-cash account (see _in_use_account_ids), are intentionally
+        skipped. Balances are NOT copied — cloned accounts start at zero.
         """
         from accounts.models import Account, AccountCategory
         label = 'gl_accounts'
+        in_use_ids = self._in_use_account_ids()
 
         # 1. PARENT accounts (no parent FK dependency)
         for obj in Account.objects.filter(
             branch=self.source, is_deleted=False, account_level=Account.LEVEL_PARENT
         ).select_related('category'):
+            if obj.pk in in_use_ids:
+                continue
             cat = self._remap(AccountCategory, obj.category_id)
             self._upsert(
                 Account,
@@ -371,18 +417,26 @@ class BranchCloneService:
                 old_pk=obj.pk,
             )
 
-        # 2. GL CHILD accounts with 4-digit codes (not sub-ledger PPPP-NNNNN)
+        # 2. GL CHILD accounts with 4-digit codes (not sub-ledger PPPP-NNNNN),
+        #    excluding anything that's actually someone's individual
+        #    loan/savings/cashier/bank/petty-cash account.
         for obj in Account.objects.filter(
             branch=self.source, is_deleted=False, account_level=Account.LEVEL_CHILD
         ).select_related('parent', 'category'):
             if not _GL_CHILD_PATTERN.match(obj.code):
                 continue
+            if obj.pk in in_use_ids:
+                continue
 
             parent = self._remap(Account, obj.parent_id)
             if parent is None:
-                self.errors.append(
-                    f"GL Account '{obj.code} – {obj.name}': parent not cloned, skipped"
-                )
+                # Expected when the parent itself was a per-entity account
+                # (excluded above) rather than shared GL structure — not an
+                # error in that case, just nothing to attach this to.
+                if obj.parent_id not in in_use_ids:
+                    self.errors.append(
+                        f"GL Account '{obj.code} – {obj.name}': parent not cloned, skipped"
+                    )
                 continue
 
             cat = self._remap(AccountCategory, obj.category_id)

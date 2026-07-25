@@ -264,3 +264,153 @@ class CorrectFrontloadedInterestAllocationTestCase(TestCase):
         call_command("correct_frontloaded_interest_allocation", confirm=True)
         first.refresh_from_db()
         self.assertEqual(first.principal_paid, first.principal_due)
+
+
+class CorrectFrontloadedInterestAllocationPartiallyFixedRowsTestCase(TestCase):
+    """
+    Reproduces the exact state found on LN-20260703-448038 in production
+    (2026-07-24): an unrelated, pre-existing tool (fix_schedule_payment_drift)
+    had already patched some schedule rows' principal_paid directly to close
+    a drift against loan.total_paid, without ever touching the loan-level
+    aggregate fields. A correction command that only sums "rows that still
+    look wrong" would badly undercount the true loan-level correction needed,
+    since two of three affected rows no longer look wrong in isolation even
+    though loan.principal_paid is still 0 for all three. This verifies the
+    command instead always resyncs the loan aggregate to the full recomputed
+    total across every row, regardless of what already touched some of them.
+    """
+
+    def setUp(self):
+        self.owner, self.tenant, self.branch = _make_env("partialfix")
+        self.approver = User.objects.create_user(username="partialfix_apr", password="pass")
+        self.approver.tenant = self.tenant
+        self.approver.branch = self.branch
+        self.approver.save()
+
+        self.loan_parent = _make_account(self.owner, self.branch, "Loans Receivable", "1300", Account.LOAN)
+        self.cash_account = _make_account(self.owner, self.branch, "Bank", "1001", Account.ASSET)
+        self.interest_income_account = _make_account(self.owner, self.branch, "Interest Income", "4100", Account.INCOME)
+
+        product_gl = Product.objects.create(
+            name="Weekly Loan", code="LOAN-WK", product_type="LOAN",
+            owner=self.owner, branch=self.branch,
+        )
+        self.product = LoanProduct.objects.create(
+            product=product_gl,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            default_interest_rate=Decimal("15.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            owner=self.owner, branch=self.branch,
+        )
+
+        self.client = Client.objects.create(
+            client_id="CLI-PARTIALFIX", first_name="Ada", last_name="Lovelace",
+            gender="female", phone_primary="08010000000",
+            tenant=self.tenant, owner=self.owner, branch=self.branch,
+        )
+
+    def tearDown(self):
+        set_current_tenant(None)
+
+    def test_loan_aggregate_resyncs_to_full_total_not_just_newly_wrong_rows(self):
+        account = Account.objects.create(
+            name="LN-TEST-3 Loan Account", code="139003",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        loan = LoanAccount.objects.create(
+            client=self.client,
+            product=self.product,
+            account=account,
+            loan_number="LN-TEST-3",
+            requested_amount=Decimal("100000.00"),
+            interest_rate=Decimal("15.00"),
+            term_months=6,
+            repayment_frequency="monthly",
+            status="pending",
+            owner=self.owner,
+            branch=self.branch,
+        )
+        loan.approve(user=self.approver)
+        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        self.assertFalse(loan.interest_recognized_at_disbursement)
+
+        self.product.interest_income_account = self.interest_income_account
+        self.product.save(update_fields=["interest_income_account"])
+
+        rows = list(loan.repayment_schedule.order_by("due_date"))
+        first, second, third = rows[0], rows[1], rows[2]
+
+        series, _ = TransactionSeries.objects.get_or_create(code="LNPMT", defaults={"description": "Loan Repayments"})
+
+        # Three payments, each covering exactly one installment, all under the
+        # pre-fix buggy allocation: every row ends up with principal_paid=0
+        # despite being fully paid, and the loan aggregate reflects the same
+        # bug (all cash counted as interest).
+        for row in (first, second, third):
+            row.total_paid = row.total_due
+            row.interest_paid = row.interest_due
+            row.principal_paid = Decimal("0.00")
+            row.status = "paid"
+            row.save()
+
+            txn = Transaction.objects.create(
+                series=series, date=row.due_date,
+                description=f"Loan repayment – {loan.loan_number}",
+                owner=self.owner, branch=self.branch, tenant=self.tenant,
+            )
+            TransactionEntry.objects.create(transaction=txn, account=self.cash_account, side=TransactionEntry.DEBIT, amount=row.total_due)
+            TransactionEntry.objects.create(transaction=txn, account=self.interest_income_account, side=TransactionEntry.CREDIT, amount=row.total_due)
+            txn.post()
+
+        loan.total_paid = first.total_due + second.total_due + third.total_due
+        loan.interest_paid = loan.total_paid
+        loan.principal_paid = Decimal("0.00")
+        loan.outstanding_interest -= loan.total_paid
+        loan.save(update_fields=["total_paid", "interest_paid", "principal_paid", "outstanding_interest"])
+
+        # Simulate fix_schedule_payment_drift already having patched the
+        # first two rows' principal_paid directly (its own, unrelated
+        # ratio-based logic), WITHOUT touching any loan-level field —
+        # exactly what was found in production.
+        first.principal_paid = first.principal_due
+        first.save(update_fields=["principal_paid"])
+        second.principal_paid = second.principal_due
+        second.save(update_fields=["principal_paid"])
+
+        self.interest_income_account.refresh_from_db()
+        account.refresh_from_db()
+        income_balance_before = self.interest_income_account.balance
+        receivable_balance_before = account.balance
+
+        call_command("correct_frontloaded_interest_allocation", confirm=True)
+
+        loan.refresh_from_db()
+        first.refresh_from_db()
+        second.refresh_from_db()
+        third.refresh_from_db()
+        self.interest_income_account.refresh_from_db()
+        account.refresh_from_db()
+
+        expected_total_principal = first.principal_due + second.principal_due + third.principal_due
+        expected_total_interest = first.interest_due + second.interest_due + third.interest_due
+        full_correction = expected_total_principal  # loan.principal_paid was 0 before
+
+        # The command must have only WRITTEN the third row (the other two
+        # were already correct) ...
+        self.assertEqual(third.principal_paid, third.principal_due)
+        # ... but the loan aggregate must reflect the FULL total across all
+        # three rows, not just the one row it had to write.
+        self.assertEqual(loan.principal_paid, expected_total_principal)
+        self.assertEqual(loan.interest_paid, expected_total_interest)
+
+        self.assertEqual(self.interest_income_account.balance, income_balance_before - full_correction)
+        self.assertEqual(account.balance, receivable_balance_before - full_correction)
+
+        # Idempotent.
+        call_command("correct_frontloaded_interest_allocation", confirm=True)
+        loan.refresh_from_db()
+        self.assertEqual(loan.principal_paid, expected_total_principal)
