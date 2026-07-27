@@ -7,9 +7,10 @@
  * See analytics/views.py DailyCollectionReportView for data sourcing.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  Award,
   AlertCircle,
   ArrowLeft,
   ClipboardList,
@@ -17,6 +18,7 @@ import {
   Loader2,
   Printer,
   RefreshCw,
+  Users,
 } from 'lucide-react';
 import {
   dailyOpsReportService,
@@ -50,10 +52,58 @@ function sum(rows: CollectionReportRow[], key: keyof CollectionReportRow): numbe
   return rows.reduce((s, r) => s + parseFloat(String(r[key] ?? '0')), 0);
 }
 
+function fmtPct(rate: number | null): string {
+  return rate === null ? '—' : `${rate.toFixed(1)}%`;
+}
+
+interface OfficerSummary {
+  officer_id: number | null;
+  officer_name: string;
+  clientCount: number;
+  savings: number;
+  fees: number;
+  amountDue: number;
+  amountCollected: number;
+  totalCollection: number;
+  collectionRate: number | null;
+}
+
+function buildOfficerSummaries(rows: CollectionReportRow[]): OfficerSummary[] {
+  const map = new Map<string, OfficerSummary & { clients: Set<number> }>();
+  for (const r of rows) {
+    const key = r.officer_id != null ? String(r.officer_id) : 'unassigned';
+    let entry = map.get(key);
+    if (!entry) {
+      entry = {
+        officer_id: r.officer_id, officer_name: r.officer_name || 'Unassigned',
+        clientCount: 0, clients: new Set(), savings: 0, fees: 0,
+        amountDue: 0, amountCollected: 0, totalCollection: 0, collectionRate: null,
+      };
+      map.set(key, entry);
+    }
+    entry.clients.add(r.client_id);
+    entry.savings += parseFloat(r.savings || '0');
+    entry.fees += parseFloat(r.registration || '0') + parseFloat(r.risk_premium || '0')
+      + parseFloat(r.loan_form || '0') + parseFloat(r.id_card || '0');
+    entry.amountDue += parseFloat(r.amount_due || '0');
+    entry.amountCollected += parseFloat(r.amount_collected || '0');
+    entry.totalCollection += parseFloat(r.total_collection || '0');
+  }
+  return Array.from(map.values())
+    .map((e) => ({
+      ...e,
+      clientCount: e.clients.size,
+      collectionRate: e.amountDue > 0 ? (e.amountCollected / e.amountDue) * 100 : null,
+    }))
+    .sort((a, b) => b.totalCollection - a.totalCollection);
+}
+
 type RangeMode = 'day' | 'month';
+type ViewMode = 'summary' | 'detail';
 
 export default function DailyCollectionReportPage() {
   const [mode, setMode] = useState<RangeMode>('day');
+  const [view, setView] = useState<ViewMode>('summary');
   const [date, setDate] = useState(todayISO());
   const [monthStart, setMonthStart] = useState(firstOfMonthISO());
   const [loading, setLoading] = useState(false);
@@ -107,6 +157,13 @@ export default function DailyCollectionReportPage() {
     amountCollected: sum(rows, 'amount_collected'),
     totalCollection: sum(rows, 'total_collection'),
   };
+
+  const officerSummaries = useMemo(() => buildOfficerSummaries(rows), [rows]);
+  const uniqueClients = useMemo(() => new Set(rows.map((r) => r.client_id)).size, [rows]);
+  const activeOfficers = officerSummaries.filter((o) => o.officer_id != null).length;
+  const overallCollectionRate = totals.amountDue > 0 ? (totals.amountCollected / totals.amountDue) * 100 : null;
+  const totalFees = totals.registration + totals.riskPremium + totals.loanForm + totals.idCard;
+  const maxOfficerTotal = Math.max(1, ...officerSummaries.map((o) => o.totalCollection));
 
   return (
     <div className="min-h-screen bg-gray-50 print:bg-white">
@@ -210,6 +267,28 @@ export default function DailyCollectionReportPage() {
           </div>
         </div>
 
+        {/* Summary / Full Detail toggle */}
+        {rows.length > 0 && (
+          <div className="mb-6 flex rounded-lg border border-gray-300 bg-white p-0.5 text-sm print:hidden w-fit">
+            <button
+              type="button"
+              onClick={() => setView('summary')}
+              className={`rounded-md px-4 py-1.5 font-medium ${view === 'summary' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              style={view === 'summary' ? { backgroundColor: BRAND.colors.navyPrimary } : undefined}
+            >
+              Summary
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('detail')}
+              className={`rounded-md px-4 py-1.5 font-medium ${view === 'detail' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              style={view === 'detail' ? { backgroundColor: BRAND.colors.navyPrimary } : undefined}
+            >
+              Full Detail ({rows.length})
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className="mb-4 flex items-center gap-2 rounded-xl bg-red-50 p-4 text-sm text-red-700">
             <AlertCircle size={16} />
@@ -231,7 +310,109 @@ export default function DailyCollectionReportPage() {
         )}
 
         {rows.length > 0 && (
-          <div className="overflow-x-auto rounded-xl bg-white shadow-sm">
+          <div className={`space-y-6 print:hidden ${view === 'summary' ? '' : 'hidden'}`}>
+            {/* General summary tiles */}
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Total Collection</p>
+                <p className="mt-1 text-2xl font-bold" style={{ color: BRAND.colors.navyPrimary }}>
+                  {fmt(totals.totalCollection)}
+                </p>
+                <p className="mt-0.5 text-xs text-gray-400">{uniqueClients} client{uniqueClients !== 1 ? 's' : ''} served</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Collection Rate</p>
+                <p className="mt-1 text-2xl font-bold text-gray-900">{fmtPct(overallCollectionRate)}</p>
+                <p className="mt-0.5 text-xs text-gray-400">{fmt(totals.amountCollected)} of {fmt(totals.amountDue)} due</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Savings Collected</p>
+                <p className="mt-1 text-2xl font-bold text-gray-900">{fmt(totals.savings)}</p>
+                <p className="mt-0.5 text-xs text-gray-400">Registration/Risk/Form/ID fees: {fmt(totalFees)}</p>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Officers Active</p>
+                <p className="mt-1 text-2xl font-bold text-gray-900">{activeOfficers}</p>
+                <p className="mt-0.5 text-xs text-gray-400">Recorded a collection this period</p>
+              </div>
+            </div>
+
+            {/* Per-officer summary */}
+            <div className="rounded-xl bg-white shadow-sm">
+              <div className="flex items-center gap-2 border-b px-5 py-4">
+                <Users size={16} className="text-gray-400" />
+                <h2 className="text-sm font-semibold text-gray-700">Collection by Officer</h2>
+              </div>
+              {officerSummaries.length === 0 ? (
+                <div className="py-10 text-center text-sm text-gray-400">No officer-level activity for this period.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        <th className="px-4 py-3">Officer</th>
+                        <th className="px-4 py-3 text-right">Clients</th>
+                        <th className="px-4 py-3 text-right">Savings</th>
+                        <th className="px-4 py-3 text-right">Fees</th>
+                        <th className="px-4 py-3 text-right">Due</th>
+                        <th className="px-4 py-3 text-right">Collected</th>
+                        <th className="px-4 py-3 text-right">Rate</th>
+                        <th className="px-4 py-3 text-right">Total Collection</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {officerSummaries.map((o, i) => (
+                        <tr key={o.officer_id ?? 'unassigned'} className="hover:bg-gray-50">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5 font-medium text-gray-900">
+                              {i === 0 && o.totalCollection > 0 && (
+                                <Award size={14} style={{ color: BRAND.colors.gold }} />
+                              )}
+                              {o.officer_name}
+                            </div>
+                            <div className="mt-1 h-1 w-32 overflow-hidden rounded-full bg-gray-100">
+                              <div
+                                className="h-full rounded-full"
+                                style={{
+                                  width: `${(o.totalCollection / maxOfficerTotal) * 100}%`,
+                                  backgroundColor: BRAND.colors.navyPrimary,
+                                }}
+                              />
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right text-gray-700">{o.clientCount}</td>
+                          <td className="px-4 py-3 text-right text-gray-700">{fmt(o.savings)}</td>
+                          <td className="px-4 py-3 text-right text-gray-700">{fmt(o.fees)}</td>
+                          <td className="px-4 py-3 text-right text-gray-700">{fmt(o.amountDue)}</td>
+                          <td className="px-4 py-3 text-right text-gray-700">{fmt(o.amountCollected)}</td>
+                          <td className="px-4 py-3 text-right text-gray-700">{fmtPct(o.collectionRate)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-900">{fmt(o.totalCollection)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 bg-gray-50 font-semibold text-gray-900">
+                        <td className="px-4 py-3">TOTAL</td>
+                        <td className="px-4 py-3 text-right">{uniqueClients}</td>
+                        <td className="px-4 py-3 text-right">{fmt(totals.savings)}</td>
+                        <td className="px-4 py-3 text-right">{fmt(totalFees)}</td>
+                        <td className="px-4 py-3 text-right">{fmt(totals.amountDue)}</td>
+                        <td className="px-4 py-3 text-right">{fmt(totals.amountCollected)}</td>
+                        <td className="px-4 py-3 text-right">{fmtPct(overallCollectionRate)}</td>
+                        <td className="px-4 py-3 text-right" style={{ color: BRAND.colors.navyPrimary }}>
+                          {fmt(totals.totalCollection)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {rows.length > 0 && (
+          <div className={`overflow-x-auto rounded-xl bg-white shadow-sm ${view === 'detail' ? '' : 'hidden print:block'}`}>
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b-2 border-gray-300 bg-gray-50 text-left font-semibold uppercase tracking-wide text-gray-500">

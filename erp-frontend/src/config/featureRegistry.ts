@@ -1330,6 +1330,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'disbursement-by-product',
+    title: '📊 Disbursement by Product',
+    description:
+      'Monthly disbursement matrix by loan product — amount and loan count, trailing 3-24 months',
+    path: '/reports/disbursement-by-product',
+    icon: PieChart,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'client-services',
+    category: 'Loan Reports',
+    isNew: true,
+  },
+  {
     id: 'daily-collection-report',
     title: '🧾 Daily Collection Report',
     description:
@@ -2130,6 +2142,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
       'Full disbursement roll for a day or month, with real collections, savings, new-client and defaulter summary tiles',
     path: '/reports/disbursement-master-roll',
     icon: BarChart3,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'loans',
+    category: 'Reports',
+    isNew: true,
+  },
+  {
+    id: 'loans-mod-disbursement-by-product',
+    title: '📊 Disbursement by Product',
+    description:
+      'Monthly disbursement matrix by loan product — amount and loan count, trailing 3-24 months',
+    path: '/reports/disbursement-by-product',
+    icon: PieChart,
     requiredPermission: 'loan-accounts-view',
     moduleId: 'loans',
     category: 'Reports',

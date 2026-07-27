@@ -132,6 +132,70 @@ export interface CollectionReportResponse {
   results: CollectionReportRow[];
 }
 
+// ── Disbursement by Product ──────────────────────────────────────────────────
+// Live pivot replacing the old hand-typed "Disbursement by Product" sheet
+// (fixed Monthly/Weekly/Daily rows x a couple of hardcoded month columns).
+// Rows are whatever loan products actually exist; columns are the trailing
+// N months. See analytics/views.py::DisbursementByProductView.
+
+export interface DisbursementByProductFilters {
+  months?: number;
+  branch?: number;
+  product?: number;
+  officer?: number;
+}
+
+export interface DisbursementByProductCell {
+  amount: string;
+  count: number;
+}
+
+export interface DisbursementByProductMonth {
+  key: string;
+  label: string;
+}
+
+export interface DisbursementByProductRow {
+  product_id: number;
+  product_name: string;
+  repayment_frequency: string;
+  months: Record<string, DisbursementByProductCell>;
+  total_amount: string;
+  total_count: number;
+}
+
+export interface DisbursementByProductTotals {
+  months: Record<string, DisbursementByProductCell>;
+  total_amount: string;
+  total_count: number;
+}
+
+export interface DisbursementByProductResponse {
+  period: { start: string; end: string };
+  months: DisbursementByProductMonth[];
+  products: DisbursementByProductRow[];
+  totals: DisbursementByProductTotals;
+}
+
+const EMPTY_DISBURSEMENT_BY_PRODUCT: DisbursementByProductResponse = {
+  period: { start: '', end: '' },
+  months: [],
+  products: [],
+  totals: { months: {}, total_amount: '0.00', total_count: 0 },
+};
+
+function buildDisbursementByProductParams(filters: DisbursementByProductFilters, extra: Record<string, string | number | undefined> = {}): string {
+  const params = new URLSearchParams();
+  params.set('months', String(filters.months ?? 6));
+  if (filters.branch) params.set('branch', String(filters.branch));
+  if (filters.product) params.set('product', String(filters.product));
+  if (filters.officer) params.set('officer', String(filters.officer));
+  for (const [key, value] of Object.entries(extra)) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+  return params.toString();
+}
+
 export const dailyOpsReportService = {
   async getMasterRoll(filters: DayRangeFilters): Promise<MasterRollResponse> {
     const qs = buildParams(filters);
@@ -168,6 +232,26 @@ export const dailyOpsReportService = {
     return downloadCsv(
       '/analytics/daily-collection-report/',
       `daily-collection-report-${filters.start}_${filters.end}.csv`,
+      qs,
+    );
+  },
+
+  async getDisbursementByProduct(filters: DisbursementByProductFilters): Promise<DisbursementByProductResponse> {
+    const qs = buildDisbursementByProductParams(filters);
+    const response = await api.get(`/analytics/disbursement-by-product/?${qs}`);
+    return {
+      period: response.period || EMPTY_DISBURSEMENT_BY_PRODUCT.period,
+      months: response.months || [],
+      products: response.products || [],
+      totals: response.totals || EMPTY_DISBURSEMENT_BY_PRODUCT.totals,
+    };
+  },
+
+  downloadDisbursementByProductCsv(filters: DisbursementByProductFilters): Promise<void> {
+    const qs = buildDisbursementByProductParams(filters, { format: 'csv' });
+    return downloadCsv(
+      '/analytics/disbursement-by-product/',
+      `disbursement-by-product-${filters.months ?? 6}mo.csv`,
       qs,
     );
   },

@@ -15,6 +15,7 @@ from .views import (
     OfficerScorecardTrendView,
     DisbursementMasterRollView,
     DailyCollectionReportView,
+    DisbursementByProductView,
 )
 
 app_name = 'analytics'
@@ -39,5 +40,6 @@ urlpatterns = [
     # Track 3 — Disbursement Master Roll / Daily Collection Report
     path('disbursement-master-roll/', DisbursementMasterRollView.as_view(), name='disbursement-master-roll'),
     path('daily-collection-report/', DailyCollectionReportView.as_view(), name='daily-collection-report'),
+    path('disbursement-by-product/', DisbursementByProductView.as_view(), name='disbursement-by-product'),
 ]
 

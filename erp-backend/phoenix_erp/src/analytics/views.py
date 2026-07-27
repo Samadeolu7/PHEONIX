@@ -1656,3 +1656,213 @@ class DailyCollectionReportView(APIView):
         })
 
 
+class DisbursementByProductView(APIView):
+    """
+    GET /api/analytics/disbursement-by-product/?months=6&branch=&product=&officer=&format=json|csv
+
+    Server-side successor to the branch's old hand-typed "Disbursement by
+    Product" spreadsheet — a matrix with three hardcoded rows (Monthly /
+    Weekly / Daily) and a couple of hardcoded month columns that someone
+    had to fill in by hand every month. This is a live pivot instead:
+
+      - Rows are whatever loan products actually exist for this tenant
+        (LoanProduct, via Product.name) rather than a fixed three-row
+        list, so a newly-added product shows up automatically. Every
+        *active* product is seeded into the matrix with zero cells even
+        if it had no disbursements this period (a silent gap is a real
+        signal — e.g. "Daily Loan disbursed ₦0 this month" — not
+        something to hide by omitting the row); a product with historical
+        disbursements but since deactivated still appears because it has
+        real data in range.
+      - Columns are the trailing `months` calendar months (default 6,
+        max 24) ending this month — not two fixed month names — computed
+        from LoanAccount.disbursement_date via TruncMonth.
+      - Each cell carries both disbursed amount and disbursement count,
+        so "why did the total drop" (fewer loans vs. smaller loans) is
+        answerable directly from the report instead of requiring a
+        follow-up query.
+
+    A TOTAL row (sum across products per month) and a grand-total column
+    (sum across months per product) are computed the same way the legacy
+    sheet's row was, but from live data.
+
+    Query params: months (1-24, default 6), branch, product, officer,
+    format (json|csv).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models.functions import TruncMonth
+        from loans.models import LoanAccount, LoanProduct
+
+        user = request.user
+        branch_filter = _get_director_branch(request)
+        req_tenant = getattr(request, 'tenant', None)
+        today = timezone.now().date()
+
+        try:
+            months = min(max(int(request.query_params.get('months', 6)), 1), 24)
+        except (TypeError, ValueError):
+            months = 6
+
+        # Trailing `months` calendar months, oldest first — e.g. months=3
+        # requested on a date in July gives [May, Jun, Jul].
+        month_starts = []
+        cursor = today.replace(day=1)
+        for _ in range(months):
+            month_starts.append(cursor)
+            cursor = (cursor - datetime.timedelta(days=1)).replace(day=1)
+        month_starts.reverse()
+
+        range_start = month_starts[0]
+        last_month_start = month_starts[-1]
+        next_month_start = (
+            last_month_start.replace(year=last_month_start.year + 1, month=1)
+            if last_month_start.month == 12
+            else last_month_start.replace(month=last_month_start.month + 1)
+        )
+        range_end = next_month_start - datetime.timedelta(days=1)
+
+        month_keys = [m.strftime('%Y-%m') for m in month_starts]
+        month_meta = [{'key': m.strftime('%Y-%m'), 'label': m.strftime('%b %Y')} for m in month_starts]
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch_filter)
+
+        def empty_months():
+            return {mkey: {'amount': Decimal('0.00'), 'count': 0} for mkey in month_keys}
+
+        # ---- Seed every active loan product as a zero-filled row -----------
+        product_qs = scope_qs(LoanProduct.objects.for_user(user)).filter(
+            product__is_active=True
+        ).select_related('product')
+        product_param = request.query_params.get('product')
+        if product_param:
+            try:
+                product_qs = product_qs.filter(product_id=int(product_param))
+            except (TypeError, ValueError):
+                pass
+
+        products = {}
+        for lp in product_qs:
+            products[lp.product_id] = {
+                'product_id': lp.product_id,
+                'product_name': lp.product.name,
+                'repayment_frequency': lp.repayment_frequency,
+                'months': empty_months(),
+            }
+
+        # ---- Overlay actual disbursements in range -------------------------
+        loan_qs = _apply_report_filters(
+            _apply_officer_scope(
+                scope_qs(LoanAccount.objects.for_user(user)),
+                user,
+                client_lookup='client__assigned_officer',
+            ),
+            request,
+        ).filter(
+            disbursement_date__gte=range_start,
+            disbursement_date__lte=range_end,
+            disbursed_amount__gt=0,
+        )
+
+        agg_rows = (
+            loan_qs.annotate(month=TruncMonth('disbursement_date'))
+            .values('month', 'product__product_id', 'product__product__name',
+                    'product__repayment_frequency')
+            .annotate(disbursed=Sum('disbursed_amount'), cnt=Count('id'))
+        )
+
+        for r in agg_rows:
+            mkey = r['month'].strftime('%Y-%m')
+            if mkey not in month_keys:
+                continue
+            pid = r['product__product_id']
+            entry = products.get(pid)
+            if entry is None:
+                # Historical disbursement on a product that's since been
+                # deactivated (or was filtered out of the seed set) — still
+                # show it, since the money genuinely moved in this period.
+                entry = products.setdefault(pid, {
+                    'product_id': pid,
+                    'product_name': r['product__product__name'] or 'Unassigned',
+                    'repayment_frequency': r['product__repayment_frequency'],
+                    'months': empty_months(),
+                })
+            entry['months'][mkey] = {
+                'amount': r['disbursed'] or Decimal('0.00'),
+                'count': r['cnt'] or 0,
+            }
+
+        # ---- Row totals + column (month) totals + grand total --------------
+        month_totals = {mkey: {'amount': Decimal('0.00'), 'count': 0} for mkey in month_keys}
+        grand_total = {'amount': Decimal('0.00'), 'count': 0}
+
+        product_rows = []
+        for entry in products.values():
+            row_total = {'amount': Decimal('0.00'), 'count': 0}
+            months_out = {}
+            for mkey in month_keys:
+                cell = entry['months'][mkey]
+                months_out[mkey] = {'amount': str(cell['amount']), 'count': cell['count']}
+                row_total['amount'] += cell['amount']
+                row_total['count'] += cell['count']
+                month_totals[mkey]['amount'] += cell['amount']
+                month_totals[mkey]['count'] += cell['count']
+            grand_total['amount'] += row_total['amount']
+            grand_total['count'] += row_total['count']
+            product_rows.append({
+                'product_id': entry['product_id'],
+                'product_name': entry['product_name'],
+                'repayment_frequency': entry['repayment_frequency'],
+                'months': months_out,
+                'total_amount': str(row_total['amount']),
+                'total_count': row_total['count'],
+            })
+
+        product_rows.sort(key=lambda r: Decimal(r['total_amount']), reverse=True)
+
+        totals_row = {
+            'months': {mkey: {'amount': str(v['amount']), 'count': v['count']} for mkey, v in month_totals.items()},
+            'total_amount': str(grand_total['amount']),
+            'total_count': grand_total['count'],
+        }
+
+        fmt = request.query_params.get('format', 'json')
+        if fmt == 'csv':
+            headers = ['product', 'repayment_frequency']
+            for m in month_meta:
+                headers += [f"{m['label']} (₦)", f"{m['label']} (count)"]
+            headers += ['Total (₦)', 'Total (count)']
+
+            csv_rows = []
+            for row in product_rows:
+                line = [row['product_name'], row['repayment_frequency']]
+                for m in month_meta:
+                    cell = row['months'][m['key']]
+                    line += [cell['amount'], cell['count']]
+                line += [row['total_amount'], row['total_count']]
+                csv_rows.append(line)
+
+            total_line = ['TOTAL', '']
+            for m in month_meta:
+                cell = totals_row['months'][m['key']]
+                total_line += [cell['amount'], cell['count']]
+            total_line += [totals_row['total_amount'], totals_row['total_count']]
+            csv_rows.append(total_line)
+
+            return _csv_response(f'disbursement-by-product-{month_keys[0]}_{month_keys[-1]}.csv', headers, csv_rows)
+        if fmt != 'json':
+            return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
+
+        return Response({
+            'success': True,
+            'period': {'start': str(range_start), 'end': str(range_end)},
+            'months': month_meta,
+            'products': product_rows,
+            'totals': totals_row,
+        })
+
+
