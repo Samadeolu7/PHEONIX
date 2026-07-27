@@ -40,6 +40,31 @@ interface LineItem {
 
 const generateId = () => Math.random().toString(36).slice(2, 9);
 
+// ─── Error extraction ─────────────────────────────────────────────────────────
+// Voucher actions (submit/approve/etc.) return {"error": "..."}; serializer
+// validation on create/update returns DRF's field-keyed {"field": ["msg"]}
+// shape instead — surface whichever one the backend actually sent.
+const extractErrorMessage = (err: any, fallback: string): string => {
+  const data = err?.response?.data;
+  if (!data) return err?.message || fallback;
+  if (typeof data === 'string') return data;
+  if (data.error) return data.error;
+  if (data.detail) return data.detail;
+  if (data.message) return data.message;
+  if (data.non_field_errors) {
+    return Array.isArray(data.non_field_errors)
+      ? data.non_field_errors.join(' ')
+      : data.non_field_errors;
+  }
+  for (const [field, value] of Object.entries(data)) {
+    const msg = Array.isArray(value) ? value[0] : value;
+    if (typeof msg === 'string') {
+      return field === 'non_field_errors' ? msg : `${field}: ${msg}`;
+    }
+  }
+  return fallback;
+};
+
 const emptyLineItem = (): LineItem => ({
   id: generateId(),
   category: '',
@@ -419,7 +444,7 @@ export const PettyCashVoucherForm: React.FC = () => {
       }
       navigate('/treasury/petty-cash');
     } catch (error: any) {
-      setErrors({ general: error.response?.data?.message || 'Failed to save voucher' });
+      setErrors({ general: extractErrorMessage(error, 'Failed to save voucher') });
     } finally {
       setSubmitting(false);
     }
@@ -445,7 +470,7 @@ export const PettyCashVoucherForm: React.FC = () => {
       await submitMutation.mutateAsync(voucherId);
       navigate('/treasury/petty-cash');
     } catch (error: any) {
-      setErrors({ general: error.response?.data?.message || 'Failed to submit voucher' });
+      setErrors({ general: extractErrorMessage(error, 'Failed to submit voucher') });
     } finally {
       setSubmitting(false);
     }

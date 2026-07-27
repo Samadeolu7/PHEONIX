@@ -43,6 +43,17 @@ from .services.cash_service import (
 logger = logging.getLogger(__name__)
 
 
+def _error_message(e: Exception) -> str:
+    """
+    str() on a Django ValidationError returns a repr'd list/dict, e.g.
+    "['Only draft vouchers can be submitted']" — unpack .messages so API
+    error responses show the plain text instead.
+    """
+    if isinstance(e, ValidationError):
+        return ' '.join(e.messages) if hasattr(e, 'messages') else str(e)
+    return str(e)
+
+
 class CashierAccountViewSet(viewsets.ModelViewSet):
     permission_module = 'cash-management'
     permission_page = 'cashier-accounts'
@@ -1212,7 +1223,7 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -1234,10 +1245,10 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Reject voucher"""
@@ -1260,7 +1271,7 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -1282,7 +1293,7 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -1318,7 +1329,7 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
-                {'error': str(e)},
+                {'error': _error_message(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
     

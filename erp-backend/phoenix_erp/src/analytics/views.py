@@ -1750,7 +1750,11 @@ class DisbursementByProductView(APIView):
             products[lp.product_id] = {
                 'product_id': lp.product_id,
                 'product_name': lp.product.name,
-                'repayment_frequency': lp.repayment_frequency,
+                # LoanProduct has no single repayment_frequency field (that's
+                # per-LoanAccount) — allowed_repayment_frequencies is the
+                # product-level config, and every canonical product carries
+                # exactly one entry (daily/weekly/monthly).
+                'repayment_frequency': ', '.join(lp.allowed_repayment_frequencies or []),
                 'months': empty_months(),
             }
 
@@ -1770,8 +1774,7 @@ class DisbursementByProductView(APIView):
 
         agg_rows = (
             loan_qs.annotate(month=TruncMonth('disbursement_date'))
-            .values('month', 'product__product_id', 'product__product__name',
-                    'product__repayment_frequency')
+            .values('month', 'product__product_id', 'product__product__name')
             .annotate(disbursed=Sum('disbursed_amount'), cnt=Count('id'))
         )
 
@@ -1788,13 +1791,24 @@ class DisbursementByProductView(APIView):
                 entry = products.setdefault(pid, {
                     'product_id': pid,
                     'product_name': r['product__product__name'] or 'Unassigned',
-                    'repayment_frequency': r['product__repayment_frequency'],
+                    'repayment_frequency': None,  # backfilled below in one batched query
                     'months': empty_months(),
                 })
             entry['months'][mkey] = {
                 'amount': r['disbursed'] or Decimal('0.00'),
                 'count': r['cnt'] or 0,
             }
+
+        # ---- Backfill frequency label for products found only via the -----
+        # ---- overlay (deactivated products not in the seeded set) ---------
+        missing_freq_ids = [pid for pid, e in products.items() if e['repayment_frequency'] is None]
+        if missing_freq_ids:
+            freq_lookup = dict(
+                LoanProduct.objects.filter(product_id__in=missing_freq_ids)
+                .values_list('product_id', 'allowed_repayment_frequencies')
+            )
+            for pid in missing_freq_ids:
+                products[pid]['repayment_frequency'] = ', '.join(freq_lookup.get(pid) or [])
 
         # ---- Row totals + column (month) totals + grand total --------------
         month_totals = {mkey: {'amount': Decimal('0.00'), 'count': 0} for mkey in month_keys}
