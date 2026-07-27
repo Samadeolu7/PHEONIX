@@ -385,6 +385,7 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/reports/financial/balance-sheet': { module: 'reports', page: 'financial-reports', action: 'view' },
   '/reports/financial/cash-flow': { module: 'reports', page: 'financial-reports', action: 'view' },
   '/reports/financial/profit-loss': { module: 'reports', page: 'financial-reports', action: 'view' },
+  '/reports/financial/monthly-profit-loss': { module: 'reports', page: 'financial-reports', action: 'view' },
   '/reports/financial/trial-balance': { module: 'reports', page: 'financial-reports', action: 'view' },
   '/reports/loans/debtors': { module: 'loans', page: 'loan-reports', action: 'view' },
   '/reports/loans/defaulters': { module: 'loans', page: 'loan-reports', action: 'view' },

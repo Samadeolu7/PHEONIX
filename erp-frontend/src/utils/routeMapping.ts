@@ -447,6 +447,16 @@ export const ROUTE_MAPPINGS: RouteMapping[] = [
     description: 'Statement of Profit or Loss',
   },
   {
+    path: '/reports/financial/monthly-profit-loss',
+    pageId: 'reports.monthly_profit_loss',
+    title: 'Monthly Profit & Loss',
+    category: 'Reports & Analytics',
+    minRank: 3,
+    component: 'MonthlyProfitLossPage',
+    icon: 'BarChart3',
+    description: 'Month-by-month Profit & Loss, one column per calendar month',
+  },
+  {
     path: '/reports/financial/balance-sheet',
     pageId: 'reports.balance_sheet',
     title: 'Statement of Financial Position',

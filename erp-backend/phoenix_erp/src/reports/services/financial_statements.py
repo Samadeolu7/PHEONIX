@@ -428,6 +428,186 @@ class FinancialStatementService:
         
         return result
     
+    def generate_monthly_profit_loss(self, year: int) -> Dict:
+        """
+        Generate a month-by-month Profit & Loss for a calendar year.
+
+        This is the client's preferred spreadsheet-style format (one row per
+        GL income/expense line, one column per calendar month), as opposed
+        to generate_profit_loss's single-period account tree. Rows are
+        grouped under their parent account (e.g. "Interest Income" holding
+        Daily/Weekly/Monthly Loan Interest) with a subtotal per group, so the
+        shape mirrors the old system's report exactly.
+
+        Every INCOME/EXPENSE account is always included, even with all-zero
+        months, so the row set stays identical across months/years and the
+        client can compare periods column-by-column without rows appearing
+        or disappearing.
+
+        Args:
+            year: Calendar year to report on.
+
+        Returns:
+            {
+                'year': int,
+                'months': [{'key': '2026-01', 'label': 'January'}, ...],
+                'income': {
+                    'groups': [
+                        {
+                            'code': '4000', 'name': 'Interest Income',
+                            'accounts': [
+                                {'code': '4001', 'name': 'Daily Loan Interest',
+                                 'months': {'2026-01': '1234.00', ...}, 'total': '...'},
+                                ...
+                            ],
+                            'months': {...},  # group subtotal per month
+                            'total': '...'
+                        },
+                        ...
+                    ],
+                    'months': {...},  # section total per month
+                    'total': '...'
+                },
+                'expenses': { ...same shape... },
+                'net_profit': {'months': {...}, 'total': '...'}
+            }
+        """
+        from django.db.models.functions import TruncMonth
+
+        start_date = date(year, 1, 1)
+        end_date = date(year, 12, 31)
+        month_keys = [f'{year}-{m:02d}' for m in range(1, 13)]
+        months = [
+            {'key': key, 'label': date(year, m, 1).strftime('%B')}
+            for m, key in enumerate(month_keys, start=1)
+        ]
+
+        def scope(qs):
+            if self.branch:
+                return qs.filter(branch=self.branch)
+            if hasattr(self.owner, 'tenant') and self.owner.tenant:
+                return qs.filter(tenant=self.owner.tenant)
+            return qs
+
+        def build_section(account_type: str) -> Dict:
+            is_debit_normal = account_type == Account.EXPENSE
+
+            parents = list(scope(Account.objects.filter(
+                account_type=account_type,
+                account_level=Account.LEVEL_PARENT,
+                is_deleted=False,
+            )).order_by('code'))
+            children = list(scope(Account.objects.filter(
+                account_type=account_type,
+                account_level=Account.LEVEL_CHILD,
+                parent_id__in=[p.id for p in parents],
+                is_deleted=False,
+            )).order_by('code'))
+
+            account_ids = [p.id for p in parents] + [c.id for c in children]
+            entries = TransactionEntry.objects.filter(
+                account_id__in=account_ids,
+                transaction__is_deleted=False,
+                posted=True,
+                transaction__date__gte=start_date,
+                transaction__date__lte=end_date,
+            )
+            if self.branch:
+                entries = entries.filter(transaction__branch=self.branch)
+            elif hasattr(self.owner, 'tenant') and self.owner.tenant:
+                entries = entries.filter(transaction__tenant=self.owner.tenant)
+
+            agg_rows = (
+                entries.annotate(month=TruncMonth('transaction__date'))
+                .values('account_id', 'month', 'side')
+                .annotate(total=Sum('amount'))
+            )
+
+            # buckets[account_id][month_number][side] = Decimal
+            buckets: Dict[int, Dict[int, Dict[str, Decimal]]] = {}
+            for row in agg_rows:
+                acc_bucket = buckets.setdefault(row['account_id'], {})
+                month_bucket = acc_bucket.setdefault(row['month'].month, {})
+                month_bucket[row['side']] = Decimal(str(row['total'] or 0))
+
+            def month_values(account_id) -> Dict[str, Decimal]:
+                acc_bucket = buckets.get(account_id, {})
+                values = {}
+                for m, key in enumerate(month_keys, start=1):
+                    mb = acc_bucket.get(m, {})
+                    debit = mb.get(TransactionEntry.DEBIT, Decimal('0.00'))
+                    credit = mb.get(TransactionEntry.CREDIT, Decimal('0.00'))
+                    values[key] = (debit - credit) if is_debit_normal else (credit - debit)
+                return values
+
+            children_by_parent: Dict[int, List[Account]] = {}
+            for child in children:
+                children_by_parent.setdefault(child.parent_id, []).append(child)
+
+            groups = []
+            section_month_totals = {key: Decimal('0.00') for key in month_keys}
+
+            for parent in parents:
+                group_month_totals = {key: Decimal('0.00') for key in month_keys}
+
+                # Direct postings on the parent itself (allow_manual_entries)
+                # are folded into the subtotal but don't get their own row,
+                # matching the flat leaf-row layout of the original report.
+                for key, val in month_values(parent.id).items():
+                    group_month_totals[key] += val
+
+                account_rows = []
+                for child in children_by_parent.get(parent.id, []):
+                    values = month_values(child.id)
+                    row_total = sum(values.values(), Decimal('0.00'))
+                    account_rows.append({
+                        'id': child.id,
+                        'code': child.code,
+                        'name': child.name,
+                        'months': {k: str(v) for k, v in values.items()},
+                        'total': str(row_total),
+                    })
+                    for key, val in values.items():
+                        group_month_totals[key] += val
+
+                group_total = sum(group_month_totals.values(), Decimal('0.00'))
+                groups.append({
+                    'code': parent.code,
+                    'name': parent.name,
+                    'accounts': account_rows,
+                    'months': {k: str(v) for k, v in group_month_totals.items()},
+                    'total': str(group_total),
+                })
+                for key, val in group_month_totals.items():
+                    section_month_totals[key] += val
+
+            section_total = sum(section_month_totals.values(), Decimal('0.00'))
+            return {
+                'groups': groups,
+                'months': {k: str(v) for k, v in section_month_totals.items()},
+                'total': str(section_total),
+            }, section_month_totals
+
+        income_section, income_month_totals = build_section(Account.INCOME)
+        expense_section, expense_month_totals = build_section(Account.EXPENSE)
+
+        net_profit_months = {
+            key: income_month_totals[key] - expense_month_totals[key]
+            for key in month_keys
+        }
+        net_profit_total = sum(net_profit_months.values(), Decimal('0.00'))
+
+        return {
+            'year': year,
+            'months': months,
+            'income': income_section,
+            'expenses': expense_section,
+            'net_profit': {
+                'months': {k: str(v) for k, v in net_profit_months.items()},
+                'total': str(net_profit_total),
+            },
+        }
+
     def _get_accounts_by_type(
         self,
         account_type: str,

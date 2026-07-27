@@ -448,6 +448,7 @@ const PrepaidExpenseAmortizePage = lazy(
 // Financial Reports pages
 const TrialBalancePage = lazy(() => import('./pages/financialReports/TrialBalancePage'));
 const ProfitLossPage = lazy(() => import('./pages/financialReports/ProfitLossPage'));
+const MonthlyProfitLossPage = lazy(() => import('./pages/financialReports/MonthlyProfitLossPage'));
 const BalanceSheetPage = lazy(() => import('./pages/financialReports/BalanceSheetPage'));
 const CashFlowStatementPage = lazy(() => import('./pages/financialReports/CashFlowStatementPage'));
 
@@ -3205,6 +3206,14 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="pl-view" module="reports" page="financial-reports">
                                       <ProfitLossPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/reports/financial/monthly-profit-loss"
+                                  element={
+                                    <ProtectedRoute requiredPermission="monthly-pl-view" module="reports" page="financial-reports">
+                                      <MonthlyProfitLossPage />
                                     </ProtectedRoute>
                                   }
                                 />

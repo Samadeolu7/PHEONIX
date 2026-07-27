@@ -138,6 +138,52 @@ export interface BalanceSheetParams {
   export_format?: 'json' | 'pdf' | 'excel';
 }
 
+// Monthly Profit & Loss (spreadsheet-style, month columns) — the format the
+// client's prior system used, as opposed to ProfitLossData's single-period
+// account tree. Rows are grouped under their parent account (e.g. "Interest
+// Income" holding Daily/Weekly/Monthly Loan Interest).
+export interface MonthlyPLMonth {
+  key: string; // e.g. '2026-01'
+  label: string; // e.g. 'January'
+}
+
+export interface MonthlyPLAccountRow {
+  id: number;
+  code: string;
+  name: string;
+  months: Record<string, string>;
+  total: string;
+}
+
+export interface MonthlyPLGroup {
+  code: string;
+  name: string;
+  accounts: MonthlyPLAccountRow[];
+  months: Record<string, string>;
+  total: string;
+}
+
+export interface MonthlyPLSection {
+  groups: MonthlyPLGroup[];
+  months: Record<string, string>;
+  total: string;
+}
+
+export interface MonthlyProfitLossData {
+  year: number;
+  months: MonthlyPLMonth[];
+  income: MonthlyPLSection;
+  expenses: MonthlyPLSection;
+  net_profit: {
+    months: Record<string, string>;
+    total: string;
+  };
+}
+
+export interface MonthlyProfitLossParams {
+  year: number;
+}
+
 // Common response wrapper
 export interface ApiResponse<T> {
   success: boolean;

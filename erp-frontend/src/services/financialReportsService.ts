@@ -9,6 +9,7 @@ import {
   ProfitLossParams,
   BalanceSheetData,
   BalanceSheetParams,
+  MonthlyProfitLossData,
   ApiResponse,
   ExportFormat,
 } from '../types/financialReports';
@@ -146,6 +147,44 @@ class FinancialReportsService {
     }
 
     return response.data;
+  }
+
+  /**
+   * Fetches the month-by-month Profit & Loss (spreadsheet-style, one column
+   * per calendar month) — the format the client's prior system used.
+   */
+  async getMonthlyProfitLoss(year: number): Promise<MonthlyProfitLossData> {
+    const url = `${this.baseUrl}/monthly_profit_loss/?year=${year}`;
+
+    const response = await this.makeAuthenticatedRequest<MonthlyProfitLossData>(url);
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to fetch Monthly Profit & Loss report');
+    }
+
+    return response.data;
+  }
+
+  /**
+   * Downloads the month-by-month Profit & Loss as a CSV file.
+   */
+  async downloadMonthlyProfitLossCsv(year: number): Promise<void> {
+    const url = `${this.baseUrl}/monthly_profit_loss/?year=${year}&format=csv`;
+
+    const response = await fetch(url, { headers: getHeaders() });
+    if (!response.ok) {
+      throw new Error(`CSV export failed: ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `monthly-profit-loss-${year}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
   }
 
   /**

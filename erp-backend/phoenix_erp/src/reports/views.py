@@ -1134,6 +1134,112 @@ class FinancialReportsViewSet(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=False, methods=['get'], url_path='monthly_profit_loss')
+    def monthly_profit_loss(self, request):
+        """
+        Generate month-by-month Profit & Loss for a calendar year.
+
+        GET /api/reports/financial/monthly_profit_loss/?year=2026&format=json|csv
+
+        Spreadsheet-style successor to the client's old system report: one
+        row per GL income/expense account (grouped under its parent, e.g.
+        "Interest Income" holding Daily/Weekly/Monthly Loan Interest), one
+        column per calendar month, plus a Net Profit row. See
+        FinancialStatementService.generate_monthly_profit_loss.
+
+        Query Parameters:
+            year (int): Calendar year to report on (default: current year)
+            format (str): 'json' or 'csv' (default: 'json')
+        """
+        from datetime import datetime
+
+        year_param = request.query_params.get('year')
+        try:
+            year = int(year_param) if year_param else timezone.now().year
+        except (TypeError, ValueError):
+            return Response({
+                'success': False,
+                'error': 'Invalid year. Use a 4-digit calendar year, e.g. 2026'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if year < 2000 or year > 2100:
+            return Response({
+                'success': False,
+                'error': 'year must be between 2000 and 2100'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        fmt = request.query_params.get('format', 'json')
+
+        try:
+            service = FinancialStatementService(
+                owner=request.user,
+                branch=resolve_effective_branch(request)
+            )
+            report_data = service.generate_monthly_profit_loss(year=year)
+
+            if fmt == 'json':
+                return Response({
+                    'success': True,
+                    'data': report_data
+                })
+            elif fmt == 'csv':
+                return self._monthly_profit_loss_csv(report_data)
+            else:
+                return Response({
+                    'success': False,
+                    'error': f"Unsupported format '{fmt}'. Use json or csv"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _monthly_profit_loss_csv(self, report_data):
+        """Flatten generate_monthly_profit_loss's nested groups into a CSV matrix."""
+        import csv as csv_module
+
+        month_keys = [m['key'] for m in report_data['months']]
+        month_labels = [m['label'] for m in report_data['months']]
+
+        response = HttpResponse(content_type='text/csv')
+        year = report_data['year']
+        response['Content-Disposition'] = f'attachment; filename="monthly-profit-loss-{year}.csv"'
+
+        writer = csv_module.writer(response)
+        writer.writerow(['Type', *month_labels, 'Total'])
+
+        def write_section(title, section):
+            writer.writerow([title.upper()])
+            for group in section['groups']:
+                writer.writerow([
+                    group['name'],
+                    *[group['months'][k] for k in month_keys],
+                    group['total'],
+                ])
+                for acc in group['accounts']:
+                    writer.writerow([
+                        f"  {acc['name']}",
+                        *[acc['months'][k] for k in month_keys],
+                        acc['total'],
+                    ])
+            writer.writerow([
+                f'Total {title}',
+                *[section['months'][k] for k in month_keys],
+                section['total'],
+            ])
+
+        write_section('Income', report_data['income'])
+        write_section('Expenses', report_data['expenses'])
+        writer.writerow([
+            'Net Profit',
+            *[report_data['net_profit']['months'][k] for k in month_keys],
+            report_data['net_profit']['total'],
+        ])
+
+        return response
+
     @action(detail=False, methods=['get'], url_path='cash_flow')
     def cash_flow_statement(self, request):
         """

@@ -301,6 +301,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'monthly-profit-loss',
+    title: 'Monthly Profit & Loss',
+    description:
+      'Month-by-month income and expenses by GL account, one column per calendar month, for comparing performance across periods',
+    path: '/reports/financial/monthly-profit-loss',
+    icon: BarChart3,
+    requiredPermission: 'financial-reports-view',
+    moduleId: 'financial',
+    category: 'Financial Reports',
+    isNew: true,
+  },
+  {
     id: 'balance-sheet',
     title: 'Statement of Financial Position',
     description:
