@@ -126,13 +126,18 @@ class ThreadParticipant(TimeStampedModel, SoftDeleteModel):
 
     @property
     def has_unread(self):
+        # A message this participant wrote themselves was, by definition,
+        # already "read" by them — without this exclude, replying in a
+        # thread and not immediately re-marking it read (e.g. a poll tick
+        # that doesn't call read/) makes that thread look unread to its own
+        # author, indistinguishable from a thread someone else actually
+        # needs to look at.
+        others_messages = self.thread.messages.filter(
+            is_system_message=False, is_deleted=False,
+        ).exclude(author=self.user)
         if not self.last_read_at:
-            return self.thread.messages.filter(is_system_message=False, is_deleted=False).exists()
-        return self.thread.messages.filter(
-            created_at__gt=self.last_read_at,
-            is_system_message=False,
-            is_deleted=False,
-        ).exists()
+            return others_messages.exists()
+        return others_messages.filter(created_at__gt=self.last_read_at).exists()
 
 
 class ThreadMessage(TimeStampedModel, SoftDeleteModel):

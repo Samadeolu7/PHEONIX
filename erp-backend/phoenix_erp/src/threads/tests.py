@@ -237,6 +237,127 @@ class ThreadReadActionTests(TestCase):
         self.assertEqual(author_participant_before, author_participant_after)
 
 
+class ThreadOwnMessageUnreadTests(TestCase):
+    """
+    None of the unread computations excluded messages authored by the
+    viewer themselves — so on pages that don't re-call the read/ endpoint
+    on every poll (e.g. DiscussionsWorkspacePage's ConversationPane used to
+    only call it once, on mount), simply replying in a thread made it look
+    unread to its own author again, indistinguishable from a thread someone
+    else actually needed to look at. A message you wrote yourself must
+    never count as unread for you.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Own Msg Org', slug='own-msg-org')
+        self.alice = User.objects.create_user(username='alice_own', password='test123', tenant=self.tenant)
+        self.bob = User.objects.create_user(username='bob_own', password='test123', tenant=self.tenant)
+
+        self.module = Module.objects.create(code='clients', name='Clients', icon='users')
+        self.page = ModulePage.objects.create(
+            module=self.module, code='clients', title='Client List',
+            page_type='list', is_threadable=True, url_path='/clients/clients/',
+        )
+
+    def _thread_with_both(self):
+        from .models import Thread, ThreadParticipant
+        thread = Thread.objects.create(
+            page=self.page, initiated_by=self.alice, owner=self.alice, tenant=self.tenant,
+        )
+        ThreadParticipant.objects.create(thread=thread, user=self.alice, added_by=self.alice, tenant=self.tenant)
+        ThreadParticipant.objects.create(thread=thread, user=self.bob, added_by=self.alice, tenant=self.tenant)
+        return thread
+
+    def test_own_message_does_not_mark_thread_unread_for_author(self):
+        from .models import ThreadMessage, ThreadParticipant
+        thread = self._thread_with_both()
+
+        # Both start caught up.
+        self.client.force_authenticate(user=self.alice)
+        self.client.post(f'/api/threads/threads/{thread.id}/read/')
+        self.client.force_authenticate(user=self.bob)
+        self.client.post(f'/api/threads/threads/{thread.id}/read/')
+
+        # Alice replies, without ever calling read/ again afterward.
+        ThreadMessage.objects.create(thread=thread, author=self.alice, body='My own reply', tenant=self.tenant)
+
+        alice_participant = ThreadParticipant.objects.get(thread=thread, user=self.alice)
+        self.assertFalse(alice_participant.has_unread)
+
+        self.client.force_authenticate(user=self.alice)
+        resp = self.client.get('/api/threads/threads/', {'page_id': self.page.id})
+        self.assertEqual(resp.data['results'][0]['unread_count'], 0)
+
+    def test_own_message_still_counts_as_unread_for_other_participants(self):
+        from .models import ThreadMessage, ThreadParticipant
+        thread = self._thread_with_both()
+
+        self.client.force_authenticate(user=self.alice)
+        self.client.post(f'/api/threads/threads/{thread.id}/read/')
+        self.client.force_authenticate(user=self.bob)
+        self.client.post(f'/api/threads/threads/{thread.id}/read/')
+
+        ThreadMessage.objects.create(thread=thread, author=self.alice, body='Hey Bob', tenant=self.tenant)
+
+        bob_participant = ThreadParticipant.objects.get(thread=thread, user=self.bob)
+        self.assertTrue(bob_participant.has_unread)
+
+        self.client.force_authenticate(user=self.bob)
+        resp = self.client.get('/api/threads/threads/', {'page_id': self.page.id})
+        self.assertEqual(resp.data['results'][0]['unread_count'], 1)
+
+    def test_participant_bulk_endpoint_excludes_own_messages_per_participant(self):
+        """
+        ThreadParticipantViewSet.list's bulk has_unread computation must give
+        each participant row a DIFFERENT answer for the same thread — this
+        used to share a single per-thread 'latest message' value across every
+        participant regardless of who authored it.
+        """
+        from .models import ThreadMessage
+        thread = self._thread_with_both()
+
+        self.client.force_authenticate(user=self.alice)
+        self.client.post(f'/api/threads/threads/{thread.id}/read/')
+        self.client.force_authenticate(user=self.bob)
+        self.client.post(f'/api/threads/threads/{thread.id}/read/')
+
+        ThreadMessage.objects.create(thread=thread, author=self.alice, body='Hey Bob', tenant=self.tenant)
+
+        self.client.force_authenticate(user=self.alice)
+        resp = self.client.get('/api/threads/thread-participants/', {'thread': thread.id})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        by_user = {row['user']: row['has_unread'] for row in resp.data['results']}
+        self.assertFalse(by_user[self.alice.id])
+        self.assertTrue(by_user[self.bob.id])
+
+    def test_widget_summary_excludes_own_messages(self):
+        from .models import ThreadMessage
+        thread = self._thread_with_both()
+
+        self.client.force_authenticate(user=self.alice)
+        self.client.post(f'/api/threads/threads/{thread.id}/read/')
+
+        ThreadMessage.objects.create(thread=thread, author=self.alice, body='My own reply', tenant=self.tenant)
+
+        resp = self.client.get('/api/threads/threads/widget-summary/')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['unread_count'], 0)
+
+    def test_unread_filter_excludes_threads_with_only_own_messages(self):
+        from .models import ThreadMessage
+        thread = self._thread_with_both()
+
+        self.client.force_authenticate(user=self.alice)
+        self.client.post(f'/api/threads/threads/{thread.id}/read/')
+
+        ThreadMessage.objects.create(thread=thread, author=self.alice, body='My own reply', tenant=self.tenant)
+
+        resp = self.client.get('/api/threads/threads/', {'page_id': self.page.id, 'unread': 'true'})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(len(resp.data['results']), 0)
+
+
 class ThreadNotificationReconciliationTests(TestCase):
     """
     Thread-native unread badges (ThreadParticipant.last_read_at) and the bell
@@ -263,9 +384,10 @@ class ThreadNotificationReconciliationTests(TestCase):
         )
         # Notification creation silently no-ops without this channel — see
         # threads/signals.py. Seeded for real deployments by
-        # notifications/migrations/0004_seed_in_app_channel.py.
-        self.channel = NotificationChannel.objects.create(
-            code='in_app', name='In-App Notification', provider='internal',
+        # notifications/migrations/0004_seed_in_app_channel.py, which has
+        # already run against the test DB, so get rather than duplicate it.
+        self.channel, _ = NotificationChannel.objects.get_or_create(
+            code='in_app', defaults={'name': 'In-App Notification', 'provider': 'internal'},
         )
 
     def _create_thread_with_participants(self):

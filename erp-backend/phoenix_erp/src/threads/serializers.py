@@ -125,13 +125,14 @@ class ThreadSerializer(serializers.ModelSerializer):
         user = request.user
         try:
             participant = obj.participants.get(user=user, is_deleted=False)
+            # See ThreadParticipant.has_unread — a message the requesting
+            # user wrote themselves never counts as unread for them.
+            others_messages = obj.messages.filter(
+                is_system_message=False, is_deleted=False,
+            ).exclude(author=user)
             if not participant.last_read_at:
-                return obj.messages.filter(is_system_message=False, is_deleted=False).count()
-            return obj.messages.filter(
-                created_at__gt=participant.last_read_at,
-                is_system_message=False,
-                is_deleted=False,
-            ).count()
+                return others_messages.count()
+            return others_messages.filter(created_at__gt=participant.last_read_at).count()
         except ThreadParticipant.DoesNotExist:
             return 0
 

@@ -158,10 +158,12 @@ class ThreadViewSet(ScopedModelViewSet):
                     thread=OuterRef('pk'), user=user, is_deleted=False
                 ).values('last_read_at')[:1]
             )
+            # A message the requesting user wrote themselves never counts as
+            # unread for them — see ThreadParticipant.has_unread.
             latest_non_sys_msg = Subquery(
                 ThreadMessage.objects.filter(
                     thread=OuterRef('pk'), is_system_message=False, is_deleted=False,
-                ).order_by('-created_at').values('created_at')[:1]
+                ).exclude(author=user).order_by('-created_at').values('created_at')[:1]
             )
             from django.db.models import F
             qs = qs.annotate(
@@ -444,7 +446,11 @@ class ThreadViewSet(ScopedModelViewSet):
         unread_counts = {}
         for tid in thread_ids:
             last_read = participant_map.get(tid)
-            q = ThreadMessage.objects.filter(thread_id=tid, is_system_message=False, is_deleted=False)
+            # A message the current user wrote themselves never counts as
+            # unread for them — see ThreadParticipant.has_unread.
+            q = ThreadMessage.objects.filter(
+                thread_id=tid, is_system_message=False, is_deleted=False,
+            ).exclude(author=user)
             if last_read:
                 q = q.filter(created_at__gt=last_read)
             unread_counts[tid] = q.count()
@@ -662,17 +668,25 @@ class ThreadParticipantViewSet(ScopedModelViewSet):
         participants = list(page_obj.object_list)
         thread_ids = list({p.thread_id for p in participants})
 
-        # One query: latest non-system message created_at per thread
-        from django.db.models import Max
-        latest_msg_map = {
-            row['thread_id']: row['latest']
-            for row in ThreadMessage.objects.filter(
-                thread_id__in=thread_ids, is_system_message=False, is_deleted=False,
-            ).values('thread_id').annotate(latest=Max('created_at'))
-        }
+        # One query: (created_at, author_id) for every candidate message,
+        # grouped by thread. A shared per-thread Max(created_at) can't be
+        # reused across participants here — each participant's own messages
+        # must be excluded from THEIR OWN unread check (see
+        # ThreadParticipant.has_unread), and different participant rows in
+        # the same thread belong to different users.
+        from collections import defaultdict
+        messages_by_thread = defaultdict(list)
+        for row in ThreadMessage.objects.filter(
+            thread_id__in=thread_ids, is_system_message=False, is_deleted=False,
+        ).values('thread_id', 'author_id', 'created_at'):
+            messages_by_thread[row['thread_id']].append((row['created_at'], row['author_id']))
 
         for p in participants:
-            latest = latest_msg_map.get(p.thread_id)
+            others_created_at = [
+                created_at for created_at, author_id in messages_by_thread.get(p.thread_id, [])
+                if author_id != p.user_id
+            ]
+            latest = max(others_created_at, default=None)
             if latest is None:
                 p._has_unread = False
             elif p.last_read_at is None:

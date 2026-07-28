@@ -296,6 +296,14 @@ function ConversationPane({
     try {
       const msgs = await threadService.listMessages(local.id);
       setMessages(msgs);
+      // This pane only exists while its tab is the active one (see the
+      // `activeThread &&` conditional render in the parent, which fully
+      // unmounts it — and this interval — on tab switch), so unlike the
+      // floating ThreadPanel there's no "minimised but still polling" state
+      // to guard against. Re-marking read on every tick (not just mount)
+      // keeps the sidebar's unread badge from re-lighting while the thread
+      // is being actively viewed.
+      threadService.markRead(local.id).catch(() => {});
     } catch { /* retain */ } finally {
       setLoadingMsgs(false);
     }
@@ -306,7 +314,6 @@ function ConversationPane({
     setMessages([]);
     prevCount.current = 0;
     fetchMessages();
-    threadService.markRead(local.id).catch(() => {});
     const t = setInterval(fetchMessages, MSG_POLL_MS);
     return () => clearInterval(t);
   }, [fetchMessages, local.id]);
