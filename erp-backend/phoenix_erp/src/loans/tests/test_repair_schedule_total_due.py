@@ -19,7 +19,7 @@ re-running the old buggy commands, which have since been fixed) and asserts
   - no *_paid field is ever modified
 """
 from datetime import timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.core.management import call_command
 from django.test import TestCase
@@ -120,7 +120,7 @@ class RepairScheduleTotalDueTestCase(TestCase):
 
         expected_penalty = self.product.calculate_late_penalty(
             sched.total_due - sched.total_paid, 278, "monthly",
-        )
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         self.assertEqual(sched.penalty_due, expected_penalty)
         self.assertGreater(sched.penalty_due, Decimal("0.00"))
 
