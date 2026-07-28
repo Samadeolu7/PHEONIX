@@ -17,8 +17,19 @@ For every flagged row (recorded penalty_due > what calculate_late_penalty()
 says it should be today):
 
     LoanRepaymentSchedule.penalty_due  -> corrected estimate
-    LoanRepaymentSchedule.total_due    -= stuck_excess (floored at total_paid)
     LoanAccount.outstanding_penalties  -= stuck_excess (summed per loan, floored at 0)
+
+total_due is intentionally NEVER touched here. total_due is defined as
+principal_due + interest_due + fees_due (see update_loan_status.py and
+LoanAccount.apply_payment) — penalty is tracked entirely separately via
+penalty_due/penalty_paid on the row and outstanding_penalties on the loan.
+An earlier version of this command subtracted stuck_excess from total_due
+(floored at total_paid), which corrupted the row whenever stuck_excess
+exceeded total_due itself — e.g. on legacy-imported loans where penalty_due
+started out inflated relative to a total_due that never included it, this
+collapsed total_due to 0 and wiped out principal/interest that was never
+inflated and had nothing to do with the penalty correction. See
+audit_total_due_integrity for finding rows already damaged this way.
 
 status is intentionally left untouched (matches apply_penalty_overcollection_credit's
 convention) — the normal repayment flow already recalculates status from
@@ -32,7 +43,7 @@ SAFETY:
     dry-run output first, not one loan at a time (see audit_penalty_due_inflation
     for the same numbers without any write capability).
   - Every corrected row is logged via FinancialAuditLog (LOAN_BALANCE_CORRECTION)
-    with before/after penalty_due, total_due, and the loan's outstanding_penalties.
+    with before/after penalty_due and the loan's outstanding_penalties.
 
 Usage:
     python manage.py apply_penalty_due_correction                # dry-run, whole book
@@ -86,7 +97,7 @@ class Command(BaseCommand):
             if days_late <= 0:
                 corrected = Decimal('0.00')
             else:
-                base_amount = sched.total_due - sched.total_paid
+                base_amount = sched.principal_due + sched.interest_due + sched.fees_due
                 corrected = loan.product.calculate_late_penalty(
                     base_amount, days_late, loan.repayment_frequency,
                 )
@@ -128,12 +139,9 @@ class Command(BaseCommand):
             for sched, days_late, corrected, stuck_excess in flags:
                 loan = sched.loan
                 penalty_due_before = sched.penalty_due
-                total_due_before = sched.total_due
 
-                new_total_due = max(sched.total_paid, sched.total_due - stuck_excess)
                 sched.penalty_due = corrected
-                sched.total_due = new_total_due
-                sched.save(update_fields=['penalty_due', 'total_due', 'updated_at'])
+                sched.save(update_fields=['penalty_due', 'updated_at'])
 
                 log_financial_event(
                     FinancialAuditLog.LOAN_BALANCE_CORRECTION,
@@ -152,8 +160,6 @@ class Command(BaseCommand):
                         'corrected_penalty_due': str(corrected),
                         'schedule_penalty_due_before': str(penalty_due_before),
                         'schedule_penalty_due_after': str(corrected),
-                        'schedule_total_due_before': str(total_due_before),
-                        'schedule_total_due_after': str(new_total_due),
                         'source_command': 'apply_penalty_due_correction',
                     },
                 )

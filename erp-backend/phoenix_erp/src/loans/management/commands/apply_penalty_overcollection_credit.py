@@ -10,9 +10,18 @@ as they are. Only two still-outstanding (not yet paid) figures move:
 
     LoanAccount.outstanding_penalties         -= credit
     LoanRepaymentSchedule.penalty_due (row)    -= credit
-    LoanRepaymentSchedule.total_due (row)      -= credit  (floored at total_paid)
 
 Both floored at zero so this can never push a balance negative.
+
+total_due is intentionally NEVER touched. total_due is defined as
+principal_due + interest_due + fees_due (see update_loan_status.py and
+LoanAccount.apply_payment) — penalty lives entirely separately in
+penalty_due/penalty_paid and outstanding_penalties. An earlier version of
+this command subtracted the credit from total_due too (floored at
+total_paid), which could zero out a row's total_due — wiping out principal/
+interest that had nothing to do with the penalty correction — whenever the
+credit exceeded total_due itself. See audit_total_due_integrity for finding
+rows already damaged this way.
 
 Safety by construction:
   - Dry-run by default. Nothing is written unless --apply is passed.
@@ -132,12 +141,9 @@ class Command(BaseCommand):
 
             for sched, days_late, corrected_penalty, overcollected in corrections:
                 penalty_due_before = sched.penalty_due
-                total_due_before = sched.total_due
                 new_penalty_due = max(Decimal('0.00'), sched.penalty_due - overcollected)
-                new_total_due = max(sched.total_paid, sched.total_due - overcollected)
                 sched.penalty_due = new_penalty_due
-                sched.total_due = new_total_due
-                sched.save(update_fields=['penalty_due', 'total_due', 'updated_at'])
+                sched.save(update_fields=['penalty_due', 'updated_at'])
 
                 log_financial_event(
                     FinancialAuditLog.LOAN_BALANCE_CORRECTION,
@@ -157,8 +163,6 @@ class Command(BaseCommand):
                         'penalty_paid_unchanged': str(sched.penalty_paid),
                         'schedule_penalty_due_before': str(penalty_due_before),
                         'schedule_penalty_due_after': str(new_penalty_due),
-                        'schedule_total_due_before': str(total_due_before),
-                        'schedule_total_due_after': str(new_total_due),
                         'loan_outstanding_penalties_before': str(outstanding_penalties_before),
                         'loan_outstanding_penalties_after': str(loan.outstanding_penalties),
                         'source_command': 'apply_penalty_overcollection_credit',

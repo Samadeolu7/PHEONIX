@@ -80,7 +80,7 @@ class Command(BaseCommand):
             if days_late <= 0:
                 corrected = Decimal('0.00')
             else:
-                base_amount = sched.total_due - sched.total_paid
+                base_amount = sched.principal_due + sched.interest_due + sched.fees_due
                 corrected = loan.product.calculate_late_penalty(
                     base_amount, days_late, loan.repayment_frequency,
                 )
