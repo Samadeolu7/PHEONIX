@@ -1,9 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { MessageSquare } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useThreadContext } from '../../contexts/ThreadContext';
 import { threadService } from '../../services/threadService';
+
+const BADGE_POLL_MS = 20_000;
 
 interface Props {
   /** The ModulePage id for this detail page */
@@ -27,46 +30,34 @@ export const ThreadToggleButton: React.FC<Props> = ({
   const { openPanel, panelState, activeTarget, closePanel } = useThreadContext();
   const location = useLocation();
 
-  const [isThreadable, setIsThreadable] = useState<boolean | null>(null);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [hasOpenThreads, setHasOpenThreads] = useState(false);
-  const [loading, setLoading] = useState(true);
-
   const isThisPageOpen =
     panelState !== 'hidden' && activeTarget?.pageId === pageId && activeTarget?.objectId === objectId;
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  const { data: pageConfig, isLoading: loadingConfig } = useQuery({
+    queryKey: ['threads', 'pageConfig', pageId],
+    queryFn: () => threadService.pageConfig(pageId),
+    staleTime: 60_000,
+  });
+  const isThreadable = pageConfig?.is_threadable ?? null;
 
-    threadService
-      .pageConfig(pageId)
-      .then(cfg => {
-        if (cancelled) return;
-        setIsThreadable(cfg.is_threadable);
+  const listParams = { page_id: pageId, ...(objectId ? { object_id: objectId } : {}) };
+  // Same queryKey shape as ThreadPanel's list query — shares its cache, so
+  // this badge also benefits from ThreadPanel's more frequent poll whenever
+  // the panel happens to be open on this record, without an extra request.
+  const { data: threads = [], isLoading: loadingThreads } = useQuery({
+    queryKey: ['threads', 'list', listParams],
+    queryFn: () => threadService.list(listParams),
+    enabled: !!isThreadable,
+    staleTime: 5_000,
+    // Independent backstop so the badge doesn't go stale when ThreadPanel
+    // isn't mounted/open for this record (e.g. new message arrives while
+    // the user reads it elsewhere, or the panel gets closed after reading).
+    refetchInterval: BADGE_POLL_MS,
+  });
 
-        if (cfg.is_threadable) {
-          return threadService.list({
-            page_id: pageId,
-            ...(objectId ? { object_id: objectId } : {}),
-          });
-        }
-      })
-      .then(threads => {
-        if (cancelled || !threads) return;
-        const open = threads.filter(t => t.status === 'open');
-        setHasOpenThreads(open.length > 0);
-        setUnreadCount(threads.reduce((s, t) => s + (t.unread_count ?? 0), 0));
-      })
-      .catch(() => {
-        if (!cancelled) setIsThreadable(false);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => { cancelled = true; };
-  }, [pageId, objectId]);
+  const loading = loadingConfig || (!!isThreadable && loadingThreads);
+  const hasOpenThreads = threads.some(t => t.status === 'open');
+  const unreadCount = threads.reduce((s, t) => s + (t.unread_count ?? 0), 0);
 
   // Auto-open panel when navigated here from inbox/widget with a specific thread ID
   useEffect(() => {

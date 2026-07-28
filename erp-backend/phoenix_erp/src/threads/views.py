@@ -333,7 +333,30 @@ class ThreadViewSet(ScopedModelViewSet):
         if receipts:
             MessageReadReceipt.objects.bulk_create(receipts, ignore_conflicts=True)
 
+        self._mark_related_notifications_read(thread, user)
+
         return Response({'status': 'ok'})
+
+    @staticmethod
+    def _mark_related_notifications_read(thread, user):
+        """
+        Reading a thread here and the bell/notification center are two
+        separate systems (see threads/signals.py) — without this, a user
+        could fully read a discussion while the bell kept showing "New
+        message in: ..." for it forever. Notifications are linked back to
+        their thread via content_type/object_id, so clear any of this
+        user's still-unread ones for this thread now.
+        """
+        try:
+            from django.contrib.contenttypes.models import ContentType
+            from notifications.models import Notification
+            Notification.objects.filter(
+                recipient_user=user,
+                content_type=ContentType.objects.get_for_model(Thread),
+                object_id=str(thread.pk),
+            ).exclude(status='read').update(status='read', read_at=timezone.now())
+        except Exception:
+            logger.exception('Failed to mark related notifications read for thread %s', thread.pk)
 
     @action(detail=False, methods=['get'], url_path='page-config/(?P<page_id>[^/.]+)')
     def page_config(self, request, page_id=None):

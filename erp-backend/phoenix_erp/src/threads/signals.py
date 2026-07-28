@@ -39,6 +39,7 @@ def notify_new_message(sender, instance, created, **kwargs):
 def _fire_participant_notification(participant, thread):
     """Create an in-app Notification for a newly tagged participant."""
     try:
+        from django.contrib.contenttypes.models import ContentType
         from notifications.models import Notification, NotificationChannel
         added_by = participant.added_by
         adder_name = (added_by.get_full_name() or added_by.username) if added_by else 'Someone'
@@ -58,6 +59,11 @@ def _fire_participant_notification(participant, thread):
             branch=thread.branch,
             created_by=added_by,
             tenant=thread.tenant,
+            # Links this Notification back to the Thread so reading the
+            # thread can also clear the notification (see ThreadViewSet.read)
+            # and so the bell UI can deep-link to it.
+            content_type=ContentType.objects.get_for_model(thread.__class__),
+            object_id=str(thread.pk),
         )
     except Exception:
         logger.exception('Failed to create participant notification for thread %s', thread.pk)
@@ -66,6 +72,7 @@ def _fire_participant_notification(participant, thread):
 def _fire_message_notifications(message):
     """Create in-app Notifications for all participants except the message author."""
     try:
+        from django.contrib.contenttypes.models import ContentType
         from notifications.models import Notification, NotificationChannel
         thread = message.thread
         channel = NotificationChannel.objects.filter(code='in_app', is_active=True).first()
@@ -77,6 +84,7 @@ def _fire_message_notifications(message):
         participants = thread.participants.filter(
             is_deleted=False
         ).exclude(user=author).select_related('user')
+        thread_content_type = ContentType.objects.get_for_model(thread.__class__)
 
         notifications = []
         for p in participants:
@@ -96,6 +104,9 @@ def _fire_message_notifications(message):
                 branch=thread.branch,
                 created_by=author,
                 tenant=thread.tenant,
+                # See note in _fire_participant_notification above.
+                content_type=thread_content_type,
+                object_id=str(thread.pk),
             ))
 
         if notifications:

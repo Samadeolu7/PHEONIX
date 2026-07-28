@@ -102,7 +102,9 @@ export const ThreadPanel: React.FC = () => {
     queryKey: threadKeys.list(listParams),
     queryFn: () => threadService.list(listParams),
     enabled: !!activeTarget,
-    refetchInterval: panelState !== 'hidden' ? THREAD_LIST_POLL_MS : false,
+    // 'minimised' is not 'hidden', but the user isn't actually looking at the
+    // panel then — only poll while it's genuinely open on screen.
+    refetchInterval: panelState === 'open' ? THREAD_LIST_POLL_MS : false,
     staleTime: 5_000,
   });
 
@@ -112,13 +114,22 @@ export const ThreadPanel: React.FC = () => {
     queryKey: threadKeys.messages(selectedThreadId ?? 0),
     queryFn: async () => {
       const msgs = await threadService.listMessages(selectedThreadId!);
-      threadService.markRead(selectedThreadId!).catch(() => {});
+      // Only mark read while the panel is actually open — a minimised panel
+      // still fetches on remount/enable transitions, but must not silently
+      // consume unread messages the user hasn't looked at yet.
+      if (panelState === 'open') {
+        threadService.markRead(selectedThreadId!).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ['threads', 'list'] });
+        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+      }
       lastMsgIdRef.current = msgs.length ? msgs[msgs.length - 1].id : 0;
       return msgs;
     },
     enabled: !!selectedThreadId,
     staleTime: 2_000,
-    refetchInterval: panelState !== 'hidden' && selectedThreadId ? POLL_INTERVAL_MS : false,
+    // Same reasoning as the list poll above: don't keep fetching (and
+    // therefore marking read) while merely minimised.
+    refetchInterval: panelState === 'open' && selectedThreadId ? POLL_INTERVAL_MS : false,
   });
 
   const { data: participantSearchResults = [] } = useQuery({
@@ -194,6 +205,19 @@ export const ThreadPanel: React.FC = () => {
     },
     onError: () => setParticipantError('Failed to remove participant.'),
   });
+
+  // ── Refresh immediately when restored from minimised ──────────────────────
+  // Polling is paused while minimised (see the queries above), so cached
+  // data can be stale by the time the user reopens the panel — refetch
+  // right away instead of waiting for the next interval tick.
+  useEffect(() => {
+    if (panelState !== 'open') return;
+    queryClient.invalidateQueries({ queryKey: threadKeys.list(listParams) });
+    if (selectedThreadId) {
+      queryClient.invalidateQueries({ queryKey: threadKeys.messages(selectedThreadId) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelState]);
 
   // ── Reset UI state when target changes ────────────────────────────────────
   useEffect(() => {
