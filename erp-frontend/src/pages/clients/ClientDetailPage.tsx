@@ -16,11 +16,7 @@ import {
   Users,
   AlertCircle,
   Globe,
-  CreditCard,
   Home,
-  Receipt,
-  Eye,
-  Download,
   Clock,
   GitBranch,
   Wallet,
@@ -30,7 +26,6 @@ import {
   Landmark,
 } from 'lucide-react';
 import { clientService, Client } from '../../services/clientService';
-import { invoiceService, Invoice } from '../../services/invoiceService';
 import { loanService, LoanTransactionRow } from '../../services/loanService';
 import { getSavingsAccounts, getSavingsTransactions, SavingsTransactionRow } from '../../services/savingsService';
 import { useDomainLabels } from '../../contexts/DomainLabelContext';
@@ -42,8 +37,6 @@ const ClientDetailPage: React.FC = () => {
   const { isSchool } = useDomainLabels();
   const { selectedRole } = useAuth();
   const [client, setClient] = useState<Client | null>(null);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [invoicesLoading, setInvoicesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'loans' | 'savings' | 'audit' | 'cross_branch'>('overview');
@@ -158,7 +151,6 @@ const ClientDetailPage: React.FC = () => {
     loadClientData();
     loadLoans();
     loadSavings();
-    loadClientInvoices();
   }, [id]);
 
   useEffect(() => {
@@ -186,23 +178,6 @@ const ClientDetailPage: React.FC = () => {
     }
   };
 
-  const loadClientInvoices = async () => {
-    if (!id) return;
-    setInvoicesLoading(true);
-    try {
-      // Set client as client id in the params
-      const response = await invoiceService.getInvoices({
-        client_id: Number(id),
-        ordering: '-invoice_date', // Most recent first
-      });
-      setInvoices(response.results || []);
-    } catch (error) {
-      console.error('Error loading client invoices:', error);
-    } finally {
-      setInvoicesLoading(false);
-    }
-  };
-
   const formatDate = (dateString?: string | null) => {
     if (!dateString) return 'Not provided';
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -220,59 +195,6 @@ const ClientDetailPage: React.FC = () => {
       return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
     } catch {
       return monthString;
-    }
-  };
-
-  const formatCurrency = (amount: string) => {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: 'NGN',
-      minimumFractionDigits: 0,
-    }).format(parseFloat(amount));
-  };
-
-  const getStatusBadge = (status: Invoice['status']) => {
-    const statusConfig = {
-      draft: { color: 'bg-gray-100 text-gray-800', label: 'Draft' },
-      sent: { color: 'bg-blue-100 text-blue-800', label: 'Sent' },
-      partial: { color: 'bg-yellow-100 text-yellow-800', label: 'Partial' },
-      paid: { color: 'bg-green-100 text-green-800', label: 'Paid' },
-      overdue: { color: 'bg-red-100 text-red-800', label: 'Overdue' },
-      cancelled: { color: 'bg-gray-100 text-gray-800', label: 'Cancelled' },
-    };
-
-    const config = statusConfig[status];
-    return (
-      <span
-        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.color}`}
-      >
-        {config.label}
-      </span>
-    );
-  };
-
-  const handleDownloadPdf = async (invoice: Invoice) => {
-    try {
-      const token = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-      const response = await fetch(`/api/incomes/invoices/${invoice.id}/download-pdf/`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `invoice-${invoice.invoice_number}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (error) {
-      console.error('Error downloading PDF:', error);
     }
   };
 
@@ -501,28 +423,6 @@ const ClientDetailPage: React.FC = () => {
           >
             <Wallet size={16} />
             Open Savings
-          </button>
-          <button
-            onClick={() => navigate(`/invoices/create?clientId=${client.id}`)}
-            style={{
-              padding: '0.75rem 1.25rem',
-              background: '#10b981',
-              color: 'white',
-              border: 'none',
-              borderRadius: '0.5rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              fontWeight: 500,
-              fontSize: '0.875rem',
-              transition: 'background-color 0.2s',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.background = '#059669')}
-            onMouseLeave={e => (e.currentTarget.style.background = '#10b981')}
-          >
-            <CreditCard size={16} />
-            Invoice
           </button>
         </div>
       </div>
@@ -788,338 +688,6 @@ const ClientDetailPage: React.FC = () => {
         )}
       </div>
       )}
-
-      {/* Mini Invoice List Section */}
-      <div
-        style={{
-          background: 'white',
-          borderRadius: '0.75rem',
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
-          marginTop: '2rem',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '1.5rem',
-            borderBottom: '1px solid #e5e7eb',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <Receipt size={20} color="#3b82f6" />
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 600, color: '#111827' }}>
-              Recent Invoices
-            </h3>
-            <span
-              style={{
-                background: '#f3f4f6',
-                padding: '0.25rem 0.75rem',
-                borderRadius: '1rem',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                color: '#4b5563',
-              }}
-            >
-              {invoices.length} total
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              onClick={() => navigate(`/clients/${client.id}/ledger`)}
-              style={{
-                padding: '0.5rem 1rem',
-                background: '#3b82f6',
-                border: 'none',
-                borderRadius: '0.375rem',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                color: 'white',
-                transition: 'all 0.2s',
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = '#2563eb';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = '#3b82f6';
-              }}
-            >
-              View Account Ledger
-            </button>
-            <button
-              onClick={() => navigate(`/sales/invoices?client=${client.id}`)}
-              style={{
-                padding: '0.5rem 1rem',
-                background: 'transparent',
-                border: '1px solid #d1d5db',
-                borderRadius: '0.375rem',
-                cursor: 'pointer',
-                fontSize: '0.875rem',
-                fontWeight: 500,
-                color: '#4b5563',
-                transition: 'all 0.2s',
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = '#f3f4f6';
-                e.currentTarget.style.borderColor = '#9ca3af';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.borderColor = '#d1d5db';
-              }}
-            >
-              View All
-            </button>
-          </div>
-        </div>
-
-        {invoicesLoading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          </div>
-        ) : invoices.length > 0 ? (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead style={{ background: '#f9fafb' }}>
-                <tr>
-                  <th
-                    style={{
-                      padding: '1rem 1.5rem',
-                      textAlign: 'left',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#6b7280',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    Invoice #
-                  </th>
-                  <th
-                    style={{
-                      padding: '1rem 1.5rem',
-                      textAlign: 'left',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#6b7280',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    Date
-                  </th>
-                  <th
-                    style={{
-                      padding: '1rem 1.5rem',
-                      textAlign: 'left',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#6b7280',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    Due Date
-                  </th>
-                  <th
-                    style={{
-                      padding: '1rem 1.5rem',
-                      textAlign: 'right',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#6b7280',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    Amount
-                  </th>
-                  <th
-                    style={{
-                      padding: '1rem 1.5rem',
-                      textAlign: 'right',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#6b7280',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    Balance
-                  </th>
-                  <th
-                    style={{
-                      padding: '1rem 1.5rem',
-                      textAlign: 'center',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#6b7280',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    Status
-                  </th>
-                  <th
-                    style={{
-                      padding: '1rem 1.5rem',
-                      textAlign: 'center',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#6b7280',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                    }}
-                  >
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.slice(0, 5).map(invoice => (
-                  <tr
-                    key={invoice.id}
-                    style={{ borderTop: '1px solid #e5e7eb', hover: { background: '#f9fafb' } }}
-                  >
-                    <td
-                      style={{
-                        padding: '1rem 1.5rem',
-                        fontSize: '0.875rem',
-                        fontWeight: 500,
-                        color: '#111827',
-                      }}
-                    >
-                      {invoice.invoice_number}
-                    </td>
-                    <td style={{ padding: '1rem 1.5rem', fontSize: '0.875rem', color: '#6b7280' }}>
-                      {formatDate(invoice.invoice_date)}
-                    </td>
-                    <td
-                      style={{
-                        padding: '1rem 1.5rem',
-                        fontSize: '0.875rem',
-                        color: invoice.is_overdue ? '#dc2626' : '#6b7280',
-                      }}
-                    >
-                      {formatDate(invoice.due_date)}
-                      {invoice.is_overdue && (
-                        <span style={{ display: 'block', fontSize: '0.75rem', color: '#dc2626' }}>
-                          Overdue
-                        </span>
-                      )}
-                    </td>
-                    <td
-                      style={{
-                        padding: '1rem 1.5rem',
-                        fontSize: '0.875rem',
-                        fontWeight: 500,
-                        color: '#111827',
-                        textAlign: 'right',
-                      }}
-                    >
-                      {formatCurrency(invoice.total_amount || invoice.amount || '0')}
-                    </td>
-                    <td
-                      style={{
-                        padding: '1rem 1.5rem',
-                        fontSize: '0.875rem',
-                        fontWeight: 500,
-                        textAlign: 'right',
-                        color: parseFloat(invoice.balance) > 0 ? '#dc2626' : '#10b981',
-                      }}
-                    >
-                      {formatCurrency(invoice.balance)}
-                    </td>
-                    <td style={{ padding: '1rem 1.5rem', textAlign: 'center' }}>
-                      {getStatusBadge(invoice.status)}
-                    </td>
-                    <td style={{ padding: '1rem 1.5rem', textAlign: 'center' }}>
-                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-                        <button
-                          onClick={() => navigate(`/sales/invoices/${invoice.id}/view`)}
-                          style={{
-                            padding: '0.25rem',
-                            background: 'transparent',
-                            border: 'none',
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            color: '#3b82f6',
-                            transition: 'all 0.2s',
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#eff6ff')}
-                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                          title="View Invoice"
-                        >
-                          <Eye size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleDownloadPdf(invoice)}
-                          style={{
-                            padding: '0.25rem',
-                            background: 'transparent',
-                            border: 'none',
-                            borderRadius: '0.25rem',
-                            cursor: 'pointer',
-                            color: '#10b981',
-                            transition: 'all 0.2s',
-                          }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#d1fae5')}
-                          onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                          title="Download PDF"
-                        >
-                          <Download size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div style={{ textAlign: 'center', padding: '3rem' }}>
-            <Receipt size={48} style={{ margin: '0 auto 1rem', color: '#9ca3af' }} />
-            <h4
-              style={{
-                fontSize: '1rem',
-                fontWeight: 600,
-                color: '#374151',
-                marginBottom: '0.5rem',
-              }}
-            >
-              No Invoices Found
-            </h4>
-            <p style={{ fontSize: '0.875rem', color: '#6b7280', marginBottom: '1.5rem' }}>
-              This client doesn't have any invoices yet.
-            </p>
-            <button
-              onClick={() => navigate(`/invoices/create?clientId=${client.id}`)}
-              style={{
-                padding: '0.75rem 1.5rem',
-                background: '#10b981',
-                color: 'white',
-                border: 'none',
-                borderRadius: '0.5rem',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                fontWeight: 500,
-                fontSize: '0.875rem',
-                transition: 'background-color 0.2s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#059669')}
-              onMouseLeave={e => (e.currentTarget.style.background = '#10b981')}
-            >
-              <CreditCard size={16} />
-              Create First Invoice
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* Loans Tab */}
       {activeTab === 'loans' && (

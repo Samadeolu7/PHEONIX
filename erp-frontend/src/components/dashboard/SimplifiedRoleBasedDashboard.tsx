@@ -538,13 +538,6 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
 // Quick actions that appear based on permissions
 const QUICK_ACTIONS = [
   {
-    id: 'create-invoice',
-    title: 'Create Invoice',
-    icon: FileText,
-    path: '/invoices/create',
-    permission: 'invoice-create',
-  },
-  {
     id: 'create-po',
     title: 'Create PO',
     icon: ShoppingCart,
