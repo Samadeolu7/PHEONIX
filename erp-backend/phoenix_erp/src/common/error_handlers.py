@@ -54,6 +54,20 @@ def custom_exception_handler(exc, context):
                     'detail': error_message[:400],
                     'action': 'retry'
                 }, status=status.HTTP_409_CONFLICT)
+            elif 'voucher_number' in error_message.lower():
+                import re
+                match = re.search(r'Key \(voucher_number\)=\(([^)]+)\)', error_message)
+                conflict_value = match.group(1) if match else 'unknown'
+                return Response({
+                    'error': 'Voucher number conflict.',
+                    'non_field_errors': [
+                        f'A voucher with number "{conflict_value}" already exists. '
+                        'The system attempted to auto-generate a new number but failed. '
+                        'Please retry the request.'
+                    ],
+                    'detail': error_message[:400],
+                    'action': 'retry'
+                }, status=status.HTTP_409_CONFLICT)
             elif 'reference_number' in error_message.lower():
                 return Response({
                     'error': 'Reference number conflict.',

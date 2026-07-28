@@ -1173,21 +1173,33 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
                         from rest_framework.exceptions import ValidationError as DRFValidationError
                         raise DRFValidationError('Petty cash fund conflict â€” please contact support.')
 
-        # â”€â”€ Generate voucher number: PCV-{YEAR}-{SEQUENTIAL} â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # â”€â”€ Generate voucher number: PCV-{YEAR}-{MONTH}-{SEQUENTIAL} â”€â”€â”€â”€â”€â”€â”€â”€
+        # Sequence resets monthly (rather than yearly) so the 4-digit counter
+        # doesn't run out within a busy year.
         # NOTE: Query globally (not just fund.vouchers) because voucher_number
         # has a global unique constraint.  Wrap in atomic + select_for_update
         # to prevent duplicate numbers under concurrent requests.
         import datetime
-        from django.db import transaction as _db_transaction
+        from django.db import transaction as _db_transaction, connection as _connection
 
-        year = datetime.datetime.now().year
-        year_prefix = f'PCV-{year}'
+        now = datetime.datetime.now()
+        year, month = now.year, now.month
+        month_prefix = f'PCV-{year}-{month:02d}'
 
         with _db_transaction.atomic():
-            # Lock all rows for this year so concurrent requests are serialised.
+            # select_for_update() only locks rows that already exist, so it
+            # can't serialise the very first voucher of a year/fund — two
+            # concurrent requests both see no rows and both compute "0001",
+            # producing a duplicate-key IntegrityError. An advisory xact lock
+            # keyed by year+month closes that gap by serialising even when
+            # the table has nothing yet to lock.
+            with _connection.cursor() as _cur:
+                _cur.execute('SELECT pg_advisory_xact_lock(%s)', [900_000_000 + year * 100 + month])
+
+            # Lock all rows for this month so concurrent requests are serialised.
             last_voucher = (
                 PettyCashVoucher.objects
-                .filter(voucher_number__startswith=year_prefix)
+                .filter(voucher_number__startswith=month_prefix)
                 .select_for_update()
                 .order_by('-voucher_number')
                 .first()
@@ -1202,7 +1214,7 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
             else:
                 new_num = 1
 
-            voucher_number = f'{year_prefix}-{new_num:04d}'
+            voucher_number = f'{month_prefix}-{new_num:04d}'
 
             serializer.save(
                 fund=fund,
