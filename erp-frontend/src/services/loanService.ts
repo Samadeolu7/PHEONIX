@@ -164,10 +164,12 @@ export interface LoanRepaymentSchedule {
   principal_due: string;
   interest_due: string;
   fees_due: string;
+  penalty_due: string;
   total_due: string;
   principal_paid: string;
   interest_paid: string;
   fees_paid: string;
+  penalty_paid: string;
   total_paid: string;
   status: 'pending' | 'paid' | 'partial' | 'overdue';
   payment_date: string | null;

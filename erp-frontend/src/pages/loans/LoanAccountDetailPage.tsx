@@ -1965,6 +1965,7 @@ export default function LoanAccountDetailPage() {
                     <th className="px-4 py-3 text-right">Principal</th>
                     <th className="px-4 py-3 text-right">Interest</th>
                     <th className="px-4 py-3 text-right">Total Due</th>
+                    <th className="px-4 py-3 text-right">Penalty</th>
                     <th className="px-4 py-3 text-right">Total Paid</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Payment Date</th>
@@ -1987,6 +1988,9 @@ export default function LoanAccountDetailPage() {
                           <td className="px-4 py-3 text-right text-gray-700">₦{fmt(row.principal_due)}</td>
                           <td className="px-4 py-3 text-right text-gray-700">₦{fmt(row.interest_due)}</td>
                           <td className="px-4 py-3 text-right font-medium text-gray-900">₦{fmt(row.total_due)}</td>
+                          <td className={`px-4 py-3 text-right ${parseFloat(row.penalty_due) > 0 ? 'font-medium text-red-700' : 'text-gray-400'}`}>
+                            {parseFloat(row.penalty_due) > 0 ? `₦${fmt(row.penalty_due)}` : '—'}
+                          </td>
                           <td className={`px-4 py-3 text-right font-medium ${parseFloat(row.total_paid) > 0 ? 'text-green-700' : 'text-gray-400'}`}>
                             {parseFloat(row.total_paid) > 0 ? `₦${fmt(row.total_paid)}` : '—'}
                           </td>

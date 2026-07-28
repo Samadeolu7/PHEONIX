@@ -82,8 +82,8 @@ class LoanRepaymentScheduleSerializer(TenantModelSerializer):
         model = LoanRepaymentSchedule
         fields = [
             'id', 'loan', 'installment_number', 'due_date',
-            'principal_due', 'interest_due', 'fees_due', 'total_due',
-            'principal_paid', 'interest_paid', 'fees_paid', 'total_paid',
+            'principal_due', 'interest_due', 'fees_due', 'penalty_due', 'total_due',
+            'principal_paid', 'interest_paid', 'fees_paid', 'penalty_paid', 'total_paid',
             'status', 'payment_date', 'days_late',
             'created_at', 'updated_at',
         ]
