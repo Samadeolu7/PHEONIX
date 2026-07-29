@@ -33,9 +33,9 @@
     background: var(--accent);
     border: 1px solid var(--border);
     border-radius: 5px;
-    padding: 10px 16px;
+    padding: 8px 16px;
     font-size: 10.5px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     color: var(--text-mid);
 }
 .payslip-meta .meta-item { display: flex; flex-direction: column; }
@@ -46,8 +46,9 @@
 .info-card {
     border: 1px solid var(--border);
     border-radius: 5px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     overflow: hidden;
+    page-break-inside: avoid;
 }
 .info-card-title {
     font-size: 10px;
@@ -56,17 +57,18 @@
     letter-spacing: 0.8px;
     color: var(--brand);
     background: var(--brand-light);
-    padding: 7px 14px;
+    padding: 6px 14px;
     border-bottom: 1px solid var(--border);
 }
 .info-card-body {
     display: flex;
     flex-wrap: wrap;
-    padding: 4px 0;
+    padding: 2px 0;
 }
 .info-card-body .field-item {
+    flex: 0 0 50%;
     width: 50%;
-    padding: 8px 14px;
+    padding: 6px 14px;
 }
 .info-card-body .field-label {
     font-size: 9px;
@@ -86,7 +88,7 @@
 .pay-columns {
     display: flex;
     gap: 14px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
     align-items: flex-start;
 }
 .pay-col { flex: 1; min-width: 0; }
@@ -166,12 +168,13 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     overflow: hidden;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
+    page-break-inside: avoid;
 }
 .summary-cell {
     flex: 1;
     text-align: center;
-    padding: 10px 8px;
+    padding: 8px 8px;
     border-right: 1px solid var(--border);
 }
 .summary-cell:last-child { border-right: none; background: var(--success-bg); }
@@ -195,22 +198,23 @@
     background: var(--success);
     color: #fff;
     border-radius: 5px;
-    padding: 16px 22px;
+    padding: 12px 22px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
     box-shadow: 0 2px 6px rgba(25,135,84,0.25);
+    page-break-inside: avoid;
 }
 .net-pay-banner .npl { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; }
-.net-pay-banner .npa { font-size: 28px; font-weight: 900; font-family: "Courier New", monospace; }
+.net-pay-banner .npa { font-size: 26px; font-weight: 900; font-family: "Courier New", monospace; }
 .net-pay-words {
     text-align: center;
     font-size: 10.5px;
     color: var(--text-mid);
     font-style: italic;
-    margin-bottom: 16px;
-    padding: 7px;
+    margin-bottom: 12px;
+    padding: 5px;
     border: 1px dashed var(--divider);
     border-radius: 4px;
 }
@@ -221,6 +225,7 @@
     border-radius: 5px;
     margin-bottom: 14px;
     overflow: hidden;
+    page-break-inside: avoid;
 }
 .paye-section-header {
     background: var(--accent);
@@ -288,12 +293,12 @@
     border: 1px solid var(--border);
     border-radius: 5px;
     overflow: hidden;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
 }
 .att-cell {
     flex: 1;
     text-align: center;
-    padding: 10px 4px;
+    padding: 7px 4px;
     border-right: 1px solid var(--border);
     font-size: 10px;
 }
@@ -305,8 +310,9 @@
 .iou-section {
     border: 1px solid var(--border);
     border-radius: 5px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
     overflow: hidden;
+    page-break-inside: avoid;
 }
 .iou-section-header {
     background: var(--accent);
@@ -344,8 +350,8 @@
 .signature-block {
     display: flex;
     justify-content: space-between;
-    margin-top: 24px;
-    padding-top: 14px;
+    margin-top: 14px;
+    padding-top: 10px;
     border-top: 1px solid var(--border);
 }
 .sig-item { text-align: center; flex: 1; }
