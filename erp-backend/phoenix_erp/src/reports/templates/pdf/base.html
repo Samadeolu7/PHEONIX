@@ -35,7 +35,19 @@
         /* Circular gold badge behind the logo — most uploaded logos are a
            square/rect image on a plain white background, which looks like a
            stray white box sitting in the header. A gold disc behind it reads
-           as an intentional medallion instead. */
+           as an intentional medallion instead.
+
+           NOTE: sizing the inner <img> is deliberately done with fixed pixel
+           width/height rather than percentages. Uploaded SVGs frequently
+           declare their own width/height that doesn't match their viewBox
+           (e.g. width="768" viewBox="0 0 576"), and WeasyPrint's flexbox +
+           SVG replaced-element sizing does not reliably honour percentage
+           max-width/max-height in that situation — it can fall back to the
+           SVG's raw intrinsic size and blow the image up way past its
+           container. Fixed px avoids that ambiguity entirely. overflow:hidden
+           on the circle is a hard backstop so a misbehaving logo file is
+           clipped to the badge instead of spilling into the rest of the
+           header. */
         .company-logo {
             width: 72px;
             height: 72px;
@@ -46,12 +58,13 @@
             justify-content: center;
             padding: 8px;
             flex-shrink: 0;
+            overflow: hidden;
             box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }
 
         .company-logo img {
-            max-height: 100%;
-            max-width: 100%;
+            width: 56px;
+            height: 56px;
             object-fit: contain;
         }
 
