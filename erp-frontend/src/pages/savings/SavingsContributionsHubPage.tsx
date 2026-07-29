@@ -31,8 +31,11 @@ export default function SavingsContributionsHubPage() {
   const products: SavingsProductRow[] = useMemo(() => {
     const raw = data as any;
     if (!raw) return [];
-    const list = Array.isArray(raw) ? raw : (raw.results ?? []);
-    return list.filter((p: SavingsProductRow) => !!p.contribution_cycle);
+    // Show every savings product, not just ones with contribution_cycle set —
+    // that field is configured separately from the daily-contribution income
+    // behaviour and is easy to leave unset even on a genuine daily-contribution
+    // product, which would otherwise hide it here entirely.
+    return Array.isArray(raw) ? raw : (raw.results ?? []);
   }, [data]);
 
   return (
@@ -63,9 +66,9 @@ export default function SavingsContributionsHubPage() {
         ) : products.length === 0 ? (
           <div className="bg-white rounded-xl border border-gray-200 p-10 text-center">
             <Calculator className="w-8 h-8 text-gray-300 mx-auto mb-3" />
-            <p className="text-sm font-medium text-gray-700">No cycle-based savings products yet</p>
+            <p className="text-sm font-medium text-gray-700">No savings products yet</p>
             <p className="text-xs text-gray-400 mt-1">
-              Set a contribution cycle on a savings product to manage client amounts here.
+              Create a savings product to manage client contribution amounts here.
             </p>
           </div>
         ) : (
@@ -82,7 +85,9 @@ export default function SavingsContributionsHubPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-gray-900 truncate">{p.name}</p>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    {CYCLE_LABEL[p.contribution_cycle ?? ''] ?? p.contribution_cycle} cycle
+                    {p.contribution_cycle
+                      ? `${CYCLE_LABEL[p.contribution_cycle] ?? p.contribution_cycle} cycle`
+                      : 'No cycle configured'}
                     {p.contribution_amount ? ` · Default ₦${parseFloat(p.contribution_amount).toLocaleString('en-NG', { minimumFractionDigits: 2 })}` : ''}
                   </p>
                 </div>
