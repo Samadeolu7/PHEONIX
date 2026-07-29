@@ -1,5 +1,6 @@
 from django.db import models, transaction as db_tx
 from django.contrib.auth.models import AbstractUser, Permission, Group
+from django.core.validators import FileExtensionValidator
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
 from django.apps import apps
@@ -142,11 +143,15 @@ class Tenant(models.Model):
     )
 
     # ── Branding ──────────────────────────────────────────────────────────────
-    logo = models.ImageField(
+    # Plain FileField rather than ImageField: ImageField validates uploads by
+    # opening them with Pillow, which cannot read SVG (a vector, not raster,
+    # format) and would reject every SVG logo at the form/admin layer.
+    logo = models.FileField(
         upload_to='tenant_logos/',
         null=True,
         blank=True,
-        help_text='Upload tenant/organisation logo (PNG, JPG, SVG)'
+        validators=[FileExtensionValidator(allowed_extensions=['png', 'jpg', 'jpeg', 'svg', 'webp', 'gif'])],
+        help_text='Upload tenant/organisation logo (PNG, JPG, SVG, WEBP, GIF)'
     )
     logo_url = models.URLField(blank=True, help_text='External URL to tenant logo (used if no file uploaded)')
     primary_color = models.CharField(

@@ -70,8 +70,9 @@ class PayrollService:
                     payroll_currency='USD',
                     payroll_frequency='monthly',
                     tax_rate_percentage=0,
-                    enable_pension=True,
+                    enable_pension=False,
                     enable_paye=True,
+                    enable_development_levy=False,
                 )
                 self.config.save()
             elif self.config.is_deleted:

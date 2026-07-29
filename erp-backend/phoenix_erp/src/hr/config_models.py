@@ -157,7 +157,7 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     # ── Pension Settings ──────────────────────────────────────────────────────
     enable_pension = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Enable pension deduction and employer contribution for this branch"
     )
 
@@ -191,7 +191,7 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     # ── Development Levy (Nigeria Tax Act 2024 — Third Schedule, Part II) ─────
     enable_development_levy = models.BooleanField(
-        default=True,
+        default=False,
         help_text="Deduct the annual Development Levy per employee (NTA 2024)"
     )
 
@@ -245,11 +245,11 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             'staff_id_prefix': 'STF',
             'staff_id_padding': 3,
             'staff_id_current_number': 1,
-            'enable_pension': True,
+            'enable_pension': False,
             'employee_pension_rate': Decimal('8.00'),
             'employer_pension_rate': Decimal('10.00'),
             'enable_paye': True,
-            'enable_development_levy': True,
+            'enable_development_levy': False,
             'development_levy_annual_amount': Decimal('1000.00'),
         }
 
