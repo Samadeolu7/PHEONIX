@@ -2,6 +2,7 @@
 from decimal import Decimal
 from django.db import models
 from django.conf import settings
+from django.core.serializers.json import DjangoJSONEncoder
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
 
@@ -916,6 +917,7 @@ class Payslip(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     overtime_pay = models.DecimalField(max_digits=18, decimal_places=2, default=0)
     allowances = models.JSONField(
         default=dict,
+        encoder=DjangoJSONEncoder,
         help_text=(
             'Dict of allowance_name: {amount, is_taxable}. '
             'Example: {"Housing Allowance": {"amount": 50000, "is_taxable": true}}'
@@ -936,6 +938,7 @@ class Payslip(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     )
     paye_breakdown = models.JSONField(
         default=list,
+        encoder=DjangoJSONEncoder,
         help_text=(
             'List of PAYE band details for audit. '
             'Each item: {band, rate, amount_in_band, tax_in_band, cumulative_balance}'
@@ -950,6 +953,7 @@ class Payslip(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     )
     deductions = models.JSONField(
         default=dict,
+        encoder=DjangoJSONEncoder,
         help_text="Dict of deduction_name: amount"
     )
 
