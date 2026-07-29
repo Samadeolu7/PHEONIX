@@ -197,6 +197,17 @@ export interface CreateSavingsAccountData {
 export const createSavingsAccount = (data: CreateSavingsAccountData): Promise<SavingsAccount> =>
   api.post(BASE_ACCOUNTS + '/', data);
 
+export interface BulkContributionAmountUpdate {
+  id: number;
+  /** Pass null to clear the override and fall back to the product default. */
+  contribution_amount: string | null;
+}
+
+export const bulkSetContributionAmounts = (
+  updates: BulkContributionAmountUpdate[]
+): Promise<{ updated: number }> =>
+  api.post(BASE_ACCOUNTS + '/bulk-set-contribution-amount/', { updates });
+
 // Compulsory Savings Policy
 export const getCompulsorySavingsPolicies = async (): Promise<CompulsorySavingsPolicy[]> => {
   const response = await api.get(BASE_POLICY + '/');

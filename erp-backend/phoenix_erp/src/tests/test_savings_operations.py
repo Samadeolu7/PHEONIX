@@ -473,3 +473,101 @@ class SavingsAPITests(TestCase):
     def test_compulsory_policy_list_returns_200(self):
         resp = self.api.get("/api/savings/policies/")
         self.assertIn(resp.status_code, [200, 404])
+
+
+# ---------------------------------------------------------------------------
+# Bulk client contribution amounts
+# ---------------------------------------------------------------------------
+
+class BulkSetContributionAmountTests(TestCase):
+    """
+    Coverage for SavingsAccountViewSet.bulk_set_contribution_amount — lets an
+    officer set/override every client's committed contribution amount for a
+    product in one call instead of editing accounts one at a time.
+    """
+
+    def setUp(self):
+        self.user, self.tenant, self.branch = _make_env("bulk_ca")
+        _, self.child_acc, self.product, self.client = _make_savings_setup(
+            self.user, self.tenant, self.branch
+        )
+        self.sa = SavingsAccount.objects.create(
+            client=self.client, account=self.child_acc, product=self.product,
+            account_number="SAV-BULK-001", interest_rate=Decimal("0.00"),
+            interest_calculation_method="monthly", minimum_balance=Decimal("0.00"),
+            opened_on=timezone.now().date(), status="active",
+            owner=self.user, branch=self.branch,
+        )
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.user)
+
+    def test_bulk_set_contribution_amount_updates_account(self):
+        resp = self.api.post(
+            "/api/savings/accounts/bulk-set-contribution-amount/",
+            {"updates": [{"id": self.sa.id, "contribution_amount": "750.00"}]},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.sa.refresh_from_db()
+        self.assertEqual(self.sa.contribution_amount, Decimal("750.00"))
+
+    def test_bulk_set_contribution_amount_null_clears_override(self):
+        self.sa.contribution_amount = Decimal("500.00")
+        self.sa.save(update_fields=['contribution_amount'])
+
+        resp = self.api.post(
+            "/api/savings/accounts/bulk-set-contribution-amount/",
+            {"updates": [{"id": self.sa.id, "contribution_amount": None}]},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.sa.refresh_from_db()
+        self.assertIsNone(self.sa.contribution_amount)
+
+    def test_bulk_set_contribution_amount_rejects_account_outside_tenant(self):
+        # Branch.code is globally unique, so build the second tenant's env by
+        # hand rather than reusing _make_env (which hardcodes code="HQ" and
+        # would collide with self.branch created in setUp).
+        other_user = User.objects.create_user(username="bulk_ca_other", password="pass")
+        other_tenant = Tenant.objects.create(name="T-bulk_ca_other", slug="t-bulk-ca-other", owner=other_user)
+        other_user.tenant = other_tenant
+        other_user.save()
+        other_branch = Branch.objects.create(name="HQ2", code="HQ2", tenant=other_tenant, owner=other_user)
+        other_user.branch = other_branch
+        other_user.save()
+        set_current_tenant(other_tenant)
+        other_parent_acc = Account.objects.create(
+            name="Savings Accounts 2", code="2200", account_type=Account.SAVINGS,
+            account_level=Account.LEVEL_PARENT, owner=other_user, created_by=other_user, branch=other_branch,
+        )
+        other_child = Account.objects.create(
+            name="Other Savings", code="2201", account_type=Account.SAVINGS,
+            account_level=Account.LEVEL_CHILD, parent=other_parent_acc,
+            owner=other_user, created_by=other_user, branch=other_branch,
+        )
+        other_product = Product.objects.create(
+            name="Other Regular Savings", product_type="SAVINGS",
+            owner=other_user, branch=other_branch,
+        )
+        other_client = Client.objects.create(
+            client_id="S-CLI-OTHER", first_name="Other", last_name="Client",
+            gender="male", phone_primary="08033333333",
+            tenant=other_tenant, owner=other_user, branch=other_branch,
+        )
+        other_sa = SavingsAccount.objects.create(
+            client=other_client, account=other_child, product=other_product,
+            account_number="SAV-BULK-OTHER", interest_rate=Decimal("0.00"),
+            interest_calculation_method="monthly", minimum_balance=Decimal("0.00"),
+            opened_on=timezone.now().date(), status="active",
+            owner=other_user, branch=other_branch,
+        )
+        set_current_tenant(self.tenant)
+
+        resp = self.api.post(
+            "/api/savings/accounts/bulk-set-contribution-amount/",
+            {"updates": [{"id": other_sa.id, "contribution_amount": "100.00"}]},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 404)
+        other_sa.refresh_from_db()
+        self.assertIsNone(other_sa.contribution_amount)

@@ -1097,6 +1097,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'savings-contributions',
+    title: '🧮 Client Contribution Amounts',
+    description:
+      'Set or update what each client has committed to contribute per cycle — the amount capped as first-deposit income',
+    path: '/savings/contributions',
+    icon: Calculator,
+    requiredPermission: 'savings-accounts-view',
+    moduleId: 'client-services',
+    category: 'Savings',
+    isNew: true,
+  },
+  {
     id: 'savings-withdrawals',
     title: '💸 Withdrawal Approvals',
     description:

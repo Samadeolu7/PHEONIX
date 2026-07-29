@@ -303,6 +303,14 @@ export default function SavingsProductConfigPage() {
             </h1>
             <p className="text-xs text-gray-500">Define behaviour rules for this savings product</p>
           </div>
+          {isDailyContribution && (
+            <button
+              onClick={() => navigate(`/savings/products/${productId}/contributions`)}
+              className="flex items-center gap-1.5 text-sm text-blue-600 border border-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50 transition-colors"
+            >
+              Manage client amounts
+            </button>
+          )}
           <button
             onClick={loadConfig}
             disabled={configLoading}

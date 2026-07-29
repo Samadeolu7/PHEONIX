@@ -412,6 +412,8 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/savings/collection/sheet': { module: 'savings', page: 'savings-collection', action: 'view' },
   '/savings/collection/spreadsheet': { module: 'savings', page: 'savings-collection', action: 'view' },
   '/savings/combined-receipt': { module: 'savings', page: 'combined-receipt', action: 'view' },
+  '/savings/contributions': { module: 'savings', page: 'savings-accounts', action: 'edit' },
+  '/savings/products/:id/contributions': { module: 'savings', page: 'savings-accounts', action: 'edit' },
   '/savings/deposit': { module: 'savings', page: 'savings-deposit', action: 'create' },
   '/savings/group-combined-receipt': { module: 'savings', page: 'combined-receipt', action: 'view' },
   '/savings/policy': { module: 'savings', page: 'compulsory-savings-policies', action: 'view' },

@@ -555,6 +555,8 @@ const SavingsAccountFormPage = lazy(() => import('./pages/savings/SavingsAccount
 const SavingsDepositPage = lazy(() => import('./pages/savings/SavingsDepositPage'));
 const SavingsPolicyPage = lazy(() => import('./pages/savings/SavingsPolicyPage'));
 const SavingsProductConfigPage = lazy(() => import('./pages/savings/SavingsProductConfigPage'));
+const SavingsProductContributionsPage = lazy(() => import('./pages/savings/SavingsProductContributionsPage'));
+const SavingsContributionsHubPage = lazy(() => import('./pages/savings/SavingsContributionsHubPage'));
 const SavingsWithdrawalsPage = lazy(() => import('./pages/savings/SavingsWithdrawalsPage'));
 
 // Loan Accounts list page
@@ -4072,6 +4074,26 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="product-list" module="products" page="products" action="edit">
                                       <SavingsProductConfigPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Savings — Bulk client contribution amounts for a product */}
+                                <Route
+                                  path="/savings/products/:id/contributions"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-accounts" action="edit">
+                                      <SavingsProductContributionsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Savings — Client contribution amounts hub (product picker) */}
+                                <Route
+                                  path="/savings/contributions"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-accounts" action="edit">
+                                      <SavingsContributionsHubPage />
                                     </ProtectedRoute>
                                   }
                                 />

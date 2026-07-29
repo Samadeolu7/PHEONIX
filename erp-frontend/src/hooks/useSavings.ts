@@ -16,6 +16,7 @@ import {
   markContributionPaid,
   generateScheduleForMonth,
   createSavingsAccount,
+  bulkSetContributionAmounts,
   getCompulsorySavingsPolicies,
   updateCompulsorySavingsPolicy,
   createCompulsorySavingsPolicy,
@@ -47,6 +48,7 @@ import {
   type SavingsDepositPayload,
   type InitiateWithdrawalData,
   type GenerateScheduleResult,
+  type BulkContributionAmountUpdate,
   type ContributionCycle,
   type ContributionStatus,
   type SmartSavingsAccount,
@@ -263,6 +265,19 @@ export const useCreateSavingsAccount = (
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data) => createSavingsAccount(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: savingsKeys.accounts() });
+    },
+    ...options,
+  });
+};
+
+export const useBulkSetContributionAmounts = (
+  options?: Omit<UseMutationOptions<{ updated: number }, Error, BulkContributionAmountUpdate[]>, 'mutationFn'>
+) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates) => bulkSetContributionAmounts(updates),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: savingsKeys.accounts() });
     },

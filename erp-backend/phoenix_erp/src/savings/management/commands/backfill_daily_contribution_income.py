@@ -36,6 +36,13 @@ Idempotent / safe to re-run:
     pushed negative (e.g. the client has since withdrawn some of that
     deposit). Any shortfall is reported for manual follow-up, never silently
     dropped or partially misapplied without a warning.
+  - Caps each correction at the client's own committed contribution amount
+    (SavingsAccount.contribution_amount / ContributionSchedule.expected_amount
+    for that date / the product default, in that priority) — mirrors the live
+    handle_first_deposit_income() cap added alongside this fix. If the
+    original deposit exceeded that amount (e.g. several days paid on one
+    instrument), only the committed portion is swept; the excess was
+    correctly a genuine deposit and is left in the savings balance.
 
 Dry-run by default — it only reads and reports. Nothing is written unless
 --apply is passed.
@@ -120,7 +127,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from accounts.models import Account
-        from savings.models import SavingsProduct, SavingsAccount
+        from savings.models import SavingsProduct, SavingsAccount, ContributionSchedule
         from transactions.models import (
             Transaction as JournalEntry,
             TransactionEntry,
@@ -265,30 +272,54 @@ class Command(BaseCommand):
                         continue
 
                     original_amount = earliest_credit.amount
+
+                    # Cap at what this client actually committed to that day —
+                    # mirrors the live handle_first_deposit_income() cap. An
+                    # officer may have posted several days' worth on one
+                    # instrument; only the committed portion is income, the
+                    # rest was correctly a genuine deposit and must NOT be
+                    # swept out of the savings balance retroactively.
+                    schedule_row = ContributionSchedule.objects.filter(
+                        savings_account=sa, expected_date=earliest_credit.transaction.date,
+                    ).first()
+                    committed_amount = (
+                        schedule_row.expected_amount if schedule_row
+                        else sa.effective_contribution_amount
+                    )
+                    capped_by_commitment = bool(
+                        committed_amount and committed_amount > Decimal('0.00')
+                        and original_amount > committed_amount
+                    )
+                    intended_amount = committed_amount if capped_by_commitment else original_amount
+
                     current_balance = sa.account.balance
-                    correction_amount = min(original_amount, current_balance)
+                    correction_amount = min(intended_amount, current_balance)
 
                     if correction_amount <= Decimal('0.00'):
                         shortfalls.append(
-                            f"{sa.account_number}: {year}-{month:02d} first deposit was "
-                            f"NGN {original_amount:,.2f} but current balance is "
+                            f"{sa.account_number}: {year}-{month:02d} intended sweep was "
+                            f"NGN {intended_amount:,.2f} but current balance is "
                             f"NGN {current_balance:,.2f} — nothing available, skipped."
                         )
                         cursor = _next_month(cursor)
                         continue
 
-                    if correction_amount < original_amount:
+                    if correction_amount < intended_amount:
                         shortfalls.append(
-                            f"{sa.account_number}: {year}-{month:02d} first deposit was "
-                            f"NGN {original_amount:,.2f} but only NGN {correction_amount:,.2f} "
+                            f"{sa.account_number}: {year}-{month:02d} intended sweep was "
+                            f"NGN {intended_amount:,.2f} but only NGN {correction_amount:,.2f} "
                             f"available (balance reduced by withdrawals since) — partial sweep."
                         )
 
+                    cap_note = (
+                        f" (original deposit NGN {original_amount:,.2f}, capped to "
+                        f"committed amount NGN {committed_amount:,.2f} — excess stays "
+                        f"in savings balance)" if capped_by_commitment else
+                        f" (original deposit NGN {original_amount:,.2f} on {earliest_credit.transaction.date})"
+                    )
                     self.stdout.write(
                         f"    {sa.account_number} {year}-{month:02d}: sweep "
-                        f"NGN {correction_amount:,.2f} (original deposit "
-                        f"NGN {original_amount:,.2f} on {earliest_credit.transaction.date}) "
-                        f"[apply={apply_changes}]"
+                        f"NGN {correction_amount:,.2f}{cap_note} [apply={apply_changes}]"
                     )
 
                     if apply_changes:

@@ -152,6 +152,56 @@ class SavingsAccountViewSet(ScopedModelViewSet):
             )
         return qs
 
+    @action(detail=False, methods=['post'], url_path='bulk-set-contribution-amount')
+    @transaction.atomic
+    def bulk_set_contribution_amount(self, request):
+        """
+        Set/override each client's own committed contribution amount in bulk.
+
+        Body: {"updates": [{"id": 1, "contribution_amount": "500.00" | null}, ...]}
+        Only accounts within the caller's scoped queryset (tenant/branch/
+        officer visibility, same as list/retrieve) may be updated.
+        """
+        updates = request.data.get('updates')
+        if not isinstance(updates, list) or not updates:
+            return Response(
+                {'detail': "'updates' must be a non-empty list of {id, contribution_amount}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        by_id = {}
+        for row in updates:
+            try:
+                account_id = int(row['id'])
+            except (KeyError, TypeError, ValueError):
+                return Response({'detail': f'Invalid account id in updates: {row!r}'}, status=400)
+            raw_amount = row.get('contribution_amount')
+            if raw_amount in (None, ''):
+                by_id[account_id] = None
+                continue
+            try:
+                by_id[account_id] = Decimal(str(raw_amount))
+            except Exception:
+                return Response(
+                    {'detail': f'Invalid contribution_amount for account {account_id}: {raw_amount!r}'},
+                    status=400,
+                )
+
+        accounts = list(self.get_queryset().filter(id__in=by_id.keys()))
+        found_ids = {a.id for a in accounts}
+        missing_ids = set(by_id.keys()) - found_ids
+        if missing_ids:
+            return Response(
+                {'detail': f'Account(s) not found or not accessible: {sorted(missing_ids)}'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        for account in accounts:
+            account.contribution_amount = by_id[account.id]
+        SavingsAccount.objects.bulk_update(accounts, ['contribution_amount'])
+
+        return Response({'updated': len(accounts)}, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'], url_path='generate-schedule')
     def generate_schedule(self, request, pk=None):
         """
