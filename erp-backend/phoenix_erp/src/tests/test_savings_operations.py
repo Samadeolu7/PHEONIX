@@ -614,3 +614,37 @@ class SavingsProductConfigUpsertTests(TestCase):
         self.assertTrue(second.json()["is_daily_contribution"])
 
         self.assertEqual(SavingsProduct.objects.filter(product=self.product).count(), 1)
+
+    def test_config_visible_regardless_of_director_branch_switcher(self):
+        """
+        A director/owner saves the config while one branch is selected in the
+        switcher (X-Branch-ID), then reloads the page with a DIFFERENT branch
+        selected. The config must still be there — a per-product setting like
+        this isn't branch-specific, so it must not be hidden by the switcher.
+        Previously ScopedModelViewSet's default get_queryset() applied a
+        strict `branch=<switcher branch>` filter with no tenant-wide
+        allowance, so this looked like the save had silently reverted.
+        """
+        other_branch = Branch.objects.create(
+            name="Other Branch", code="OTHERBR", tenant=self.tenant, owner=self.user,
+        )
+
+        created = self.api.post(
+            "/api/savings/product-configs/",
+            {"product": self.product.id, "is_daily_contribution": True},
+            format="json",
+            HTTP_X_BRANCH_ID=str(self.branch.id),
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+
+        # Reload as if the director switched to a different branch afterwards.
+        fetched = self.api.get(
+            "/api/savings/product-configs/",
+            {"product": self.product.id},
+            HTTP_X_BRANCH_ID=str(other_branch.id),
+        )
+        self.assertEqual(fetched.status_code, 200, fetched.content)
+        results = fetched.json()
+        results = results if isinstance(results, list) else results.get('results', [])
+        self.assertEqual(len(results), 1, results)
+        self.assertTrue(results[0]['is_daily_contribution'])

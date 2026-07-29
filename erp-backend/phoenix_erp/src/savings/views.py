@@ -651,7 +651,23 @@ class SavingsProductConfigViewSet(ScopedModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsTenantUser]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        """
+        Deliberately bypasses ScopedModelViewSet's default get_queryset(): its
+        director-branch-switcher override (X-Branch-ID) strictly filters to
+        one exact branch with no allowance for tenant-wide records. A savings
+        product's contribution/income-sweep config is a per-product setting,
+        not something that should vary — or disappear — based on which branch
+        a director currently has selected in the switcher. Whatever branch it
+        happened to be created under (branch selection is still required at
+        create time by the base ViewSet), it must stay visible afterwards
+        regardless of switcher state, or a save "appears to revert" the next
+        time the page loads under a different branch selection.
+        """
+        user = self.request.user
+        if getattr(user, 'is_system_admin', False):
+            qs = SavingsProduct.objects.all_tenants()
+        else:
+            qs = SavingsProduct.objects.for_user(user)
         product_id = self.request.query_params.get('product')
         if product_id:
             qs = qs.filter(product_id=product_id)

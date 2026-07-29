@@ -29,6 +29,8 @@ import { loanService, LoanAccountList, LoanRepaymentSchedule } from '../../servi
 import type { SavingsAccount } from '../../services/savingsService';
 import { getSavingsAccounts, depositToSavings } from '../../services/savingsService';
 import api from '../../services/api';
+import { BankAccount } from '../../types/banks';
+import { bankService } from '../../services/bankService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -168,6 +170,12 @@ export default function GroupCombinedReceiptPage() {
   // Payment mode
   const [paymentMode, setPaymentMode] = useState<'cash' | 'bank_transfer'>('cash');
   const [bankReference, setBankReference] = useState('');
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [bankAccountId, setBankAccountId] = useState<number | ''>('');
+
+  useEffect(() => {
+    bankService.listBankAccounts({ is_active: true }).then(setBankAccounts);
+  }, []);
 
   // Posting
   const [postingStatus, setPostingStatus] = useState<PostingStatus>('idle');
@@ -303,6 +311,10 @@ export default function GroupCombinedReceiptPage() {
       setSubmitError('Bank reference is required for bank transfers.');
       return;
     }
+    if (paymentMode === 'bank_transfer' && !bankAccountId) {
+      setSubmitError('Please select a destination bank account.');
+      return;
+    }
     if (anyRed) {
       setSubmitError('Cannot post: some members have insufficient funds. Resolve red rows first.');
       return;
@@ -332,16 +344,20 @@ export default function GroupCombinedReceiptPage() {
           payment_date: collectionDate,
           payment_mode: paymentMode,
           bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
+          bank_account_id: paymentMode === 'bank_transfer' ? Number(bankAccountId) : undefined,
         });
 
         // Post savings deposit if surplus > 0
+        // NOTE: the savings deposit endpoint reads `payment_method` ('cash'|'bank') and
+        // `bank_account_id`, not the `payment_mode`/`bank_reference` convention used by
+        // loan repayments — sending the wrong keys silently falls back to a cash posting.
         if (row.surplus > 0 && row.savingsAccount) {
           await depositToSavings(row.savingsAccount.id, {
             amount: String(row.surplus),
             date: collectionDate,
             description: `Group combined receipt — surplus`,
-            payment_mode: paymentMode,
-            bank_reference: paymentMode === 'bank_transfer' ? bankReference : undefined,
+            payment_method: paymentMode === 'bank_transfer' ? 'bank' : 'cash',
+            bank_account_id: paymentMode === 'bank_transfer' ? Number(bankAccountId) : undefined,
           });
         }
 
@@ -673,22 +689,44 @@ export default function GroupCombinedReceiptPage() {
                   </div>
                 </div>
 
-                {/* Bank reference */}
+                {/* Bank account + reference */}
                 {paymentMode === 'bank_transfer' && (
-                  <div className="flex-1 min-w-[220px]">
-                    <label className="mb-1 block text-sm font-medium text-gray-700">
-                      Bank Reference <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      value={bankReference}
-                      onChange={e => setBankReference(e.target.value)}
-                      placeholder="e.g. TRF/20240617/1234567"
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
-                      required={paymentMode === 'bank_transfer'}
-                      disabled={postingStatus === 'posting'}
-                    />
-                  </div>
+                  <>
+                    <div className="min-w-[240px]">
+                      <label className="mb-1 block text-sm font-medium text-gray-700">
+                        Destination Bank Account <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        aria-label="Destination Bank Account"
+                        value={bankAccountId}
+                        onChange={e => setBankAccountId(e.target.value ? Number(e.target.value) : '')}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                        required
+                        disabled={postingStatus === 'posting'}
+                      >
+                        <option value="">Select bank account</option>
+                        {bankAccounts.map(acc => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.bank_name} — {acc.account_number} ({acc.account_name})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex-1 min-w-[220px]">
+                      <label className="mb-1 block text-sm font-medium text-gray-700">
+                        Bank Reference <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={bankReference}
+                        onChange={e => setBankReference(e.target.value)}
+                        placeholder="e.g. TRF/20240617/1234567"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                        required
+                        disabled={postingStatus === 'posting'}
+                      />
+                    </div>
+                  </>
                 )}
 
                 {/* Shortfall info */}
@@ -715,7 +753,7 @@ export default function GroupCombinedReceiptPage() {
                       postingStatus === 'posting' ||
                       anyRed ||
                       rows.every(r => r.status === 'skipped') ||
-                      (paymentMode === 'bank_transfer' && !bankReference.trim())
+                      (paymentMode === 'bank_transfer' && (!bankReference.trim() || !bankAccountId))
                     }
                     className="flex items-center gap-2 rounded-lg bg-[#0a1857] px-5 py-2 text-sm font-medium text-white hover:bg-[#060e30] disabled:opacity-50"
                   >
