@@ -81,6 +81,21 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         ('on_demand', 'On Demand')
     ], default='monthly')
 
+    # This client's own committed contribution amount per cycle (daily/weekly/
+    # monthly, per the product's contribution_cycle), captured at account
+    # opening. Overrides the product's flat contribution_amount default —
+    # different clients on the same daily-contribution product can commit to
+    # different amounts. Falls back to product.contribution_amount when null
+    # (e.g. accounts opened before this field existed).
+    contribution_amount = models.DecimalField(
+        max_digits=18, decimal_places=2,
+        null=True, blank=True,
+        help_text=(
+            "This client's committed contribution amount per cycle. "
+            "Overrides the product's default contribution_amount when set."
+        ),
+    )
+
     # For weekly-cycle accounts: which weekday contributions are expected (0=Monday … 6=Sunday)
     contribution_day_of_week = models.IntegerField(
         null=True,
@@ -94,6 +109,11 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
+
+    @property
+    def effective_contribution_amount(self):
+        """This client's own committed amount, falling back to the product default."""
+        return self.contribution_amount or self.product.contribution_amount
 
     @property
     def current_balance(self):

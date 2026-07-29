@@ -3243,6 +3243,22 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 raise ValidationError(
                     "savings_account must be set for a savings_deposit item."
                 )
+            # First-deposit-as-income check: on a daily-contribution product
+            # configured to sweep the first deposit of the calendar month to
+            # income, this must run before crediting the savings balance —
+            # otherwise the collection-sheet channel bypasses the same rule
+            # already enforced in SavingsAccountViewSet.deposit /
+            # ContributionScheduleViewSet.mark_paid.
+            from savings.services import handle_first_deposit_income
+            _journal, was_income = handle_first_deposit_income(
+                savings_account=self.savings_account,
+                amount=self.amount_collected,
+                deposit_date=self.sheet.collection_date,
+                cashier_account=payment_gl_account,
+                transacted_by=user,
+            )
+            if was_income:
+                return _journal
             # deposit creates, posts, and now returns the journal entry.
             return self.savings_account.deposit(
                 amount=self.amount_collected,

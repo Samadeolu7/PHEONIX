@@ -53,7 +53,7 @@ def _generate_month_schedule(savings_account, year, month):
     Existing rows for the same account/date are skipped (idempotent).
     """
     cycle = savings_account.product.contribution_cycle
-    amount = savings_account.product.contribution_amount or Decimal('0.00')
+    amount = savings_account.effective_contribution_amount or Decimal('0.00')
     if not cycle or amount <= 0:
         return []
 
@@ -499,8 +499,13 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
 
         # First-deposit-as-income check: if this is the first deposit of the
         # calendar month on a daily-contribution product configured to treat
-        # the first payment as income, the full amount goes to the income GL
-        # and the savings balance is NOT credited.
+        # the first payment as income, the committed amount goes to the
+        # income GL and the savings balance is NOT credited for that portion.
+        # committed_amount is passed explicitly as this schedule row's own
+        # expected_amount — deposit_date is "today" (when marked paid), which
+        # may differ from schedule.expected_date for a backdated/late
+        # contribution, so the service's own date-based auto-lookup could
+        # otherwise resolve a different (wrong) schedule row.
         from .services import handle_first_deposit_income
         journal, was_income = handle_first_deposit_income(
             savings_account=schedule.savings_account,
@@ -508,6 +513,7 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
             deposit_date=timezone.localdate(),
             cashier_account=cashier_account,
             transacted_by=request.user,
+            committed_amount=schedule.expected_amount,
         )
 
         if not was_income:

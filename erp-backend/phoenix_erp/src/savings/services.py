@@ -14,7 +14,7 @@ from django.core.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 
 from .models import (
-    SavingsAccount, SavingsProduct,
+    SavingsAccount, SavingsProduct, ContributionSchedule,
     WithdrawalApprovalTier, SavingsWithdrawalRequest, WithdrawalApprovalStep,
     SmartSavingsAccount, SmartSavingsEvent,
 )
@@ -33,14 +33,30 @@ def handle_first_deposit_income(
     deposit_date,
     cashier_account,
     transacted_by,
+    committed_amount: Decimal | None = None,
 ) -> tuple[object | None, bool]:
     """
     Called before every deposit on a daily-contribution account.
 
     Checks whether this is the FIRST deposit of the current calendar month.
     If yes AND the linked SavingsProduct has first_deposit_is_income=True,
-    posts the FULL amount as income (does NOT credit the savings balance) and
-    returns (journal_entry, True).
+    sweeps this client's committed contribution amount to income (does NOT
+    credit the savings balance for that portion) and returns
+    (journal_entry, True). The committed amount is capped at `amount` itself
+    when the client under-pays.
+
+    `amount` collected may exceed what this specific client was expected to
+    contribute that day — e.g. several days' worth paid on one instrument.
+    Only the committed amount is swept to income; any excess is deposited to
+    the savings balance normally as part of this same call, so callers must
+    still treat a True return as "the full amount has been handled".
+
+    `committed_amount` lets a caller that already knows the exact expected
+    amount for this deposit (e.g. ContributionScheduleViewSet.mark_paid,
+    which is paying a specific, possibly backdated, schedule row) pass it in
+    directly. When omitted, it is looked up from ContributionSchedule for
+    (savings_account, expected_date=deposit_date), falling back to the
+    product's default contribution_amount.
 
     If not the first deposit of the month, returns (None, False) and the
     caller should proceed with a normal deposit.
@@ -95,7 +111,28 @@ def handle_first_deposit_income(
         # Not the first deposit — normal flow
         return None, False
 
-    # First deposit of the month → post as income
+    # Cap the sweep at what THIS client was actually expected to contribute
+    # today — not the raw amount collected. An officer may post several
+    # days' worth on a single instrument; only the committed portion is
+    # income, the rest is a genuine deposit and must still reach the
+    # client's savings balance.
+    if committed_amount is None:
+        schedule_row = ContributionSchedule.objects.filter(
+            savings_account=savings_account, expected_date=today,
+        ).first()
+        committed_amount = (
+            schedule_row.expected_amount if schedule_row
+            else savings_account.effective_contribution_amount
+        )
+
+    if committed_amount and committed_amount > Decimal('0.00') and amount > committed_amount:
+        income_amount = committed_amount
+        excess_amount = amount - committed_amount
+    else:
+        income_amount = amount
+        excess_amount = Decimal('0.00')
+
+    # First deposit of the month → post the committed portion as income
     from transactions.models import (
         Transaction as JournalEntry,
         TransactionEntry,
@@ -125,7 +162,7 @@ def handle_first_deposit_income(
         transaction=journal,
         account=cashier_account,
         side=TransactionEntry.DEBIT,
-        amount=amount,
+        amount=income_amount,
     )
 
     # Credit: Income account (does NOT touch savings balance)
@@ -133,7 +170,7 @@ def handle_first_deposit_income(
         transaction=journal,
         account=config.first_deposit_income_account,
         side=TransactionEntry.CREDIT,
-        amount=amount,
+        amount=income_amount,
     )
 
     journal.post()
@@ -141,6 +178,18 @@ def handle_first_deposit_income(
     savings_account.last_transaction_date = today
     savings_account.last_first_deposit_income_date = today
     savings_account.save(update_fields=['last_transaction_date', 'last_first_deposit_income_date'])
+
+    if excess_amount > Decimal('0.00'):
+        savings_account.deposit(
+            amount=excess_amount,
+            description=(
+                f"Deposit above expected first-day amount – "
+                f"{savings_account.account_number}"
+            ),
+            cashier_account=cashier_account,
+            transacted_by=transacted_by,
+            date=today,
+        )
 
     return journal, True
 

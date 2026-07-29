@@ -166,9 +166,14 @@ class FirstDepositIncomeTests(TestCase):
         _, self.child_acc, self.product, self.client = _make_savings_setup(
             self.user, self.tenant, self.branch
         )
+        cash_parent = Account.objects.create(
+            name="Cash", code="1000", account_type=Account.ASSET,
+            account_level=Account.LEVEL_PARENT, owner=self.user,
+            created_by=self.user, branch=self.branch,
+        )
         self.cashier_acc = Account.objects.create(
             name="Cash Till", code="1001", account_type=Account.ASSET,
-            account_level=Account.LEVEL_CHILD, owner=self.user,
+            account_level=Account.LEVEL_CHILD, parent=cash_parent, owner=self.user,
             created_by=self.user, branch=self.branch,
         )
         income_parent = Account.objects.create(
@@ -258,6 +263,53 @@ class FirstDepositIncomeTests(TestCase):
             transacted_by=self.user,
         )
         self.assertTrue(was_income)
+
+    def test_first_deposit_above_committed_amount_sweeps_only_committed_portion(self):
+        """
+        If the amount collected exceeds what this client committed to (e.g.
+        several days paid on one instrument), only the committed amount is
+        income — the excess must still land in the savings balance.
+        """
+        self.sa.contribution_amount = Decimal("500.00")
+        self.sa.save(update_fields=['contribution_amount'])
+
+        journal, was_income = self._deposit("800.00", day=1)
+        self.assertTrue(was_income)
+        self.child_acc.refresh_from_db()
+        self.income_acc.refresh_from_db()
+        self.assertEqual(self.income_acc.balance, Decimal("500.00"))
+        self.assertEqual(self.child_acc.balance, Decimal("300.00"))
+
+    def test_first_deposit_at_or_below_committed_amount_is_fully_income(self):
+        self.sa.contribution_amount = Decimal("500.00")
+        self.sa.save(update_fields=['contribution_amount'])
+
+        _, was_income = self._deposit("500.00", day=1)
+        self.assertTrue(was_income)
+        self.child_acc.refresh_from_db()
+        self.income_acc.refresh_from_db()
+        self.assertEqual(self.income_acc.balance, Decimal("500.00"))
+        self.assertEqual(self.child_acc.balance, Decimal("0.00"))
+
+    def test_explicit_committed_amount_overrides_account_and_schedule(self):
+        """Callers that already know the exact expected amount (e.g. mark_paid
+        paying a specific schedule row) can pass committed_amount directly."""
+        self.sa.contribution_amount = Decimal("500.00")
+        self.sa.save(update_fields=['contribution_amount'])
+
+        journal, was_income = handle_first_deposit_income(
+            savings_account=self.sa,
+            amount=Decimal("800.00"),
+            deposit_date=timezone.now().date().replace(day=1),
+            cashier_account=self.cashier_acc,
+            transacted_by=self.user,
+            committed_amount=Decimal("650.00"),
+        )
+        self.assertTrue(was_income)
+        self.child_acc.refresh_from_db()
+        self.income_acc.refresh_from_db()
+        self.assertEqual(self.income_acc.balance, Decimal("650.00"))
+        self.assertEqual(self.child_acc.balance, Decimal("150.00"))
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ interface SavingsProductOption {
   id: number;
   name: string;
   contribution_cycle?: string;
+  contribution_amount?: string | null;
 }
 
 const INTEREST_METHODS = [
@@ -61,6 +62,7 @@ export default function SavingsAccountFormPage() {
   const [autoRenew, setAutoRenew] = useState(true);
   const [statementFreq, setStatementFreq] = useState('monthly');
   const [contribDay, setContribDay] = useState<number | ''>('');
+  const [contributionAmount, setContributionAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
@@ -118,6 +120,8 @@ export default function SavingsAccountFormPage() {
     setProductId(id);
     const p = products.find(x => String(x.id) === id) ?? null;
     setSelectedProduct(p);
+    // Pre-fill with the product's default; the officer can override per client.
+    setContributionAmount(p?.contribution_amount ?? '');
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -145,6 +149,10 @@ export default function SavingsAccountFormPage() {
         selectedProduct?.contribution_cycle === 'weekly' && contribDay !== ''
           ? Number(contribDay)
           : null,
+      contribution_amount:
+        selectedProduct?.contribution_cycle && contributionAmount.trim() !== ''
+          ? contributionAmount
+          : undefined,
     });
   }
 
@@ -314,21 +322,43 @@ export default function SavingsAccountFormPage() {
               </div>
             </div>
 
-            {/* Weekly contribution day */}
-            {selectedProduct?.contribution_cycle === 'weekly' && (
-              <div className="mt-4">
-                <label className="block text-xs font-medium text-gray-600 mb-1">Weekly Contribution Day</label>
-                <select
-                  value={contribDay}
-                  onChange={e => setContribDay(e.target.value === '' ? '' : Number(e.target.value))}
-                  aria-label="Weekly contribution day"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
-                >
-                  <option value="">— Select day —</option>
-                  {WEEKDAYS.map(d => (
-                    <option key={d.value} value={d.value}>{d.label}</option>
-                  ))}
-                </select>
+            {/* Contribution cycle settings */}
+            {selectedProduct?.contribution_cycle && (
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                {selectedProduct.contribution_cycle === 'weekly' && (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Weekly Contribution Day</label>
+                    <select
+                      value={contribDay}
+                      onChange={e => setContribDay(e.target.value === '' ? '' : Number(e.target.value))}
+                      aria-label="Weekly contribution day"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                    >
+                      <option value="">— Select day —</option>
+                      {WEEKDAYS.map(d => (
+                        <option key={d.value} value={d.value}>{d.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Committed Contribution Amount (₦)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={contributionAmount}
+                    onChange={e => setContributionAmount(e.target.value)}
+                    title="Amount this client has committed to contribute per cycle"
+                    placeholder="Product default"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    What this client agreed to bring in per {selectedProduct.contribution_cycle} cycle. Leave blank to use the product's default — this is also the amount swept to income as the first deposit of the month.
+                  </p>
+                </div>
               </div>
             )}
           </div>

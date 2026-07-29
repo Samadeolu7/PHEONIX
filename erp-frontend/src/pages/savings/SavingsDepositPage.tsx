@@ -105,10 +105,10 @@ export default function SavingsDepositPage() {
   const [cashierAccountId, setCashierAccountId] = useState<number | ''>('');
   const [description, setDescription] = useState('');
 
-  // Pre-fill amount from the account's contribution_amount when account selected
+  // Pre-fill amount from the account's committed (or product default) contribution amount
   useEffect(() => {
-    if (selectedAccount?.contribution_amount) {
-      setAmount(selectedAccount.contribution_amount);
+    if (selectedAccount?.effective_contribution_amount) {
+      setAmount(selectedAccount.effective_contribution_amount);
     } else {
       setAmount('');
     }
@@ -289,9 +289,9 @@ export default function SavingsDepositPage() {
                               {acc.contribution_cycle}
                             </span>
                           )}
-                          {acc.contribution_amount && (
+                          {acc.effective_contribution_amount && (
                             <span className="text-xs text-gray-400">
-                              ₦{fmt(acc.contribution_amount)}/cycle
+                              ₦{fmt(acc.effective_contribution_amount)}/cycle
                             </span>
                           )}
                         </div>

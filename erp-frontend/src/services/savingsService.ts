@@ -22,7 +22,12 @@ export interface SavingsAccount {
   product: number;
   product_name: string;
   contribution_cycle: ContributionCycle | null;
+  /** This client's own committed contribution amount; null falls back to the product default. */
   contribution_amount: string | null;
+  /** Read-only: the product's standard/default contribution amount. */
+  product_contribution_amount: string | null;
+  /** Read-only: contribution_amount if set, else product_contribution_amount. Use this for display/pre-fill. */
+  effective_contribution_amount: string | null;
   contribution_day_of_week: number | null;
   interest_rate: string;
   interest_calculation_method: string;
@@ -185,6 +190,8 @@ export interface CreateSavingsAccountData {
   auto_renew?: boolean;
   statement_frequency?: string;
   contribution_day_of_week?: number | null;
+  /** This client's committed contribution amount; omit to use the product default. */
+  contribution_amount?: string | null;
 }
 
 export const createSavingsAccount = (data: CreateSavingsAccountData): Promise<SavingsAccount> =>

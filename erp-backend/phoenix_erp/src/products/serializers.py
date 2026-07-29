@@ -43,6 +43,9 @@ class ProductSerializer(serializers.ModelSerializer):
             'validation_scope', 'track_inventory', 'allow_credit_sales',
             'allow_reservations', 'requires_approval',
             
+            # Savings contribution cycle
+            'contribution_cycle', 'contribution_amount',
+
             # Interest Configuration
             'interest_rate', 'interest_posting_method', 'interest_posting_cron',
             

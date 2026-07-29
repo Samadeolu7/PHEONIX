@@ -21,8 +21,13 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
     contribution_cycle = serializers.CharField(
         source='product.contribution_cycle', read_only=True
     )
-    contribution_amount = serializers.DecimalField(
+    product_contribution_amount = serializers.DecimalField(
         source='product.contribution_amount',
+        max_digits=18,
+        decimal_places=2,
+        read_only=True,
+    )
+    effective_contribution_amount = serializers.DecimalField(
         max_digits=18,
         decimal_places=2,
         read_only=True,
@@ -42,6 +47,7 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
             'client', 'client_name',
             'product', 'product_name',
             'contribution_cycle', 'contribution_amount',
+            'product_contribution_amount', 'effective_contribution_amount',
             'contribution_day_of_week',
             'interest_rate', 'interest_calculation_method',
             'minimum_balance', 'allow_overdraft', 'overdraft_limit',
@@ -52,7 +58,8 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'account_number', 'current_balance', 'available_balance',
-            'smart_savings_active',
+            'smart_savings_active', 'product_contribution_amount',
+            'effective_contribution_amount',
         ]
 
     def get_smart_savings_active(self, obj):

@@ -577,10 +577,13 @@ export default function SavingsAccountDetailPage() {
                 <p className="font-medium capitalize text-gray-900">{account.contribution_cycle}</p>
               </div>
             )}
-            {account.contribution_amount && parseFloat(account.contribution_amount) > 0 && (
+            {account.effective_contribution_amount && parseFloat(account.effective_contribution_amount) > 0 && (
               <div>
                 <p className="text-gray-500">Contribution Amount</p>
-                <p className="font-medium text-gray-900">₦{fmt(account.contribution_amount)}</p>
+                <p className="font-medium text-gray-900">₦{fmt(account.effective_contribution_amount)}</p>
+                {!account.contribution_amount && (
+                  <p className="text-xs text-gray-400">Product default — not set for this client</p>
+                )}
               </div>
             )}
             <div>

@@ -222,7 +222,7 @@ export default function SavingsAccountsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right text-gray-700">
-                    {acc.contribution_amount ? `₦${fmt(acc.contribution_amount)}` : '—'}
+                    {acc.effective_contribution_amount ? `₦${fmt(acc.effective_contribution_amount)}` : '—'}
                   </td>
                   <td className="px-4 py-3 text-right font-semibold text-gray-900">
                     ₦{fmt(acc.current_balance)}
