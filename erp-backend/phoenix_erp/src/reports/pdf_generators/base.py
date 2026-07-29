@@ -19,7 +19,18 @@ class BasePDFGenerator:
 
     # Override in subclasses
     template_name = None
-    css_file = 'pdf/styles.css'
+    # Every subclass's template extends pdf/base.html, which is fully
+    # self-contained (its own <style> block, plus each template's
+    # extra_css block). styles.css is a legacy, separately-evolved
+    # stylesheet that happens to reuse the same class names
+    # (.document-header, .company-name, .document-type h2, ...) at equal
+    # CSS specificity. Because it's passed to WeasyPrint as an extra
+    # stylesheet (loaded after the document's own <style>), it silently won
+    # every naming collision — e.g. company_primary_color theming in
+    # base.html was being overridden by styles.css's hardcoded #2563eb/
+    # #1e40af on every document. Not loading it here removes that dead
+    # weight/hidden bug for every document type at once.
+    css_file = None
 
     def __init__(self, instance, user):
         """
@@ -304,8 +315,10 @@ class BasePDFGenerator:
     # Rendering & generation
     # ──────────────────────────────────────────────────────────────────────────
 
-    def get_css_path(self) -> str:
-        """Get absolute path to CSS file"""
+    def get_css_path(self) -> Optional[str]:
+        """Get absolute path to CSS file, or None if this generator doesn't use one"""
+        if not self.css_file:
+            return None
         static_root = settings.STATIC_ROOT or settings.BASE_DIR / 'static'
         return os.path.join(static_root, self.css_file)
 
@@ -346,7 +359,7 @@ class BasePDFGenerator:
 
             css = None
             css_path = self.get_css_path()
-            if os.path.exists(css_path):
+            if css_path and os.path.exists(css_path):
                 with open(css_path, 'r') as f:
                     css = CSS(string=f.read())
 

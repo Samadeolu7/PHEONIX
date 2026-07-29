@@ -11,37 +11,19 @@
 
 :root {
     --brand:      {{ company_primary_color|default:"#1a4e8a" }};
-    --brand-light:{{ company_primary_color|default:"#1a4e8a" }}22;
-    --accent:     #e8f0fc;
-    --text-dark:  #1a1a1a;
-    --text-mid:   #444;
-    --text-light: #777;
-    --border:     #d0d9e8;
+    --brand-light:{{ company_primary_color|default:"#1a4e8a" }}14;
+    --accent:     #f8fafc;
+    --text-dark:  #1f2937;
+    --text-mid:   #4b5563;
+    --text-light: #9ca3af;
+    --border:     #e5e7eb;
     --green:      #2e7d32;
     --green-bg:   #e8f5e9;
+    --success:    #198754;
+    --success-bg: #e7f4ee;
     --red:        #c62828;
     --red-bg:     #ffebee;
-    --net-bg:     #1a4e8a;
-    --divider:    #b0bec5;
-    --net-blue:   #0f3460;
-}
-
-/* ── Override base header for payslip ── */
-.document-header {
-    border-bottom: 3px solid var(--brand);
-    margin-bottom: 0;
-    padding-bottom: 14px;
-}
-.company-name { font-size: 17px; }
-.document-type h2 {
-    color: #fff;
-    background: var(--brand);
-    font-size: 18px;
-    letter-spacing: 2px;
-    font-weight: 900;
-    padding: 6px 18px;
-    display: inline-block;
-    border-radius: 3px;
+    --divider:    #d1d5db;
 }
 
 /* ── Payslip meta bar ── */
@@ -50,50 +32,51 @@
     justify-content: space-between;
     background: var(--accent);
     border: 1px solid var(--border);
-    border-top: none;
-    padding: 8px 16px;
+    border-radius: 5px;
+    padding: 10px 16px;
     font-size: 10.5px;
-    margin-bottom: 14px;
+    margin-bottom: 16px;
     color: var(--text-mid);
 }
 .payslip-meta .meta-item { display: flex; flex-direction: column; }
 .payslip-meta .meta-label { font-size: 9px; text-transform: uppercase; color: var(--text-light); letter-spacing: 0.5px; }
-.payslip-meta .meta-value { font-weight: 700; color: var(--text-dark); font-size: 11px; margin-top: 1px; }
+.payslip-meta .meta-value { font-weight: 700; color: var(--text-dark); font-size: 11px; margin-top: 2px; }
 
 /* ── Employee info card ── */
-.employee-card {
-    display: flex;
-    gap: 0;
+.info-card {
     border: 1px solid var(--border);
-    border-radius: 4px;
-    margin-bottom: 14px;
+    border-radius: 5px;
+    margin-bottom: 16px;
     overflow: hidden;
 }
-.employee-card .left-band {
-    background: var(--brand);
-    width: 6px;
-    flex-shrink: 0;
+.info-card-title {
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--brand);
+    background: var(--brand-light);
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border);
 }
-.employee-card .employee-fields {
+.info-card-body {
     display: flex;
     flex-wrap: wrap;
-    gap: 0;
-    flex: 1;
-    padding: 10px 14px;
+    padding: 4px 0;
 }
-.employee-card .field-item {
-    flex: 1 1 160px;
-    margin-bottom: 6px;
-    padding-right: 16px;
+.info-card-body .field-item {
+    width: 50%;
+    padding: 8px 14px;
 }
-.employee-card .field-label {
+.info-card-body .field-label {
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: var(--text-light);
     display: block;
+    margin-bottom: 2px;
 }
-.employee-card .field-value {
+.info-card-body .field-value {
     font-size: 11.5px;
     font-weight: 700;
     color: var(--text-dark);
@@ -102,38 +85,43 @@
 /* ── Two-column earnings / deductions layout ── */
 .pay-columns {
     display: flex;
-    gap: 12px;
+    gap: 14px;
     margin-bottom: 14px;
     align-items: flex-start;
 }
 .pay-col { flex: 1; min-width: 0; }
 
-/* ── Section header ── */
+/* ── Section header — a quiet label with a colored underline reads as
+   organized without shouting the way a full solid-color bar does. ── */
 .section-header {
     display: flex;
-    align-items: center;
-    background: var(--brand);
-    color: #fff;
-    font-size: 10.5px;
+    align-items: baseline;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--section-color, var(--brand));
+    color: var(--section-color, var(--brand));
+    font-size: 10px;
     font-weight: 800;
     letter-spacing: 1px;
     text-transform: uppercase;
-    padding: 5px 10px;
-    border-radius: 3px 3px 0 0;
+    padding: 0 2px 6px 2px;
 }
-.section-header .header-amount { margin-left: auto; }
+.section-header .header-amount {
+    font-size: 8.5px;
+    font-weight: 600;
+    color: var(--text-light);
+    text-transform: none;
+    letter-spacing: 0;
+}
 
 /* ── Pay rows ── */
 .pay-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 11px;
-    border: 1px solid var(--border);
-    border-top: none;
 }
-.pay-table tr { border-bottom: 1px solid #ecf0f1; }
+.pay-table tr { border-bottom: 1px solid var(--border); }
 .pay-table tr:last-child { border-bottom: none; }
-.pay-table td { padding: 5px 10px; color: var(--text-dark); }
+.pay-table td { padding: 7px 2px; color: var(--text-dark); }
 .pay-table .label-col { width: 65%; }
 .pay-table .amount-col { text-align: right; font-family: "Courier New", monospace; font-size: 11px; }
 
@@ -165,50 +153,82 @@
 
 /* Subtotal row */
 .pay-table .subtotal-row td {
-    background: #f5f8ff;
-    font-weight: 700;
-    border-top: 2px solid var(--border);
+    font-weight: 800;
+    border-top: 2px solid var(--text-dark);
+    border-bottom: none;
+    padding-top: 8px;
 }
+
+/* ── Summary strip (Gross / Deductions / Net) — lets the reader see the
+   three headline numbers at a glance before the line-item detail. ── */
+.summary-strip {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+    margin-bottom: 16px;
+}
+.summary-cell {
+    flex: 1;
+    text-align: center;
+    padding: 10px 8px;
+    border-right: 1px solid var(--border);
+}
+.summary-cell:last-child { border-right: none; background: var(--success-bg); }
+.summary-cell .sc-label {
+    font-size: 8.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-light);
+    margin-bottom: 3px;
+}
+.summary-cell .sc-value {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--text-dark);
+    font-family: "Courier New", monospace;
+}
+.summary-cell:last-child .sc-value { color: var(--success); }
 
 /* ── Net pay banner ── */
 .net-pay-banner {
-    background: var(--net-blue);
+    background: var(--success);
     color: #fff;
     border-radius: 5px;
-    padding: 14px 22px;
+    padding: 16px 22px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 10px;
-    box-shadow: 0 2px 6px rgba(15,52,96,0.25);
+    box-shadow: 0 2px 6px rgba(25,135,84,0.25);
 }
 .net-pay-banner .npl { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; }
-.net-pay-banner .npa { font-size: 26px; font-weight: 900; font-family: "Courier New", monospace; }
+.net-pay-banner .npa { font-size: 28px; font-weight: 900; font-family: "Courier New", monospace; }
 .net-pay-words {
     text-align: center;
     font-size: 10.5px;
     color: var(--text-mid);
     font-style: italic;
-    margin-bottom: 14px;
-    padding: 6px;
+    margin-bottom: 16px;
+    padding: 7px;
     border: 1px dashed var(--divider);
-    border-radius: 3px;
+    border-radius: 4px;
 }
 
 /* ── PAYE breakdown ── */
 .paye-section {
-    border: 1px solid #fff3e0;
-    border-radius: 4px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
     margin-bottom: 14px;
     overflow: hidden;
 }
 .paye-section-header {
-    background: #fff3e0;
-    border-bottom: 1px solid #ffe0b2;
-    padding: 6px 12px;
+    background: var(--accent);
+    border-bottom: 1px solid var(--border);
+    padding: 7px 12px;
     font-size: 10px;
     font-weight: 700;
-    color: #e65100;
+    color: #b45309;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     display: flex;
@@ -220,81 +240,81 @@
     font-size: 9.5px;
 }
 .paye-table th {
-    background: #fff8e1;
-    padding: 4px 8px;
+    padding: 5px 12px;
     text-align: left;
-    color: #795548;
+    color: var(--text-mid);
     font-weight: 700;
     text-transform: uppercase;
     font-size: 8.5px;
+    border-bottom: 1px solid var(--border);
 }
 .paye-table td {
-    padding: 4px 8px;
-    border-bottom: 1px solid #fff3e0;
+    padding: 5px 12px;
+    border-bottom: 1px solid var(--border);
     color: var(--text-dark);
 }
 .paye-table .num { text-align: right; font-family: "Courier New", monospace; }
 .paye-table .zero { color: var(--text-light); }
-.paye-table .total-row td { background: #fff3e0; font-weight: 700; }
+.paye-table .total-row td { background: var(--accent); font-weight: 700; border-bottom: none; }
 
 /* ── Pension table ── */
 .pension-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 10.5px;
-    border: 1px solid #c8e6c9;
-    border-radius: 4px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
     overflow: hidden;
     margin-bottom: 14px;
 }
 .pension-table .pension-head td {
-    background: #e8f5e9;
-    padding: 5px 10px;
+    background: var(--accent);
+    padding: 7px 12px;
     font-weight: 800;
     font-size: 9.5px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    color: #2e7d32;
+    color: var(--green);
 }
-.pension-table td { padding: 5px 10px; color: var(--text-dark); }
+.pension-table td { padding: 6px 12px; color: var(--text-dark); }
 .pension-table .amount-col { text-align: right; font-family: "Courier New", monospace; }
 .pension-table .note-col { font-size: 9px; color: var(--text-light); padding-left: 8px; }
-.pension-table .total-row td { background: #f1f8e9; font-weight: 700; }
+.pension-table .total-row td { background: var(--accent); font-weight: 700; }
 
 /* ── Attendance row ── */
 .attendance-row {
     display: flex;
     gap: 8px;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 5px;
     overflow: hidden;
     margin-bottom: 14px;
 }
 .att-cell {
     flex: 1;
     text-align: center;
-    padding: 8px 4px;
+    padding: 10px 4px;
     border-right: 1px solid var(--border);
     font-size: 10px;
 }
 .att-cell:last-child { border-right: none; }
-.att-cell .att-val { font-size: 18px; font-weight: 900; color: var(--brand); }
+.att-cell .att-val { font-size: 17px; font-weight: 800; color: var(--brand); }
 .att-cell .att-lbl { font-size: 9px; color: var(--text-light); text-transform: uppercase; margin-top: 2px; }
 
 /* ── Staff IOU / Loan balance block ── */
 .iou-section {
-    border: 1px solid #ffe0b2;
-    border-radius: 4px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
     margin-bottom: 14px;
     overflow: hidden;
 }
 .iou-section-header {
-    background: #fff3e0;
-    border-bottom: 1px solid #ffe0b2;
-    padding: 6px 12px;
+    background: var(--accent);
+    border-bottom: 1px solid var(--border);
+    padding: 7px 12px;
     font-size: 10px;
     font-weight: 700;
-    color: #e65100;
+    color: #b45309;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     display: flex;
@@ -306,25 +326,26 @@
     font-size: 10px;
 }
 .iou-table th {
-    background: #fff8e1;
-    padding: 4px 10px;
+    padding: 5px 12px;
     text-align: left;
-    color: #795548;
+    color: var(--text-mid);
     font-weight: 700;
     text-transform: uppercase;
     font-size: 8.5px;
+    border-bottom: 1px solid var(--border);
 }
-.iou-table td { padding: 5px 10px; border-bottom: 1px solid #fff3e0; color: var(--text-dark); }
+.iou-table td { padding: 6px 12px; border-bottom: 1px solid var(--border); color: var(--text-dark); }
 .iou-table .num { text-align: right; font-family: "Courier New", monospace; }
 .iou-table .after-col { color: var(--green); font-weight: 700; }
-.iou-table .total-row td { background: #fff3e0; font-weight: 700; border-top: 1px solid #ffb74d; }
-.iou-note { font-size: 8.5px; color: #e65100; font-style: italic; padding: 5px 10px; background: #fff8e1; }
+.iou-table .total-row td { background: var(--accent); font-weight: 700; border-bottom: none; }
+.iou-note { font-size: 8.5px; color: #b45309; font-style: italic; padding: 6px 12px; background: var(--accent); }
 
-
+/* ── Signature block ── */
+.signature-block {
     display: flex;
     justify-content: space-between;
-    margin-top: 20px;
-    padding-top: 12px;
+    margin-top: 24px;
+    padding-top: 14px;
     border-top: 1px solid var(--border);
 }
 .sig-item { text-align: center; flex: 1; }
@@ -340,7 +361,7 @@
 .confidential-note {
     text-align: center;
     font-size: 8.5px;
-    color: #aaa;
+    color: var(--text-light);
     margin-top: 10px;
     font-style: italic;
 }
@@ -373,10 +394,10 @@
     </div>
 </div>
 
-{# ── EMPLOYEE CARD ─────────────────────────────────────────────────────── #}
-<div class="employee-card">
-    <div class="left-band"></div>
-    <div class="employee-fields">
+{# ── EMPLOYEE INFORMATION CARD ─────────────────────────────────────────── #}
+<div class="info-card">
+    <div class="info-card-title">Employee Information</div>
+    <div class="info-card-body">
         <div class="field-item">
             <span class="field-label">Employee Name</span>
             <span class="field-value">{{ staff_name }}</span>
@@ -400,12 +421,28 @@
     </div>
 </div>
 
+{# ── SUMMARY STRIP ──────────────────────────────────────────────────────── #}
+<div class="summary-strip">
+    <div class="summary-cell">
+        <div class="sc-label">Gross Pay</div>
+        <div class="sc-value">{{ currency_symbol }}&nbsp;{{ gross_pay|floatformat:2 }}</div>
+    </div>
+    <div class="summary-cell">
+        <div class="sc-label">Total Deductions</div>
+        <div class="sc-value">{{ currency_symbol }}&nbsp;{{ total_deductions|floatformat:2 }}</div>
+    </div>
+    <div class="summary-cell">
+        <div class="sc-label">Net Pay</div>
+        <div class="sc-value">{{ currency_symbol }}&nbsp;{{ net_pay|floatformat:2 }}</div>
+    </div>
+</div>
+
 {# ── EARNINGS / DEDUCTIONS COLUMNS ─────────────────────────────────────── #}
 <div class="pay-columns">
 
     {# ── EARNINGS ── #}
     <div class="pay-col">
-        <div class="section-header" style="background:{{ company_primary_color|default:'#1a4e8a' }};">
+        <div class="section-header" style="--section-color:{{ company_primary_color|default:'#1a4e8a' }};">
             <span>Earnings</span>
             <span class="header-amount">Amount ({{ currency_symbol }})</span>
         </div>
@@ -425,7 +462,7 @@
 
     {# ── DEDUCTIONS ── #}
     <div class="pay-col">
-        <div class="section-header" style="background:#c62828;">
+        <div class="section-header" style="--section-color:#c62828;">
             <span>Deductions</span>
             <span class="header-amount">Amount ({{ currency_symbol }})</span>
         </div>
@@ -464,7 +501,7 @@
     <span class="npl">Net Pay (Take Home)</span>
     <span class="npa">{{ currency_symbol }}&thinsp;{{ net_pay|floatformat:2 }}</span>
 </div>
-
+<div class="net-pay-words">{{ net_pay_words }}</div>
 
 {# ── STAFF IOU / LOAN BALANCE SUMMARY ─────────────────────────────────── #}
 {% if iou_details %}
@@ -525,8 +562,8 @@
         <div class="att-val" style="font-size:13px;">{{ gross_pay|floatformat:0 }}</div>
         <div class="att-lbl">Gross ({{ currency_code }})</div>
     </div>
-    <div class="att-cell" style="background:#f0f4ff;">
-        <div class="att-val" style="font-size:13px;color:var(--net-blue);">{{ net_pay|floatformat:0 }}</div>
+    <div class="att-cell" style="background:var(--success-bg);">
+        <div class="att-val" style="font-size:13px;color:var(--success);">{{ net_pay|floatformat:0 }}</div>
         <div class="att-lbl">Net ({{ currency_code }})</div>
     </div>
 </div>
@@ -554,7 +591,9 @@
 {% endblock %}
 
 {% block footer %}
-<p>Generated on {% now "F d, Y" %} &mdash; {{ company_name }}
-{% if branch_name %} &mdash; {{ branch_name }}{% endif %}
+<p>Generated by Phoenix ERP &mdash; {% now "d M Y, H:i" %}</p>
+<p class="generated-at">
+    {{ company_name }}{% if branch_name %} &mdash; {{ branch_name }}{% endif %}
+    {% if company_email %} &mdash; Need help? {{ company_email }}{% endif %}
 </p>
 {% endblock %}
