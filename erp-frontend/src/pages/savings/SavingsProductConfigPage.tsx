@@ -168,6 +168,13 @@ export default function SavingsProductConfigPage() {
   const [withdrawalNeedsApproval, setWithdrawalNeedsApproval] = useState(true);
   const [onlyAccountManagerCanWithdraw, setOnlyAccountManagerCanWithdraw] = useState(true);
 
+  // Contribution schedule — lives on Product itself, not the SavingsProduct
+  // config, but edited here since this is where daily-contribution behaviour
+  // is actually configured end to end.
+  const [contributionCycle, setContributionCycle] = useState<'' | 'daily' | 'weekly' | 'monthly'>('');
+  const [contributionAmount, setContributionAmount] = useState<string>('');
+  const [productSaving, setProductSaving] = useState(false);
+
   const [configLoading, setConfigLoading] = useState(true);
 
   // Load GL accounts
@@ -180,10 +187,16 @@ export default function SavingsProductConfigPage() {
     }).catch(() => {});
   }, []);
 
-  // Load product name
+  // Load product name + contribution schedule (contribution_cycle /
+  // contribution_amount live on Product itself, not the SavingsProduct
+  // config). apiClient is a raw axios instance with no response unwrapping,
+  // so the payload is under `.data`, not the response object itself.
   useEffect(() => {
-    apiClient.get(`/products/products/${productId}/`).then((p: any) => {
+    apiClient.get(`/products/products/${productId}/`).then((res: any) => {
+      const p = res?.data ?? res;
       setProductName(p?.name ?? '');
+      setContributionCycle(p?.contribution_cycle ?? '');
+      setContributionAmount(p?.contribution_amount != null ? String(p.contribution_amount) : '');
     }).catch(() => {});
   }, [productId]);
 
@@ -219,32 +232,18 @@ export default function SavingsProductConfigPage() {
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
 
+  // Success/error state for both the config and product saves is handled
+  // centrally in handleSave (they're saved together as one logical action),
+  // so these mutations only need the config-id capture on first create.
   const createConfigMutation = useCreateSavingsProductConfig({
-    onSuccess: (created) => {
-      setConfigId(created.id);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    },
-    onError: (e) => {
-      const detail = e?.details ?? e?.message ?? 'Failed to save configuration.';
-      setError(typeof detail === 'object' ? JSON.stringify(detail) : String(detail));
-    },
+    onSuccess: (created) => setConfigId(created.id),
   });
 
-  const updateConfigMutation = useUpdateSavingsProductConfig({
-    onSuccess: () => {
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
-    },
-    onError: (e) => {
-      const detail = e?.details ?? e?.message ?? 'Failed to save configuration.';
-      setError(typeof detail === 'object' ? JSON.stringify(detail) : String(detail));
-    },
-  });
+  const updateConfigMutation = useUpdateSavingsProductConfig();
 
-  const saving = createConfigMutation.isPending || updateConfigMutation.isPending;
+  const saving = createConfigMutation.isPending || updateConfigMutation.isPending || productSaving;
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (hasSavingsCycle && !interestExpenseAccount) {
       setError('An interest expense account is required when savings cycle is enabled.');
@@ -262,7 +261,7 @@ export default function SavingsProductConfigPage() {
     setError(null);
     setSuccess(false);
 
-    const payload: Partial<SavingsProductConfig> = {
+    const configPayload: Partial<SavingsProductConfig> = {
       product: productId,
       interest_expense_account: interestExpenseAccount,
       penalty_income_account: penaltyIncomeAccount,
@@ -278,10 +277,24 @@ export default function SavingsProductConfigPage() {
       only_account_manager_can_withdraw: onlyAccountManagerCanWithdraw,
     };
 
-    if (configId) {
-      updateConfigMutation.mutate({ id: configId, data: payload });
-    } else {
-      createConfigMutation.mutate(payload);
+    setProductSaving(true);
+    try {
+      await Promise.all([
+        apiClient.patch(`/products/products/${productId}/`, {
+          contribution_cycle: contributionCycle || null,
+          contribution_amount: contributionAmount.trim() === '' ? null : contributionAmount,
+        }),
+        configId
+          ? updateConfigMutation.mutateAsync({ id: configId, data: configPayload })
+          : createConfigMutation.mutateAsync(configPayload),
+      ]);
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      const detail = err?.response?.data ?? err?.details ?? err?.message ?? 'Failed to save configuration.';
+      setError(typeof detail === 'object' ? JSON.stringify(detail) : String(detail));
+    } finally {
+      setProductSaving(false);
     }
   };
 
@@ -303,7 +316,7 @@ export default function SavingsProductConfigPage() {
             </h1>
             <p className="text-xs text-gray-500">Define behaviour rules for this savings product</p>
           </div>
-          {isDailyContribution && (
+          {(isDailyContribution || !!contributionCycle) && (
             <button
               onClick={() => navigate(`/savings/products/${productId}/contributions`)}
               className="flex items-center gap-1.5 text-sm text-blue-600 border border-blue-200 rounded-lg px-3 py-1.5 hover:bg-blue-50 transition-colors"
@@ -354,6 +367,35 @@ export default function SavingsProductConfigPage() {
             </div>
 
             <div className="space-y-5">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Contribution Cycle</label>
+                  <p className="text-xs text-gray-500 mb-1.5">
+                    How often clients are expected to contribute. Drives schedule generation and is
+                    the default committed amount used to cap first-deposit-income sweeps.
+                  </p>
+                  <select
+                    value={contributionCycle}
+                    onChange={e => setContributionCycle(e.target.value as typeof contributionCycle)}
+                    aria-label="Contribution Cycle"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="">— None (no fixed cycle) —</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+                <NumberInput
+                  label="Default Contribution Amount (₦)"
+                  description="Used when a client doesn't have their own committed amount set."
+                  value={contributionAmount}
+                  onChange={setContributionAmount}
+                  min={0}
+                  step="0.01"
+                />
+              </div>
+
               <Toggle
                 checked={isDailyContribution}
                 onChange={setIsDailyContribution}
