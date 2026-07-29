@@ -110,8 +110,8 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
         amount,
         date: paymentDate,
         description: description || 'Deposit',
-        payment_mode: paymentMethod,
-        ...(paymentMethod === 'bank' ? { bank_reference: String(selectedBankAccount) } : {}),
+        payment_method: paymentMethod,
+        ...(paymentMethod === 'bank' ? { bank_account_id: Number(selectedBankAccount) } : {}),
       },
     });
   }

@@ -657,6 +657,24 @@ class SavingsProductConfigViewSet(ScopedModelViewSet):
             qs = qs.filter(product_id=product_id)
         return qs
 
+    def create(self, request, *args, **kwargs):
+        """
+        Upsert on 'product': config is one-to-one with a Product, so a second
+        POST for the same product (e.g. a client that didn't know a config
+        row already existed — stale UI state, race between tabs, etc.) should
+        update that row instead of failing on the unique constraint. Avoids a
+        confusing raw "already exists" error for what the user experiences as
+        just "save my configuration".
+        """
+        product_id = request.data.get('product')
+        existing = self.get_queryset().filter(product_id=product_id).first() if product_id else None
+        if existing:
+            serializer = self.get_serializer(existing, data=request.data, partial=False)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return super().create(request, *args, **kwargs)
+
 
 class WithdrawalApprovalTierViewSet(ScopedModelViewSet):
     """

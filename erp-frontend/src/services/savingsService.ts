@@ -463,7 +463,15 @@ export interface SavingsDepositPayload {
   date: string;
   cashier_account_id?: number;
   description?: string;
+  // NOTE: the /savings/accounts/:id/deposit/ endpoint reads `payment_method`
+  // ('cash'|'bank') and `bank_account_id` — NOT the `payment_mode`/`bank_reference`
+  // convention used by loans/collections. Sending the wrong keys silently falls
+  // back to a cash posting on the backend (see views.py SavingsAccountViewSet.deposit).
+  payment_method?: 'cash' | 'bank';
+  bank_account_id?: number;
+  /** @deprecated wrong key name — backend does not read this for deposits, use payment_method */
   payment_mode?: 'cash' | 'bank_transfer';
+  /** @deprecated wrong key name — backend does not read this for deposits, use bank_account_id */
   bank_reference?: string;
 }
 

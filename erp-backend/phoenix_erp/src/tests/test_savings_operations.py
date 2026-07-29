@@ -571,3 +571,46 @@ class BulkSetContributionAmountTests(TestCase):
         self.assertEqual(resp.status_code, 404)
         other_sa.refresh_from_db()
         self.assertIsNone(other_sa.contribution_amount)
+
+
+# ---------------------------------------------------------------------------
+# Savings product config — upsert on POST
+# ---------------------------------------------------------------------------
+
+class SavingsProductConfigUpsertTests(TestCase):
+    """
+    SavingsProduct.product is OneToOne, so a second POST to /product-configs/
+    for the same product used to 400 with a raw "already exists" validator
+    error — confusing when the client just wants to save its configuration
+    (e.g. stale/lost configId in the frontend). The viewset's create() now
+    updates the existing row instead of failing.
+    """
+
+    def setUp(self):
+        self.user, self.tenant, self.branch = _make_env("cfg_upsert")
+        _, self.child_acc, self.product, self.client = _make_savings_setup(
+            self.user, self.tenant, self.branch
+        )
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.user)
+        self.api.credentials(HTTP_X_BRANCH_ID=str(self.branch.id))
+
+    def test_second_post_for_same_product_updates_instead_of_erroring(self):
+        first = self.api.post(
+            "/api/savings/product-configs/",
+            {"product": self.product.id, "is_daily_contribution": False},
+            format="json",
+        )
+        self.assertEqual(first.status_code, 201, first.content)
+        first_id = first.json()["id"]
+
+        second = self.api.post(
+            "/api/savings/product-configs/",
+            {"product": self.product.id, "is_daily_contribution": True},
+            format="json",
+        )
+        self.assertEqual(second.status_code, 200, second.content)
+        self.assertEqual(second.json()["id"], first_id)
+        self.assertTrue(second.json()["is_daily_contribution"])
+
+        self.assertEqual(SavingsProduct.objects.filter(product=self.product).count(), 1)
