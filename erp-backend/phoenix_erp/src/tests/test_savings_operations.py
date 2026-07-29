@@ -679,11 +679,9 @@ class ProductBranchSwitcherVisibilityTests(TestCase):
     def test_product_update_visible_regardless_of_director_branch_switcher(self):
         update = self.api.patch(
             f"/api/products/products/{self.product.id}/",
-            {
-                "contribution_cycle": "monthly",
-                "contribution_amount": "1000.00",
-                "interest_rate": "0.00",
-            },
+            # Deliberately NOT resending interest_rate — a genuine partial
+            # update, matching what SavingsProductConfigPage actually sends.
+            {"contribution_cycle": "monthly", "contribution_amount": "1000.00"},
             format="json",
             HTTP_X_BRANCH_ID=str(self.branch.id),
         )
@@ -697,6 +695,29 @@ class ProductBranchSwitcherVisibilityTests(TestCase):
         self.assertEqual(fetched.status_code, 200, fetched.content)
         self.assertEqual(fetched.json()['contribution_cycle'], 'monthly')
         self.assertEqual(float(fetched.json()['contribution_amount']), 1000.00)
+
+    def test_partial_update_does_not_require_resending_interest_rate(self):
+        """
+        ProductSerializer.validate() used to check data.get('interest_rate')
+        with no fallback to the existing instance value — so ANY partial PATCH
+        that didn't explicitly resend interest_rate failed with "Interest
+        rate is required for SAVINGS products", even though the product
+        already had one. Mirrors the min/max amount validation two lines
+        above it, which already handled this correctly via instance fallback.
+        """
+        self.product.interest_rate = Decimal("2.50")
+        self.product.save(update_fields=['interest_rate'])
+
+        resp = self.api.patch(
+            f"/api/products/products/{self.product.id}/",
+            {"contribution_cycle": "daily"},
+            format="json",
+            HTTP_X_BRANCH_ID=str(self.branch.id),
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.interest_rate, Decimal("2.50"))
+        self.assertEqual(self.product.contribution_cycle, 'daily')
 
     def test_product_list_visible_regardless_of_director_branch_switcher(self):
         listed = self.api.get(

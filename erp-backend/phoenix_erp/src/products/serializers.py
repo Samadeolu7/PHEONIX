@@ -143,7 +143,12 @@ class ProductSerializer(serializers.ModelSerializer):
         # Validate interest rate exists for SAVINGS/LOAN products
         product_type = data.get('product_type') or (self.instance.product_type if self.instance else None)
         interest_rate = data.get('interest_rate')
-        
+        if interest_rate is None and self.instance is not None:
+            # Partial update that doesn't touch interest_rate — the instance
+            # already has a value (or already passed this same check when it
+            # was created), so don't demand it be resent on every PATCH.
+            interest_rate = self.instance.interest_rate
+
         if product_type in ['SAVINGS', 'LOAN'] and interest_rate is None:
             raise serializers.ValidationError({
                 'interest_rate': f'Interest rate is required for {product_type} products'
