@@ -189,6 +189,12 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text="Enable automatic PAYE tax calculation using the Nigerian Tax Act 2024 bands"
     )
 
+    # ── NHF — National Housing Fund ───────────────────────────────────────────
+    enable_nhf = models.BooleanField(
+        default=False,
+        help_text="Deduct National Housing Fund contribution (2.5% of basic salary)"
+    )
+
     # ── Development Levy (Nigeria Tax Act 2024 — Third Schedule, Part II) ─────
     enable_development_levy = models.BooleanField(
         default=False,
@@ -249,6 +255,7 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             'employee_pension_rate': Decimal('8.00'),
             'employer_pension_rate': Decimal('10.00'),
             'enable_paye': True,
+            'enable_nhf': False,
             'enable_development_levy': False,
             'development_levy_annual_amount': Decimal('1000.00'),
         }

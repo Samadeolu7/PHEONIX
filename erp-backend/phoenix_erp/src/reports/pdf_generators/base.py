@@ -148,6 +148,8 @@ class BasePDFGenerator:
                 mime_type = (
                     mimetypes.guess_type(logo_field.name)[0] or 'image/png'
                 )
+                if mime_type == 'image/svg+xml':
+                    logo_data = self._normalize_svg_intrinsic_size(logo_data)
                 b64 = base64.b64encode(logo_data).decode('utf-8')
                 return f'data:{mime_type};base64,{b64}'
             except Exception:
@@ -156,6 +158,39 @@ class BasePDFGenerator:
 
         # ── 2. External URL ───────────────────────────────────────────────────
         return getattr(self.tenant, 'logo_url', '') or ''
+
+    @staticmethod
+    def _normalize_svg_intrinsic_size(svg_bytes: bytes) -> bytes:
+        """
+        Strip width/height attributes from the root <svg> tag so aspect
+        ratio is derived purely from viewBox, with no conflicting intrinsic
+        size for a renderer to reconcile.
+
+        Uploaded SVGs (e.g. exported from Illustrator) frequently declare a
+        width/height that doesn't match their own viewBox (seen in practice:
+        width="768" height="768" against viewBox="0 0 576 576"). WeasyPrint
+        has been observed to resolve that mismatch inconsistently — skewed
+        or oversized renders when the logo is placed in a small fixed-size
+        box. Removing width/height entirely (viewBox alone still fully
+        defines the aspect ratio per the SVG spec) removes the ambiguity.
+        """
+        import re
+
+        try:
+            svg_text = svg_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            return svg_bytes
+
+        match = re.search(r'<svg\b[^>]*>', svg_text, re.IGNORECASE)
+        if not match:
+            return svg_bytes
+
+        tag = match.group(0)
+        cleaned_tag = re.sub(r'''\s(width|height)=["'][^"']*["']''', '', tag)
+        if cleaned_tag == tag:
+            return svg_bytes
+
+        return (svg_text[:match.start()] + cleaned_tag + svg_text[match.end():]).encode('utf-8')
 
     def _get_registration_number(self) -> str:
         return getattr(self.tenant, 'registration_number', '') or ''

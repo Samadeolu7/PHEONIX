@@ -72,6 +72,7 @@ class PayrollService:
                     tax_rate_percentage=0,
                     enable_pension=False,
                     enable_paye=True,
+                    enable_nhf=False,
                     enable_development_levy=False,
                 )
                 self.config.save()
@@ -341,7 +342,7 @@ class PayrollService:
         # Statutory rate: 2.5% of basic salary, deducted from employee.
         # NHF-exempt staff can be flagged with `is_nhf_exempt=True` on the Staff model;
         # if that attribute doesn't exist we treat all staff as liable.
-        if getattr(staff, 'is_nhf_exempt', False):
+        if not config.enable_nhf or getattr(staff, 'is_nhf_exempt', False):
             nhf = Decimal('0.00')
         else:
             nhf = (basic_salary * Decimal('0.025')).quantize(

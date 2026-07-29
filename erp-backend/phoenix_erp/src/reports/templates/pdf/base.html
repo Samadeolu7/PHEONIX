@@ -35,11 +35,9 @@
         /* Circular frame around the logo — most uploaded logos are a
            square/rect image on a plain white background, which looks like a
            stray white box sitting in the header. A clean white disc with a
-           thin gold ring reads as an intentional badge instead. A solid
-           saturated gold fill was tried first but fought visually with the
-           blue used everywhere else in the document (name, accent bars,
-           issuing-branch banner) — a thin ring keeps gold as an accent
-           rather than a second competing block color.
+           thin neutral border reads as an intentional badge instead. A gold
+           ring was tried first but read as an odd, unexplained color choice
+           on its own — neutral gray doesn't compete with any brand palette.
 
            NOTE: sizing/centering the inner <img> is deliberately done with
            absolute positioning + fixed pixel width/height, NOT flexbox
@@ -54,22 +52,22 @@
            spilling into the rest of the header. */
         .company-logo {
             position: relative;
-            width: 72px;
-            height: 72px;
+            width: 96px;
+            height: 96px;
             border-radius: 50%;
             background: #fff;
-            border: 3px solid #b79758;
+            border: 1px solid #e2e2e2;
             flex-shrink: 0;
             overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+            box-shadow: 0 1px 4px rgba(0,0,0,0.12);
         }
 
         .company-logo img {
             position: absolute;
-            top: 10px;
-            left: 10px;
-            width: 46px;
-            height: 46px;
+            top: 14px;
+            left: 14px;
+            width: 66px;
+            height: 66px;
             object-fit: contain;
         }
 
