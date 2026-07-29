@@ -32,9 +32,26 @@
             margin-bottom: 18px;
         }
 
+        /* Circular gold badge behind the logo — most uploaded logos are a
+           square/rect image on a plain white background, which looks like a
+           stray white box sitting in the header. A gold disc behind it reads
+           as an intentional medallion instead. */
+        .company-logo {
+            width: 72px;
+            height: 72px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f0c419, #cf9d1f);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 8px;
+            flex-shrink: 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+
         .company-logo img {
-            max-height: 70px;
-            max-width: 200px;
+            max-height: 100%;
+            max-width: 100%;
             object-fit: contain;
         }
 
