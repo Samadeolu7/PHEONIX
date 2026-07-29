@@ -171,6 +171,20 @@ def get_or_create_child_account(
             parent_account = None
 
         if not parent_account:
+            # The intended code may already be taken by a non-PARENT account
+            # (e.g. a CHILD account from an unrelated feature, or a manually
+            # customised chart of accounts). Blindly calling
+            # get_or_create(code=parent_code) below would silently adopt that
+            # wrong-level account as the "parent" — its lookup doesn't filter
+            # by account_level — which then fails Account.clean()'s "Parent
+            # must be a parent-level account" check downstream once we try to
+            # attach a child to it. Detect that up front and redirect to a
+            # genuinely free code instead of a code that's merely free of
+            # PARENT-level accounts.
+            existing_at_code = Account.objects.filter(**scope_filter, code=parent_code).first()
+            if existing_at_code and existing_at_code.account_level != 'PARENT':
+                parent_code = _find_nearest_parent_code(owner, branch, parent_code, tenant)
+
             cached = _cache_get(parent_code)
             if cached:
                 parent_account = cached
@@ -281,8 +295,16 @@ def get_or_create_system_account(code, name, account_type, owner, branch, accoun
 
 def _find_nearest_parent_code(owner, branch, preferred_code, tenant=None):
     """
-    Find the nearest free 4-digit parent code within the same 1000-unit section
-    band (e.g., 1000-1999 for Assets).
+    Find the nearest 4-digit parent code within the same 1000-unit section
+    band (e.g., 1000-1999 for Assets) that has NO existing account at all.
+
+    NOTE: the scope filter deliberately does NOT restrict to
+    account_level='PARENT'. A candidate code with an existing CHILD account
+    (but no PARENT) previously passed this check as "free", and the caller
+    would then treat that CHILD account as if it were the parent — failing
+    Account.clean()'s "Parent must be a parent-level account" validation the
+    moment a new child tried to attach to it. Requiring the code to be
+    completely unused avoids that class of bug entirely.
     """
     try:
         pref = int(preferred_code)
@@ -293,7 +315,7 @@ def _find_nearest_parent_code(owner, branch, preferred_code, tenant=None):
     low_bound = section * 1000
     high_bound = low_bound + 999
 
-    scope_filter = {'account_level': 'PARENT'}
+    scope_filter = {}
     if branch is not None:
         scope_filter['branch'] = branch
     if tenant is not None:
@@ -452,29 +474,42 @@ SYSTEM_ACCOUNTS = {
         'name': 'Pension Expense (Employer Contribution)', 'account_type': 'EXPENSE',
         'parent_name': 'Personnel and Employment Costs',
     },
-    # Payroll Liabilities (parent 2130 = Payroll Liabilities group)
+    # Payroll Liabilities (parent 2150 = Payroll Liabilities group)
+    #
+    # NOTE: this used to be parent_code '2130', which collides with
+    # setup_accounts.py's canonical '2130 Accruals and Deferred Income'
+    # group (and with a third, unrelated '2130 Taxes Payable' mapping in
+    # initialize_erp_system.py). That collision let get_or_create_child_account
+    # silently adopt an unrelated existing account as payroll's "parent",
+    # sometimes crashing with "Parent must be a parent-level account" and
+    # otherwise just posting payroll liabilities into a wrongly-named GL
+    # account. '2150' sits in the documented-but-unused 2141-2199 gap between
+    # 'Customer Savings Deposits' (2140) and 'Long-term Borrowings' (2200),
+    # so it can't collide with either of the other two schemes. Verified no
+    # account or transaction anywhere already uses 2130-2135 before this
+    # renumbering, so there is no existing data to migrate.
     'salary_payable': {
-        'parent_code': '2130', 'child_suffix': '001',
+        'parent_code': '2150', 'child_suffix': '001',
         'name': 'Salaries Payable (Payroll Clearance)', 'account_type': 'LIABILITY',
         'parent_name': 'Payroll Liabilities',
     },
     'employee_pension_payable': {
-        'parent_code': '2130', 'child_suffix': '002',
+        'parent_code': '2150', 'child_suffix': '002',
         'name': 'Employee Pension Payable (8%)', 'account_type': 'LIABILITY',
         'parent_name': 'Payroll Liabilities',
     },
     'employer_pension_payable': {
-        'parent_code': '2130', 'child_suffix': '003',
+        'parent_code': '2150', 'child_suffix': '003',
         'name': 'Employer Pension Payable (10%)', 'account_type': 'LIABILITY',
         'parent_name': 'Payroll Liabilities',
     },
     'other_payroll_deductions_payable': {
-        'parent_code': '2130', 'child_suffix': '004',
+        'parent_code': '2150', 'child_suffix': '004',
         'name': 'Other Payroll Deductions Payable', 'account_type': 'LIABILITY',
         'parent_name': 'Payroll Liabilities',
     },
     'development_levy_payable': {
-        'parent_code': '2130', 'child_suffix': '005',
+        'parent_code': '2150', 'child_suffix': '005',
         'name': 'Development Levy Payable', 'account_type': 'LIABILITY',
         'parent_name': 'Payroll Liabilities',
     },
