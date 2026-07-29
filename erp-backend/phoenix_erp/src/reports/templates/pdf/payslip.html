@@ -438,6 +438,10 @@
                 <td class="label-col">Pension (Employee 8%)</td>
                 <td class="amount-col">{{ currency_symbol }}&nbsp;{{ employee_pension|floatformat:2 }}</td>
             </tr>
+            <tr>
+                <td class="label-col">NHF (National Housing Fund, 2.5%)</td>
+                <td class="amount-col">{{ currency_symbol }}&nbsp;{{ nhf|floatformat:2 }}</td>
+            </tr>
             {% for ded in other_deductions %}
             <tr>
                 <td class="label-col">{{ ded.label }}</td>

@@ -200,6 +200,9 @@ class PayslipPDFGenerator(BasePDFGenerator):
             'employee_pension': payslip.employee_pension,
             'employer_pension': payslip.employer_pension,
 
+            # NHF (National Housing Fund, 2.5% of basic salary)
+            'nhf': payslip.nhf,
+
             # Other deductions
             'other_deductions': other_deductions,
             'total_deductions': payslip.total_deductions,
