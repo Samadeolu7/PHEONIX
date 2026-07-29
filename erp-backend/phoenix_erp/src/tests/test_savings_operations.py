@@ -648,3 +648,63 @@ class SavingsProductConfigUpsertTests(TestCase):
         results = results if isinstance(results, list) else results.get('results', [])
         self.assertEqual(len(results), 1, results)
         self.assertTrue(results[0]['is_daily_contribution'])
+
+
+# ---------------------------------------------------------------------------
+# Product visibility — same director-branch-switcher class of bug
+# ---------------------------------------------------------------------------
+
+class ProductBranchSwitcherVisibilityTests(TestCase):
+    """
+    Product (loan/savings product catalog, including contribution_cycle /
+    contribution_amount) is institution-wide, not branch-specific — it must
+    not appear to vanish or "not persist" just because a director has a
+    different branch selected in the switcher than whichever branch was
+    active when the product was edited. Same underlying bug as
+    SavingsProductConfigViewSet, just on ProductViewSet.
+    """
+
+    def setUp(self):
+        self.user, self.tenant, self.branch = _make_env("prod_vis")
+        self.other_branch = Branch.objects.create(
+            name="Other Branch", code="PRODOTHER", tenant=self.tenant, owner=self.user,
+        )
+        self.product = Product.objects.create(
+            name="Monthly Contribution Savings", code="SAV-MC", product_type="SAVINGS",
+            owner=self.user, branch=self.branch,
+        )
+        self.api = APIClient()
+        self.api.force_authenticate(user=self.user)
+
+    def test_product_update_visible_regardless_of_director_branch_switcher(self):
+        update = self.api.patch(
+            f"/api/products/products/{self.product.id}/",
+            {
+                "contribution_cycle": "monthly",
+                "contribution_amount": "1000.00",
+                "interest_rate": "0.00",
+            },
+            format="json",
+            HTTP_X_BRANCH_ID=str(self.branch.id),
+        )
+        self.assertEqual(update.status_code, 200, update.content)
+
+        # Reload as if the director switched to a different branch afterwards.
+        fetched = self.api.get(
+            f"/api/products/products/{self.product.id}/",
+            HTTP_X_BRANCH_ID=str(self.other_branch.id),
+        )
+        self.assertEqual(fetched.status_code, 200, fetched.content)
+        self.assertEqual(fetched.json()['contribution_cycle'], 'monthly')
+        self.assertEqual(float(fetched.json()['contribution_amount']), 1000.00)
+
+    def test_product_list_visible_regardless_of_director_branch_switcher(self):
+        listed = self.api.get(
+            "/api/products/products/",
+            {"product_type": "SAVINGS"},
+            HTTP_X_BRANCH_ID=str(self.other_branch.id),
+        )
+        self.assertEqual(listed.status_code, 200, listed.content)
+        results = listed.json()
+        results = results if isinstance(results, list) else results.get('results', [])
+        self.assertIn(self.product.id, [p['id'] for p in results])

@@ -56,10 +56,23 @@ class ProductViewSet(ScopedModelViewSet):
     def get_queryset(self):
         """
         Filter products based on user's branch access.
-        Branch/tenant scoping is handled by ScopedModelViewSet.get_queryset().
-        We only add the account-count annotation on top.
+
+        Deliberately bypasses ScopedModelViewSet's default get_queryset():
+        its director-branch-switcher override (X-Branch-ID) applies a strict
+        `branch=<switcher branch>` filter with no tenant-wide allowance. A
+        product catalog entry (loan/savings product config, interest rates,
+        contribution cycle, etc.) is institution-wide, not branch-specific —
+        it must not appear to vanish just because a director has a different
+        branch selected in the switcher than whichever branch was active
+        when the product was created. Deliberate branch filtering is still
+        available and unaffected via the explicit `branch`/`branch__id`
+        filterset fields below.
         """
-        queryset = super().get_queryset()
+        user = self.request.user
+        if getattr(user, 'is_system_admin', False):
+            queryset = Product.objects.all_tenants().select_related('branch', 'owner', 'created_by')
+        else:
+            queryset = Product.objects.for_user(user).select_related('branch', 'owner', 'created_by')
 
         # Annotate with active savings account count for this product
         queryset = queryset.annotate(
