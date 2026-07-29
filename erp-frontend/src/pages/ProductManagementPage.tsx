@@ -51,6 +51,10 @@ interface Product {
   allow_overdraft?: boolean;
   overdraft_limit?: number;
 
+  // Savings contribution cycle
+  contribution_cycle?: 'daily' | 'weekly' | 'monthly' | null;
+  contribution_amount?: number | null;
+
   // Validation Configuration
   validation_scope?: 'category' | 'account' | 'user';
   validation_rules?: any;
@@ -164,6 +168,8 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({ filterTyp
     allow_overdraft: false,
     auto_debit_fees: false,
     requires_approval_above: 0,
+    contribution_cycle: null,
+    contribution_amount: null,
   });
 
   const [cronPreset, setCronPreset] = useState<string>('monthly');
@@ -618,6 +624,80 @@ const ProductManagementPage: React.FC<ProductManagementPageProps> = ({ filterTyp
               <option value="compound">Compound Interest</option>
               <option value="reducing_balance">Reducing Balance (Loans)</option>
             </select>
+          </div>
+        )}
+
+        {/* Contribution Cycle (SAVINGS only) — how often clients are expected to
+            contribute. Drives ContributionSchedule generation and is the default
+            committed amount used to cap first-deposit-income sweeps when a client
+            doesn't have their own override set. Separate from the "has daily
+            contribution / first-deposit-is-income" behaviour flags, which live on
+            the product's savings config page, not here. */}
+        {showScheduling && (
+          <div style={{ marginBottom: '20px', display: 'flex', gap: '16px' }}>
+            <div style={{ flex: 1 }}>
+              <label
+                style={{ display: 'block', fontWeight: 600, marginBottom: '8px', color: '#374151' }}
+              >
+                <Clock size={16} style={{ display: 'inline', marginRight: '6px' }} />
+                Contribution Cycle
+              </label>
+              <select
+                value={formData.contribution_cycle ?? ''}
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    contribution_cycle: (e.target.value || null) as any,
+                  })
+                }
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                }}
+              >
+                <option value="">— None (no fixed cycle) —</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                How often clients are expected to contribute. Required for schedule
+                generation and for first-deposit-income capping to work correctly.
+              </p>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label
+                style={{ display: 'block', fontWeight: 600, marginBottom: '8px', color: '#374151' }}
+              >
+                Default Contribution Amount (₦)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={formData.contribution_amount ?? ''}
+                onChange={e =>
+                  setFormData({
+                    ...formData,
+                    contribution_amount: e.target.value === '' ? null : parseFloat(e.target.value),
+                  })
+                }
+                placeholder="e.g., 500.00"
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                }}
+              />
+              <p style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                Used when a client doesn't have their own committed amount set.
+              </p>
+            </div>
           </div>
         )}
 
