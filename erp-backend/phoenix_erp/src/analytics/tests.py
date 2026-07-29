@@ -195,8 +195,8 @@ class PortfolioPerformanceViewsTestCase(TestCase):
         self.interest_income_account = _make_account(self.owner, self.branch, "Interest Income", "4210", Account.INCOME)
         self.provision_expense_account = _make_account(self.owner, self.branch, "Provision Expense", "5310", Account.EXPENSE)
         self.allowance_account = _make_account(self.owner, self.branch, "Allowance for Loan Losses", "1320", Account.LIABILITY)
-        self.allowance_account.balance = Decimal("500.00")
-        self.allowance_account.save()
+        Account.objects.filter(pk=self.allowance_account.pk).update(balance=Decimal("500.00"))
+        self.allowance_account.refresh_from_db()
 
         gl_product = Product.objects.create(name="Weekly Loan", code="LOAN-WK", product_type="LOAN", owner=self.owner, branch=self.branch)
         self.product = LoanProduct.objects.create(
@@ -305,7 +305,11 @@ class PortfolioPerformanceViewsTestCase(TestCase):
         self.assertEqual(len(response.data["data"]), 1)
         self.assertEqual(Decimal(response.data["data"][0]["outstanding_principal"]), Decimal("1000.00"))
 
-    def test_breakdown_respects_date_range(self):
+    def test_breakdown_outstanding_balance_ignores_date_range(self):
+        # A loan disbursed well outside [start, end] must still contribute
+        # its current outstanding balance to the portfolio total — the date
+        # range must not silently drop still-active loans out of the report
+        # just because they're old. See PortfolioBreakdownView's docstring.
         today = timezone.now().date()
         old_date = today - timezone.timedelta(days=400)
         self._make_loan(self.client1, "LN-PP5", outstanding_principal=Decimal("500.00"), disbursement_date=today)
@@ -317,7 +321,24 @@ class PortfolioPerformanceViewsTestCase(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         total_outstanding = sum(Decimal(r["outstanding_principal"]) for r in response.data["data"])
-        self.assertEqual(total_outstanding, Decimal("500.00"))
+        self.assertEqual(total_outstanding, Decimal("1499.00"))
+
+    def test_breakdown_disbursed_amount_respects_date_range(self):
+        # disbursed_amount (a cohort/origination-volume figure) is the one
+        # value that should still be scoped to [start, end], separately from
+        # the always-current outstanding balance.
+        today = timezone.now().date()
+        old_date = today - timezone.timedelta(days=400)
+        self._make_loan(self.client1, "LN-PP5B", outstanding_principal=Decimal("500.00"), disbursement_date=today)
+        self._make_loan(self.client2, "LN-PP6B", outstanding_principal=Decimal("999.00"), disbursement_date=old_date)
+
+        response = self.api.get(
+            "/api/analytics/portfolio-performance/breakdown/",
+            {"start": str(today - timezone.timedelta(days=10)), "end": str(today)},
+        )
+        self.assertEqual(response.status_code, 200)
+        total_disbursed = sum(Decimal(r["disbursed_amount"]) for r in response.data["data"])
+        self.assertEqual(total_disbursed, Decimal("500.00"))
 
     def test_interest_income_at_disbursement_uses_schedule_interest_due(self):
         loan = self._make_loan(

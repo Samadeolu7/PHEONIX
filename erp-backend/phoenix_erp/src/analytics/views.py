@@ -817,12 +817,20 @@ class PortfolioBreakdownView(APIView):
     GET /api/analytics/portfolio-performance/breakdown/
 
     Portfolio composition cross-cut by branch x product x officer x CBN risk
-    band, for loans disbursed within [start, end] (see _parse_date_range —
-    defaults to the trailing 12 months). The date range filters *which
-    loans are included* (by disbursement_date); outstanding_principal and
-    provision_amount are still *current* balances on those loans — there is
-    no historical balance snapshot, same limitation every other view in
-    this module has.
+    band. outstanding_principal/total_paid/provision_amount are a *current*
+    balance snapshot over all in-scope loans regardless of when they were
+    disbursed — matching the Gross Loan Portfolio definition used by
+    par_summary/cbn_returns/dashboard-stats, so this report's total always
+    agrees with the dashboard's. [start, end] (see _parse_date_range —
+    defaults to the trailing 12 months) instead scopes only
+    disbursed_amount, a cohort ("how much did we lend out in this window")
+    figure — it does NOT gate which loans' balances are counted, so a loan
+    disbursed outside the window still contributes its current outstanding
+    balance. (Previously the date range gated both, which meant a loan's
+    entire remaining balance would silently vanish from the report once its
+    disbursement date aged past the window, making the portfolio total
+    trend downward over time independent of real repayment/origination
+    activity.)
 
     Query params: start, end, branch, product, officer, risk_band,
     group_by (comma list, subset of branch,product,officer,risk_band;
@@ -858,11 +866,7 @@ class PortfolioBreakdownView(APIView):
             scope_qs(LoanAccount.objects.for_user(user)),
             user,
             client_lookup='client__assigned_officer',
-        ).filter(
-            status__in=['active', 'disbursed', 'paid_off', 'defaulted'],
-            disbursement_date__gte=start,
-            disbursement_date__lte=end,
-        )
+        ).filter(status__in=['active', 'disbursed', 'paid_off', 'defaulted'])
         loan_qs = _apply_report_filters(loan_qs, request)
 
         risk_band = request.query_params.get('risk_band')
@@ -876,17 +880,33 @@ class PortfolioBreakdownView(APIView):
 
         value_fields = [self.FIELD_MAP[k] for k in group_keys]
 
+        # Current portfolio snapshot — every in-scope loan, regardless of
+        # disbursement date.
         rows = list(
             loan_qs.values(*value_fields)
             .annotate(
                 loan_count=Count('id'),
                 outstanding_principal=Sum('outstanding_principal'),
-                disbursed_amount=Sum('disbursed_amount'),
                 total_paid=Sum('total_paid'),
                 provision_amount=Sum('provision_amount'),
             )
             .order_by('-outstanding_principal')
         )
+
+        # Disbursement volume is the one figure that's genuinely scoped to
+        # [start, end] — a separate query so it can't gate the balance
+        # snapshot above. Every group here is necessarily also present in
+        # `rows` (same status filter, disbursement_date narrows a subset),
+        # so a plain dict lookup below is safe.
+        disbursed_rows = (
+            loan_qs.filter(disbursement_date__gte=start, disbursement_date__lte=end)
+            .values(*value_fields)
+            .annotate(disbursed_amount=Sum('disbursed_amount'))
+        )
+        disbursed_map = {
+            tuple(r[f] for f in value_fields): r['disbursed_amount'] or Decimal('0.00')
+            for r in disbursed_rows
+        }
 
         branch_names, product_names, officer_names = {}, {}, {}
         if 'branch' in group_keys:
@@ -911,10 +931,11 @@ class PortfolioBreakdownView(APIView):
                 (paid / total_obligation * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
                 if total_obligation > 0 else Decimal('0')
             )
+            disbursed_key = tuple(r.get(f) for f in value_fields)
             row_out = {
                 'loan_count': r['loan_count'],
                 'outstanding_principal': str(outstanding),
-                'disbursed_amount': str(r['disbursed_amount'] or Decimal('0.00')),
+                'disbursed_amount': str(disbursed_map.get(disbursed_key, Decimal('0.00'))),
                 'total_paid': str(paid),
                 'provision_amount': str(r['provision_amount'] or Decimal('0.00')),
                 'collection_rate': str(collection_rate),
