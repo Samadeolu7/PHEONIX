@@ -150,10 +150,21 @@ class Command(BaseCommand):
                 "Every matched staff member already has a Salary Advance account. Nothing to create."
             ))
         elif not skip_confirm:
-            confirm = input(
-                f"\nThis will create {len(need_one)} GL 'Salary Advance' sub-account(s) "
-                f"in the LIVE database. Type 'yes' to continue: "
-            )
+            try:
+                confirm = input(
+                    f"\nThis will create {len(need_one)} GL 'Salary Advance' sub-account(s) "
+                    f"in the LIVE database. Type 'yes' to continue: "
+                )
+            except EOFError:
+                # No interactive stdin attached — e.g. `docker exec` without -i,
+                # a cron job, or CI. Fail closed with a clear instruction rather
+                # than a raw traceback, since we can't safely assume consent.
+                raise CommandError(
+                    "No interactive terminal available to confirm (this happens with "
+                    "`docker exec` without -i, cron, or CI). Re-run with --yes to skip "
+                    "the prompt once you're sure, e.g.:\n"
+                    "  python manage.py create_staff_salary_advance_accounts --apply --yes"
+                )
             if confirm.strip().lower() != 'yes':
                 self.stdout.write(self.style.ERROR('Aborted — no changes made.'))
                 return
