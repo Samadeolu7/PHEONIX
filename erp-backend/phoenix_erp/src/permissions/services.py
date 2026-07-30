@@ -31,7 +31,7 @@ from django.db import transaction as db_tx
 from django.db.models import Q as _Q
 from permissions.models import (
     RolePermissionPolicy, UserPermissionOverride,
-    SCOPE_GLOBAL, SCOPE_OWN_BRANCH, SCOPE_RANK,
+    SCOPE_GLOBAL, SCOPE_OWN_BRANCH, SCOPE_OWN_RECORDS, SCOPE_RANK,
 )
 
 
@@ -338,7 +338,13 @@ class PermissionResolver:
     def _aggregate_policy_list(policy_list):
         """Same winning-flags/scope/limit aggregation as _resolve_role_baseline, factored out for bulk reuse."""
         flags = {f: False for f in FLAG_NAMES}
-        scope = SCOPE_OWN_BRANCH
+        # Seed at the NARROWEST rank, not SCOPE_OWN_BRANCH — policy_list is
+        # never empty here (callers only invoke this when `applicable` is
+        # truthy), so the loop below always overwrites this with a real
+        # policy's scope. Seeding at own_branch (rank 3) would silently
+        # out-rank any single assigned_clients/ajo_group/own_records policy
+        # (rank ≤2), making those scopes impossible to ever resolve to.
+        scope = SCOPE_OWN_RECORDS
         limit: Optional[Decimal] = Decimal('0')
         unlimited = False
         for p in sorted(policy_list, key=lambda x: x.specificity, reverse=True):
@@ -537,7 +543,14 @@ class PermissionResolver:
         # Pick the single most specific policy per role then aggregate across roles
         # (if multiple roles match, OR the boolean flags, take broader scope, take higher limit)
         winning_flags = {f: False for f in FLAG_NAMES}
-        winning_scope = SCOPE_OWN_BRANCH
+        # Seed at the NARROWEST rank, not SCOPE_OWN_BRANCH — `policies` is
+        # confirmed non-empty above (the `not policies.exists()` branch
+        # already returned), so the loop below always overwrites this with a
+        # real policy's scope. Seeding at own_branch (rank 3) would silently
+        # out-rank any single assigned_clients/ajo_group/own_records policy
+        # (rank ≤2) an admin configured via the Permission Setup UI, making
+        # those narrower scopes impossible to ever actually resolve to.
+        winning_scope = SCOPE_OWN_RECORDS
         winning_limit: Optional[Decimal] = Decimal('0')  # start at 0, build up
         limit_is_unlimited = False
 
@@ -697,3 +710,77 @@ class PermissionResolver:
             is_elevated=is_elevated,
             elevated_fields=list(set(elevated_fields)),
         )
+
+
+def scope_queryset_to_user(
+    qs,
+    user,
+    *,
+    module: str,
+    page: str,
+    officer_client_lookup: Optional[str],
+    officer_group_lookup: Optional[str] = None,
+    officer_group_members_lookup: Optional[str] = None,
+):
+    """
+    Free-function equivalent of common.views.ScopedModelViewSet's
+    `_apply_officer_scope` instance method, for use in plain APIView-based
+    report/aggregation endpoints that don't go through a ModelViewSet.
+    Mirrors that method's tiers and fail-closed behavior exactly, so a
+    report's totals agree with what the same (module, page) scope already
+    permits in the corresponding list endpoint.
+
+    `officer_client_lookup` is the ORM path from `qs`'s model to
+    `Client.assigned_officer` (e.g. 'client__assigned_officer'), same
+    convention as ScopedModelViewSet.officer_client_lookup.
+    """
+    if getattr(user, 'is_system_admin', False):
+        return qs
+    if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+        return qs
+
+    scope = PermissionResolver.resolve(user, module=module, page=page).scope
+
+    if scope in ('own_branch', 'global'):
+        return qs
+
+    staff = None
+    try:
+        staff = user.staff_profile
+    except Exception:
+        pass
+
+    lookup = officer_client_lookup
+    if not lookup:
+        return qs.filter(created_by=user)
+
+    if not staff:
+        return qs.none()
+
+    # Unassigned records (officer_client_lookup IS NULL) are visible to
+    # everyone, not just the officers they'd otherwise be scoped to —
+    # matches ScopedModelViewSet._apply_officer_scope's documented behavior.
+    unassigned = _Q(**{f'{lookup}__isnull': True})
+
+    if scope == 'ajo_group':
+        q = (
+            _Q(**{lookup: staff}) |
+            _Q(**{f'{lookup}__reports_to': staff}) |
+            unassigned
+        )
+        if officer_group_lookup:
+            q |= _Q(**{officer_group_lookup: staff})
+        if officer_group_members_lookup:
+            q |= _Q(**{officer_group_members_lookup: staff})
+            return qs.filter(q).distinct()
+        return qs.filter(q)
+
+    # own_records / assigned_clients (and any other/unrecognized value) —
+    # narrowest tier, fail toward MORE restriction rather than less.
+    q = _Q(**{lookup: staff}) | unassigned
+    if officer_group_lookup:
+        q |= _Q(**{officer_group_lookup: staff})
+    if officer_group_members_lookup:
+        q |= _Q(**{officer_group_members_lookup: staff})
+        return qs.filter(q).distinct()
+    return qs.filter(q)

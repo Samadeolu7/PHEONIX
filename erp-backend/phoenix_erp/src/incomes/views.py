@@ -468,6 +468,7 @@ class InvoiceViewSet(ScopedModelViewSet):
     """ViewSet for invoices"""
     permission_module = 'incomes'
     permission_page = 'invoices'
+    officer_client_lookup = 'client__assigned_officer'
     queryset = Invoice.objects.all()
     serializer_class = InvoiceSerializer
     permission_classes = [IsAuthenticated]

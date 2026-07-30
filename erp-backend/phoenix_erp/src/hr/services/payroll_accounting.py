@@ -471,18 +471,24 @@ class PayrollAccountingService:
 
     def _get_default_payment_account(self):
         """Get default cash account for payment"""
-        # Try to get bank account first, then cash
+        # Try to get bank account first, then cash.
+        # Must be a postable (CHILD, allow_manual_entries) account — a plain
+        # name match can otherwise land on a PARENT-level "header" account
+        # (e.g. a legacy 3-digit chart's '100 Cash and Bank' group account),
+        # which TransactionEntry.clean() correctly refuses to post to.
         account = Account.objects.filter(
             branch=self.payroll.branch,
             account_type=Account.ASSET,
+            account_level=Account.LEVEL_CHILD,
+            allow_manual_entries=True,
             name__icontains='bank',
             is_deleted=False
-        ).first()
-        
+        ).order_by('code').first()
+
         if not account:
             # Fallback to cash account
             account = get_system_account('cash', self.payroll.owner, self.payroll.branch)
-        
+
         return account
 
     # ── Account Getters ──────────────────────────────────────────────────────

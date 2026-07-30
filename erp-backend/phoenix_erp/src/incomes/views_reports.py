@@ -41,9 +41,21 @@ def _parse_date(value, fallback):
 
 
 def _base_invoice_qs(request):
-    """Return non-cancelled invoices scoped to the requesting user/branch."""
+    """
+    Return non-cancelled invoices scoped to the requesting user/branch, and
+    further narrowed to their assigned clients when the Permission Setup UI
+    scope for incomes/invoices calls for it (assigned_clients/ajo_group/
+    own_records) — mirrors InvoiceViewSet's own scoping so these reports
+    agree with what the officer can already see in the invoice list.
+    """
+    from permissions.services import scope_queryset_to_user
+
     qs = Invoice.objects.for_user(request.user).exclude(status='cancelled')
-    return qs
+    return scope_queryset_to_user(
+        qs, request.user,
+        module='incomes', page='invoices',
+        officer_client_lookup='client__assigned_officer',
+    )
 
 
 def _fmt(value):

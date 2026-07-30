@@ -61,7 +61,12 @@ const StaffIOUFormPage: React.FC = () => {
     },
   });
 
-  const { data: staffData, isLoading: isLoadingStaff } = useQuery({
+  const {
+    data: staffData,
+    isLoading: isLoadingStaff,
+    isError: isStaffError,
+    refetch: refetchStaff,
+  } = useQuery({
     queryKey: ['staff-dropdown'],
     queryFn: () => hrService.getStaffForDropdown(),
   });
@@ -162,13 +167,20 @@ const StaffIOUFormPage: React.FC = () => {
             render={({ field }) => (
               <select
                 {...field}
+                disabled={isStaffError}
                 onChange={e => field.onChange(Number(e.target.value))}
                 className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                   errors.staff ? 'border-red-400' : 'border-gray-300'
                 }`}
               >
                 <option value={0}>
-                  {isLoadingStaff ? 'Loading staff…' : 'Select staff member'}
+                  {isLoadingStaff
+                    ? 'Loading staff…'
+                    : isStaffError
+                      ? 'Failed to load staff list'
+                      : staffData && staffData.length === 0
+                        ? 'No staff found'
+                        : 'Select staff member'}
                 </option>
                 {staffData?.map(s => (
                   <option key={s.id} value={s.id}>
@@ -178,6 +190,18 @@ const StaffIOUFormPage: React.FC = () => {
               </select>
             )}
           />
+          {isStaffError && (
+            <p className="mt-1 text-xs text-red-500">
+              Could not load the staff list.{' '}
+              <button
+                type="button"
+                onClick={() => refetchStaff()}
+                className="underline hover:text-red-600"
+              >
+                Retry
+              </button>
+            </p>
+          )}
           {errors.staff && (
             <p className="mt-1 text-xs text-red-500">{errors.staff.message}</p>
           )}

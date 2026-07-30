@@ -66,47 +66,27 @@ def _scoped(qs, branch):
     return qs
 
 
-_SCOPE_RANK = {
-    'assigned_clients': 0,
-    'own_records':       0,
-    'ajo_group':         1,
-    'own_branch':        2,
-    'global':            3,
-}
-
-# These roles are always scoped to personally-assigned clients regardless of
-# what default_scope is stored on the Role record in the database.
-_FIELD_OFFICER_ROLES = frozenset({
-    'credit officer', 'loan officer', 'field officer', 'officer', 'registrar',
-})
-
-
-def _apply_officer_scope(qs, user, client_lookup: str):
+def _apply_officer_scope(qs, user, client_lookup: str, *, module: str, page: str):
     """
-    Narrow a queryset to only the records this user may see based on
-    their tenant Role.default_scope.  Field officers are always pinned to
-    rank 0 (assigned_clients) by role name so that a mis-configured role
-    record cannot accidentally expose the whole branch portfolio.
+    Narrow a queryset to only the records this user may see, based on the
+    RolePermissionPolicy scope configured for (module, page) via the
+    Permission Setup UI — the same PermissionResolver-driven mechanism
+    ScopedModelViewSet._apply_officer_scope uses for list endpoints (see
+    common/views.py), so a report's totals agree with what an officer can
+    already see in the underlying list view for the same module/page.
+
+    Previously this read Role.default_scope directly, a coarser, page-blind
+    value the Permission Setup UI's per-page Scope dropdown had no effect
+    on — an admin setting "Assigned Clients Only" for a page did nothing to
+    any analytics report built from the same data.
     """
     if _is_global_user(user):
         return qs
 
-    rank = 2
-    try:
-        for r in user.roles.filter(is_active=True):
-            s = getattr(r, 'default_scope', None)
-            r_rank = _SCOPE_RANK.get(s)
-            if r_rank is not None and r_rank < rank:
-                rank = r_rank
-            # Force assigned-clients scope for field-level officer roles,
-            # even when default_scope is not configured on the role record.
-            role_name = (getattr(r, 'name', '') or '').lower()
-            if role_name in _FIELD_OFFICER_ROLES:
-                rank = min(rank, 0)
-    except Exception:
-        pass
+    from permissions.services import PermissionResolver
+    scope = PermissionResolver.resolve(user, module=module, page=page).scope
 
-    if rank >= 2:
+    if scope in ('own_branch', 'global'):
         return qs
 
     staff = None
@@ -117,14 +97,21 @@ def _apply_officer_scope(qs, user, client_lookup: str):
     if not staff:
         return qs.none()
 
-    if rank == 0:
-        return qs.filter(Q(**{client_lookup: staff}))
+    # Unassigned records (client_lookup IS NULL) are visible to everyone,
+    # not just the officers they'd otherwise be scoped to — matches
+    # ScopedModelViewSet._apply_officer_scope's documented behavior.
+    unassigned = Q(**{f'{client_lookup}__isnull': True})
 
-    # rank 1: ajo_group / supervisor
-    return qs.filter(
-        Q(**{client_lookup: staff}) |
-        Q(**{f'{client_lookup}__reports_to': staff})
-    )
+    if scope == 'ajo_group':
+        return qs.filter(
+            Q(**{client_lookup: staff}) |
+            Q(**{f'{client_lookup}__reports_to': staff}) |
+            unassigned
+        )
+
+    # own_records / assigned_clients (and any other/unrecognized value) —
+    # narrowest tier, fail toward MORE restriction rather than less.
+    return qs.filter(Q(**{client_lookup: staff}) | unassigned)
 
 
 def _parse_date_range(request, default_days=365, max_days=1825):
@@ -240,6 +227,7 @@ class MicrofinanceDashboardStatsView(APIView):
                 scope_qs(Client.objects.for_user(user)),
                 user,
                 client_lookup='assigned_officer',
+                module='clients', page='clients',
             )
             data['total_clients'] = client_qs.count()
             data['active_clients'] = client_qs.filter(status='active').count()
@@ -257,6 +245,7 @@ class MicrofinanceDashboardStatsView(APIView):
                 scope_qs(LoanAccount.objects.for_user(user)),
                 user,
                 client_lookup='client__assigned_officer',
+                module='loans', page='loan-accounts',
             )
 
             data['active_loans'] = loan_qs.filter(status__in=['active', 'disbursed']).count()
@@ -336,6 +325,7 @@ class MicrofinanceDashboardStatsView(APIView):
                 scope_qs(SavingsAccount.objects.for_user(user)).filter(status='active'),
                 user,
                 client_lookup='client__assigned_officer',
+                module='savings', page='savings-accounts',
             )
             total_savings = savings_qs.aggregate(
                 total=Sum('account__balance')
@@ -352,6 +342,7 @@ class MicrofinanceDashboardStatsView(APIView):
                 scope_qs(LoanAccount.objects.for_user(user)),
                 user,
                 client_lookup='client__assigned_officer',
+                module='loans', page='loan-accounts',
             ).filter(status='pending').count()
         except Exception:
             pass
@@ -414,6 +405,7 @@ class MicrofinanceDashboardStatsView(APIView):
                 scope_qs(Client.objects.for_user(user)),
                 user,
                 client_lookup='assigned_officer',
+                module='clients', page='clients',
             ).filter(client_type='pr').count()
         except Exception:
             data['pending_prospects'] = 0
@@ -624,6 +616,7 @@ class StaffPerformanceView(APIView):
             scope_qs(LoanAccount.objects.for_user(user)),
             user,
             client_lookup='client__assigned_officer',
+            module='loans', page='loan-accounts',
         )
 
         portfolio_rows = (
@@ -726,6 +719,7 @@ class CashInflowTrendView(APIView):
             _scoped(LoanRepaymentSchedule.objects.for_user(user), branch),
             user,
             client_lookup='loan__client__assigned_officer',
+            module='loans', page='loan-accounts',
         )
 
         expected_rows = (
@@ -787,6 +781,7 @@ class LoanPortfolioByProductView(APIView):
             scope_qs(LoanAccount.objects.for_user(user)),
             user,
             client_lookup='client__assigned_officer',
+            module='loans', page='loan-accounts',
         ).filter(status__in=['active', 'disbursed'])
 
         rows = (
@@ -866,6 +861,7 @@ class PortfolioBreakdownView(APIView):
             scope_qs(LoanAccount.objects.for_user(user)),
             user,
             client_lookup='client__assigned_officer',
+            module='loans', page='loan-accounts',
         ).filter(status__in=['active', 'disbursed', 'paid_off', 'defaulted'])
         loan_qs = _apply_report_filters(loan_qs, request)
 
@@ -1012,6 +1008,7 @@ class InterestIncomeByRecognitionModeView(APIView):
                 scope_qs(LoanAccount.objects.for_user(user)),
                 user,
                 client_lookup='client__assigned_officer',
+                module='loans', page='loan-accounts',
             ),
             request,
         )
@@ -1107,6 +1104,7 @@ class ProvisioningComplianceView(APIView):
                 scope_qs(LoanAccount.objects.for_user(user)),
                 user,
                 client_lookup='client__assigned_officer',
+                module='loans', page='loan-accounts',
             ),
             request,
         ).filter(status__in=['active', 'disbursed', 'defaulted'])
@@ -1205,6 +1203,7 @@ class OfficerScorecardTrendView(APIView):
                 scope_qs(LoanAccount.objects.for_user(user)),
                 user,
                 client_lookup='client__assigned_officer',
+                module='loans', page='loan-accounts',
             ),
             request,
         )
@@ -1341,12 +1340,14 @@ class DisbursementMasterRollView(APIView):
                 scope_qs(LoanAccount.objects.for_user(user)),
                 user,
                 client_lookup='client__assigned_officer',
+                module='loans', page='loan-accounts',
             ),
             request,
         )
 
         client_qs = _apply_officer_scope(
             scope_qs(Client.objects.for_user(user)), user, client_lookup='assigned_officer',
+            module='clients', page='clients',
         )
         officer_param = request.query_params.get('officer')
         if officer_param:
@@ -1537,6 +1538,7 @@ class DailyCollectionReportView(APIView):
 
         client_qs = _apply_officer_scope(
             scope_qs(Client.objects.for_user(user)), user, client_lookup='assigned_officer',
+            module='clients', page='clients',
         ).select_related('assigned_officer', 'group')
 
         officer_param = request.query_params.get('officer')
@@ -1785,6 +1787,7 @@ class DisbursementByProductView(APIView):
                 scope_qs(LoanAccount.objects.for_user(user)),
                 user,
                 client_lookup='client__assigned_officer',
+                module='loans', page='loan-accounts',
             ),
             request,
         ).filter(

@@ -91,10 +91,8 @@ class Command(BaseCommand):
             self.stdout.write(f"  Regenerating: {account.code}  {account.name}")
             try:
                 with transaction.atomic():
-                    workflow_config = getattr(account, '_workflow_config', None)
-
-                    form_schema = _generate_form_schema(account, workflow_config)
-                    workflow = _get_or_create_master_workflow(account, workflow_config)
+                    form_schema = _generate_form_schema(account)
+                    workflow = _get_or_create_master_workflow(account)
                     _link_account_to_workflow(account, workflow, form_schema)
 
                     module_page = _generate_module_page(account, form_schema)

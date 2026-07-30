@@ -26,8 +26,7 @@ class AccountSerializer(TenantModelSerializer):
     # Temporarily disabled to diagnose transaction errors
     # children_count = serializers.SerializerMethodField()
     # total_children_balance = serializers.SerializerMethodField()
-    workflow_config = serializers.JSONField(write_only=True, required=False)
-    
+
     class Meta:
         model = Account
         fields = [
@@ -38,25 +37,9 @@ class AccountSerializer(TenantModelSerializer):
             'enable_smart_forms', 'generated_form_schema',
             'generated_workflow', 'generated_page',
             'allow_manual_entries', 'is_system_account',
-            'workflow_config',
             'created_at', 'updated_at'
         ]
-    
-    def create(self, validated_data):
-        """Create account and attach workflow config for signal processing"""
-        # Extract workflow config before creating
-        workflow_config = validated_data.pop('workflow_config', None)
-        
-        # Create account
-        account = super().create(validated_data)
-        
-        # Attach workflow config to instance for signal handler
-        if workflow_config:
-            account._workflow_config = workflow_config
-            account.save()  # Trigger signal again with config attached
-        
-        return account
-    
+
     def get_children_count(self, obj):
         """Get count of child accounts for parent accounts"""
         if obj.is_category_account:

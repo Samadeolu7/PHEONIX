@@ -305,6 +305,60 @@ class PortfolioPerformanceViewsTestCase(TestCase):
         self.assertEqual(len(response.data["data"]), 1)
         self.assertEqual(Decimal(response.data["data"][0]["outstanding_principal"]), Decimal("1000.00"))
 
+    def test_breakdown_narrows_to_assigned_clients_when_scope_configured(self):
+        """
+        Regression test: PortfolioBreakdownView (and the whole analytics
+        module) used to scope via Role.default_scope directly — the
+        Permission Setup UI's per-page Scope dropdown had no effect on it.
+        Now it resolves scope through PermissionResolver for
+        (module='loans', page='loan-accounts'), same as LoanAccountViewSet
+        itself — configuring 'assigned_clients' there must narrow this
+        report to only the requesting officer's own clients' loans.
+        """
+        self._make_loan(self.client1, "LN-PP-SCOPE1", outstanding_principal=Decimal("1000.00"))
+        self._make_loan(self.client2, "LN-PP-SCOPE2", outstanding_principal=Decimal("2000.00"))
+
+        from pages.models import Module, ModulePage
+        from permissions.models import RolePermissionPolicy, SCOPE_ASSIGNED_CLIENTS
+        from users.models import Role
+
+        officer_user = User.objects.create_user(username="pp_scope_officer", password="pass")
+        officer_user.tenant = self.tenant
+        officer_user.branch = self.branch
+        officer_user.save()
+        # A post_save signal on User auto-creates a Staff profile — fetch and
+        # complete it rather than creating a second one (unique on user_id).
+        officer_staff = Staff.objects.get(user=officer_user)
+        officer_staff.first_name = "Scoped"
+        officer_staff.last_name = "Officer"
+        officer_staff.owner = self.owner
+        officer_staff.branch = self.branch
+        officer_staff.tenant = self.tenant
+        officer_staff.save()
+
+        # Re-point client1 to this new officer so their loan is the only one
+        # that should be visible once assigned_clients scope is enforced.
+        self.client1.assigned_officer = officer_staff
+        self.client1.save(update_fields=["assigned_officer"])
+
+        module = Module.objects.create(code="loans", name="Loans", icon="cash")
+        page = ModulePage.objects.create(
+            module=module, code="loan-accounts", title="Loan Accounts", page_type="list",
+            page_config={"entity": "LoanAccount", "columns": []},
+        )
+        role = Role.objects.create(tenant=self.tenant, name="Scoped Officer Role")
+        RolePermissionPolicy.objects.create(
+            role=role, page=page, can_view=True, scope=SCOPE_ASSIGNED_CLIENTS,
+        )
+        officer_user.roles.add(role)
+
+        api = APIClient()
+        api.force_authenticate(user=officer_user)
+        response = api.get("/api/analytics/portfolio-performance/breakdown/")
+        self.assertEqual(response.status_code, 200)
+        total_outstanding = sum(Decimal(r["outstanding_principal"]) for r in response.data["data"])
+        self.assertEqual(total_outstanding, Decimal("1000.00"))
+
     def test_breakdown_outstanding_balance_ignores_date_range(self):
         # A loan disbursed well outside [start, end] must still contribute
         # its current outstanding balance to the portfolio total — the date

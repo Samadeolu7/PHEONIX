@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Info, Plus, Sparkles, AlertCircle, CheckCircle, Loader } from 'lucide-react';
-import { CascadingAccountSelector } from '../components/CascadingAccountSelector';
 import { api } from '../services/api';
 
 // Account type configurations with v3's comprehensive config
@@ -129,18 +128,9 @@ const UnifiedAccountCreationPage: React.FC = () => {
   });
   const [specificData, setSpecificData] = useState<any>({});
 
-  // Workflow configuration
-  const [workflowConfig, setWorkflowConfig] = useState<any>({
-    contraAccountOption: 'select_now', // 'select_now', 'select_on_form', 'none'
-    contraAccountId: null,
-    requiresApproval: false,
-    approvalRole: '',
-  });
-
   // Backend data (from original & v3)
   const [categories, setCategories] = useState<AccountCategory[]>([]);
   const [parentAccounts, setParentAccounts] = useState<Account[]>([]);
-  const [allAccounts, setAllAccounts] = useState<Account[]>([]); // For contra account selection
   const [products, setProducts] = useState<Product[]>([]);
   const [createdAccount, setCreatedAccount] = useState<any>(null);
   const [generatedComponents, setGeneratedComponents] = useState<GeneratedComponents>({});
@@ -154,10 +144,9 @@ const UnifiedAccountCreationPage: React.FC = () => {
 
   const config = accountType ? ACCOUNT_TYPE_CONFIG[accountType] : null;
 
-  // Fetch categories and accounts on mount
+  // Fetch categories on mount
   useEffect(() => {
     fetchCategories();
-    fetchAllAccounts();
   }, []);
 
   // Auto-select category for specialized types (SAVINGS, LOAN)
@@ -227,17 +216,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
     }
   };
 
-  const fetchAllAccounts = async () => {
-    try {
-      const data = await api.get('/accounts/?account_level=CHILD');
-
-      setAllAccounts(data.results || data);
-    } catch (err: unknown) {
-      console.error('Error fetching all accounts:', err);
-      setAllAccounts([]);
-    }
-  };
-
   const handleCreateCategory = async () => {
     if (!newCategoryName.trim()) {
       setCategoryError('Category name is required');
@@ -291,11 +269,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
       // Add specific data for child accounts
       if (accountLevel === 'CHILD' && Object.keys(specificData).length > 0) {
         payload.specific_data = specificData;
-      }
-
-      // Add workflow configuration for child accounts
-      if (accountLevel === 'CHILD') {
-        payload.workflow_config = workflowConfig;
       }
 
       const account = await api.post('/accounts/', payload);
@@ -1057,149 +1030,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
             </>
           )}
 
-        {/* Workflow Configuration Section */}
-        {accountLevel === 'CHILD' && (
-          <div
-            style={{
-              marginTop: '32px',
-              padding: '20px',
-              background: '#f9fafb',
-              borderRadius: '12px',
-              border: '1px solid #e5e7eb',
-            }}
-          >
-            <h3
-              style={{ margin: '0 0 16px 0', fontSize: '16px', fontWeight: 600, color: '#111827' }}
-            >
-              ⚡ Workflow Configuration
-            </h3>
-            <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '20px' }}>
-              Configure how transactions for this account will be processed
-            </p>
-
-            {/* Contra Account Option */}
-            <div style={{ marginBottom: '20px' }}>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  marginBottom: '8px',
-                  color: '#374151',
-                }}
-              >
-                Contra Account Setup
-              </label>
-              <select
-                value={workflowConfig.contraAccountOption}
-                onChange={e =>
-                  setWorkflowConfig({ ...workflowConfig, contraAccountOption: e.target.value })
-                }
-                style={{
-                  width: '100%',
-                  padding: '10px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  fontSize: '14px',
-                }}
-              >
-                <option value="select_now">Select specific contra account now</option>
-                <option value="select_on_form">Let users select on transaction form</option>
-              </select>
-              <p style={{ fontSize: '12px', color: '#6b7280', marginTop: '6px' }}>
-                {workflowConfig.contraAccountOption === 'select_now'
-                  ? 'You will choose the contra account (e.g., Cash, Bank) that will be used for all transactions.'
-                  : 'A dropdown will be added to the transaction form for flexible contra account selection.'}
-              </p>
-            </div>
-
-            {/* Contra Account Selection */}
-            {workflowConfig.contraAccountOption === 'select_now' && (
-              <div style={{ marginBottom: '20px' }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    marginBottom: '12px',
-                    color: '#374151',
-                  }}
-                >
-                  Select Contra Account *
-                </label>
-                <CascadingAccountSelector
-                  value={workflowConfig.contraAccountId}
-                  onChange={accountId =>
-                    setWorkflowConfig({ ...workflowConfig, contraAccountId: accountId })
-                  }
-                  filterTypes={
-                    accountType === 'EXPENSE' || accountType === 'ASSET'
-                      ? ['ASSET'] // For expenses/assets, use Cash/Bank (assets)
-                      : ['ASSET', 'LIABILITY'] // For income/liability, flexible
-                  }
-                  required={true}
-                />
-              </div>
-            )}
-
-            {/* Approval Configuration */}
-            <div style={{ marginBottom: '12px' }}>
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  fontSize: '14px',
-                  cursor: 'pointer',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={workflowConfig.requiresApproval}
-                  onChange={e =>
-                    setWorkflowConfig({ ...workflowConfig, requiresApproval: e.target.checked })
-                  }
-                  style={{ marginRight: '8px' }}
-                />
-                Require approval for transactions
-              </label>
-            </div>
-
-            {workflowConfig.requiresApproval && (
-              <div style={{ marginLeft: '24px', marginBottom: '12px' }}>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    marginBottom: '8px',
-                    color: '#374151',
-                  }}
-                >
-                  Approval Role *
-                </label>
-                <select
-                  value={workflowConfig.approvalRole}
-                  onChange={e =>
-                    setWorkflowConfig({ ...workflowConfig, approvalRole: e.target.value })
-                  }
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '14px',
-                  }}
-                >
-                  <option value="">-- Select role --</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Admin</option>
-                  <option value="finance">Finance Team</option>
-                  <option value="sys_admin">System Admin</option>
-                </select>
-              </div>
-            )}
-          </div>
-        )}
       </div>
 
       <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'space-between' }}>
@@ -1220,19 +1050,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
             if (!formData.name || !formData.category) {
               setError('Please fill in all required fields');
               return;
-            }
-            if (accountLevel === 'CHILD') {
-              if (
-                workflowConfig.contraAccountOption === 'select_now' &&
-                !workflowConfig.contraAccountId
-              ) {
-                setError('Please select a contra account or choose to select it on the form');
-                return;
-              }
-              if (workflowConfig.requiresApproval && !workflowConfig.approvalRole) {
-                setError('Please select an approval role');
-                return;
-              }
             }
             setError(null);
             if (accountLevel === 'CHILD') {

@@ -114,15 +114,12 @@ def generate_account_components(sender, instance, created, **kwargs):
             from automations.models import FormSchema, WorkflowTemplate
             from pages.models import Module, ModulePage
             from reports.services.generator import ReportGenerator
-            
-            # Get workflow configuration if provided during account creation
-            workflow_config = getattr(instance, '_workflow_config', None)
-            
-            # 1. Generate Form Schema (with contra account field if needed)
-            form_schema = _generate_form_schema(instance, workflow_config)
-            
+
+            # 1. Generate Form Schema
+            form_schema = _generate_form_schema(instance)
+
             # 2. Get or Create MASTER Workflow Template (reusable across accounts)
-            workflow = _get_or_create_master_workflow(instance, workflow_config)
+            workflow = _get_or_create_master_workflow(instance)
             
             # 3. Link account to master workflow template
             _link_account_to_workflow(instance, workflow, form_schema)
@@ -152,100 +149,22 @@ def generate_account_components(sender, instance, created, **kwargs):
     transaction.on_commit(_generate)
 
 
-# def _generate_form_schema(account: Account, workflow_config=None):
-#     """Generate form schema for account transactions"""
-#     from automations.models import FormSchema
-#     from django.utils import timezone
-    
-#     # Determine transaction type labels
-#     if account.account_type in ['ASSET', 'EXPENSE']:
-#         debit_label = 'Increase'
-#         credit_label = 'Decrease'
-#     else:
-#         debit_label = 'Decrease'
-#         credit_label = 'Increase'
-    
-#     # Base fields
-#     fields = [
-#         {
-#             'id': 'transaction_date',
-#             'name': 'transaction_date',
-#             'label': 'Transaction Date',
-#             'type': 'date',
-#             'required': True,
-#             'default': timezone.now().date().isoformat()
-#         },
-#         {
-#             'id': 'amount',
-#             'name': 'amount',
-#             'label': 'Amount',
-#             'type': 'number',
-#             'required': True,
-#             'validation': {'min': 0.01}
-#         },
-#         {
-#             'id': 'description',
-#             'name': 'description',
-#             'label': 'Description',
-#             'type': 'textarea',
-#             'required': True
-#         }
-#     ]
-    
-#     # Add contra account selector if configured to be selected on form
-#     if workflow_config and workflow_config.get('contraAccountOption') == 'select_on_form':
-#         fields.append({
-#             'id': 'contra_account_id',
-#             'name': 'contra_account_id',
-#             'label': 'Payment Method / Source Account',
-#             'type': 'account_select',  # Custom field type for account dropdown
-#             'required': True,
-#             'config': {
-#                 'account_types': ['ASSET'],  # Usually Cash/Bank accounts
-#                 'placeholder': 'Select payment method or source account'
-#             }
-#         })
-    
-#     form_schema = FormSchema.objects.create(
-#         owner=account.owner,
-#         branch=account.branch,
-#         created_by=account.created_by,
-#         name=f'{account.name} Transaction',
-#         description=f'Record transactions for {account.name}',
-#         trigger_event_name=f'transaction.{account.code.replace("-", "_").lower()}',
-#         schema={
-#             'title': f'{account.name} Transaction',
-#             'fields': fields
-#         }
-#     )
-    
-#     return form_schema
-
-
-# accounts/signals.py - FIXED master template creation
-
-def _get_or_create_master_workflow(account: Account, workflow_config=None):
+def _get_or_create_master_workflow(account: Account):
     """Get or create MASTER workflow template - FIXED"""
     from automations.models import WorkflowTemplate, WorkflowType
     
     # Determine template identifier
     account_type_lower = account.account_type.lower()
-    has_approval = workflow_config and workflow_config.get('requiresApproval', False)
-    is_dynamic_contra = workflow_config and workflow_config.get('contraAccountOption') == 'select_on_form'
-    
+
     # Build template run_sequence scoped to owner so each tenant gets its own
     # uniquely-named template and PostgreSQL sequence.  Without the owner prefix,
     # a globally-unique constraint on run_sequence would collide when:
     #   a) multiple EXPENSE parent accounts are created in one batch (race), OR
     #   b) a second tenant creates its first EXPENSE account.
     template_sequence = f"o{account.owner_id}_{account_type_lower}_transaction"
-    if has_approval:
-        template_sequence += "_approval"
-    if is_dynamic_contra:
-        template_sequence += "_dynamic"
-    
+
     logger.info(f"Looking for master template: {template_sequence}")
-    
+
     # Determine transaction sides
     if account.account_type in ['ASSET', 'EXPENSE']:
         main_side = 'DR'
@@ -253,11 +172,7 @@ def _get_or_create_master_workflow(account: Account, workflow_config=None):
     else:
         main_side = 'CR'
         contra_side = 'DR'
-    
-    # ALWAYS use data.contra_account_id since we always include the field in form
-    # (it may be readonly with pre-selected value, or user-selectable)
-    contra_account_id = '${data.contra_account_id}'
-    
+
     # Build transaction entries
     transaction_entries = [
         {
@@ -267,13 +182,13 @@ def _get_or_create_master_workflow(account: Account, workflow_config=None):
             'description': '${workflow.parent_account_name} - ${data.description}'
         },
         {
-            'account_id': contra_account_id,
+            'account_id': '${data.contra_account_id}',
             'side': contra_side,
             'amount': '${data.amount}',
             'description': '${data.description}'
         }
     ]
-    
+
     # Build workflow steps
     steps = [
         {
@@ -289,29 +204,10 @@ def _get_or_create_master_workflow(account: Account, workflow_config=None):
             }
         }
     ]
-    
-    # Add approval step if required
-    if has_approval:
-        approval_role = workflow_config.get('approvalRole', 'manager')
-        steps.insert(0, {
-            'id': 'request_approval',
-            'name': 'Request Approval',
-            'type': 'approval',
-            'config': {
-                'approval_role': approval_role,
-                'approval_message': 'Transaction approval required for ${workflow.target_account_name}',
-                'timeout_hours': 48
-            },
-            'next': 'create_transaction'
-        })
-    
+
     # Human-readable name
     name_parts = [account.get_account_type_display(), 'Transaction']
-    if has_approval:
-        name_parts.append('(Approval)')
-    if is_dynamic_contra:
-        name_parts.append('(Dynamic)')
-    
+
     # Use get_or_create so concurrent account-creation signals (e.g. bulk chart-of-
     # accounts setup) don't race each other.  Django's get_or_create catches the
     # IntegrityError from the unique constraint and retries the get, so only one
@@ -335,14 +231,14 @@ def _get_or_create_master_workflow(account: Account, workflow_config=None):
             'category': account_type_lower,
             'is_atomic': False,
             'is_locked': False,
-            'requires_approval': bool(has_approval),
+            'requires_approval': False,
             'max_execution_time_seconds': 300,
             'max_depth': 3,
             'max_steps': 15,
             'is_active': True,
         }
     )
-    
+
     if was_created:
         logger.info(f"Created master template: {workflow.run_sequence} (ID: {workflow.id})")
     else:
@@ -350,7 +246,7 @@ def _get_or_create_master_workflow(account: Account, workflow_config=None):
     return workflow
 
 
-def _generate_form_schema(account: Account, workflow_config=None):
+def _generate_form_schema(account: Account):
     """Generate form schema for PARENT account - includes child account selector"""
     from automations.models import FormSchema
     from django.utils import timezone
@@ -394,42 +290,21 @@ def _generate_form_schema(account: Account, workflow_config=None):
         }
     ]
     
-    # ALWAYS add contra account field - behavior depends on whether it was selected during account creation
-    contra_account_id = None
-    is_contra_readonly = False
-    
-    if workflow_config:
-        if workflow_config.get('contraAccountOption') == 'select_now':
-            # Contra account was selected during account creation - make it read-only
-            contra_account_id = workflow_config.get('contraAccountId')
-            is_contra_readonly = True
-        elif workflow_config.get('contraAccountOption') == 'select_on_form':
-            # Contra account will be selected during form submission - make it editable
-            is_contra_readonly = False
-    
-    # Add contra account field (always included for double-entry accounting)
-    contra_field = {
+    # Contra account field (always included for double-entry accounting; selected
+    # by the user at form-submission time)
+    fields.append({
         'id': 'contra_account_id',
         'name': 'contra_account_id',
         'label': 'Offset Account (Double Entry)',
         'type': 'account_select',
         'required': True,
-        'readonly': is_contra_readonly,
+        'placeholder': 'Select offset account',
         'metadata': {
             'help_text': 'The offsetting account for double-entry bookkeeping',
             'field_type': 'cascading_account_selector'
         }
-    }
-    
-    # If pre-selected, add the default value
-    if contra_account_id:
-        contra_field['default'] = contra_account_id
-        contra_field['metadata']['pre_selected'] = True
-    else:
-        contra_field['placeholder'] = 'Select offset account'
-    
-    fields.append(contra_field)
-    
+    })
+
     form_schema = FormSchema.objects.create(
         owner=account.owner,
         branch=account.branch,
@@ -449,13 +324,7 @@ def _generate_form_schema(account: Account, workflow_config=None):
 def _link_account_to_workflow(account: Account, master_template, form_schema):
     """Link PARENT account to master template via binding"""
     from automations.models import WorkflowBinding
-    
-    workflow_config = getattr(account, '_workflow_config', None)
-    contra_account_id = None
-    
-    if workflow_config and workflow_config.get('contraAccountOption') == 'select_now':
-        contra_account_id = workflow_config.get('contraAccountId')
-    
+
     # Create binding - workflow parameters reference the parent account
     binding = WorkflowBinding.objects.create(
         owner=account.owner,
@@ -467,253 +336,18 @@ def _link_account_to_workflow(account: Account, master_template, form_schema):
             'parent_account_id': account.id,  # This is the parent account
             'parent_account_name': account.name,
             'parent_account_code': account.code,
-            'contra_account_id': contra_account_id,
-            # Child account will be selected via form field (data.child_account_id)
+            # Child and contra accounts are selected via form fields
+            # (data.child_account_id / data.contra_account_id)
         },
         is_active=True
     )
-    
+
     logger.info(
         f"Created binding: {form_schema.name} → {master_template.name} "
         f"(Binding ID: {binding.id}, Parent Account: {account.code})"
     )
-    
+
     return binding
-
-def _create_master_workflow_template(account: Account, template_code: str, workflow_config=None, has_product=False):
-    """Create a new master workflow template with parameterized accounts"""
-    from automations.models import WorkflowTemplate
-    
-    # Determine the appropriate transaction sides for double-entry bookkeeping
-    if account.account_type in ['ASSET', 'EXPENSE']:
-        # Assets/Expenses: Debit increases
-        main_side = 'DR'
-        contra_side = 'CR'
-    else:  # LIABILITY, EQUITY, INCOME
-        # Liabilities/Equity/Income: Credit increases
-        main_side = 'CR'
-        contra_side = 'DR'
-    
-    # Determine contra account configuration for MASTER template
-    # Master templates use PARAMETERS instead of hardcoded IDs
-    is_dynamic_contra = workflow_config and workflow_config.get('contraAccountOption') == 'select_on_form'
-    
-    if is_dynamic_contra:
-        # Dynamic: User selects contra account on form
-        contra_account_id = '${data.contra_account_id}'
-        contra_description = '${data.description}'
-    else:
-        # Fixed: Use parameter that will be set when linking account to template
-        contra_account_id = '${workflow.contra_account_id}'
-        contra_description = '${data.description}'
-    
-    # Build transaction entries with PARAMETERIZED accounts
-    # This allows the template to work with ANY account!
-    transaction_entries = [
-        {
-            'account_id': '${workflow.target_account_id}',  # Parameter: which account to affect
-            'side': main_side,
-            # Use `data` because `FormSubmission._trigger_workflows` places submitted values
-            # under the `data` key in the workflow context.
-            'amount': '${data.amount}',
-            'description': '${workflow.target_account_name} - ${data.description}'
-        },
-        {
-            'account_id': contra_account_id,  # Parameter or form field
-            'side': contra_side,
-            'amount': '${data.amount}',
-            'description': contra_description
-        }
-    ]
-    
-    # Build workflow steps
-    steps = [
-        {
-            'id': 'create_transaction',
-            'name': 'Create Transaction',
-            'type': 'transaction',
-            'on_validation_error': 'send_validation_error' if has_product else None,
-            'config': {
-                # Ensure transaction step has a date mapping. The form submission payload
-                # is provided under `data` in the workflow context, so use that.
-                'date': '${data.transaction_date}',
-                'description': '${data.description}',
-                'series_code': 'TXN',
-                'transaction_type': 'double_entry',
-                'entries': transaction_entries
-            }
-        }
-    ]
-    
-    # Add approval step if required
-    has_approval = workflow_config and workflow_config.get('requiresApproval', False)
-    if has_approval:
-        approval_role = workflow_config.get('approvalRole', 'manager')
-        steps.insert(0, {
-            'id': 'request_approval',
-            'name': 'Request Approval',
-            'type': 'approval',
-            'config': {
-                'approval_role': approval_role,
-                'approval_message': 'Transaction approval required for ${workflow.target_account_name}',
-                'timeout_hours': 48,
-                'on_approved': 'create_transaction',
-                'on_rejected': 'send_rejection_notification'
-            }
-        })
-        
-        steps.append({
-            'id': 'send_rejection_notification',
-            'name': 'Send Rejection Notification',
-            'type': 'notification',
-            'config': {
-                'notification_type': 'email',
-                'recipient': '${user.email}',
-                'subject': 'Transaction Rejected - ${workflow.target_account_name}',
-                'message': (
-                    'Your transaction was rejected by ' + approval_role + ':\\n\\n'
-                    'Account: ${workflow.target_account_name}\\n'
-                    'Amount: ${form.amount}\\n'
-                    'Reason: ${approval.rejection_reason}\\n\\n'
-                )
-            }
-        })
-    
-    # Add validation error notification step if account has product
-    if has_product:
-        steps.append({
-            'id': 'send_validation_error',
-            'name': 'Send Validation Error Notification',
-            'type': 'notification',
-            'config': {
-                'notification_type': 'email',
-                'recipient': '${user.email}',
-                'subject': 'Transaction Blocked - ${workflow.target_account_name}',
-                'message': (
-                    'Your transaction was blocked due to product validation failure:\\n\\n'
-                    'Account: ${workflow.target_account_name}\\n'
-                    'Amount: ${form.amount}\\n'
-                    'Reason: ${validation_result.checks[-1].message}\\n\\n'
-                    'Please review your transaction and try again or contact support.'
-                )
-            }
-        })
-    
-    # Generate description for MASTER template
-    account_type_name = account.get_account_type_display()
-    has_approval = workflow_config and workflow_config.get('requiresApproval', False)
-    is_dynamic = workflow_config and workflow_config.get('contraAccountOption') == 'select_on_form'
-    
-    description_parts = [
-        f'🎯 MASTER TEMPLATE for {account_type_name} transactions.',
-        'This template is reusable across multiple accounts of this type.',
-    ]
-    
-    if has_approval:
-        approval_role = workflow_config.get('approvalRole', 'manager')
-        description_parts.append(f'✅ Requires approval from {approval_role}.')
-    
-    if is_dynamic:
-        description_parts.append('💳 Dynamic contra account (user selects on form).')
-    else:
-        description_parts.append('🔒 Fixed contra account (configured per account).')
-    
-    if has_product:
-        description_parts.append('📊 Includes product validation.')
-    
-    # Human-readable name
-    name_parts = [account_type_name, 'Transaction']
-    if has_approval:
-        name_parts.append('(Approval)')
-    if is_dynamic:
-        name_parts.append('(Dynamic)')
-    if has_product:
-        name_parts.append('(Validated)')
-    
-    workflow = WorkflowTemplate.objects.create(
-        owner=account.owner,
-        branch=account.branch,
-        created_by=account.created_by,
-        code=template_code,
-        name=' '.join(name_parts),
-        description=' '.join(description_parts),
-        trigger_type='event',
-        trigger_config={
-            'event_pattern': f'transaction.{account.account_type.lower()}.*',  # Matches all events of this type
-            'filters': {}
-        },
-        workflow_definition={
-            'steps': steps,
-            'initial_step': steps[0]['id']
-        },
-        workflow_type='master_template',  # Mark as master template
-        access_level='private',
-        is_atomic=False,
-        is_locked=False,
-        required_inputs=[
-            {
-                'name': 'form',
-                'type': 'object',
-                'description': 'Transaction form data',
-                'validation': {'required': True}
-            },
-            {
-                'name': 'workflow',
-                'type': 'object',
-                'description': 'Workflow parameters (account IDs, names)',
-                'validation': {'required': True}
-            }
-        ],
-        outputs=[
-            {
-                'name': 'transaction_id',
-                'type': 'string',
-                'description': 'ID of created transaction'
-            }
-        ],
-        max_execution_time_seconds=300,
-        max_depth=3,
-        max_steps=15,
-        is_active=True  # Master templates are always active
-    )
-    
-    return workflow
-
-
-# def _link_account_to_workflow(account: Account, master_template, form_schema):
-#     """Link an account to a master workflow template with specific parameters
-    
-#     This creates a lightweight "binding" that says:
-#     'When form X is submitted, trigger master template Y with these parameters'
-#     """
-#     from automations.models import WorkflowBinding
-    
-#     # Get contra account ID if configured
-#     workflow_config = getattr(account, '_workflow_config', None)
-#     contra_account_id = None
-#     if workflow_config and workflow_config.get('contraAccountOption') == 'select_now':
-#         contra_account_id = workflow_config.get('contraAccountId')
-    
-#     # Create binding
-#     WorkflowBinding.objects.create(
-#         owner=account.owner,
-#         branch=account.branch,
-#         created_by=account.created_by,
-        
-#         # Link form to master template
-#         form_schema=form_schema,
-#         workflow_template=master_template,
-        
-#         # Account-specific parameters
-#         parameters={
-#             'target_account_id': account.id,
-#             'target_account_name': account.name,
-#             'target_account_code': account.code,
-#             'contra_account_id': contra_account_id,  # None if dynamic
-#         },
-        
-#         is_active=True
-#     )
 
 
 def _generate_module_page(account: Account, form_schema):
