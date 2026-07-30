@@ -20,7 +20,11 @@ from transactions.models import (
     TransactionSeries
 )
 from accounts.models import Account
-from accounts.utils.account_creation import get_or_create_child_account, get_system_account
+from accounts.utils.account_creation import (
+    get_or_create_child_account,
+    get_system_account,
+    get_or_create_staff_salary_advance_account,
+)
 
 
 class PayrollAccountingService:
@@ -301,13 +305,6 @@ class PayrollAccountingService:
             ).select_related('gl_account')
         }
 
-        # Also map the aggregated "Staff IOU" deduction key to the staff_iou
-        # system account so IOU recoveries credit the correct GL account.
-        _staff_iou_account = get_system_account(
-            'staff_iou', self.payroll.owner, self.payroll.branch
-        )
-        component_gl_map['Staff IOU'] = _staff_iou_account
-
         total_tax                = Decimal('0.00')
         total_employee_pension   = Decimal('0.00')
         total_employer_pension   = Decimal('0.00')
@@ -328,7 +325,16 @@ class PayrollAccountingService:
                     # one-time BonusDeductionRequest items so we can match the
                     # canonical component name stored in component_gl_map.
                     canonical_name = deduction_name.replace(' (One-time)', '').strip()
-                    gl_account = component_gl_map.get(canonical_name)
+                    if canonical_name == 'Staff IOU':
+                        # Each staff member has their own Salary Advance
+                        # sub-account (not a shared pooled account), so this
+                        # has to be resolved per-payslip rather than via the
+                        # flat component_gl_map lookup used for everything else.
+                        gl_account = get_or_create_staff_salary_advance_account(
+                            payslip.staff, self.payroll.owner, self.payroll.branch
+                        )
+                    else:
+                        gl_account = component_gl_map.get(canonical_name)
                     if gl_account:
                         gl_deductions[gl_account] = gl_deductions.get(gl_account, Decimal('0.00')) + amt
                     else:

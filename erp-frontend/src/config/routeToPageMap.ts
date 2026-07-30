@@ -283,7 +283,6 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/inventory/locations': { module: 'inventory', page: 'locations', action: 'view' },
   '/inventory/material-requests': { module: 'inventory', page: 'material-requests', action: 'view' },
   '/inventory/material-requests/:id': { module: 'inventory', page: 'material-requests', action: 'view' },
-  '/inventory/material-requests/create': { module: 'inventory', page: 'material-requests', action: 'create' },
   '/inventory/movements': { module: 'inventory', page: 'stock-movements', action: 'view' },
   '/inventory/office-use-requests': { module: 'inventory', page: 'office-use-requests', action: 'view' },
   '/inventory/office-use-requests/:id': { module: 'inventory', page: 'office-use-requests', action: 'view' },

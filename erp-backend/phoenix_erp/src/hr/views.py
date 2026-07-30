@@ -2255,10 +2255,20 @@ class StaffIOUViewSet(ScopedModelViewSet):
         return qs.order_by('-created_at')
 
     def perform_create(self, serializer):
+        # Scope to the selected staff member's own branch/owner/tenant rather
+        # than the creating user's current branch-context toggle — an IOU
+        # belongs wherever the staff member belongs, so it stays visible when
+        # switching into that staff's branch regardless of which branch (or
+        # "All Branches") the admin was on when they created it. Mirrors what
+        # from_reconciliation() already does correctly below.
+        staff = serializer.validated_data['staff']
         serializer.save(
             created_by=self.request.user,
             balance_remaining=serializer.validated_data['total_amount'],
             status=StaffIOU.PENDING,
+            owner=staff.owner,
+            branch=staff.branch,
+            tenant=staff.tenant,
         )
 
     @action(detail=False, methods=['post'], url_path='from-reconciliation')
@@ -2420,15 +2430,15 @@ class StaffIOUViewSet(ScopedModelViewSet):
                The IOU is simply activated; payroll will automatically deduct
                monthly instalments and post:
                    Dr  Payroll Clearance (Salaries Payable)
-                   Cr  Staff Loan Account
+                   Cr  <staff member's own Salary Advance sub-account>
                No GL entry is created here.
 
         2. type='cash'
                Cash was physically given to the employee from a bank account
                or petty cash.  The source account MUST be supplied via
                credit_account_id.  GL posted now:
-                   Dr  Staff Loan Account          [total IOU amount]
-                   Cr  <bank / petty cash account> [total IOU amount]
+                   Dr  <staff member's own Salary Advance sub-account> [total IOU amount]
+                   Cr  <bank / petty cash account>                     [total IOU amount]
                Payroll will still deduct and post the recovery entry each month.
 
         Body params:
@@ -2436,7 +2446,7 @@ class StaffIOUViewSet(ScopedModelViewSet):
           credit_account_id   (int, required if type='cash') — bank/petty cash account
           description_override (str, optional) — custom JE description (cash only)
         """
-        from accounts.utils.account_creation import get_system_account
+        from accounts.utils.account_creation import get_or_create_staff_salary_advance_account
         from accounts.models import Account
         from transactions.models import (
             Transaction as JournalEntry,
@@ -2478,8 +2488,8 @@ class StaffIOUViewSet(ScopedModelViewSet):
             })
 
         # ── Cash disbursement ──────────────────────────────────────────────
-        #     Dr  Staff Loan Account          (asset — employee owes the company)
-        #     Cr  Bank / Petty Cash Account   (cash leaves the organisation)
+        #     Dr  Staff's own Salary Advance sub-account   (asset — employee owes the company)
+        #     Cr  Bank / Petty Cash Account                (cash leaves the organisation)
         credit_account_id = request.data.get('credit_account_id')
         if not credit_account_id:
             return Response(
@@ -2496,15 +2506,15 @@ class StaffIOUViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        loan_account = get_system_account('staff_iou', owner, branch)
+        loan_account = get_or_create_staff_salary_advance_account(iou.staff, owner, branch)
 
         description = request.data.get('description_override', '').strip() or (
-            f"Staff Loan Disbursement – {iou.staff.first_name} {iou.staff.last_name} "
+            f"Salary Advance Disbursement – {iou.staff.first_name} {iou.staff.last_name} "
             f"(Ref: {iou.reference_number}) via {cash_account.name}"
         )
 
         series, _ = TransactionSeries.objects.get_or_create(
-            code='IOUDIS',
+            code='IOUDS',
             defaults={'description': 'Staff IOU Cash Disbursement'},
         )
 
@@ -2518,7 +2528,7 @@ class StaffIOUViewSet(ScopedModelViewSet):
                 branch=branch,
                 owner=owner,
             )
-            # Dr Staff Loan Account (receivable increases — employee owes company)
+            # Dr staff's own Salary Advance sub-account (receivable increases — employee owes company)
             JournalEntryLine.objects.create(
                 transaction=je, account=loan_account,
                 side=JournalEntryLine.DEBIT, amount=iou.total_amount,
@@ -2536,9 +2546,10 @@ class StaffIOUViewSet(ScopedModelViewSet):
             iou.save(update_fields=['status', 'cash_disbursed', 'disbursement_journal'])
 
         return Response({
-            'message': f'Cash disbursement recorded. GL entry posted (Dr Staff Loan Account / Cr {cash_account.name}).',
+            'message': f'Cash disbursement recorded. GL entry posted (Dr {loan_account.name} / Cr {cash_account.name}).',
             'journal_entry_id': je.id,
             'cash_account': cash_account.name,
+            'salary_advance_account': loan_account.name,
             'data': StaffIOUSerializer(iou).data,
         })
 
@@ -2642,7 +2653,7 @@ class StaffIOUViewSet(ScopedModelViewSet):
             ]
         }
         """
-        from accounts.utils.account_creation import get_system_account
+        from accounts.utils.account_creation import get_or_create_staff_salary_advance_account
         from accounts.models import Account
         from transactions.models import (
             Transaction as JournalEntry,
@@ -2765,9 +2776,8 @@ class StaffIOUViewSet(ScopedModelViewSet):
             f"{len(validated)} staff (total ₦{total_amount:,.2f})"
         )
 
-        iou_account = get_system_account('staff_iou', owner, branch)
         series, _   = TransactionSeries.objects.get_or_create(
-            code='IOUDIS',
+            code='IOUDS',
             defaults={'description': 'Staff IOU Disbursement'},
         )
 
@@ -2805,9 +2815,12 @@ class StaffIOUViewSet(ScopedModelViewSet):
                 )
                 iou.save()   # triggers auto reference_number + balance_remaining init
 
+                staff_iou_account = get_or_create_staff_salary_advance_account(
+                    entry['staff'], owner, branch
+                )
                 JournalEntryLine.objects.create(
                     transaction=je,
-                    account=iou_account,
+                    account=staff_iou_account,
                     side=JournalEntryLine.DEBIT,
                     amount=entry['amount'],
                 )

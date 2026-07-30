@@ -132,9 +132,10 @@ export interface OfficeUseRequest {
   requested_by: number;
   requested_by_name: string;
   department: string;
-  expense_account: number;
-  expense_account_name: string;
-  expense_account_code: string;
+  /** Deprecated: expense accounts are now derived per item from item.category.cogs_account. */
+  expense_account: number | null;
+  expense_account_name?: string;
+  expense_account_code?: string;
   delivery_location: number;
   delivery_location_name: string;
   purpose: string;
@@ -174,13 +175,15 @@ export interface OfficeUseRequestItem {
   unit_of_measure: string;
   quantity: string;
   notes: string;
+  /** GL expense account this line posts to on fulfilment, from item.category.cogs_account */
+  expense_account_name?: string;
+  expense_account_code?: string;
   created_at: string;
   updated_at: string;
 }
 
 export interface CreateOfficeUseRequest {
   department?: string;
-  expense_account: number;
   delivery_location: number;
   purpose: string;
   notes?: string;

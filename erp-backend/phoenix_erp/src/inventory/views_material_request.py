@@ -94,18 +94,22 @@ class MaterialRequestViewSet(ScopedModelViewSet):
             return MaterialRequestUpdateSerializer
         return MaterialRequestSerializer
     
-    @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """Create a new material request"""
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        material_request = serializer.save()
-        
-        # Return full serialized data
-        output_serializer = MaterialRequestSerializer(material_request)
+        """
+        Retired: the client + service-invoice material request workflow has been
+        superseded by Office Use Requests (staff-only, posts straight to each
+        item's category expense account). This endpoint is kept read-only so
+        historical requests remain visible and can still be actioned through
+        to completion.
+        """
         return Response(
-            output_serializer.data,
-            status=status.HTTP_201_CREATED
+            {
+                'error': (
+                    'Creating new material requests is no longer supported. '
+                    'Use /inventory/office-use-requests/ instead.'
+                )
+            },
+            status=status.HTTP_410_GONE
         )
     
     @action(detail=True, methods=['post'])

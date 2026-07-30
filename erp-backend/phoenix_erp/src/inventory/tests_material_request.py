@@ -1027,8 +1027,16 @@ class TestMaterialRequestWorkflow(BaseMRTest):
 
     # --- API workflow via HTTP ---
 
-    def test_api_create_material_request(self):
-        """POST /api/inventory/material-requests/ creates a draft MR."""
+    def test_api_create_material_request_is_retired(self):
+        """
+        POST /api/inventory/material-requests/ is retired: the client +
+        service-invoice workflow has been superseded by Office Use Requests
+        (see inventory/models_office_use_request.py). The endpoint must
+        reject creation with 410 Gone rather than silently accepting new
+        requests, while list/retrieve/workflow actions keep working for
+        historical records (see TestMRApiScoping and
+        TestMaterialRequestWorkflow's ORM-based tests below).
+        """
         invoice = _make_invoice(self.staff, self.branch, self.buyer, "INV-API1")
         _add_service_line(invoice, self.svc_books)
         api = self._api_client()
@@ -1041,24 +1049,7 @@ class TestMaterialRequestWorkflow(BaseMRTest):
             "items": [{"item": self.book1.id, "quantity": "2", "notes": ""}],
         }
         resp = api.post("/api/inventory/material-requests/", payload, format="json")
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
-        self.assertEqual(resp.data["status"], "draft")
-
-    def test_api_unauthorized_item_rejected(self):
-        """POST with an unauthorized item returns 400."""
-        invoice = _make_invoice(self.staff, self.branch, self.buyer, "INV-API2")
-        _add_service_line(invoice, self.svc_books)  # allows Book only
-        api = self._api_client()
-        payload = {
-            "client": self.buyer.id,
-            "service_invoice": invoice.id,
-            "delivery_location": self.location.id,
-            "purpose": "API test",
-            "notes": "",
-            "items": [{"item": self.uniform1.id, "quantity": "1", "notes": ""}],
-        }
-        resp = api.post("/api/inventory/material-requests/", payload, format="json")
-        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(resp.status_code, status.HTTP_410_GONE, resp.data)
 
     def test_api_submit_action(self):
         """POST /material-requests/{id}/submit/ transitions to 'submitted'."""
@@ -1075,9 +1066,12 @@ class TestMaterialRequestWorkflow(BaseMRTest):
 # ===========================================================================
 # 8. API scoping — the tenant/branch 404 regression suite
 #
-# These tests specifically guard against the bug where POST creates a
-# MaterialRequest without tenant/branch set, so every subsequent GET/list
-# returns 0 results because ScopedModelViewSet filters by tenant+branch.
+# The client + service-invoice creation workflow is retired (POST now
+# returns 410 Gone — see test_api_create_material_request_is_retired), but
+# historical MaterialRequest rows still need to be listable/retrievable
+# without leaking across tenants. These tests create records directly via
+# the ORM (as a data migration or the old serializer once did) and then
+# exercise the live GET/list endpoints against them.
 # ===========================================================================
 
 MR_LIST_URL = "/api/inventory/material-requests/"
@@ -1085,131 +1079,63 @@ MR_LIST_URL = "/api/inventory/material-requests/"
 
 class TestMRApiScoping(BaseMRTest):
     """
-    End-to-end API tests that go through the full HTTP stack:
-      POST  → creates the record
-      GET / → list must contain it
-      GET /{id}/ → retrieve must return it (not 404)
-
-    Each assertion also prints diagnostic DB state so failures are easy to
-    diagnose on the server.
+    Tests that historical MaterialRequest records remain correctly scoped
+    by tenant/branch when read through the (still-live) list/retrieve
+    endpoints, even though creation is retired.
     """
 
-    def _post_mr(self, invoice, items, buyer=None):
-        """POST to the MR list endpoint and return the response."""
-        api = self._api_client()
+    def _create_mr(self, invoice, items, buyer=None, suffix=""):
+        """Create a MaterialRequest + items directly via the ORM, with
+        tenant/branch set the way the retired serializer used to."""
         buyer = buyer or self.buyer
-        payload = {
-            "client": buyer.id,
-            "service_invoice": invoice.id,
-            "delivery_location": self.location.id,
-            "purpose": "Scoping regression test",
-            "notes": "",
-            "items": [
-                {"item": item.id, "quantity": str(qty), "notes": ""}
-                for item, qty in items
-            ],
-        }
-        return api, api.post(MR_LIST_URL, payload, format="json")
+        mr = MaterialRequest.objects.create(
+            request_number=f"MRSC{suffix or invoice.id}",
+            client=buyer,
+            service_invoice=invoice,
+            delivery_location=self.location,
+            purpose="Scoping regression test",
+            requested_by=self.staff,
+            owner=self.staff,
+            branch=self.staff.branch,
+            tenant=self.staff.tenant,
+        )
+        for item, qty in items:
+            MaterialRequestItem.objects.create(
+                material_request=mr, item=item, quantity=Decimal(str(qty))
+            )
+        return mr
 
     # -----------------------------------------------------------------------
-    # Core regression: create → retrieve round-trip
+    # Core regression: retrieve / list round-trip
     # -----------------------------------------------------------------------
 
-    def test_created_mr_has_tenant_set(self):
+    def test_retrieve_returns_200_not_404(self):
         """
-        After POST the created MaterialRequest must have tenant equal to
-        the requesting user's tenant — not NULL.
-        """
-        invoice = _make_invoice(self.staff, self.branch, self.buyer, "INV-SC1")
-        _add_service_line(invoice, self.svc_books)
-        _, resp = self._post_mr(invoice, [(self.book1, "1")])
-
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED,
-            f"POST failed — response: {resp.data}")
-
-        mr_id = resp.data["id"]
-        mr = MaterialRequest.all_objects.get(id=mr_id)  # bypass manager scoping
-
-        self.assertIsNotNone(
-            mr.tenant_id,
-            f"FAIL — MaterialRequest id={mr_id} was saved with tenant=NULL. "
-            f"User tenant={getattr(self.staff, 'tenant_id', 'MISSING')}. "
-            f"This means the serializer create() is not setting tenant."
-        )
-        self.assertEqual(
-            mr.tenant_id, self.staff.tenant_id,
-            f"FAIL — tenant mismatch: MR.tenant={mr.tenant_id}, "
-            f"user.tenant={self.staff.tenant_id}"
-        )
-
-    def test_created_mr_has_branch_set(self):
-        """
-        After POST the created MaterialRequest must have branch equal to
-        the requesting user's branch — not NULL.
-        """
-        invoice = _make_invoice(self.staff, self.branch, self.buyer, "INV-SC2")
-        _add_service_line(invoice, self.svc_books)
-        _, resp = self._post_mr(invoice, [(self.book1, "1")])
-
-        self.assertEqual(resp.status_code, status.HTTP_201_CREATED,
-            f"POST failed — response: {resp.data}")
-
-        mr_id = resp.data["id"]
-        mr = MaterialRequest.all_objects.get(id=mr_id)
-
-        self.assertIsNotNone(
-            mr.branch_id,
-            f"FAIL — MaterialRequest id={mr_id} was saved with branch=NULL. "
-            f"User branch={getattr(self.staff, 'branch_id', 'MISSING')}."
-        )
-        self.assertEqual(
-            mr.branch_id, self.staff.branch_id,
-            f"FAIL — branch mismatch: MR.branch={mr.branch_id}, "
-            f"user.branch={self.staff.branch_id}"
-        )
-
-    def test_retrieve_after_post_does_not_404(self):
-        """
-        GET /material-requests/{id}/ immediately after POST must return 200,
-        not 404. This is the exact production bug.
+        GET /material-requests/{id}/ for a record scoped to the requesting
+        user's tenant/branch must return 200, not 404.
         """
         invoice = _make_invoice(self.staff, self.branch, self.buyer, "INV-SC3")
         _add_service_line(invoice, self.svc_books)
-        api, post_resp = self._post_mr(invoice, [(self.book1, "1")])
+        mr = self._create_mr(invoice, [(self.book1, "1")], suffix="3")
 
-        self.assertEqual(post_resp.status_code, status.HTTP_201_CREATED,
-            f"POST failed — cannot continue: {post_resp.data}")
-
-        mr_id = post_resp.data["id"]
-
-        # Diagnose what the DB actually contains before the GET
-        raw = MaterialRequest.all_objects.filter(id=mr_id).values(
-            "id", "tenant_id", "branch_id", "status", "is_deleted"
-        ).first()
-
-        get_resp = api.get(f"{MR_LIST_URL}{mr_id}/")
+        api = self._api_client()
+        get_resp = api.get(f"{MR_LIST_URL}{mr.id}/")
 
         self.assertEqual(
             get_resp.status_code, status.HTTP_200_OK,
             f"FAIL — GET returned {get_resp.status_code}. "
-            f"DB row for id={mr_id}: {raw}. "
             f"Queryset would filter tenant={self.staff.tenant_id} "
             f"branch={self.staff.branch_id}. "
             f"GET response body: {get_resp.data}"
         )
 
-    def test_list_contains_newly_created_mr(self):
-        """
-        GET /material-requests/ must return count >= 1 after a successful POST.
-        """
+    def test_list_contains_scoped_mr(self):
+        """GET /material-requests/ must return a record scoped to the requesting user."""
         invoice = _make_invoice(self.staff, self.branch, self.buyer, "INV-SC4")
         _add_service_line(invoice, self.svc_books)
-        api, post_resp = self._post_mr(invoice, [(self.book1, "1")])
+        mr = self._create_mr(invoice, [(self.book1, "1")], suffix="4")
 
-        self.assertEqual(post_resp.status_code, status.HTTP_201_CREATED,
-            f"POST failed — cannot continue: {post_resp.data}")
-
-        mr_id = post_resp.data["id"]
+        api = self._api_client()
         list_resp = api.get(MR_LIST_URL)
 
         self.assertEqual(list_resp.status_code, status.HTTP_200_OK,
@@ -1221,11 +1147,9 @@ class TestMRApiScoping(BaseMRTest):
         ids = [r["id"] for r in results]
 
         self.assertIn(
-            mr_id, ids,
-            f"FAIL — id={mr_id} not in list. "
-            f"All returned ids: {ids}. "
-            f"DB check: tenant_id={self.staff.tenant_id}, branch_id={self.staff.branch_id}. "
-            f"Raw MR: {MaterialRequest.all_objects.filter(id=mr_id).values('tenant_id','branch_id','is_deleted').first()}"
+            mr.id, ids,
+            f"FAIL — id={mr.id} not in list. All returned ids: {ids}. "
+            f"DB check: tenant_id={self.staff.tenant_id}, branch_id={self.staff.branch_id}."
         )
 
     def test_list_returns_200_when_empty(self):
@@ -1253,10 +1177,8 @@ class TestMRApiScoping(BaseMRTest):
         # Create MR under self.staff (tenant A)
         invoice = _make_invoice(self.staff, self.branch, self.buyer, "INV-ISO1")
         _add_service_line(invoice, self.svc_books)
-        _, post_resp = self._post_mr(invoice, [(self.book1, "1")])
-        self.assertEqual(post_resp.status_code, status.HTTP_201_CREATED,
-            f"Setup POST failed: {post_resp.data}")
-        mr_id = post_resp.data["id"]
+        mr = self._create_mr(invoice, [(self.book1, "1")], suffix="ISO1")
+        mr_id = mr.id
 
         # Create a completely separate tenant/user
         other_tenant, other_staff = _make_user_and_tenant("other_tenant_user")

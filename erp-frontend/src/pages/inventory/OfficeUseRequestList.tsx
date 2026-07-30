@@ -180,9 +180,6 @@ const OfficeUseRequestList: React.FC = () => {
                   Items
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Expense Account
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -214,12 +211,6 @@ const OfficeUseRequestList: React.FC = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {req.total_items}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <span className="text-xs font-mono bg-gray-100 px-1 rounded">
-                      {req.expense_account_code}
-                    </span>{' '}
-                    {req.expense_account_name}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span

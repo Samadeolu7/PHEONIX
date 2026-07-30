@@ -606,11 +606,10 @@ export const navigationModules: NavigationModule[] = [
       },
       {
         id: 'material-requests',
-        title: 'Material Requests',
+        title: 'Material Requests (history)',
         path: '/inventory/material-requests',
         icon: FileText,
         isNew: true,
-        badge: { count: 3, type: 'info' },
       },
       {
         id: 'office-use-requests',

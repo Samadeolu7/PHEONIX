@@ -144,8 +144,8 @@ const StaffIOUFormPage: React.FC = () => {
           <div>
             <strong>Two-step workflow:</strong> After creating, this IOU will need to be{' '}
             <strong>approved</strong> by a manager. Upon approval you will record the origin of
-            the debt — either the staff received cash (which posts a GL entry: Dr Staff Loan Account
-            / Cr Bank or Petty Cash), or the obligation arose from a non-cash transaction (e.g.
+            the debt — either the staff received cash (which posts a GL entry: Dr the staff's own
+            Salary Advance sub-account / Cr Bank or Petty Cash), or the obligation arose from a non-cash transaction (e.g.
             asset disposal, damage recovery) and repayment will be deducted from payroll only.
           </div>
         </div>

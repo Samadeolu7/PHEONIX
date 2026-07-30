@@ -243,6 +243,124 @@ def get_or_create_child_account(
     return child_account
 
 
+def get_or_create_staff_salary_advance_account(staff, owner, branch):
+    """
+    Get or create a dedicated GL child account for one staff member's own
+    Salary Advance / IOU balance, nested under a single shared "Salary
+    Advance" parent account — its own group, deliberately not nested under
+    1110 Trade and Other Receivables, since Salary Advance is its own line
+    item per the client's chart of accounts request.
+
+    Every staff member gets their own child account so balances are visible
+    and manageable individually instead of being pooled into one shared
+    "Staff Loan Account" — the previous design.
+
+    setup_accounts.py (create_standard_accounts) is the single canonical
+    chart-of-accounts seed for this codebase — the other, historically
+    inconsistent seeding scripts that used to exist alongside it
+    (initialize_production_erp.py, initialize_erp_system.py,
+    seed_account_hierarchy.py, setup_microfinance.py, setup_sample_data.py)
+    had zero live callers anywhere and were removed. PREFERRED_PARENT_CODE
+    was picked from a gap in setup_accounts.py's own ranges, but it still
+    collided in testing with setup_accounts.py's own '1140 Short-term
+    Investments' parent (a different tenant/branch may have that code
+    occupied by a differently-created account too), so this still looks the
+    parent up by NAME as well as level/code and redirects to a genuinely
+    free code rather than adopting the wrong account.
+
+    The assigned account is cached on staff.salary_advance_account so it's
+    only created once per staff member and reused on every subsequent call
+    (payroll deduction, cash disbursement, bulk debit, etc).
+
+    Parameters
+    ----------
+    staff : hr.models.Staff
+    owner : User
+    branch : Branch
+
+    Returns
+    -------
+    Account
+        This staff member's own child account, ready for postings.
+    """
+    if staff.salary_advance_account_id:
+        return staff.salary_advance_account
+
+    tenant = getattr(owner, 'tenant', None)
+    scope_filter = {}
+    if branch is not None:
+        scope_filter['branch'] = branch
+    if tenant is not None:
+        scope_filter['tenant'] = tenant
+
+    PREFERRED_PARENT_CODE = '1160'
+    PARENT_NAME = 'Salary Advance'
+
+    with transaction.atomic():
+        # Lock (or create) the parent row so concurrent first-time creations
+        # for two different staff members can't both compute the same "next
+        # free child code" and collide on the unique (code, tenant, branch)
+        # constraint.
+        #
+        # Look this up by NAME/LEVEL (not by PREFERRED_PARENT_CODE) — once a
+        # collision has redirected the parent to some other code (e.g. 1159
+        # instead of 1160), every subsequent call must still find that SAME
+        # parent rather than only checking the preferred code, seeing it's
+        # still occupied by the unrelated account, and creating a second,
+        # duplicate "Salary Advance" parent.
+        parent_account = Account.objects.select_for_update().filter(
+            **scope_filter, account_level='PARENT', name=PARENT_NAME,
+        ).first()
+
+        if not parent_account:
+            existing_at_code = Account.objects.filter(
+                **scope_filter, code=PREFERRED_PARENT_CODE
+            ).first()
+            parent_code = PREFERRED_PARENT_CODE
+            if existing_at_code is not None:
+                # Something else — right level or wrong, doesn't matter —
+                # already occupies this code. Never adopt it.
+                parent_code = _find_nearest_parent_code(
+                    owner, branch, PREFERRED_PARENT_CODE, tenant
+                )
+            parent_account = Account.objects.create(
+                **scope_filter, code=parent_code,
+                name=PARENT_NAME,
+                account_type='ASSET',
+                account_level='PARENT',
+                allow_manual_entries=False,
+                is_system_account=True,
+                balance=Decimal('0.00'),
+                owner=owner,
+            )
+            parent_account = Account.objects.select_for_update().get(pk=parent_account.pk)
+
+        # Re-check under the lock in case another request just assigned one
+        # while we were waiting for it (avoids creating a duplicate child).
+        staff.refresh_from_db(fields=['salary_advance_account'])
+        if staff.salary_advance_account_id:
+            return staff.salary_advance_account
+
+        child_code = _find_available_child_code(owner, branch, parent_account.code, tenant)
+        staff_label = staff.staff_id or f'#{staff.pk}'
+        child_account = Account.objects.create(
+            **scope_filter, code=child_code,
+            name=f"Salary Advance – {staff.first_name} {staff.last_name} ({staff_label})",
+            account_type='ASSET',
+            account_level='CHILD',
+            parent=parent_account,
+            allow_manual_entries=True,
+            is_system_account=True,
+            balance=Decimal('0.00'),
+            owner=owner,
+        )
+
+        staff.salary_advance_account = child_account
+        staff.save(update_fields=['salary_advance_account'])
+
+    return child_account
+
+
 def get_or_create_system_account(code, name, account_type, owner, branch, account_level='PARENT'):
     """
     Get or create a system account by code.
@@ -513,12 +631,10 @@ SYSTEM_ACCOUNTS = {
         'name': 'Development Levy Payable', 'account_type': 'LIABILITY',
         'parent_name': 'Payroll Liabilities',
     },
-    # Staff Loan Account / Cash Advances Receivable (parent 1110 = Trade and Other Receivables)
-    'staff_iou': {
-        'parent_code': '1110', 'child_suffix': '006',
-        'name': 'Staff Loan Account', 'account_type': 'ASSET',
-        'parent_name': 'Trade and Other Receivables',
-    },
+    # NOTE: Staff IOU / Salary Advance is intentionally NOT a SYSTEM_ACCOUNTS
+    # entry — each staff member gets their own dedicated child account
+    # instead of sharing one pooled account. See
+    # get_or_create_staff_salary_advance_account() below.
 }
 
 

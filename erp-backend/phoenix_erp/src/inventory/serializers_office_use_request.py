@@ -13,12 +13,21 @@ class OfficeUseRequestItemSerializer(serializers.ModelSerializer):
     item_name = serializers.CharField(source='item.name', read_only=True)
     item_sku = serializers.CharField(source='item.sku', read_only=True)
     unit_of_measure = serializers.CharField(source='item.unit_of_measure', read_only=True)
+    # The GL expense account this line will post to on fulfilment — comes from
+    # the item's own category (set up when the item/category was created).
+    expense_account_name = serializers.CharField(
+        source='item.category.cogs_account.name', read_only=True
+    )
+    expense_account_code = serializers.CharField(
+        source='item.category.cogs_account.code', read_only=True
+    )
 
     class Meta:
         model = OfficeUseRequestItem
         fields = [
             'id', 'item', 'item_details', 'item_name', 'item_sku',
             'unit_of_measure', 'quantity', 'notes',
+            'expense_account_name', 'expense_account_code',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -99,16 +108,9 @@ class OfficeUseRequestCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = OfficeUseRequest
         fields = [
-            'department', 'expense_account', 'delivery_location',
+            'department', 'delivery_location',
             'purpose', 'notes', 'items',
         ]
-
-    def validate_expense_account(self, value):
-        if value.account_type != 'EXPENSE':
-            raise serializers.ValidationError(
-                "The selected account must be an EXPENSE type account."
-            )
-        return value
 
     def validate_items(self, value):
         if not value:
@@ -154,16 +156,9 @@ class OfficeUseRequestUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = OfficeUseRequest
         fields = [
-            'department', 'expense_account', 'delivery_location',
+            'department', 'delivery_location',
             'purpose', 'notes', 'items',
         ]
-
-    def validate_expense_account(self, value):
-        if value.account_type != 'EXPENSE':
-            raise serializers.ValidationError(
-                "The selected account must be an EXPENSE type account."
-            )
-        return value
 
     def update(self, instance, validated_data):
         items_data = validated_data.pop('items', None)

@@ -220,6 +220,9 @@ ACTIONS = [
     ('accounts','chart-of-accounts','accounts-create', 'Create Account', 'create'),
     ('accounts','chart-of-accounts','accounts-edit',   'Edit Account',   'edit'),
     ('accounts','chart-of-accounts','trial-balance-view','View Trial Balance','view'),
+    ('accounts','account-categories','account-categories-view',  'View Account Categories',  'view'),
+    ('accounts','account-categories','account-categories-create','Create Account Category',  'create'),
+    ('accounts','account-categories','account-categories-edit',  'Edit Account Category',    'edit'),
     ('accounts','balance-sheet',    'balance-sheet-view','View Balance Sheet','view'),
     ('accounts','financial-reports','cash-flow-view',  'View Cash Flow',  'view'),
     # ── clients ───────────────────────────────────────────────────────────────

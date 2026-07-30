@@ -74,15 +74,23 @@ const MaterialRequestList: React.FC = () => {
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Material Requests</h1>
             <p className="text-gray-600 mt-1">
-              Manage inventory requests authorized by service invoices
+              Historical record of client-invoice-authorized material requests. This workflow has
+              been retired — use{' '}
+              <button
+                onClick={() => navigate('/inventory/office-use-requests')}
+                className="underline text-blue-600 hover:text-blue-800"
+              >
+                Office Use Requests
+              </button>{' '}
+              for new requests.
             </p>
           </div>
           <button
-            onClick={() => navigate('/inventory/material-requests/create')}
+            onClick={() => navigate('/inventory/office-use-requests/create')}
             className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm"
           >
             <Plus className="w-5 h-5 mr-2" />
-            New Material Request
+            New Office Use Request
           </button>
         </div>
 
@@ -177,15 +185,15 @@ const MaterialRequestList: React.FC = () => {
             <FileText className="mx-auto h-12 w-12 text-gray-400" />
             <h3 className="mt-2 text-sm font-medium text-gray-900">No material requests</h3>
             <p className="mt-1 text-sm text-gray-500">
-              Get started by creating a new material request.
+              This workflow has been retired. Create an Office Use Request instead.
             </p>
             <div className="mt-6">
               <button
-                onClick={() => navigate('/inventory/material-requests/create')}
+                onClick={() => navigate('/inventory/office-use-requests/create')}
                 className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
               >
                 <Plus className="w-5 h-5 mr-2" />
-                New Material Request
+                New Office Use Request
               </button>
             </div>
           </div>

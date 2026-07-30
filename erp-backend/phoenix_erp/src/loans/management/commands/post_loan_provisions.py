@@ -76,7 +76,7 @@ class Command(BaseCommand):
         if not dry_run:
             from transactions.models import TransactionSeries
             series, _ = TransactionSeries.objects.get_or_create(
-                code='LNPROV',
+                code='LNPRV',
                 defaults={'description': 'Loan Loss Provisions'},
             )
 

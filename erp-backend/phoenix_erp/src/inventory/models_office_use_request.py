@@ -22,7 +22,7 @@ class OfficeUseRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     Used when staff members need inventory items for internal office use
     (stationery, cleaning supplies, etc.).  No client or service invoice
     is involved.  On fulfilment:
-        Dr  expense_account   (user-selected GL expense account)
+        Dr  category.cogs_account       (per item's own category, set up when the item was created)
         Cr  category.inventory_account  (per consumed item)
     Stock quantities are reduced at the specified location.
     """
@@ -45,12 +45,17 @@ class OfficeUseRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text="Department or cost centre requesting the items",
     )
 
-    # GL account to debit when fulfilled (must be EXPENSE type)
+    # Deprecated: expense accounts are now derived per line item from
+    # item.category.cogs_account (set up when the item/category was created),
+    # so requesters no longer pick one manually. Kept nullable for requests
+    # created before this change.
     expense_account = models.ForeignKey(
         'accounts.Account',
         on_delete=models.PROTECT,
         related_name='office_use_requests',
-        help_text="GL expense account to debit when this request is fulfilled",
+        null=True,
+        blank=True,
+        help_text="Deprecated. Expense account is now derived from each item's category.",
     )
 
     # Delivery / collection location
@@ -231,7 +236,9 @@ class OfficeUseRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         Fulfil the office-use request:
           1. Validate sufficient stock.
           2. Reduce stock via InventoryService.
-          3. Create journal entry: Dr expense_account / Cr inventory_account(s).
+          3. Create journal entry: Dr category.cogs_account / Cr category.inventory_account,
+             grouped per distinct account (each item's category was configured with
+             both accounts when the item/category was created).
           4. Post the journal entry (updates GL balances).
         """
         if self.status != 'approved':
@@ -253,10 +260,12 @@ class OfficeUseRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             TransactionSeries,
         )
 
-        total_expense = Decimal('0.00')
+        expense_debits = {}     # {account_id: {'account': ..., 'amount': Decimal}}
         inventory_credits = {}  # {account_id: {'account': ..., 'amount': Decimal}}
 
-        for req_item in self.items.select_related('item__category__inventory_account').all():
+        for req_item in self.items.select_related(
+            'item__category__inventory_account', 'item__category__cogs_account'
+        ).all():
             stock, movement = InventoryService.reduce_stock(
                 item=req_item.item,
                 location=self.delivery_location,
@@ -268,7 +277,14 @@ class OfficeUseRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             )
 
             item_cost = movement.unit_cost * req_item.quantity
-            total_expense += item_cost
+
+            expense_account = req_item.item.category.cogs_account
+            if expense_account.id not in expense_debits:
+                expense_debits[expense_account.id] = {
+                    'account': expense_account,
+                    'amount': Decimal('0.00'),
+                }
+            expense_debits[expense_account.id]['amount'] += item_cost
 
             inv_account = req_item.item.category.inventory_account
             if inv_account.id not in inventory_credits:
@@ -295,13 +311,14 @@ class OfficeUseRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             tenant=self.tenant,
         )
 
-        # Debit: expense account (single line for the total)
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=self.expense_account,
-            side=JournalEntryLine.DEBIT,
-            amount=total_expense,
-        )
+        # Debit: expense account(s) – one line per distinct category expense account
+        for debit_data in expense_debits.values():
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=debit_data['account'],
+                side=JournalEntryLine.DEBIT,
+                amount=debit_data['amount'],
+            )
 
         # Credit: inventory account(s) – one line per distinct inventory account
         for credit_data in inventory_credits.values():

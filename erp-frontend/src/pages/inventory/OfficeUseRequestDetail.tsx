@@ -350,17 +350,6 @@ const OfficeUseRequestDetail: React.FC = () => {
               )}
               <div>
                 <dt className="flex items-center gap-1.5 text-gray-500 font-medium mb-0.5">
-                  <BookOpen className="w-4 h-4" /> Expense Account
-                </dt>
-                <dd className="text-gray-900">
-                  <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded mr-1">
-                    {request.expense_account_code}
-                  </span>
-                  {request.expense_account_name}
-                </dd>
-              </div>
-              <div>
-                <dt className="flex items-center gap-1.5 text-gray-500 font-medium mb-0.5">
                   <Package className="w-4 h-4" /> Issue Location
                 </dt>
                 <dd className="text-gray-900">{request.delivery_location_name}</dd>
@@ -395,6 +384,9 @@ const OfficeUseRequestDetail: React.FC = () => {
                     <th className="px-4 py-3 text-left font-medium text-gray-500">SKU</th>
                     <th className="px-4 py-3 text-right font-medium text-gray-500">Qty</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Unit</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      Expense Account
+                    </th>
                     {stockCheck && (
                       <th className="px-4 py-3 text-center font-medium text-gray-500">Stock</th>
                     )}
@@ -415,6 +407,14 @@ const OfficeUseRequestDetail: React.FC = () => {
                         </td>
                         <td className="px-4 py-3 text-right text-gray-900">{item.quantity}</td>
                         <td className="px-4 py-3 text-gray-600">{item.unit_of_measure}</td>
+                        <td className="px-4 py-3 text-gray-600">
+                          {item.expense_account_code && (
+                            <span className="font-mono text-xs bg-gray-100 px-1.5 py-0.5 rounded mr-1">
+                              {item.expense_account_code}
+                            </span>
+                          )}
+                          {item.expense_account_name || '–'}
+                        </td>
                         {stockCheck && (
                           <td className="px-4 py-3 text-center">
                             {sc ? (
@@ -491,21 +491,23 @@ const OfficeUseRequestDetail: React.FC = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
-                          <tr>
-                            <td className="py-2">
-                              <span className="font-mono text-xs bg-gray-200 px-1.5 py-0.5 rounded mr-1">
-                                {request.expense_account_code}
-                              </span>
-                              {request.expense_account_name}
-                              <span className="ml-2 text-xs text-gray-400">
-                                (requested by: {request.requested_by_name})
-                              </span>
-                            </td>
-                            <td className="py-2 text-right font-medium text-red-700">–</td>
-                            <td className="py-2 text-right text-gray-400">–</td>
-                          </tr>
                           {request.items.map(item => (
-                            <tr key={item.id}>
+                            <tr key={`dr-${item.id}`}>
+                              <td className="py-2">
+                                <span className="font-mono text-xs bg-gray-200 px-1.5 py-0.5 rounded mr-1">
+                                  {item.expense_account_code}
+                                </span>
+                                {item.expense_account_name}
+                                <span className="ml-2 text-xs text-gray-400">
+                                  ({item.item_name})
+                                </span>
+                              </td>
+                              <td className="py-2 text-right font-medium text-red-700">–</td>
+                              <td className="py-2 text-right text-gray-400">–</td>
+                            </tr>
+                          ))}
+                          {request.items.map(item => (
+                            <tr key={`cr-${item.id}`}>
                               <td className="py-2 pl-4 text-gray-600">
                                 Inventory – {item.item_name}
                               </td>
@@ -516,20 +518,14 @@ const OfficeUseRequestDetail: React.FC = () => {
                         </tbody>
                       </table>
                       <p className="text-xs text-gray-500 mt-3">
-                        Full amounts are recorded in the journal entry. View the ledger report for
+                        Full amounts are recorded in the journal entry (accounts with the same
+                        code are combined into a single line there). View the ledger report for
                         running balances.
                       </p>
                     </div>
 
                     {/* Links to ledger reports */}
                     <div className="flex flex-wrap gap-3">
-                      <Link
-                        to={`/accounts/ledger?account=${request.expense_account}&ref=${request.journal_entry_reference}`}
-                        className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-                      >
-                        <BookOpen className="w-4 h-4" />
-                        View Expense Account Ledger
-                      </Link>
                       <Link
                         to={`/accounts/transactions/${request.journal_entry}`}
                         className="inline-flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
@@ -548,8 +544,8 @@ const OfficeUseRequestDetail: React.FC = () => {
                         : 'The journal entry will be created automatically when this request is fulfilled.'}
                     </p>
                     <p className="text-xs text-gray-400 mt-1">
-                      Entry: <strong>Dr</strong> {request.expense_account_code}{' '}
-                      {request.expense_account_name} / <strong>Cr</strong> Inventory account(s)
+                      Entry: <strong>Dr</strong> each item's category expense account /{' '}
+                      <strong>Cr</strong> its inventory account
                     </p>
                   </div>
                 )}

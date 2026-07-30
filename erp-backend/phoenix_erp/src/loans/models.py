@@ -1851,7 +1851,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 TransactionSeries,
             )
             series, _ = TransactionSeries.objects.get_or_create(
-                code='LNRESTR',
+                code='LNRST',
                 defaults={'description': 'Loan Restructures'},
             )
             journal_entry = JournalEntry.objects.create(

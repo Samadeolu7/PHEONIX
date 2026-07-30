@@ -267,7 +267,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
       { code: 'stock-adjustments', title: 'Stock Adjustments', description: 'Manual stock quantity adjustments', paths: ['/inventory/adjustments', '/inventory/adjustments/:id', '/inventory/adjustments/create'] },
       { code: 'stock-transfers', title: 'Stock Transfers', description: 'Transfer stock between locations', paths: ['/inventory/transfers', '/inventory/transfers/:id', '/inventory/transfers/create'] },
       { code: 'stock-valuation', title: 'Stock Valuation Report', description: 'Inventory valuation reporting', path: '/inventory/reports/valuation' },
-      { code: 'material-requests', title: 'Material Requests', description: 'Internal material request workflow', paths: ['/inventory/material-requests', '/inventory/material-requests/:id', '/inventory/material-requests/create'] },
+      { code: 'material-requests', title: 'Material Requests (history)', description: 'Retired material request workflow, kept read-only for historical records', paths: ['/inventory/material-requests', '/inventory/material-requests/:id'] },
       { code: 'office-use-requests', title: 'Office-Use Requests', description: 'Office-use stock request workflow', paths: ['/inventory/office-use-requests', '/inventory/office-use-requests/:id', '/inventory/office-use-requests/create'] },
       { code: 'sales-orders', title: 'Sales Orders', description: 'Inventory-linked sales orders', paths: ['/inventory/sales-orders', '/inventory/sales-orders/:id', '/inventory/sales-orders/new'] },
       { code: 'allocations', title: 'Allocations', description: 'Stock allocation to clients/staff', paths: ['/inventory/allocations', '/inventory/allocations/:id'] },

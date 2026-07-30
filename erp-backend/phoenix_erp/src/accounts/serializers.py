@@ -6,6 +6,19 @@ from .models import Account,AccountCategory, Period, BalanceSheetSnapshot
 
 # accounts/serializers.py - Add to your serializers
 
+# Default FIRS/IFRS GL section (1000s Assets, 2000s Liabilities, 3000s Equity,
+# 4000s Revenue, 5000s Expenses) used to auto-generate a parent account's code
+# when no category was selected to imply one.
+_DEFAULT_SECTION_BY_ACCOUNT_TYPE = {
+    Account.ASSET: 1,
+    Account.LIABILITY: 2,
+    Account.EQUITY: 3,
+    Account.INCOME: 4,
+    Account.EXPENSE: 5,
+    Account.LOAN: 1,     # loans receivable is an asset
+    Account.SAVINGS: 2,  # customer deposits are a liability
+}
+
 
 class AccountSerializer(TenantModelSerializer):
     """Enhanced AccountSerializer with generated components info"""
@@ -39,6 +52,10 @@ class AccountSerializer(TenantModelSerializer):
             'allow_manual_entries', 'is_system_account',
             'created_at', 'updated_at'
         ]
+        extra_kwargs = {
+            # Omit `code` to have one auto-generated (see create()/_allocate_code below).
+            'code': {'required': False, 'allow_blank': True},
+        }
 
     def get_children_count(self, obj):
         """Get count of child accounts for parent accounts"""
@@ -76,9 +93,93 @@ class AccountSerializer(TenantModelSerializer):
             raise serializers.ValidationError(
                 "Parent accounts cannot have a parent"
             )
-        
+
         return data
-    
+
+    def create(self, validated_data):
+        """Create an account, auto-generating `code` when the client omits it.
+
+        Child accounts get the next PPPP-NNNNN sub-ledger number under their
+        parent; parent accounts get the next free 4-digit GL code in their
+        category's (or account type's) FIRS/IFRS section range.
+        """
+        if validated_data.get('code'):
+            return super().create(validated_data)
+
+        from django.db import IntegrityError, transaction
+
+        last_exc = None
+        for _ in range(5):
+            try:
+                with transaction.atomic():
+                    validated_data['code'] = self._allocate_code(validated_data)
+                    return super().create(validated_data)
+            except IntegrityError as exc:
+                last_exc = exc
+                validated_data.pop('code', None)
+                continue
+        raise serializers.ValidationError(
+            {'code': f'Could not allocate a unique account code: {last_exc}'}
+        )
+
+    def _allocate_code(self, data):
+        """Return the next free account code. Must run inside a transaction
+        with the caller prepared to retry on IntegrityError (races with
+        concurrent allocations are resolved by the DB's unique constraint)."""
+        account_level = data.get('account_level', Account.LEVEL_CHILD)
+
+        if account_level == Account.LEVEL_CHILD:
+            parent = data.get('parent')
+            if not parent:
+                raise serializers.ValidationError(
+                    {'code': 'A code is required (or select a parent so one can be auto-generated).'}
+                )
+            prefix = f"{parent.code}-"
+            existing = (
+                Account.objects.select_for_update()
+                .filter(parent=parent, is_deleted=False)
+                .values_list('code', flat=True)
+            )
+            seqs = []
+            for c in existing:
+                if c.startswith(prefix):
+                    try:
+                        seqs.append(int(c[len(prefix):]))
+                    except Exception:
+                        pass
+            next_seq = (max(seqs) + 1) if seqs else 1
+            return f"{parent.code}-{next_seq:05d}"
+
+        # PARENT account — allocate the next free 4-digit GL code within the
+        # relevant FIRS/IFRS section range.
+        category = data.get('category')
+        section = (
+            category.section if category is not None
+            else _DEFAULT_SECTION_BY_ACCOUNT_TYPE.get(data.get('account_type'), 1)
+        )
+        lower, upper = section * 1000, section * 1000 + 999
+
+        existing_ints = set()
+        qs = Account.objects.select_for_update().filter(
+            branch=data.get('branch'),
+            code__gte=str(lower),
+            code__lte=str(upper),
+            is_deleted=False,
+        )
+        for c in qs.values_list('code', flat=True):
+            try:
+                existing_ints.add(int(c))
+            except Exception:
+                pass
+
+        for num in range(lower + 1, upper + 1):
+            if num not in existing_ints:
+                return str(num)
+
+        raise serializers.ValidationError(
+            {'code': f'No available account codes left in the {lower}-{upper} range.'}
+        )
+
     def get_generated_form_schema(self, obj):
         """Get generated form schema if it exists"""
         try:

@@ -72,6 +72,19 @@ class Staff(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text='If True, pension contributions are not calculated for this staff member (e.g. contract staff)'
     )
 
+    # Dedicated GL sub-account (under the shared "Salary Advance" parent) that
+    # tracks this staff member's own IOU/advance balance individually, rather
+    # than pooling every staff member's advances into one shared account.
+    # Lazily created on first use — see
+    # accounts.utils.account_creation.get_or_create_staff_salary_advance_account().
+    salary_advance_account = models.ForeignKey(
+        'accounts.Account',
+        null=True, blank=True,
+        on_delete=models.PROTECT,
+        related_name='staff_salary_advance_holders',
+        help_text="This staff member's individual Salary Advance sub-account"
+    )
+
     # ── Organisational hierarchy & access control ─────────────────────────────
 
     ROLE_LEVEL_CHOICES = [
@@ -1244,14 +1257,20 @@ class StaffIOU(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     Accounting flow
     ---------------
+    Each staff member gets their own dedicated GL child account under a
+    shared "Salary Advance" parent (see
+    accounts.utils.account_creation.get_or_create_staff_salary_advance_account),
+    so balances are tracked and visible per employee rather than pooled into
+    one shared receivable.
+
     When cash is disbursed (on approval):
-        Dr  Staff IOU Receivable   (asset account — staff owes the company)
-        Cr  Cash / Bank            (money leaves the organisation)
+        Dr  <staff's own Salary Advance sub-account>   (asset — staff owes the company)
+        Cr  Cash / Bank                                (money leaves the organisation)
 
     Each month at payroll time the recovery entry is posted as part of the
     payroll liability journal:
-        Dr  Salary Payable (Payroll Clearance)   [net pay reduced]
-        Cr  Staff IOU Receivable                 [receivable reduced]
+        Dr  Salary Payable (Payroll Clearance)         [net pay reduced]
+        Cr  <staff's own Salary Advance sub-account>   [receivable reduced]
 
     The deduction appears in the payslip under the key "Staff IOU".
     When balance_remaining reaches zero the IOU is automatically marked

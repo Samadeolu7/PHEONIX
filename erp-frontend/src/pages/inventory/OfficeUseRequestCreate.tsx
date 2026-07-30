@@ -3,7 +3,6 @@ import { ArrowLeft, Plus, Trash2, Package, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../../hooks/useToast';
 import { useCreateOfficeUseRequest } from '../../hooks/useLedger';
-import { useExpenseAccounts } from '../../hooks/useAccountsSimple';
 import { useInventoryLocationsList, useInventoryItems } from '../../hooks/useInventory';
 import { CreateOfficeUseRequest, CreateOfficeUseRequestItem } from '../../types/ledger';
 
@@ -21,7 +20,6 @@ const OfficeUseRequestCreate: React.FC = () => {
 
   // Form state
   const [department, setDepartment] = useState('');
-  const [expenseAccountId, setExpenseAccountId] = useState('');
   const [deliveryLocationId, setDeliveryLocationId] = useState('');
   const [purpose, setPurpose] = useState('');
   const [notes, setNotes] = useState('');
@@ -32,15 +30,6 @@ const OfficeUseRequestCreate: React.FC = () => {
   const [itemSearch, setItemSearch] = useState('');
 
   // Lookup data via React Query
-  const { data: expenseAccountsRaw } = useExpenseAccounts();
-  const expenseAccounts = (
-    Array.isArray(expenseAccountsRaw) ? expenseAccountsRaw : (expenseAccountsRaw?.results ?? [])
-  ).map((a: any) => ({
-    id: a.id,
-    code: a.code,
-    name: a.name,
-    account_type: a.account_type || a.type,
-  }));
   const { data: locationsRaw } = useInventoryLocationsList();
   const locations = Array.isArray(locationsRaw)
     ? locationsRaw
@@ -89,10 +78,6 @@ const OfficeUseRequestCreate: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
-    if (!expenseAccountId) {
-      showError('Please select an expense account');
-      return;
-    }
     if (!deliveryLocationId) {
       showError('Please select a delivery location');
       return;
@@ -110,7 +95,6 @@ const OfficeUseRequestCreate: React.FC = () => {
 
     const payload: CreateOfficeUseRequest = {
       department: department.trim() || undefined,
-      expense_account: parseInt(expenseAccountId),
       delivery_location: parseInt(deliveryLocationId),
       purpose: purpose.trim(),
       notes: notes.trim() || undefined,
@@ -129,7 +113,6 @@ const OfficeUseRequestCreate: React.FC = () => {
     } catch (err: any) {
       const data = err?.response?.data;
       const msg =
-        data?.expense_account?.[0] ||
         data?.items?.[0] ||
         data?.error ||
         data?.detail ||
@@ -183,30 +166,6 @@ const OfficeUseRequestCreate: React.FC = () => {
                 placeholder="e.g. Administration, IT, Finance"
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-            </div>
-
-            {/* Expense Account */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Expense Account <span className="text-red-500">*</span>
-              </label>
-              <select
-                aria-label="Expense account"
-                value={expenseAccountId}
-                onChange={e => setExpenseAccountId(e.target.value)}
-                required
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Select expense account...</option>
-                {expenseAccounts.map(a => (
-                  <option key={a.id} value={a.id}>
-                    {a.code} – {a.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                GL account that will be debited when this request is fulfilled
-              </p>
             </div>
 
             {/* Delivery Location */}
@@ -376,8 +335,8 @@ const OfficeUseRequestCreate: React.FC = () => {
               <ul className="text-sm text-blue-700 mt-1 list-disc list-inside space-y-0.5">
                 <li>Reduce inventory stock at the selected location</li>
                 <li>
-                  Post a journal entry: <strong>Dr</strong> selected expense account /{' '}
-                  <strong>Cr</strong> inventory asset account(s)
+                  Post a journal entry: <strong>Dr</strong> each item's category expense
+                  account / <strong>Cr</strong> its inventory asset account
                 </li>
                 <li>Record the requester&apos;s name in the journal for full traceability</li>
               </ul>

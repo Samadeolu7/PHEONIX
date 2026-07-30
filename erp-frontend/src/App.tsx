@@ -262,9 +262,8 @@ const StockTransferListPage = lazy(() => import('./pages/inventory/StockTransfer
 const StockTransferDetailPage = lazy(() => import('./pages/inventory/StockTransferDetailPage'));
 const StockValuationReportPage = lazy(() => import('./pages/inventory/StockValuationReportPage'));
 
-// Material Request and Ledger pages
+// Material Request (retired — kept read-only for historical records; see OfficeUseRequest for new requests) and Ledger pages
 const MaterialRequestList = lazy(() => import('./pages/inventory/MaterialRequestList'));
-const MaterialRequestCreate = lazy(() => import('./pages/inventory/MaterialRequestCreate'));
 const MaterialRequestDetail = lazy(() => import('./pages/inventory/MaterialRequestDetail'));
 const OfficeUseRequestList = lazy(() => import('./pages/inventory/OfficeUseRequestList'));
 const OfficeUseRequestCreate = lazy(() => import('./pages/inventory/OfficeUseRequestCreate'));
@@ -1166,11 +1165,7 @@ function App() {
                                 />
                                 <Route
                                   path="/inventory/material-requests/create"
-                                  element={
-                                    <ProtectedRoute requiredPermission="material-request-create" module="inventory" page="material-requests" action="create">
-                                      <MaterialRequestCreate />
-                                    </ProtectedRoute>
-                                  }
+                                  element={<Navigate to="/inventory/office-use-requests/create" replace />}
                                 />
                                 <Route
                                   path="/inventory/material-requests/:id"

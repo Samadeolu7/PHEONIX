@@ -521,7 +521,7 @@ const UnifiedAccountCreationPage: React.FC = () => {
             <label
               style={{ display: 'block', fontWeight: '500', marginBottom: '8px', color: '#374151' }}
             >
-              Category {config.categoryCode ? '' : '*'}
+              Category {config.categoryCode ? '' : '(Optional)'}
               {config.categoryCode && (
                 <span
                   style={{ fontSize: '12px', fontWeight: 400, color: '#6b7280', marginLeft: '8px' }}
@@ -650,7 +650,8 @@ const UnifiedAccountCreationPage: React.FC = () => {
             }}
           />
           <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-            Format: XXX for parent or XXX-XXX for child (e.g., 150-001)
+            Format: 4-digit GL code for a parent (e.g. 1150), or PPPP-NNNNN for a
+            child under that parent (e.g. 1150-00001)
           </div>
         </div>
 
@@ -1047,7 +1048,7 @@ const UnifiedAccountCreationPage: React.FC = () => {
         </button>
         <button
           onClick={() => {
-            if (!formData.name || !formData.category) {
+            if (!formData.name) {
               setError('Please fill in all required fields');
               return;
             }
@@ -1062,9 +1063,9 @@ const UnifiedAccountCreationPage: React.FC = () => {
             padding: '12px 24px',
             border: 'none',
             borderRadius: '8px',
-            background: formData.name && formData.category ? config?.color : '#9ca3af',
+            background: formData.name ? config?.color : '#9ca3af',
             color: 'white',
-            cursor: formData.name && formData.category ? 'pointer' : 'not-allowed',
+            cursor: formData.name ? 'pointer' : 'not-allowed',
             fontWeight: '500',
           }}
         >

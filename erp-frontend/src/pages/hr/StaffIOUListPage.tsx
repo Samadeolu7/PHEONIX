@@ -155,7 +155,7 @@ const ApproveDisburseModal: React.FC<ApproveDisburseModalProps> = ({
                     Repayment will be deducted from salary.
                   </div>
                   <div className="mt-2 bg-gray-100 rounded px-2 py-1 font-mono text-xs text-gray-600">
-                    No GL entry now. Payroll will recover: Dr Payroll Clearance / Cr Staff Loan Account
+                    No GL entry now. Payroll will recover: Dr Payroll Clearance / Cr Salary Advance (staff sub-account)
                   </div>
                 </div>
               </div>
@@ -184,7 +184,7 @@ const ApproveDisburseModal: React.FC<ApproveDisburseModalProps> = ({
                     repay it through monthly salary deductions.
                   </div>
                   <div className="mt-2 bg-gray-100 rounded px-2 py-1 font-mono text-xs text-gray-600">
-                    Posts now: Dr Staff Loan Account / Cr [selected account]
+                    Posts now: Dr Salary Advance (staff sub-account) / Cr [selected account]
                   </div>
                 </div>
               </div>
