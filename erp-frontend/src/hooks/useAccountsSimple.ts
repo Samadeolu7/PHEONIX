@@ -10,6 +10,18 @@ export const useAccountsByType = (account_type: 'ASSET' | 'INCOME' | 'EXPENSE') 
   });
 };
 
+/** Accounts scoped to an explicit branch, independent of the ambient branch
+ * switcher — for pickers where the branch is chosen inline (e.g. an
+ * inter-branch transfer's From/To account selects). */
+export const useAccountsByBranch = (branchId: number | null | undefined) => {
+  return useQuery({
+    queryKey: ['accounts', 'by-branch', branchId],
+    queryFn: () => accountService.getAccounts({ branch: branchId as number, is_active: true }),
+    enabled: !!branchId,
+    staleTime: 60 * 1000,
+  });
+};
+
 export const useInventoryAccounts = () => {
   return useQuery({
     queryKey: ['accounts', 'ASSET', 'current'],

@@ -97,6 +97,8 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Ledger Search', '/accounts/ledger-search'),
         leaf('Journal Vouchers', '/accounting/journal-vouchers'),
         leaf('New Journal Voucher', '/accounting/journal-vouchers/create'),
+        leaf('Inter-Branch Transfers', '/accounting/interbranch-transfers'),
+        leaf('New Inter-Branch Transfer', '/accounting/interbranch-transfers/new'),
         leaf('New Budget Period', '/budgets/periods/new'),
         leaf('Trial Balance', '/reports/financial/trial-balance'),
         leaf('Profit & Loss', '/reports/financial/profit-loss'),

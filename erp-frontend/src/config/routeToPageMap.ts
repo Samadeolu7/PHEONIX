@@ -28,6 +28,8 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/accounting/journal-vouchers/:id': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounting/journal-vouchers/create': { module: 'accounts', page: 'chart-of-accounts', action: 'create' },
   '/accounting/periods': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
+  '/accounting/interbranch-transfers': { module: 'interbranch', page: 'transfers', action: 'view' },
+  '/accounting/interbranch-transfers/new': { module: 'interbranch', page: 'transfers', action: 'create' },
   '/accounts': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounts-payable': { module: 'liabilities', page: 'accounts-payable', action: 'view' },
   '/accounts/:accountId/ledger': { module: 'accounts', page: 'account-ledger', action: 'view' },

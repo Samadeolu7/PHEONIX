@@ -90,7 +90,7 @@ class AccountViewSet(ScopedModelViewSet):
             return AccountReadSerializer
         return AccountSerializer
 
-    filterset_fields = ['account_type', 'account_level']
+    filterset_fields = ['account_type', 'account_level', 'branch']
     search_fields = ['name', 'code']
     ordering_fields = ['code', 'name', 'balance', 'created_at']
     ordering = ['code']  # Default ordering by account code

@@ -512,6 +512,8 @@ const BankAccountDetailPage = lazy(() => import('./pages/banks/BankAccountDetail
 const BankTransferListPage = lazy(() => import('./pages/banks/BankTransferListPage'));
 const BankTransferFormPage = lazy(() => import('./pages/banks/BankTransferFormPage'));
 const TransferApprovalPage = lazy(() => import('./pages/banks/TransferApprovalPage'));
+const InterbranchTransferListPage = lazy(() => import('./pages/accounting/InterbranchTransferListPage'));
+const InterbranchTransferFormPage = lazy(() => import('./pages/accounting/InterbranchTransferFormPage'));
 const BankPaymentListPage = lazy(() => import('./pages/banks/BankPaymentListPage'));
 const BankPaymentFormPage = lazy(() => import('./pages/banks/BankPaymentFormPage'));
 const ReconciliationListPage = lazy(() => import('./pages/banks/ReconciliationListPage'));
@@ -1553,6 +1555,24 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
                                       <JournalVoucherDetailPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Inter-Branch Transfer routes */}
+                                <Route
+                                  path="/accounting/interbranch-transfers"
+                                  element={
+                                    <ProtectedRoute module="interbranch" page="transfers">
+                                      <InterbranchTransferListPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/accounting/interbranch-transfers/new"
+                                  element={
+                                    <ProtectedRoute module="interbranch" page="transfers" action="create">
+                                      <InterbranchTransferFormPage />
                                     </ProtectedRoute>
                                   }
                                 />

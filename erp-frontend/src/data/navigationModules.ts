@@ -42,6 +42,7 @@ import {
   Layers,
   Wrench,
   TrendingDown,
+  GitBranch,
 } from 'lucide-react';
 import { NavigationModule } from '../types/navigation';
 
@@ -88,6 +89,13 @@ export const navigationModules: NavigationModule[] = [
         title: 'Period Management',
         path: '/accounting/periods',
         icon: Calendar,
+        isNew: true,
+      },
+      {
+        id: 'interbranch-transfers',
+        title: 'Inter-Branch Transfers',
+        path: '/accounting/interbranch-transfers',
+        icon: GitBranch,
         isNew: true,
       },
       // Receivables Management

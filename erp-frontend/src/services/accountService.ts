@@ -6,6 +6,7 @@ export const accountService = {
     account_type?: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
     search?: string;
     is_active?: boolean;
+    branch?: number;
   }): Promise<Account[]> {
     const response = await api.get('/accounts/', { params });
     return response.results || response.data || response;

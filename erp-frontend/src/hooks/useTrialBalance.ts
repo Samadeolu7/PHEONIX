@@ -4,7 +4,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { financialReportsService } from '../services/financialReportsService';
-import { TrialBalanceData, TrialBalanceParams, ExportFormat } from '../types/financialReports';
+import {
+  TrialBalanceData,
+  TrialBalanceParams,
+  ExportFormat,
+  ConsolidatedTrialBalanceData,
+  ConsolidatedTrialBalanceParams,
+} from '../types/financialReports';
 
 export interface UseTrialBalanceReturn {
   data: TrialBalanceData | undefined;
@@ -44,7 +50,9 @@ export const useTrialBalance = (initialParams: TrialBalanceParams = {}): UseTria
       financialReportsService.downloadReport('trial-balance', format, initialParams),
     onError: (error: any) => {
       console.error('Export failed:', error);
-      toast.error(error?.response?.data?.message || 'Failed to export trial balance. Please try again.');
+      toast.error(
+        error?.response?.data?.message || 'Failed to export trial balance. Please try again.'
+      );
     },
   });
 
@@ -75,6 +83,39 @@ export const useTrialBalance = (initialParams: TrialBalanceParams = {}): UseTria
     error: error?.message || null,
     refetch,
     exportReport,
+    isRefetching,
+  };
+};
+
+export interface UseConsolidatedTrialBalanceReturn {
+  data: ConsolidatedTrialBalanceData | undefined;
+  loading: boolean;
+  error: string | null;
+  isRefetching: boolean;
+}
+
+/** Tenant-wide trial balance with reciprocal Due-from/Due-to pairs eliminated
+ * from the totals — see FinancialStatementService.generate_consolidated_trial_balance.
+ * `enabled` should be false unless the caller is an elevated user with no
+ * single branch selected (matches the backend's own gate). */
+export const useConsolidatedTrialBalance = (
+  params: ConsolidatedTrialBalanceParams = {},
+  enabled = true
+): UseConsolidatedTrialBalanceReturn => {
+  const { data, isLoading, error, isRefetching } = useQuery({
+    queryKey: ['consolidatedTrialBalance', params],
+    queryFn: () => financialReportsService.getConsolidatedTrialBalance(params),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    retry: 3,
+    retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000),
+    enabled,
+  });
+
+  return {
+    data,
+    loading: isLoading,
+    error: error?.message || null,
     isRefetching,
   };
 };

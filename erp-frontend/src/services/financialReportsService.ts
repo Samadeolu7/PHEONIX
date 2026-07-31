@@ -114,6 +114,24 @@ class FinancialReportsService {
   }
 
   /**
+   * Fetches the consolidated (tenant-wide, elimination) Trial Balance —
+   * only meaningful for elevated users in All-Branches mode (no branch
+   * selected), matching the backend's own gate.
+   */
+  async getConsolidatedTrialBalance(params: TrialBalanceParams = {}): Promise<TrialBalanceData> {
+    const queryString = this.buildQueryParams(params);
+    const url = `${this.baseUrl}/consolidated_trial_balance/${queryString ? `?${queryString}` : ''}`;
+
+    const response = await this.makeAuthenticatedRequest<TrialBalanceData>(url);
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error || 'Failed to fetch Consolidated Trial Balance report');
+    }
+
+    return response.data;
+  }
+
+  /**
    * Fetches Profit & Loss statement
    */
   async getProfitLoss(params: ProfitLossParams): Promise<ProfitLossData> {

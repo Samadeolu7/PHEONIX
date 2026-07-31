@@ -122,6 +122,16 @@ export const PERMISSION_REGISTRY: PermModule[] = [
     ],
   },
   {
+    code: 'interbranch',
+    name: 'Inter-Branch Transfers',
+    icon: 'GitBranch',
+    color: '#0891b2',
+    description: 'Funds moved between branches via linked JVs and Due-from/Due-to clearing accounts',
+    pages: [
+      { code: 'transfers', title: 'Inter-Branch Transfers', description: 'Create, view, and reverse inter-branch transfers', paths: ['/accounting/interbranch-transfers', '/accounting/interbranch-transfers/new'] },
+    ],
+  },
+  {
     code: 'transactions',
     name: 'Transactions',
     icon: 'ArrowLeftRight',

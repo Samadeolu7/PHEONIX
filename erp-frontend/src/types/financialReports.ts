@@ -11,6 +11,14 @@ export interface AccountBalance {
   credit: string;
   balance: string;
   children?: AccountBalance[];
+  // Present only on consolidated (tenant-wide) trial balance rows — see
+  // FinancialStatementService.generate_consolidated_trial_balance.
+  branch_id?: number;
+  branch_name?: string;
+  // True for a reciprocal Due-from/Due-to clearing-account leg — still shown
+  // for audit visibility, but excluded from the consolidated totals since
+  // its matching pair (on the counterparty branch's books) nets it to zero.
+  is_interbranch_eliminated?: boolean;
 }
 
 // Trial Balance specific types
@@ -36,6 +44,11 @@ export interface TrialBalanceParams {
   include_zero_balances?: boolean;
   export_format?: 'json' | 'pdf' | 'excel';
 }
+
+// Consolidated (tenant-wide, elimination) Trial Balance — same shape as
+// TrialBalanceData, just sourced from generate_consolidated_trial_balance.
+export type ConsolidatedTrialBalanceData = TrialBalanceData;
+export type ConsolidatedTrialBalanceParams = TrialBalanceParams;
 
 // Profit & Loss specific types
 export interface ProfitLossData {
