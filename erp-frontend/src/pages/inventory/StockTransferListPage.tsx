@@ -12,6 +12,7 @@ import {
   CheckCircle,
   XCircle,
   Truck,
+  AlertTriangle,
 } from 'lucide-react';
 import { inventoryService } from '../../services/inventoryService';
 
@@ -20,14 +21,25 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   pending: { label: 'Pending Approval', color: 'bg-amber-100 text-amber-800', icon: Clock },
   approved: { label: 'Approved', color: 'bg-blue-100 text-blue-800', icon: CheckCircle },
   rejected: { label: 'Rejected', color: 'bg-red-100 text-red-800', icon: XCircle },
-  executed: { label: 'Executed', color: 'bg-green-100 text-green-800', icon: Truck },
+  dispatched: { label: 'In Transit', color: 'bg-indigo-100 text-indigo-800', icon: Truck },
+  acknowledged: { label: 'Acknowledged', color: 'bg-green-100 text-green-800', icon: CheckCircle },
+  short_received: {
+    label: 'Short Received',
+    color: 'bg-amber-100 text-amber-800',
+    icon: AlertTriangle,
+  },
+  disputed: { label: 'Disputed', color: 'bg-red-100 text-red-800', icon: AlertTriangle },
+  executed: { label: 'Executed (Legacy)', color: 'bg-green-100 text-green-800', icon: Truck },
 };
 
 const TABS: { key: string; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'pending', label: 'Pending' },
   { key: 'approved', label: 'Approved' },
-  { key: 'executed', label: 'Executed' },
+  { key: 'dispatched', label: 'In Transit' },
+  { key: 'acknowledged', label: 'Acknowledged' },
+  { key: 'short_received', label: 'Short Received' },
+  { key: 'disputed', label: 'Disputed' },
   { key: 'rejected', label: 'Rejected' },
 ];
 
@@ -74,7 +86,7 @@ const StockTransferListPage: React.FC = () => {
             Stock Transfers
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Manage inter-location inventory transfer requests
+            Manage inventory transfers between locations — within a branch or across branches
           </p>
         </div>
         <button
@@ -158,8 +170,18 @@ const StockTransferListPage: React.FC = () => {
                       <div className="font-medium text-gray-900">{t.item_name}</div>
                       <div className="text-xs text-gray-500">{t.item_sku}</div>
                     </td>
-                    <td className="px-4 py-3 text-gray-700">{t.from_location_name}</td>
-                    <td className="px-4 py-3 text-gray-700">{t.to_location_name}</td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {t.from_location_name}
+                      {t.from_branch !== t.to_branch && t.from_branch_name && (
+                        <div className="text-xs text-gray-400">{t.from_branch_name}</div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">
+                      {t.to_location_name}
+                      {t.from_branch !== t.to_branch && t.to_branch_name && (
+                        <div className="text-xs text-gray-400">{t.to_branch_name}</div>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right font-medium">
                       {parseFloat(t.quantity).toLocaleString()}
                     </td>

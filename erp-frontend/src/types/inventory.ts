@@ -167,13 +167,21 @@ export interface StockAdjustment {
 // STOCK TRANSFER TYPES
 // ============================================================================
 
-export type TransferStatus = 'pending' | 'approved' | 'rejected' | 'executed';
+export type TransferStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'dispatched'
+  | 'acknowledged'
+  | 'short_received'
+  | 'disputed'
+  | 'executed'; // legacy — pre-dates the dispatch/acknowledge split
 
 export interface StockTransferRequest {
   requested_by: number; // Required
   item: number; // Required
   from_location: number; // Required
-  to_location: number; // Required
+  to_location: number; // Required — may belong to ANY branch of the tenant
   quantity: string; // Required decimal string ^-?\d{0,16}(?:\.\d{0,2})?$
   unit_cost?: string | null; // Optional decimal string ^-?\d{0,16}(?:\.\d{0,2})?$ - Estimated unit cost for approval decision
   reason: string; // Required non-empty - Reason for transfer
@@ -191,12 +199,20 @@ export interface StockTransfer {
   item: number;
   item_name: string;
   item_sku: string;
+  /** The destination branch's own item record for this SKU — resolved/auto-created at acknowledge time. */
+  destination_item: number | null;
+  destination_item_name?: string | null;
+  destination_item_sku?: string | null;
   from_location: number;
   from_location_name: string;
   to_location: number;
   to_location_name: string;
+  from_branch: number | null;
+  from_branch_name?: string | null;
+  to_branch: number | null;
+  to_branch_name?: string | null;
   quantity: string; // Decimal string ^-?\d{0,16}(?:\.\d{0,2})?$
-  unit_cost?: string | null; // Decimal string ^-?\d{0,16}(?:\.\d{0,2})?$ - Estimated unit cost for approval decision
+  unit_cost?: string | null; // Decimal string ^-?\d{0,16}(?:\.\d{0,2})?$ - Estimated unit cost for approval decision; overwritten with the actual dispatch-time cost once dispatched
   estimated_cost: string; // Decimal string ^-?\d{0,16}(?:\.\d{0,2})?$ - Total estimated cost (quantity × unit_cost)
   reason: string; // Reason for transfer
   notes?: string;
@@ -206,6 +222,23 @@ export interface StockTransfer {
   approved_by_name: string | null;
   approved_at: string | null; // Date-time
   approval_notes?: string;
+  dispatched_by: number | null;
+  dispatched_by_name?: string | null;
+  dispatched_at: string | null;
+  dispatch_notes?: string;
+  acknowledged_by: number | null;
+  acknowledged_by_name?: string | null;
+  acknowledged_at: string | null;
+  acknowledgment_notes?: string;
+  actual_quantity_received: string | null;
+  variance_quantity: string;
+  variance_notes?: string;
+  disputed_by: number | null;
+  disputed_by_name?: string | null;
+  disputed_at: string | null;
+  dispute_reason?: string;
+  dispatch_journal_entry: number | null;
+  acknowledgment_journal_entry: number | null;
   transfer_out_movement: number | null;
   transfer_in_movement: number | null;
   created_at: string; // Date-time

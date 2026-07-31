@@ -302,7 +302,7 @@ class BaseApprovalTest(TestCase):
 
 class StockTransferApprovalTest(BaseApprovalTest):
     """Test stock transfer approval workflows"""
-    
+
     def setUp(self):
         super().setUp()
         # Create second test location
@@ -316,6 +316,17 @@ class StockTransferApprovalTest(BaseApprovalTest):
             created_by=self.user
         )
         self.location_b = self.to_location  # Keep alias for backward compatibility
+
+        # dispatch/acknowledge require approval-tier authority (same gate as
+        # approve()) — make self.user a tenant owner so can_user_approve()
+        # passes, matching the "tenant owner has full access" convention
+        # used everywhere else in this codebase's permission system.
+        from users.models import Tenant
+        self.tenant = Tenant.objects.create(name='Test Tenant TRF', slug='test-tenant-trf')
+        self.tenant.owner = self.user
+        self.tenant.save()
+        self.user.tenant = self.tenant
+        self.user.save()
     
     def test_transfer_with_approval_required(self):
         """Test creating transfer when approval is required"""
@@ -384,7 +395,7 @@ class StockTransferApprovalTest(BaseApprovalTest):
         self.assertFalse(response.data['requires_approval'])
     
     def test_full_transfer_workflow(self):
-        """Test complete transfer workflow: create → approve → execute"""
+        """Test complete transfer workflow: create → approve → dispatch → acknowledge"""
         # Configure - no approval for adjustments, all transfers require approval
         config, _ = InventoryConfig.objects.update_or_create(
             owner=self.user,
@@ -395,7 +406,7 @@ class StockTransferApprovalTest(BaseApprovalTest):
                 'transfer_approval_threshold': None  # All transfers need approval
             }
         )
-        
+
         # First, create some stock at from_location using adjustment
         adjustment_response = self.client.post('/api/inventory/adjustments/', {
             'item_id': self.item.id,
@@ -406,7 +417,7 @@ class StockTransferApprovalTest(BaseApprovalTest):
             'reason': 'Initial stock'
         })
         self.assertEqual(adjustment_response.status_code, status.HTTP_201_CREATED)
-        
+
         # Step 1: Create transfer request
         response = self.client.post('/api/inventory/transfers/', {
             'item_id': self.item.id,
@@ -416,26 +427,95 @@ class StockTransferApprovalTest(BaseApprovalTest):
             'unit_cost': '100.00',
             'reason': 'Rebalancing stock'
         })
-        
+
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         request_id = response.data['data']['id']
-        
+
         # Step 2: Approve
         response = self.client.post(f'/api/inventory/transfers/{request_id}/approve/', {
             'notes': 'Approved'
         })
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['data']['status'], 'approved')
-        
-        # Step 3: Execute
-        response = self.client.post(f'/api/inventory/transfers/{request_id}/execute/')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['data']['status'], 'executed')
-        
+
+        # Step 3: Dispatch (same-branch — no GL entry expected, just stock movement)
+        response = self.client.post(f'/api/inventory/transfers/{request_id}/dispatch/', {
+            'notes': 'Sent'
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['data']['status'], 'dispatched')
+
+        # The old /execute/ endpoint is retired
+        legacy_response = self.client.post(f'/api/inventory/transfers/{request_id}/execute/')
+        self.assertEqual(legacy_response.status_code, status.HTTP_410_GONE)
+
+        # Step 4: Acknowledge (full receipt)
+        response = self.client.post(f'/api/inventory/transfers/{request_id}/acknowledge/', {
+            'actual_quantity_received': '5'
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['data']['status'], 'acknowledged')
+
         # Verify both movements were created
         request_obj = StockTransferRequest.objects.get(pk=request_id)
         self.assertIsNotNone(request_obj.transfer_out_movement)
         self.assertIsNotNone(request_obj.transfer_in_movement)
+        self.assertEqual(request_obj.from_branch_id, self.branch.id)
+        self.assertEqual(request_obj.to_branch_id, self.branch.id)
+        # Same-branch transfer -> no GL entries posted
+        self.assertIsNone(request_obj.dispatch_journal_entry_id)
+        self.assertIsNone(request_obj.acknowledgment_journal_entry_id)
+
+    def test_transfer_short_receipt_posts_shrinkage(self):
+        """A short receipt on a same-branch transfer posts a shrinkage entry for the shortfall only."""
+        InventoryConfig.objects.update_or_create(
+            owner=self.user, branch=self.branch,
+            defaults={'require_adjustment_approval': False, 'require_transfer_approval': False},
+        )
+
+        adjustment_response = self.client.post('/api/inventory/adjustments/', {
+            'item_id': self.item.id,
+            'location_id': self.from_location.id,
+            'adjustment_type': 'increase',
+            'quantity': '50',
+            'unit_cost': '100.00',
+            'reason': 'Initial stock'
+        })
+        self.assertEqual(adjustment_response.status_code, status.HTTP_201_CREATED)
+
+        response = self.client.post('/api/inventory/transfers/', {
+            'item_id': self.item.id,
+            'from_location_id': self.from_location.id,
+            'to_location_id': self.to_location.id,
+            'quantity': '10',
+            'unit_cost': '100.00',
+            'reason': 'Rebalancing stock'
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        request_id = response.data['data']['id']
+        self.assertEqual(response.data['data']['status'], 'approved')  # auto-approved, below threshold
+
+        response = self.client.post(f'/api/inventory/transfers/{request_id}/dispatch/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+        response = self.client.post(f'/api/inventory/transfers/{request_id}/acknowledge/', {
+            'actual_quantity_received': '8'
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data['data']['status'], 'short_received')
+        self.assertEqual(Decimal(response.data['data']['variance_quantity']), Decimal('2.00'))
+
+        request_obj = StockTransferRequest.objects.get(pk=request_id)
+        self.assertIsNotNone(request_obj.acknowledgment_journal_entry_id)
+        je = request_obj.acknowledgment_journal_entry
+        lines = list(je.entries.all())
+        self.assertEqual(len(lines), 2)
+        debit = next(l for l in lines if l.side == l.DEBIT)
+        credit = next(l for l in lines if l.side == l.CREDIT)
+        self.assertEqual(debit.account.name, 'Transfer Shrinkage')
+        self.assertEqual(debit.amount, Decimal('200.00'))  # 2 units * 100
+        self.assertEqual(credit.account_id, self.inventory_account.id)
+        self.assertEqual(credit.amount, Decimal('200.00'))
 
 
 class WriteOffApprovalTest(BaseApprovalTest):

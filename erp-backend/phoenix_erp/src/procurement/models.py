@@ -612,6 +612,12 @@ class PurchaseOrder(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     
     objects = OwnerBranchManager()
     
+    def clean(self):
+        """Defense in depth: delivery_location must belong to this PO's own branch."""
+        if self.delivery_location_id and self.branch_id and \
+                self.delivery_location.branch_id != self.branch_id:
+            raise ValidationError("delivery_location must belong to this purchase order's branch.")
+
     def save(self, *args, **kwargs):
         """Auto-assign tenant if not provided"""
         if not self.tenant_id:
@@ -623,15 +629,19 @@ class PurchaseOrder(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 self.tenant = self.owner.tenant
             elif self.branch and hasattr(self.branch, 'tenant'):
                 self.tenant = self.branch.tenant
+        # Only enforced on INSERT, not on later partial-field status updates —
+        # mirrors TransactionEntry.save()'s rationale (transactions/models.py).
+        if self.pk is None:
+            self.clean()
         super().save(*args, **kwargs)
-    
+
     class Meta:
         ordering = ['-order_date']
         indexes = [
             models.Index(fields=['status', 'order_date']),
             models.Index(fields=['supplier', 'status']),
         ]
-    
+
     def __str__(self):
         return f"PO-{self.po_number}"
     
@@ -840,6 +850,12 @@ class GoodsReceivedNote(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     
     objects = OwnerBranchManager()
     
+    def clean(self):
+        """Defense in depth: received_location must belong to this GRN's own branch."""
+        if self.received_location_id and self.branch_id and \
+                self.received_location.branch_id != self.branch_id:
+            raise ValidationError("received_location must belong to this GRN's branch.")
+
     def save(self, *args, **kwargs):
         """Auto-assign tenant if not provided"""
         if not self.tenant_id:
@@ -851,15 +867,19 @@ class GoodsReceivedNote(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 self.tenant = self.owner.tenant
             elif self.branch and hasattr(self.branch, 'tenant'):
                 self.tenant = self.branch.tenant
+        # Only enforced on INSERT, not on later partial-field status updates —
+        # mirrors TransactionEntry.save()'s rationale (transactions/models.py).
+        if self.pk is None:
+            self.clean()
         super().save(*args, **kwargs)
-    
+
     class Meta:
         ordering = ['-received_date']
         indexes = [
             models.Index(fields=['received_date', 'is_posted']),
             models.Index(fields=['supplier', 'received_date']),
         ]
-    
+
     def __str__(self):
         return f"GRN-{self.grn_number}"
     

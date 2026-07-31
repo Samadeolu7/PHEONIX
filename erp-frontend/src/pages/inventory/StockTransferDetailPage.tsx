@@ -40,8 +40,32 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; 
     bg: 'bg-red-50 border-red-200',
     icon: XCircle,
   },
+  dispatched: {
+    label: 'In Transit',
+    color: 'text-indigo-700',
+    bg: 'bg-indigo-50 border-indigo-200',
+    icon: Truck,
+  },
+  acknowledged: {
+    label: 'Acknowledged',
+    color: 'text-green-700',
+    bg: 'bg-green-50 border-green-200',
+    icon: CheckCircle,
+  },
+  short_received: {
+    label: 'Short Received',
+    color: 'text-amber-700',
+    bg: 'bg-amber-50 border-amber-200',
+    icon: AlertTriangle,
+  },
+  disputed: {
+    label: 'Disputed',
+    color: 'text-red-700',
+    bg: 'bg-red-50 border-red-200',
+    icon: AlertTriangle,
+  },
   executed: {
-    label: 'Executed',
+    label: 'Executed (Legacy)',
     color: 'text-green-700',
     bg: 'bg-green-50 border-green-200',
     icon: Truck,
@@ -56,6 +80,10 @@ const StockTransferDetailPage: React.FC = () => {
   const [actionNotes, setActionNotes] = useState('');
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showDispatchModal, setShowDispatchModal] = useState(false);
+  const [showAcknowledgeModal, setShowAcknowledgeModal] = useState(false);
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [actualQuantityReceived, setActualQuantityReceived] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const {
@@ -110,15 +138,58 @@ const StockTransferDetailPage: React.FC = () => {
     }
   };
 
-  const handleExecute = async () => {
+  const handleDispatch = async () => {
     if (!transfer) return;
     setSubmitting(true);
     try {
-      await inventoryService.executeStockTransfer(transfer.id);
-      toast.success('Transfer executed — stock moved');
+      await inventoryService.dispatchStockTransfer(transfer.id, actionNotes || undefined);
+      toast.success('Transfer dispatched — now in transit');
       queryClient.invalidateQueries({ queryKey: ['stockTransfer', id] });
+      setShowDispatchModal(false);
+      setActionNotes('');
     } catch {
-      toast.error('Failed to execute transfer');
+      toast.error('Failed to dispatch transfer');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleAcknowledge = async () => {
+    if (!transfer) return;
+    setSubmitting(true);
+    try {
+      await inventoryService.acknowledgeStockTransfer(
+        transfer.id,
+        actualQuantityReceived || undefined,
+        actionNotes || undefined
+      );
+      toast.success('Transfer acknowledged');
+      queryClient.invalidateQueries({ queryKey: ['stockTransfer', id] });
+      setShowAcknowledgeModal(false);
+      setActionNotes('');
+      setActualQuantityReceived('');
+    } catch {
+      toast.error('Failed to acknowledge transfer');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDispute = async () => {
+    if (!transfer) return;
+    if (!actionNotes.trim()) {
+      toast.error('A dispute reason is required');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await inventoryService.disputeStockTransfer(transfer.id, actionNotes);
+      toast.success('Transfer disputed');
+      queryClient.invalidateQueries({ queryKey: ['stockTransfer', id] });
+      setShowDisputeModal(false);
+      setActionNotes('');
+    } catch {
+      toast.error('Failed to dispute transfer');
     } finally {
       setSubmitting(false);
     }
@@ -192,17 +263,36 @@ const StockTransferDetailPage: React.FC = () => {
           )}
           {transfer.status === 'approved' && isAdmin && (
             <button
-              onClick={handleExecute}
+              onClick={() => setShowDispatchModal(true)}
               disabled={submitting}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
+              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1"
             >
-              {submitting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Truck className="w-4 h-4" />
-              )}
-              Execute Transfer
+              <Truck className="w-4 h-4" />
+              Dispatch
             </button>
+          )}
+          {transfer.status === 'dispatched' && isAdmin && (
+            <>
+              <button
+                onClick={() => {
+                  setActualQuantityReceived(transfer.quantity);
+                  setShowAcknowledgeModal(true);
+                }}
+                disabled={submitting}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+              >
+                <CheckCircle className="w-4 h-4" />
+                Acknowledge Receipt
+              </button>
+              <button
+                onClick={() => setShowDisputeModal(true)}
+                disabled={submitting}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 flex items-center gap-1"
+              >
+                <AlertTriangle className="w-4 h-4" />
+                Dispute
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -251,16 +341,45 @@ const StockTransferDetailPage: React.FC = () => {
               <MapPin className="w-5 h-5 text-red-500 mx-auto mb-1" />
               <p className="text-xs text-gray-500">From</p>
               <p className="font-medium text-gray-900">{transfer.from_location_name}</p>
+              {transfer.from_branch_name && (
+                <p className="text-xs text-gray-400">{transfer.from_branch_name}</p>
+              )}
             </div>
             <ArrowLeftRight className="w-5 h-5 text-gray-400 flex-shrink-0" />
             <div className="flex-1 bg-green-50 border border-green-200 rounded-lg p-3 text-center">
               <MapPin className="w-5 h-5 text-green-500 mx-auto mb-1" />
               <p className="text-xs text-gray-500">To</p>
               <p className="font-medium text-gray-900">{transfer.to_location_name}</p>
+              {transfer.to_branch_name && (
+                <p className="text-xs text-gray-400">{transfer.to_branch_name}</p>
+              )}
             </div>
           </div>
+          {transfer.from_branch !== transfer.to_branch && (
+            <p className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 rounded px-2 py-1">
+              Cross-branch transfer — posts through inter-branch clearing accounts
+            </p>
+          )}
         </div>
       </div>
+
+      {/* Variance banner */}
+      {parseFloat(transfer.variance_quantity || '0') > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-900">Short receipt recorded</p>
+            <p className="text-sm text-amber-700">
+              Dispatched {parseFloat(transfer.quantity).toLocaleString()}, received{' '}
+              {transfer.actual_quantity_received
+                ? parseFloat(transfer.actual_quantity_received).toLocaleString()
+                : '—'}{' '}
+              — a shortfall of {parseFloat(transfer.variance_quantity).toLocaleString()} was
+              posted to Transfer Shrinkage.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* People & Dates */}
       <div className="bg-white border rounded-lg p-5">
@@ -291,6 +410,36 @@ const StockTransferDetailPage: React.FC = () => {
                 </p>
                 <p className="text-sm font-medium">{transfer.approved_by_name}</p>
                 <p className="text-xs text-gray-400">{formatDate(transfer.approved_at)}</p>
+              </div>
+            </div>
+          )}
+          {transfer.dispatched_by_name && (
+            <div className="flex items-start gap-2">
+              <Truck className="w-4 h-4 text-gray-400 mt-0.5" />
+              <div>
+                <p className="text-xs text-gray-500">Dispatched By</p>
+                <p className="text-sm font-medium">{transfer.dispatched_by_name}</p>
+                <p className="text-xs text-gray-400">{formatDate(transfer.dispatched_at)}</p>
+              </div>
+            </div>
+          )}
+          {transfer.acknowledged_by_name && (
+            <div className="flex items-start gap-2">
+              <CheckCircle className="w-4 h-4 text-gray-400 mt-0.5" />
+              <div>
+                <p className="text-xs text-gray-500">Acknowledged By</p>
+                <p className="text-sm font-medium">{transfer.acknowledged_by_name}</p>
+                <p className="text-xs text-gray-400">{formatDate(transfer.acknowledged_at)}</p>
+              </div>
+            </div>
+          )}
+          {transfer.disputed_by_name && (
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-gray-400 mt-0.5" />
+              <div>
+                <p className="text-xs text-gray-500">Disputed By</p>
+                <p className="text-sm font-medium">{transfer.disputed_by_name}</p>
+                <p className="text-xs text-gray-400">{formatDate(transfer.disputed_at)}</p>
               </div>
             </div>
           )}
@@ -401,6 +550,142 @@ const StockTransferDetailPage: React.FC = () => {
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50"
               >
                 {submitting ? 'Rejecting…' : 'Confirm Reject'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dispatch Modal */}
+      {showDispatchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Dispatch Transfer</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              This will reduce stock at <strong>{transfer.from_location_name}</strong> by{' '}
+              <strong>{parseFloat(transfer.quantity).toLocaleString()}</strong> and mark the
+              transfer as in transit
+              {transfer.from_branch !== transfer.to_branch && ' (posting the inter-branch clearing entry)'}.
+            </p>
+            <textarea
+              rows={3}
+              value={actionNotes}
+              onChange={e => setActionNotes(e.target.value)}
+              placeholder="Optional dispatch notes…"
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm mb-4"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowDispatchModal(false);
+                  setActionNotes('');
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDispatch}
+                disabled={submitting}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {submitting ? 'Dispatching…' : 'Confirm Dispatch'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Acknowledge Modal */}
+      {showAcknowledgeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Acknowledge Receipt</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Confirm how much of <strong>{transfer.item_name}</strong> actually arrived at{' '}
+              <strong>{transfer.to_location_name}</strong>. Dispatched quantity:{' '}
+              <strong>{parseFloat(transfer.quantity).toLocaleString()}</strong>.
+            </p>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Actual Quantity Received
+            </label>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              max={transfer.quantity}
+              value={actualQuantityReceived}
+              onChange={e => setActualQuantityReceived(e.target.value)}
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm mb-3"
+            />
+            {parseFloat(actualQuantityReceived || '0') < parseFloat(transfer.quantity) && (
+              <p className="text-xs text-amber-600 mb-3">
+                This is less than the dispatched quantity — the shortfall will be posted
+                automatically to Transfer Shrinkage.
+              </p>
+            )}
+            <textarea
+              rows={2}
+              value={actionNotes}
+              onChange={e => setActionNotes(e.target.value)}
+              placeholder="Optional notes…"
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 sm:text-sm mb-4"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowAcknowledgeModal(false);
+                  setActionNotes('');
+                  setActualQuantityReceived('');
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAcknowledge}
+                disabled={submitting}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50"
+              >
+                {submitting ? 'Acknowledging…' : 'Confirm Receipt'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dispute Modal */}
+      {showDisputeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Dispute Transfer</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Flag a problem with this delivery (wrong item, damaged, etc.) instead of
+              acknowledging it. Resolution happens manually — this is terminal for now.
+            </p>
+            <textarea
+              rows={3}
+              value={actionNotes}
+              onChange={e => setActionNotes(e.target.value)}
+              placeholder="Reason for dispute…"
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-red-500 focus:ring-red-500 sm:text-sm mb-4"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowDisputeModal(false);
+                  setActionNotes('');
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDispute}
+                disabled={submitting}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50"
+              >
+                {submitting ? 'Disputing…' : 'Confirm Dispute'}
               </button>
             </div>
           </div>

@@ -9,13 +9,14 @@ branch is either fully set up or left untouched on failure.
 What IS cloned
 --------------
 Chart of Accounts (GL parent + 4-digit child accounts), account categories,
-products & product categories, fees, loan products, savings products,
-expense/income categories, inventory categories & items, service items,
-asset categories, salary components, leave types, workflow templates,
-form schemas, fee structures & components, HR/Inventory/Procurement branch
-configs (incl. their default-workflow FKs), income accounting GL config
-(incl. category overrides), notification templates (incl. channel configs),
-client registration config, client classifications, workflow defaults, and
+products & product categories, inventory Locations (shells only — see "What
+is NOT cloned"), fees, loan products, savings products, expense/income
+categories, inventory categories & items, service items, asset categories,
+salary components, leave types, workflow templates, form schemas, fee
+structures & components, HR/Inventory/Procurement branch configs (incl.
+their default-workflow FKs), income accounting GL config (incl. category
+overrides), notification templates (incl. channel configs), client
+registration config, client classifications, workflow defaults, and
 dashboard themes/templates — plus all their child/dependent rows.
 
 What is NOT cloned
@@ -30,6 +31,8 @@ What is NOT cloned
 - Client, staff or user data
 - Bank accounts, cashier accounts, petty cash funds
 - Fiscal periods, balance sheet snapshots
+- InventoryStock (actual on-hand quantities) — Locations are cloned as empty
+  shells; stock itself is operational data, not structural setup.
 - Operational records (expenses, income payments, procurement, etc.)
 - ReportCategory / ReportTemplate — both have a globally unique `code`
   field, which conflicts with per-branch duplication; auto-generated
@@ -169,6 +172,7 @@ class BranchCloneService:
         # Phase 1 — no inter-model FK deps
         self._clone_account_categories()
         self._clone_product_categories()
+        self._clone_locations()
         self._clone_fees()
         self._clone_salary_components()
         self._clone_leave_types()
@@ -240,6 +244,33 @@ class BranchCloneService:
                     'name': obj.name,
                     'description': obj.description,
                     'is_system_category': obj.is_system_category,
+                },
+                label=label,
+                old_pk=obj.pk,
+            )
+
+    def _clone_locations(self):
+        """
+        Clone Location shells (name/code/location_type/address/is_active)
+        only — never InventoryStock, which stays correctly excluded as
+        operational data. Without this, a freshly cloned branch has a full
+        item/category catalog and correctly-wired GL accounts but zero
+        locations, so nobody can receive/hold/transfer stock there until a
+        location is created manually.
+        """
+        from inventory.models import Location
+        label = 'locations'
+        for obj in Location.objects.filter(branch=self.source, is_deleted=False):
+            self._upsert(
+                Location,
+                lookup={'branch': self.target, 'code': obj.code},
+                create_kwargs={
+                    **self._base(),
+                    'name': obj.name,
+                    'code': obj.code,
+                    'location_type': obj.location_type,
+                    'address': obj.address,
+                    'is_active': obj.is_active,
                 },
                 label=label,
                 old_pk=obj.pk,

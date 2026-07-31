@@ -348,6 +348,16 @@ export const useInventoryLocationsList = () => {
   });
 };
 
+// Locations across every branch of the tenant — for the stock transfer
+// "To Location" picker, since a transfer's destination may be in any branch.
+export const useTransferDestinations = () => {
+  return useQuery({
+    queryKey: [...inventoryKeys.locations(), 'transfer-destinations'],
+    queryFn: () => inventoryService.getTransferDestinations(),
+    staleTime: 5 * 60 * 1000,
+  });
+};
+
 export const useInventoryLocation = (id: number, enabled: boolean = true) => {
   return useQuery({
     queryKey: [...inventoryKeys.locations(), id],

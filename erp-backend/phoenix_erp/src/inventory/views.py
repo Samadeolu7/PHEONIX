@@ -39,6 +39,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum, Count, F, Prefetch
 from django.utils import timezone
@@ -902,77 +903,133 @@ class StockAdjustmentViewSet(ScopedModelViewSet):
 
 class StockTransferViewSet(ScopedModelViewSet):
     """
-    API endpoint for stock transfers between locations.
-    
-    Use this to move inventory from one location to another.
-    Supports approval workflow based on InventoryConfig settings.
-    
+    API endpoint for stock transfers between locations — same-branch or
+    cross-branch. Every transfer goes through the same workflow:
+
+        pending -> approved/rejected -> dispatched -> acknowledged/short_received
+                                                     -> disputed (terminal for now)
+
     POST /api/inventory/transfers/
     Body: {
         "item_id": 5,
         "from_location_id": 2,
-        "to_location_id": 3,
+        "to_location_id": 3,       // may be in ANY branch of the tenant
         "quantity": "25.00",
         "notes": "Transfer to branch warehouse",
         "reference_number": "TRF-2026-001",
         "unit_cost": "50.00"  // Optional, for cost-based approval thresholds
     }
-    
-    POST /api/inventory/transfers/{id}/approve/  - Approve pending transfer
-    POST /api/inventory/transfers/{id}/reject/   - Reject pending transfer
-    POST /api/inventory/transfers/{id}/execute/  - Execute approved transfer
+
+    POST /api/inventory/transfers/{id}/approve/      - Approve pending transfer
+    POST /api/inventory/transfers/{id}/reject/       - Reject pending transfer
+    POST /api/inventory/transfers/{id}/dispatch/     - Mark approved transfer as sent (in transit)
+    POST /api/inventory/transfers/{id}/acknowledge/  - Destination confirms receipt
+                                                        Body: {"actual_quantity_received": "..."} (optional, defaults to dispatched quantity)
+    POST /api/inventory/transfers/{id}/dispute/      - Destination flags a problem instead of acknowledging
     """
     permission_module = 'inventory'
     permission_page = 'stock-transfers'
     http_method_names = ['get', 'post', 'head', 'options']
-    
+
     def get_serializer_class(self):
         from inventory.models import StockTransferRequest
         from rest_framework import serializers
-        
+
         class StockTransferRequestSerializer(serializers.ModelSerializer):
             requested_by_name = serializers.CharField(source='requested_by.get_full_name', read_only=True)
             approved_by_name = serializers.CharField(source='approved_by.get_full_name', read_only=True, allow_null=True)
+            dispatched_by_name = serializers.CharField(source='dispatched_by.get_full_name', read_only=True, allow_null=True)
+            acknowledged_by_name = serializers.CharField(source='acknowledged_by.get_full_name', read_only=True, allow_null=True)
+            disputed_by_name = serializers.CharField(source='disputed_by.get_full_name', read_only=True, allow_null=True)
             item_name = serializers.CharField(source='item.name', read_only=True)
             item_sku = serializers.CharField(source='item.sku', read_only=True)
+            destination_item_name = serializers.CharField(source='destination_item.name', read_only=True, allow_null=True)
+            destination_item_sku = serializers.CharField(source='destination_item.sku', read_only=True, allow_null=True)
             from_location_name = serializers.CharField(source='from_location.name', read_only=True)
             to_location_name = serializers.CharField(source='to_location.name', read_only=True)
-            
+            from_branch_name = serializers.CharField(source='from_branch.name', read_only=True, allow_null=True)
+            to_branch_name = serializers.CharField(source='to_branch.name', read_only=True, allow_null=True)
+
             class Meta:
                 model = StockTransferRequest
                 fields = [
                     'id', 'request_number', 'requested_by', 'requested_by_name',
                     'item', 'item_name', 'item_sku',
+                    'destination_item', 'destination_item_name', 'destination_item_sku',
                     'from_location', 'from_location_name',
                     'to_location', 'to_location_name',
+                    'from_branch', 'from_branch_name', 'to_branch', 'to_branch_name',
                     'quantity', 'unit_cost', 'estimated_cost',
                     'reason', 'notes', 'reference_number', 'status',
                     'approved_by', 'approved_by_name', 'approved_at', 'approval_notes',
+                    'dispatched_by', 'dispatched_by_name', 'dispatched_at', 'dispatch_notes',
+                    'acknowledged_by', 'acknowledged_by_name', 'acknowledged_at', 'acknowledgment_notes',
+                    'actual_quantity_received', 'variance_quantity', 'variance_notes',
+                    'disputed_by', 'disputed_by_name', 'disputed_at', 'dispute_reason',
+                    'dispatch_journal_entry', 'acknowledgment_journal_entry',
                     'transfer_out_movement', 'transfer_in_movement',
                     'created_at', 'updated_at'
                 ]
-                read_only_fields = ['request_number', 'estimated_cost', 'approved_by', 'approved_at', 
-                                    'transfer_out_movement', 'transfer_in_movement']
-        
+                read_only_fields = [
+                    'request_number', 'estimated_cost', 'destination_item',
+                    'from_branch', 'to_branch',
+                    'approved_by', 'approved_at',
+                    'dispatched_by', 'dispatched_at',
+                    'acknowledged_by', 'acknowledged_at',
+                    'actual_quantity_received', 'variance_quantity',
+                    'disputed_by', 'disputed_at',
+                    'dispatch_journal_entry', 'acknowledgment_journal_entry',
+                    'transfer_out_movement', 'transfer_in_movement',
+                ]
+
         return StockTransferRequestSerializer
-    
+
     def get_queryset(self):
-        """Show transfer requests"""
+        """
+        Show transfer requests where the caller's effective branch is
+        either side of the transfer (from_branch or to_branch) — a transfer
+        is relevant to both the sending and receiving branch. Elevated
+        users honor the X-Branch-ID switcher; with no header they see every
+        branch's transfers, consistent with the rest of the app.
+        """
         from inventory.models import StockTransferRequest
-        return StockTransferRequest.objects.filter(
-            owner__tenant=self.request.user.tenant,
-            branch=self.request.user.branch
+        from common.views import is_elevated_user, resolve_effective_branch
+
+        qs = StockTransferRequest.objects.filter(
+            owner__tenant=self.request.user.tenant
         ).select_related(
-            'item', 'from_location', 'to_location', 'requested_by', 'approved_by'
+            'item', 'destination_item', 'from_location', 'to_location',
+            'from_branch', 'to_branch', 'requested_by', 'approved_by',
+            'dispatched_by', 'acknowledged_by', 'disputed_by',
         ).order_by('-created_at')
-    
+
+        if is_elevated_user(self.request.user):
+            effective_branch = resolve_effective_branch(self.request)
+            if effective_branch is not None:
+                qs = qs.filter(Q(from_branch=effective_branch) | Q(to_branch=effective_branch))
+            # else: elevated user, no X-Branch-ID header -> all branches.
+        else:
+            qs = qs.filter(
+                Q(from_branch=self.request.user.branch) | Q(to_branch=self.request.user.branch)
+            )
+
+        return qs
+
     @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """Create stock transfer (direct or pending approval)"""
-        from inventory.stock_service import InventoryService
+        """
+        Create a stock transfer request. from_location must belong to the
+        acting user's own (or X-Branch-ID-selected) branch; to_location may
+        be in ANY branch of the tenant — this is what makes cross-branch
+        transfers possible. Every transfer is created as a StockTransferRequest
+        row (pending, or auto-approved when below the approval threshold) —
+        it must still go through dispatch/acknowledge either way, so the
+        in-transit/acknowledgment workflow applies uniformly.
+        """
         from inventory.models import StockTransferRequest
         from inventory.config_models import InventoryConfig
-        
+        from common.views import resolve_effective_branch, is_elevated_user
+
         data = request.data
         item_id = data.get('item_id') or data.get('item')
         from_location_id = data.get('from_location_id') or data.get('from_location')
@@ -982,267 +1039,350 @@ class StockTransferViewSet(ScopedModelViewSet):
         notes = data.get('notes', '')
         reference_number = data.get('reference_number', '')
         unit_cost = data.get('unit_cost')
-        
+
         # Validate
         if not all([item_id, from_location_id, to_location_id, quantity]):
             return Response({
                 'error': 'item_id, from_location_id, to_location_id, and quantity are required'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        if from_location_id == to_location_id:
+
+        if str(from_location_id) == str(to_location_id):
             return Response({
                 'error': 'from_location and to_location must be different'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # from_location is scoped to the acting user's own (or X-Branch-ID-
+        # selected) branch. to_location is intentionally NOT branch-filtered
+        # here — it may belong to any branch in the tenant.
+        effective_branch = resolve_effective_branch(request)
+        from_location_qs = Location.objects.filter(
+            owner__tenant=request.user.tenant, is_deleted=False
+        )
+        if effective_branch is not None:
+            from_location_qs = from_location_qs.filter(branch=effective_branch)
+        elif not is_elevated_user(request.user):
+            return Response({'error': 'No branch assigned.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from_location = from_location_qs.get(pk=from_location_id)
+        except Location.DoesNotExist:
+            return Response({
+                'error': 'from_location not found in your branch'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            to_location = Location.objects.get(
+                pk=to_location_id, owner__tenant=request.user.tenant, is_deleted=False
+            )
+        except Location.DoesNotExist:
+            return Response({'error': 'to_location not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # The item being sent must belong to the source location's own
+        # branch — item is branch-scoped master data, matched by SKU on
+        # the destination side at acknowledge time (see item_linking.py).
         try:
             item = InventoryItem.objects.get(
                 pk=item_id,
                 owner__tenant=request.user.tenant,
-                branch=request.user.branch,
+                branch=from_location.branch,
                 is_deleted=False
             )
-            from_location = Location.objects.get(
-                pk=from_location_id,
-                owner__tenant=request.user.tenant,
-                branch=request.user.branch,
-                is_deleted=False
-            )
-            to_location = Location.objects.get(
-                pk=to_location_id,
-                owner__tenant=request.user.tenant,
-                branch=request.user.branch,
-                is_deleted=False
-            )
-        except (InventoryItem.DoesNotExist, Location.DoesNotExist):
+        except InventoryItem.DoesNotExist:
             return Response({
-                'error': 'Item or location not found'
+                'error': "Item not found in the source location's branch"
             }, status=status.HTTP_404_NOT_FOUND)
-        
+
         # Convert unit_cost if provided
         if unit_cost:
             unit_cost = Decimal(str(unit_cost))
         else:
-            # Use item's cost if available
             unit_cost = item.cost_price or Decimal('0')
-        
+
         estimated_cost = quantity * unit_cost
-        
-        # Check if approval is required
+
         config, _ = InventoryConfig.objects.get_or_create(
             owner=request.user,
-            branch=request.user.branch
+            branch=from_location.branch
         )
-        
+
         requires_approval = config.requires_transfer_approval(estimated_cost)
-        
-        if requires_approval:
-            # Create approval request with unique request_number
-            # Generate unique request number by checking today's max sequence
-            from django.db import IntegrityError
-            max_attempts = 10
-            transfer_request = None
-            
-            for attempt in range(max_attempts):
-                try:
-                    today = timezone.now().date()
-                    # Get today's transfer requests to determine next sequence number
-                    today_prefix = f"{config.transfer_prefix}-{today.strftime('%Y%m%d')}"
-                    existing_today = StockTransferRequest.objects.filter(
-                        request_number__startswith=today_prefix,
-                        owner__tenant=request.user.tenant,
-                        branch=request.user.branch
-                    ).count()
-                    
-                    request_number = f"{today_prefix}-{existing_today + 1 + attempt:04d}"
-                    
-                    transfer_request = StockTransferRequest.objects.create(
-                        owner=request.user,
-                        created_by=request.user,
-                        branch=request.user.branch,
-                        request_number=request_number,
-                        requested_by=request.user,
-                        item=item,
-                        from_location=from_location,
-                        to_location=to_location,
-                        quantity=quantity,
-                        unit_cost=unit_cost,
-                        estimated_cost=estimated_cost,
-                        reason=reason,
-                        notes=notes,
-                        reference_number=reference_number,
-                        status='pending'
-                    )
-                    # Success! Break out of retry loop
-                    break
-                except IntegrityError as e:
-                    error_msg = str(e).lower()
-                    if 'request_number' in error_msg and 'unique' in error_msg:
-                        # Duplicate request_number, retry with next sequence
-                        if attempt == max_attempts - 1:
-                            # Last attempt failed
-                            logger.error(f"Failed to generate unique request_number after {max_attempts} attempts")
-                            return Response({
-                                'error': 'Unable to generate unique request number',
-                                'detail': 'Please try again. If the issue persists, contact support.',
-                                'debug_info': str(e) if request.user.is_staff else None
-                            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                        continue
-                    else:
-                        # Different integrity error, provide detailed info
-                        logger.error(f"IntegrityError creating transfer request: {e}", exc_info=True)
-                        
-                        # Extract constraint name if available
-                        constraint_name = None
-                        if 'constraint' in error_msg:
-                            try:
-                                constraint_name = error_msg.split('constraint')[1].split()[0].strip('"')
-                            except:
-                                pass
-                        
+
+        # Generate unique request number by checking today's max sequence
+        from django.db import IntegrityError
+        max_attempts = 10
+        transfer_request = None
+
+        for attempt in range(max_attempts):
+            try:
+                today = timezone.now().date()
+                today_prefix = f"{config.transfer_prefix}-{today.strftime('%Y%m%d')}"
+                existing_today = StockTransferRequest.objects.filter(
+                    request_number__startswith=today_prefix,
+                    owner__tenant=request.user.tenant,
+                ).count()
+
+                request_number = f"{today_prefix}-{existing_today + 1 + attempt:04d}"
+
+                transfer_request = StockTransferRequest.objects.create(
+                    owner=request.user,
+                    created_by=request.user,
+                    branch=from_location.branch,
+                    request_number=request_number,
+                    requested_by=request.user,
+                    item=item,
+                    from_location=from_location,
+                    to_location=to_location,
+                    from_branch=from_location.branch,
+                    to_branch=to_location.branch,
+                    quantity=quantity,
+                    unit_cost=unit_cost,
+                    estimated_cost=estimated_cost,
+                    reason=reason,
+                    notes=notes,
+                    reference_number=reference_number,
+                    status='pending' if requires_approval else 'approved',
+                )
+                if not requires_approval:
+                    transfer_request.approved_by = request.user
+                    transfer_request.approved_at = timezone.now()
+                    transfer_request.approval_notes = 'Auto-approved (below approval threshold)'
+                    transfer_request.save()
+                break
+            except IntegrityError as e:
+                error_msg = str(e).lower()
+                if 'request_number' in error_msg and 'unique' in error_msg:
+                    if attempt == max_attempts - 1:
+                        logger.error(f"Failed to generate unique request_number after {max_attempts} attempts")
                         return Response({
-                            'error': 'Duplicate record detected',
-                            'detail': str(e),
-                            'constraint': constraint_name,
-                            'debug_info': 'A transfer request with these exact details may already exist. Please check pending requests or modify your input.'
-                        }, status=status.HTTP_400_BAD_REQUEST)
-            
-            if not transfer_request:
-                return Response({
-                    'error': 'Failed to create transfer request',
-                    'detail': 'Unable to generate unique request after multiple attempts'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            serializer = self.get_serializer(transfer_request)
+                            'error': 'Unable to generate unique request number',
+                            'detail': 'Please try again. If the issue persists, contact support.',
+                            'debug_info': str(e) if request.user.is_staff else None
+                        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    continue
+                else:
+                    logger.error(f"IntegrityError creating transfer request: {e}", exc_info=True)
+                    constraint_name = None
+                    if 'constraint' in error_msg:
+                        try:
+                            constraint_name = error_msg.split('constraint')[1].split()[0].strip('"')
+                        except Exception:
+                            pass
+                    return Response({
+                        'error': 'Duplicate record detected',
+                        'detail': str(e),
+                        'constraint': constraint_name,
+                        'debug_info': 'A transfer request with these exact details may already exist. Please check pending requests or modify your input.'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not transfer_request:
             return Response({
-                'success': True,
-                'message': 'Stock transfer request created. Awaiting approval.',
-                'requires_approval': True,
-                'data': serializer.data
-            }, status=status.HTTP_201_CREATED)
-        
-        else:
-            # Execute immediately
-            out_movement, from_stock, to_stock = InventoryService.transfer_stock(
-                item=item,
-                from_location=from_location,
-                to_location=to_location,
-                quantity=quantity,
-                reference_number=reference_number,
-                user=request.user
-            )
-            
-            return Response({
-                'success': True,
-                'message': 'Stock transferred successfully (no approval required)',
-                'requires_approval': False,
-                'movement_out_id': out_movement.id if out_movement else None
-            }, status=status.HTTP_201_CREATED)
-    
-    @action(detail=True, methods=['post'])
-    def approve(self, request, pk=None):
-        """Approve stock transfer request"""
-        from inventory.models import StockTransferRequest
-        
-        transfer_request = self.get_object()
-        
-        if transfer_request.status != 'pending':
-            return Response({
-                'error': 'Only pending requests can be approved'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        approval_notes = request.data.get('notes', '')
-        
-        transfer_request.status = 'approved'
-        transfer_request.approved_by = request.user
-        transfer_request.approved_at = timezone.now()
-        transfer_request.approval_notes = approval_notes
-        transfer_request.save()
-        
+                'error': 'Failed to create transfer request',
+                'detail': 'Unable to generate unique request after multiple attempts'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
         serializer = self.get_serializer(transfer_request)
         return Response({
             'success': True,
-            'message': 'Transfer request approved. Ready for execution.',
+            'message': (
+                'Stock transfer request created. Awaiting approval.'
+                if requires_approval else
+                'Stock transfer request auto-approved (below approval threshold). Ready to dispatch.'
+            ),
+            'requires_approval': requires_approval,
+            'data': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approve stock transfer request"""
+        transfer_request = self.get_object()
+        notes = request.data.get('notes', '')
+        try:
+            transfer_request.approve(user=request.user, notes=notes)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = self.get_serializer(transfer_request)
+        return Response({
+            'success': True,
+            'message': 'Transfer request approved. Ready for dispatch.',
             'data': serializer.data
         }, status=status.HTTP_200_OK)
-    
+
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Reject stock transfer request"""
-        from inventory.models import StockTransferRequest
-        
         transfer_request = self.get_object()
-        
-        if transfer_request.status != 'pending':
-            return Response({
-                'error': 'Only pending requests can be rejected'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        approval_notes = request.data.get('notes', 'Rejected')
-        
-        transfer_request.status = 'rejected'
-        transfer_request.approved_by = request.user
-        transfer_request.approved_at = timezone.now()
-        transfer_request.approval_notes = approval_notes
-        transfer_request.save()
-        
+        notes = request.data.get('notes', 'Rejected')
+        try:
+            transfer_request.reject(user=request.user, notes=notes)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = self.get_serializer(transfer_request)
         return Response({
             'success': True,
             'message': 'Transfer request rejected',
             'data': serializer.data
         }, status=status.HTTP_200_OK)
-    
-    @action(detail=True, methods=['post'])
+
+    @action(detail=True, methods=['post'], url_path='dispatch', url_name='dispatch')
     @transaction.atomic
-    def execute(self, request, pk=None):
-        """Execute approved stock transfer"""
-        from inventory.models import StockTransferRequest
-        from inventory.stock_service import InventoryService
-        
+    def dispatch_transfer_action(self, request, pk=None):
+        """
+        Mark an approved transfer as dispatched (in transit) — reduces
+        stock at the source location and, for a cross-branch transfer,
+        posts the Due-from/inventory GL entry. Requires the same
+        approval-tier authority as approving the transfer: a genuine
+        two-step control, not just "any source-branch staff."
+
+        Named dispatch_transfer_action (not `dispatch`) because `dispatch`
+        is Django View's own HTTP-method-routing method — defining a
+        ViewSet action with that exact name silently shadows it and breaks
+        routing for the ENTIRE ViewSet, not just this action. url_path
+        keeps the actual route at /dispatch/ as intended.
+        """
+        from common.approval_permissions import can_user_approve
+
         transfer_request = self.get_object()
-        
-        if transfer_request.status != 'approved':
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
             return Response({
-                'error': 'Only approved requests can be executed'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Execute transfer
-        out_movement, from_stock, to_stock = InventoryService.transfer_stock(
-            item=transfer_request.item,
-            from_location=transfer_request.from_location,
-            to_location=transfer_request.to_location,
-            quantity=transfer_request.quantity,
-            reference_number=transfer_request.reference_number or transfer_request.request_number,
-            user=request.user
-        )
-        
-        # Find the transfer movements
-        transfer_out = StockMovement.objects.filter(
-            item=transfer_request.item,
-            from_location=transfer_request.from_location,
-            to_location=transfer_request.to_location,
-            movement_type='transfer'
-        ).order_by('-created_at').first()
-        
-        transfer_in = StockMovement.objects.filter(
-            item=transfer_request.item,
-            from_location=transfer_request.from_location,
-            to_location=transfer_request.to_location,
-            movement_type='transfer'
-        ).order_by('-created_at').first()
-        
-        # Link to movements
-        transfer_request.transfer_out_movement = transfer_out
-        transfer_request.transfer_in_movement = transfer_in
-        transfer_request.status = 'executed'
-        transfer_request.save()
-        
+                'error': 'You do not have authority to dispatch transfers.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        notes = request.data.get('notes', '')
+        try:
+            transfer_request.dispatch(user=request.user, notes=notes)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = self.get_serializer(transfer_request)
         return Response({
             'success': True,
-            'message': 'Stock transfer executed successfully',
+            'message': 'Transfer dispatched — now in transit.',
             'data': serializer.data
         }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def acknowledge(self, request, pk=None):
+        """
+        Destination confirms receipt — may be less than the dispatched
+        quantity (short receipt), which posts a shrinkage entry
+        automatically. Only destination-branch staff may acknowledge.
+        """
+        from common.views import resolve_effective_branch, is_elevated_user
+
+        transfer_request = self.get_object()
+
+        effective_branch = resolve_effective_branch(request)
+        if effective_branch is not None and transfer_request.to_branch_id != effective_branch.id:
+            return Response({
+                'error': 'Only destination-branch staff can acknowledge this transfer.'
+            }, status=status.HTTP_403_FORBIDDEN)
+        if effective_branch is None and not is_elevated_user(request.user) \
+                and transfer_request.to_branch_id != getattr(request.user, 'branch_id', None):
+            return Response({
+                'error': 'Only destination-branch staff can acknowledge this transfer.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        actual_quantity_received = request.data.get('actual_quantity_received')
+        if actual_quantity_received is not None:
+            actual_quantity_received = Decimal(str(actual_quantity_received))
+        notes = request.data.get('notes', '')
+
+        try:
+            transfer_request.acknowledge(
+                user=request.user,
+                actual_quantity_received=actual_quantity_received,
+                notes=notes,
+            )
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = self.get_serializer(transfer_request)
+        message = (
+            'Transfer acknowledged in full.'
+            if transfer_request.status == 'acknowledged'
+            else f'Transfer acknowledged with a shortfall of {transfer_request.variance_quantity}.'
+        )
+        return Response({
+            'success': True,
+            'message': message,
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def dispute(self, request, pk=None):
+        """
+        Destination flags a problem with the delivery instead of
+        acknowledging it (wrong item, damaged, etc.) — terminal for now;
+        resolution happens manually/offline.
+        """
+        from common.views import resolve_effective_branch, is_elevated_user
+
+        transfer_request = self.get_object()
+
+        effective_branch = resolve_effective_branch(request)
+        if effective_branch is not None and transfer_request.to_branch_id != effective_branch.id:
+            return Response({
+                'error': 'Only destination-branch staff can dispute this transfer.'
+            }, status=status.HTTP_403_FORBIDDEN)
+        if effective_branch is None and not is_elevated_user(request.user) \
+                and transfer_request.to_branch_id != getattr(request.user, 'branch_id', None):
+            return Response({
+                'error': 'Only destination-branch staff can dispute this transfer.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        reason = request.data.get('reason', '')
+        try:
+            transfer_request.dispute(user=request.user, reason=reason)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = self.get_serializer(transfer_request)
+        return Response({
+            'success': True,
+            'message': 'Transfer disputed.',
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def execute(self, request, pk=None):
+        """
+        Retired — superseded by dispatch/acknowledge (see the two-phase
+        workflow in the class docstring). Kept as a route so any stale
+        caller gets a clear signal instead of a 404.
+        """
+        return Response({
+            'error': 'This endpoint is retired. Use /dispatch/ then /acknowledge/ instead.'
+        }, status=status.HTTP_410_GONE)
+
+    @action(detail=False, methods=['get'], url_path='available-destinations')
+    def available_destinations(self, request):
+        """
+        All active locations in the tenant, across every branch — used by
+        the transfer-creation form's "To Location" picker. Deliberately NOT
+        branch-scoped like the standard /inventory/locations/ list, since a
+        transfer's destination may be in any branch, unlike from_location
+        (which stays scoped to the caller's own/selected branch).
+        """
+        locations = Location.objects.filter(
+            owner__tenant=request.user.tenant, is_active=True, is_deleted=False
+        ).select_related('branch').order_by('branch__name', 'name')
+
+        data = [
+            {
+                'id': loc.id,
+                'name': loc.name,
+                'code': loc.code,
+                'branch': loc.branch_id,
+                'branch_name': loc.branch.name if loc.branch else None,
+            }
+            for loc in locations
+        ]
+        return Response(data)
 
 
 # ================================================================

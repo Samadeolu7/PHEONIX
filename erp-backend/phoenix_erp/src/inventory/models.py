@@ -1629,46 +1629,88 @@ class StockAdjustmentRequest(TimeStampedModel, BranchScopedModel, SoftDeleteMode
     
     def __str__(self):
         return f"{self.request_number} - {self.item.sku} ({self.status})"
-    
+
+    def clean(self):
+        """Defense in depth: location must belong to this request's own branch."""
+        if self.location_id and self.branch_id and self.location.branch_id != self.branch_id:
+            raise ValidationError("location must belong to this request's branch.")
+
     def save(self, *args, **kwargs):
         if self.unit_cost:
             self.estimated_cost = self.quantity * self.unit_cost
+        # Only enforced on INSERT, not on later partial-field status updates —
+        # mirrors TransactionEntry.save()'s rationale (transactions/models.py).
+        if self.pk is None:
+            self.clean()
         super().save(*args, **kwargs)
 
 
 class StockTransferRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """
-    Stock transfer approval request.
-    Created when transfer requires approval before execution.
+    Stock transfer request — moves inventory between two locations, which may
+    belong to the same branch or to different branches of the same tenant.
+
+    Workflow: pending → approved/rejected → dispatched → acknowledged/short_received
+              (or dispatched → disputed, a terminal state requiring manual/offline
+              resolution for now).
+
+    Same-branch transfers post no GL entries (nothing left the branch's own
+    inventory asset account). Cross-branch transfers post through a pair of
+    reciprocal "Due from/Due to" clearing accounts (see
+    inventory/services/inter_branch_clearing.py), because TransactionEntry.clean()
+    forbids a single journal entry from mixing accounts across branches — see
+    interbranch.services for the account-pairing helper this reuses.
     """
     request_number = models.CharField(max_length=50, unique=True, db_index=True)
-    
+
     # Requested by
     requested_by = models.ForeignKey(
         'users.User',
         on_delete=models.PROTECT,
         related_name='stock_transfer_requests'
     )
-    
+
     # Transfer details
     item = models.ForeignKey(
         InventoryItem,
         on_delete=models.PROTECT,
-        related_name='transfer_requests'
+        related_name='transfer_requests',
+        help_text="The source branch's item record being sent"
     )
-    
+
     from_location = models.ForeignKey(
         Location,
         on_delete=models.PROTECT,
         related_name='transfer_requests_out'
     )
-    
+
     to_location = models.ForeignKey(
         Location,
         on_delete=models.PROTECT,
         related_name='transfer_requests_in'
     )
-    
+
+    # Denormalized from from_location.branch / to_location.branch at save()
+    # time — lets from_branch != to_branch (cross-branch transfer) while
+    # self.branch (from BranchScopedModel) continues to mean "the branch
+    # that owns/initiated this request", matching from_branch.
+    from_branch = models.ForeignKey(
+        'branches.Branch',
+        on_delete=models.PROTECT,
+        related_name='transfers_out',
+        null=True,
+        blank=True,
+        help_text="Denormalized from from_location.branch"
+    )
+    to_branch = models.ForeignKey(
+        'branches.Branch',
+        on_delete=models.PROTECT,
+        related_name='transfers_in',
+        null=True,
+        blank=True,
+        help_text="Denormalized from to_location.branch"
+    )
+
     quantity = models.DecimalField(max_digits=18, decimal_places=2)
     unit_cost = models.DecimalField(
         max_digits=18,
@@ -1683,20 +1725,27 @@ class StockTransferRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel)
         default=0,
         help_text="Total estimated cost (quantity × unit_cost)"
     )
-    
+
     reason = models.TextField(help_text="Reason for transfer")
     notes = models.TextField(blank=True)
     reference_number = models.CharField(max_length=100, blank=True)
-    
+
     # Status and approval
     STATUS_CHOICES = [
         ('pending', 'Pending Approval'),
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
-        ('executed', 'Executed'),
+        ('dispatched', 'Dispatched / In Transit'),
+        ('acknowledged', 'Acknowledged / Completed'),
+        ('short_received', 'Short Received (Variance)'),
+        ('disputed', 'Disputed'),
+        # Legacy terminal state from before the dispatch/acknowledge split.
+        # New code never produces this again — old rows have no dispatch/
+        # acknowledge audit trail, so they are not force-remapped.
+        ('executed', 'Executed (Legacy)'),
     ]
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    
+
     approved_by = models.ForeignKey(
         'users.User',
         null=True,
@@ -1706,7 +1755,59 @@ class StockTransferRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel)
     )
     approved_at = models.DateTimeField(null=True, blank=True)
     approval_notes = models.TextField(blank=True)
-    
+
+    dispatched_by = models.ForeignKey(
+        'users.User', null=True, blank=True, on_delete=models.PROTECT,
+        related_name='dispatched_transfer_requests'
+    )
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    dispatch_notes = models.TextField(blank=True)
+
+    acknowledged_by = models.ForeignKey(
+        'users.User', null=True, blank=True, on_delete=models.PROTECT,
+        related_name='acknowledged_transfer_requests'
+    )
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    acknowledgment_notes = models.TextField(blank=True)
+
+    actual_quantity_received = models.DecimalField(
+        max_digits=18, decimal_places=2, null=True, blank=True
+    )
+    variance_quantity = models.DecimalField(
+        max_digits=18, decimal_places=2, default=0,
+        help_text="quantity - actual_quantity_received; positive = shortfall"
+    )
+    variance_notes = models.TextField(blank=True)
+
+    disputed_by = models.ForeignKey(
+        'users.User', null=True, blank=True, on_delete=models.PROTECT,
+        related_name='disputed_transfer_requests'
+    )
+    disputed_at = models.DateTimeField(null=True, blank=True)
+    dispute_reason = models.TextField(blank=True)
+
+    # The destination branch's own item record for this SKU — may differ
+    # from `item` (the source branch's record) when auto-linked/created at
+    # acknowledge time. See inventory/services/item_linking.py.
+    destination_item = models.ForeignKey(
+        InventoryItem,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name='transfer_requests_received'
+    )
+
+    # GL linkage for cross-branch transfers (null for same-branch transfers,
+    # which post no GL entries on a full transfer).
+    dispatch_journal_entry = models.ForeignKey(
+        'transactions.Transaction', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='transfer_dispatches'
+    )
+    acknowledgment_journal_entry = models.ForeignKey(
+        'transactions.Transaction', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='transfer_acknowledgments'
+    )
+
     # Link to executed movements
     transfer_out_movement = models.ForeignKey(
         StockMovement,
@@ -1722,23 +1823,131 @@ class StockTransferRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel)
         on_delete=models.SET_NULL,
         related_name='transfer_in_request'
     )
-    
+
     objects = OwnerBranchManager()
-    
+
     class Meta:
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['status', 'created_at']),
             models.Index(fields=['requested_by']),
+            models.Index(fields=['from_branch', 'status']),
+            models.Index(fields=['to_branch', 'status']),
         ]
-    
+
     def __str__(self):
         return f"{self.request_number} - {self.item.sku} ({self.from_location} → {self.to_location})"
-    
+
+    def clean(self):
+        """Defense in depth: from_branch/to_branch must actually match the
+        branches of from_location/to_location. This model legitimately spans
+        two branches by design, so this is NOT a same-branch check."""
+        if self.from_location_id and self.from_branch_id:
+            if self.from_location.branch_id != self.from_branch_id:
+                raise ValidationError(
+                    "from_branch must match from_location's branch."
+                )
+        if self.to_location_id and self.to_branch_id:
+            if self.to_location.branch_id != self.to_branch_id:
+                raise ValidationError(
+                    "to_branch must match to_location's branch."
+                )
+
     def save(self, *args, **kwargs):
         if self.unit_cost:
             self.estimated_cost = self.quantity * self.unit_cost
+        if self.from_location_id and not self.from_branch_id:
+            self.from_branch_id = self.from_location.branch_id
+        if self.to_location_id and not self.to_branch_id:
+            self.to_branch_id = self.to_location.branch_id
+        # Only enforced on INSERT, not on later partial-field status updates —
+        # mirrors TransactionEntry.save()'s rationale (transactions/models.py).
+        # Runs after the auto-population above so a first-time create that
+        # doesn't specify from_branch/to_branch still passes; an explicit
+        # mismatch is still caught.
+        if self.pk is None:
+            self.clean()
         super().save(*args, **kwargs)
+
+    # ── Workflow actions ─────────────────────────────────────────────────
+
+    def approve(self, user, notes=''):
+        if self.status != 'pending':
+            raise ValidationError("Only pending requests can be approved")
+        self.status = 'approved'
+        self.approved_by = user
+        self.approved_at = timezone.now()
+        self.approval_notes = notes
+        self.save()
+        return True
+
+    def reject(self, user, notes=''):
+        if self.status != 'pending':
+            raise ValidationError("Only pending requests can be rejected")
+        self.status = 'rejected'
+        self.approved_by = user
+        self.approved_at = timezone.now()
+        self.approval_notes = notes or 'Rejected'
+        self.save()
+        return True
+
+    @transaction.atomic
+    def dispatch(self, user, notes=''):
+        """Approved → dispatched. Reduces stock at from_location and, for a
+        cross-branch transfer, posts the Dr Due-from / Cr inventory entry."""
+        if self.status != 'approved':
+            raise ValidationError("Only approved requests can be dispatched")
+
+        from .stock_service import InventoryService
+        InventoryService.dispatch_transfer(self, user)
+
+        self.status = 'dispatched'
+        self.dispatched_by = user
+        self.dispatched_at = timezone.now()
+        self.dispatch_notes = notes
+        self.save()
+        return True
+
+    @transaction.atomic
+    def acknowledge(self, user, actual_quantity_received=None, notes=''):
+        """Dispatched → acknowledged (full) or short_received (partial).
+        Receives stock at to_location and posts the acknowledgment (+
+        shrinkage, if short) GL entry."""
+        if self.status != 'dispatched':
+            raise ValidationError("Only dispatched requests can be acknowledged")
+
+        if actual_quantity_received is None:
+            actual_quantity_received = self.quantity
+        if actual_quantity_received < 0 or actual_quantity_received > self.quantity:
+            raise ValidationError(
+                f"actual_quantity_received must be between 0 and {self.quantity}"
+            )
+
+        from .stock_service import InventoryService
+        InventoryService.acknowledge_transfer(self, actual_quantity_received, user)
+
+        self.actual_quantity_received = actual_quantity_received
+        self.variance_quantity = self.quantity - actual_quantity_received
+        self.status = 'short_received' if self.variance_quantity > 0 else 'acknowledged'
+        self.acknowledged_by = user
+        self.acknowledged_at = timezone.now()
+        self.acknowledgment_notes = notes
+        self.save()
+        return True
+
+    def dispute(self, user, reason):
+        """Dispatched → disputed. Terminal for now — no stock/GL effect;
+        resolution (correcting transfer, write-off, etc.) happens manually."""
+        if self.status != 'dispatched':
+            raise ValidationError("Only dispatched requests can be disputed")
+        if not reason:
+            raise ValidationError("A dispute reason is required")
+        self.status = 'disputed'
+        self.disputed_by = user
+        self.disputed_at = timezone.now()
+        self.dispute_reason = reason
+        self.save()
+        return True
 
 
 class WriteOffRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
@@ -1845,10 +2054,19 @@ class WriteOffRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     
     def __str__(self):
         return f"{self.request_number} - {self.item.sku} ({self.quantity} {self.item.unit_of_measure})"
-    
+
+    def clean(self):
+        """Defense in depth: location must belong to this request's own branch."""
+        if self.location_id and self.branch_id and self.location.branch_id != self.branch_id:
+            raise ValidationError("location must belong to this request's branch.")
+
     def save(self, *args, **kwargs):
         if self.unit_cost:
             self.estimated_cost = self.quantity * self.unit_cost
+        # Only enforced on INSERT, not on later partial-field status updates —
+        # mirrors TransactionEntry.save()'s rationale (transactions/models.py).
+        if self.pk is None:
+            self.clean()
         super().save(*args, **kwargs)
 
 

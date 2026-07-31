@@ -561,6 +561,11 @@ SYSTEM_ACCOUNTS = {
         'name': 'Bank Charges', 'account_type': 'EXPENSE',
         'parent_name': 'Administrative and General Expenses',
     },
+    'transfer_shrinkage': {
+        'parent_code': '5300', 'child_suffix': '003',
+        'name': 'Transfer Shrinkage', 'account_type': 'EXPENSE',
+        'parent_name': 'Administrative and General Expenses',
+    },
     # Asset disposal gain / loss accounts (FIRS: other income 4200, other expenses 5400)
     'asset_disposal': {
         'parent_code': '1900', 'child_suffix': '001',

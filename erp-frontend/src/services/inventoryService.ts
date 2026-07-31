@@ -532,20 +532,61 @@ class InventoryService {
 
   async approveStockTransfer(id: number, notes?: string): Promise<StockTransfer> {
     const response = await api.post(`/inventory/transfers/${id}/approve/`, {
-      approval_notes: notes,
+      notes,
     });
     return response.data || response;
   }
 
   async rejectStockTransfer(id: number, notes?: string): Promise<StockTransfer> {
     const response = await api.post(`/inventory/transfers/${id}/reject/`, {
-      approval_notes: notes,
+      notes,
     });
     return response.data || response;
   }
 
-  async executeStockTransfer(id: number): Promise<StockTransfer> {
-    const response = await api.post(`/inventory/transfers/${id}/execute/`);
+  /** Mark an approved transfer as dispatched (in transit). Requires approval-tier authority. */
+  async dispatchStockTransfer(id: number, notes?: string): Promise<StockTransfer> {
+    const response = await api.post(`/inventory/transfers/${id}/dispatch/`, {
+      notes,
+    });
+    return response.data || response;
+  }
+
+  /**
+   * Destination confirms receipt. Omit actualQuantityReceived to acknowledge
+   * the full dispatched quantity; pass a lower value for a short receipt
+   * (posts a shrinkage entry automatically).
+   */
+  async acknowledgeStockTransfer(
+    id: number,
+    actualQuantityReceived?: string,
+    notes?: string
+  ): Promise<StockTransfer> {
+    const response = await api.post(`/inventory/transfers/${id}/acknowledge/`, {
+      actual_quantity_received: actualQuantityReceived,
+      notes,
+    });
+    return response.data || response;
+  }
+
+  /** Destination flags a problem with the delivery instead of acknowledging it. Terminal for now. */
+  async disputeStockTransfer(id: number, reason: string): Promise<StockTransfer> {
+    const response = await api.post(`/inventory/transfers/${id}/dispute/`, {
+      reason,
+    });
+    return response.data || response;
+  }
+
+  /**
+   * All active locations in the tenant, across every branch — for the
+   * transfer-creation form's "To Location" picker. Unlike the standard
+   * location list (branch-scoped), a transfer's destination may be in any
+   * branch.
+   */
+  async getTransferDestinations(): Promise<
+    { id: number; name: string; code: string; branch: number | null; branch_name: string | null }[]
+  > {
+    const response = await api.get('/inventory/transfers/available-destinations/');
     return response.data || response;
   }
 

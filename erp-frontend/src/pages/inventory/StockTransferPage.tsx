@@ -4,6 +4,7 @@ import { ArrowLeft, Save, Search, ArrowRight } from 'lucide-react';
 import {
   useInventoryItems,
   useInventoryLocationsList,
+  useTransferDestinations,
   useCreateStockTransfer,
 } from '../../hooks/useInventory';
 import { useToast } from '../../hooks/useToast';
@@ -37,8 +38,18 @@ export default function StockTransferPage() {
     shouldFetchItems ? { search: debouncedSearchTerm } : undefined
   );
   const { data: locations } = useInventoryLocationsList();
+  const { data: destinations } = useTransferDestinations();
   const createTransferMutation = useCreateStockTransfer();
   const { user } = useAuth();
+
+  // Group destinations by branch so cross-branch options are clearly labeled.
+  const destinationsByBranch = (destinations ?? []).reduce<
+    Record<string, typeof destinations>
+  >((acc, loc) => {
+    const key = loc.branch_name || 'Unassigned';
+    (acc[key] = acc[key] || []).push(loc);
+    return acc;
+  }, {});
 
   // Handle item selection
   const handleItemSelect = (itemId: string) => {
@@ -107,7 +118,12 @@ export default function StockTransferPage() {
 
   const selectedItemData = items?.results?.find(item => item.id.toString() === selectedItem);
   const fromLocationData = locations?.find(loc => loc.id.toString() === fromLocation);
-  const toLocationData = locations?.find(loc => loc.id.toString() === toLocation);
+  const toLocationData = destinations?.find(loc => loc.id.toString() === toLocation);
+  // destinations spans every branch, so it also carries from_location's own
+  // branch — used purely to label the cross-branch notice below.
+  const fromLocationBranch = destinations?.find(loc => loc.id.toString() === fromLocation)?.branch;
+  const isCrossBranch =
+    fromLocationBranch != null && toLocationData != null && fromLocationBranch !== toLocationData.branch;
 
   return (
     <div className="p-6">
@@ -120,7 +136,10 @@ export default function StockTransferPage() {
         </button>
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Stock Transfer</h1>
-          <p className="text-gray-600">Transfer inventory between locations</p>
+          <p className="text-gray-600">
+            Transfer inventory between locations — same branch or across branches. The request
+            still needs to be dispatched and acknowledged before stock actually moves.
+          </p>
         </div>
       </div>
 
@@ -227,14 +246,22 @@ export default function StockTransferPage() {
                 required
               >
                 <option value="">Select To Location</option>
-                {locations
-                  ?.filter(loc => loc.id.toString() !== fromLocation)
-                  .map(location => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
+                {Object.entries(destinationsByBranch).map(([branchName, locs]) => (
+                  <optgroup key={branchName} label={branchName}>
+                    {(locs ?? [])
+                      .filter(loc => loc.id.toString() !== fromLocation)
+                      .map(location => (
+                        <option key={location.id} value={location.id}>
+                          {location.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                ))}
               </select>
+              <p className="text-xs text-gray-500 mt-1">
+                May be in any branch — cross-branch transfers post through inter-branch
+                clearing accounts automatically.
+              </p>
             </div>
           </div>
 
@@ -247,8 +274,17 @@ export default function StockTransferPage() {
                 <ArrowRight className="w-4 h-4 text-blue-600" />
                 <div className="text-sm">
                   <span className="font-medium">To:</span> {toLocationData.name}
+                  {toLocationData.branch_name && (
+                    <span className="text-gray-500"> ({toLocationData.branch_name})</span>
+                  )}
                 </div>
               </div>
+              {isCrossBranch && (
+                <p className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-2 py-1 mt-2">
+                  Cross-branch transfer — will post Due-from/Due-to clearing entries on dispatch
+                  and acknowledgment.
+                </p>
+              )}
             </div>
           )}
 

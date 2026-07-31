@@ -90,7 +90,7 @@ class InventoryService:
             source_document_id=str(grn.id if grn else po_item.id if po_item else ''),
             tenant=item.tenant if hasattr(item, 'tenant') else None,
             owner=item.owner,
-            branch=item.branch,
+            branch=location.branch,
             created_by=user
         )
         
@@ -156,10 +156,10 @@ class InventoryService:
             serial_number=serial_number,
             tenant=item.tenant if hasattr(item, 'tenant') else None,
             owner=item.owner,
-            branch=item.branch,
+            branch=location.branch,
             created_by=user
         )
-        
+
         # Create accounting entry for COGS if sale/redemption
         if movement_type in ['sale', 'redemption']:
             InventoryService._create_cogs_journal_entry(
@@ -188,9 +188,14 @@ class InventoryService:
         user=None
     ) -> Tuple[StockMovement, InventoryStock, InventoryStock]:
         """
-        Transfer stock between locations
+        Back-compat wrapper for callers expecting the old instant, single-
+        step transfer. Prefer StockTransferRequest.dispatch()/.acknowledge()
+        for the full dispatch -> in-transit -> acknowledge workflow with GL
+        entries — this wrapper does NOT create a StockTransferRequest and
+        does NOT post any inter-branch clearing entries even if
+        from_location/to_location belong to different branches, since there
+        is no transfer request to attach GL linkage to.
         """
-        # Reduce from source
         from_stock, out_movement = InventoryService.reduce_stock(
             item=item,
             location=from_location,
@@ -199,8 +204,7 @@ class InventoryService:
             reference_number=reference_number,
             user=user
         )
-        
-        # Add to destination
+
         to_stock, in_movement = InventoryService.receive_stock(
             item=item,
             location=to_location,
@@ -209,22 +213,110 @@ class InventoryService:
             reference_number=reference_number,
             user=user
         )
-        
-        # Link movements
-        out_movement.movement_type = 'transfer'
+
         out_movement.to_location = to_location
         out_movement.save()
-        
+
         in_movement.movement_type = 'transfer'
         in_movement.from_location = from_location
         in_movement.save()
-        
+
         logger.info(
             f"Stock transferred: {item.sku} - {quantity} units "
             f"from {from_location.code} to {to_location.code}"
         )
-        
+
         return out_movement, from_stock, to_stock
+
+    @staticmethod
+    @transaction.atomic
+    def dispatch_transfer(transfer_request, user) -> StockMovement:
+        """
+        Phase 1 of a StockTransferRequest: reduce stock at the source
+        location. For a cross-branch transfer, also posts the dispatch GL
+        entry (Dr Due-from-<to_branch> / Cr source category.inventory_account).
+        A same-branch transfer posts no GL entry here — nothing has left the
+        branch's own inventory asset account yet, only stock quantity moved.
+        """
+        from_stock, movement = InventoryService.reduce_stock(
+            item=transfer_request.item,
+            location=transfer_request.from_location,
+            quantity=transfer_request.quantity,
+            movement_type='transfer',
+            reference_number=transfer_request.request_number,
+            user=user,
+        )
+        movement.to_location = transfer_request.to_location
+        movement.save()
+
+        # Capture the actual cost at dispatch time — acknowledge_transfer()
+        # may run days later, once average_cost has moved on further
+        # receipts/sales, so the value posted at both ends must be fixed now.
+        transfer_request.unit_cost = from_stock.average_cost
+        transfer_request.transfer_out_movement = movement
+
+        if transfer_request.from_branch_id != transfer_request.to_branch_id:
+            from .services.inter_branch_clearing import build_dispatch_entry
+            transfer_request.dispatch_journal_entry = build_dispatch_entry(transfer_request, user)
+
+        logger.info(
+            f"Transfer dispatched: {transfer_request.item.sku} - {transfer_request.quantity} units "
+            f"from {transfer_request.from_location.code} (Ref: {transfer_request.request_number})"
+        )
+        return movement
+
+    @staticmethod
+    @transaction.atomic
+    def acknowledge_transfer(transfer_request, actual_quantity_received: Decimal, user) -> StockMovement:
+        """
+        Phase 2 of a StockTransferRequest: receive at the destination
+        location for actual_quantity_received (may be less than the
+        dispatched quantity). Resolves/creates the destination branch's own
+        item record for this SKU if needed, then posts the acknowledgment
+        (+ shrinkage, if short) GL entry.
+        """
+        from .services.item_linking import resolve_or_create_destination_item
+
+        if transfer_request.destination_item_id is None:
+            transfer_request.destination_item = resolve_or_create_destination_item(
+                source_item=transfer_request.item,
+                destination_branch=transfer_request.to_branch,
+                owner=transfer_request.owner,
+                user=user,
+            )
+
+        to_stock, movement = InventoryService.receive_stock(
+            item=transfer_request.destination_item,
+            location=transfer_request.to_location,
+            quantity=actual_quantity_received,
+            unit_cost=transfer_request.unit_cost,
+            reference_number=transfer_request.request_number,
+            user=user,
+        )
+        movement.movement_type = 'transfer'
+        movement.from_location = transfer_request.from_location
+        movement.save()
+        transfer_request.transfer_in_movement = movement
+
+        shortfall_qty = transfer_request.quantity - actual_quantity_received
+
+        if transfer_request.from_branch_id != transfer_request.to_branch_id:
+            from .services.inter_branch_clearing import build_acknowledgment_entry
+            transfer_request.acknowledgment_journal_entry = build_acknowledgment_entry(
+                transfer_request, actual_quantity_received, transfer_request.unit_cost, user
+            )
+        elif shortfall_qty > 0:
+            from .services.inter_branch_clearing import build_same_branch_shrinkage_entry
+            transfer_request.acknowledgment_journal_entry = build_same_branch_shrinkage_entry(
+                transfer_request, shortfall_qty, transfer_request.unit_cost, user
+            )
+
+        logger.info(
+            f"Transfer acknowledged: {transfer_request.destination_item.sku} - "
+            f"{actual_quantity_received}/{transfer_request.quantity} units "
+            f"at {transfer_request.to_location.code} (Ref: {transfer_request.request_number})"
+        )
+        return movement
     
     @staticmethod
     @transaction.atomic
