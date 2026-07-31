@@ -121,7 +121,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
   const [accountLevel, setAccountLevel] = useState<'PARENT' | 'CHILD'>('CHILD');
   const [formData, setFormData] = useState({
     name: '',
-    code: '',
     description: '',
     parent: null as number | null,
     category: null as number | null,
@@ -258,10 +257,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
         category: formData.category,
       };
 
-      if (formData.code) {
-        payload.code = formData.code;
-      }
-
       if (accountLevel === 'CHILD' && formData.parent) {
         payload.parent = formData.parent;
       }
@@ -304,7 +299,7 @@ const UnifiedAccountCreationPage: React.FC = () => {
     setStep(1);
     setAccountType('');
     setAccountLevel('CHILD');
-    setFormData({ name: '', code: '', description: '', parent: null, category: null });
+    setFormData({ name: '', description: '', parent: null, category: null });
     setSpecificData({});
     setCreatedAccount(null);
     setGeneratedComponents({});
@@ -626,33 +621,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
               fontSize: '14px',
             }}
           />
-        </div>
-
-        {/* Account Code */}
-        <div>
-          <label
-            style={{ display: 'block', fontWeight: '500', marginBottom: '8px', color: '#374151' }}
-          >
-            Account Code (Optional)
-          </label>
-          <input
-            type="text"
-            value={formData.code}
-            onChange={e => setFormData({ ...formData, code: e.target.value })}
-            placeholder="Leave blank to auto-generate"
-            style={{
-              width: '100%',
-              padding: '12px',
-              border: '1px solid #d1d5db',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontFamily: 'monospace',
-            }}
-          />
-          <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-            Format: 4-digit GL code for a parent (e.g. 1150), or PPPP-NNNNN for a
-            child under that parent (e.g. 1150-00001)
-          </div>
         </div>
 
         {/* Description */}
@@ -1262,12 +1230,8 @@ const UnifiedAccountCreationPage: React.FC = () => {
               </>
             )}
 
-            {formData.code && (
-              <>
-                <div style={{ fontWeight: '600', color: '#6b7280' }}>Account Code:</div>
-                <div style={{ color: '#111827', fontFamily: 'monospace' }}>{formData.code}</div>
-              </>
-            )}
+            <div style={{ fontWeight: '600', color: '#6b7280' }}>Account Code:</div>
+            <div style={{ color: '#111827', fontFamily: 'monospace' }}>Auto-generated on creation</div>
 
             {Object.entries(specificData).map(([key, value]: [string, any]) => (
               <React.Fragment key={key}>
