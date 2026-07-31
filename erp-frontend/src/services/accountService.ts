@@ -7,6 +7,11 @@ export const accountService = {
     search?: string;
     is_active?: boolean;
     branch?: number;
+    // Per-entity sub-ledger accounts (one row per loan/savings account/
+    // cashier till) are excluded by default — only pass true for pages that
+    // need to pick an *existing* cashier/loan/savings sub-account directly
+    // (e.g. "which cashier collected this cash"), not generic GL pickers.
+    include_subledgers?: boolean;
   }): Promise<Account[]> {
     const response = await api.get('/accounts/', { params });
     return response.results || response.data || response;

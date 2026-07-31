@@ -30,7 +30,9 @@ const CashTransferFormPage: React.FC = () => {
 
   const { data: glAccounts = [] } = useQuery({
     queryKey: ['gl-accounts-all'],
-    queryFn: () => accountService.getAccounts({ is_active: true }),
+    // Moving cash between named cashier/bank tills needs to see those
+    // tills' own sub-ledger accounts, not just generic GL accounts.
+    queryFn: () => accountService.getAccounts({ is_active: true, include_subledgers: true }),
     staleTime: 60_000,
   });
 

@@ -9,7 +9,7 @@ from decimal import Decimal
 # Use string references for cross-app relationships to avoid circular imports
 from common.base import BranchScopedModel, SoftDeleteModel, TimeStampedModel
 from common.managers import OwnerBranchManager
-from django.db.models import F, Sum
+from django.db.models import F, Sum, Q
 from django.utils import timezone
 class Period(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """
@@ -630,7 +630,32 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         child_data.setdefault('tenant', parent.tenant)
 
         return cls.objects.create(**child_data)
-    
+
+    @classmethod
+    def entity_subledger_q(cls):
+        """
+        Matches Account rows that exist purely to track one specific entity's
+        balance (a loan, a savings account, a cashier till) rather than being
+        a chart-of-accounts entry a human would pick from a generic account
+        list — each entity model links straight to its own dedicated Account
+        row (LoanAccount.account, SavingsAccount.account, CashierAccount.account),
+        so the reverse relation being non-null is the reliable signal; the
+        account_type ('LOAN'/'SAVINGS') alone also matches the legitimate
+        parent GL headers ("Customer Loan Portfolio" etc.), and cashier
+        sub-ledgers are plain ASSET accounts indistinguishable by type or
+        code format from a normal Cash account.
+        """
+        return (
+            Q(loan_account_detail__isnull=False)
+            | Q(savings_account_detail__isnull=False)
+            | Q(cashier_accounts__isnull=False)
+        )
+
+    @classmethod
+    def exclude_entity_subledgers(cls, queryset):
+        """Drop per-entity sub-ledger accounts (see entity_subledger_q) from a queryset."""
+        return queryset.exclude(cls.entity_subledger_q())
+
     def __str__(self):
         level_indicator = "📁" if self.account_level == self.LEVEL_PARENT else "📄"
         return f"{level_indicator} {self.code} – {self.name}"

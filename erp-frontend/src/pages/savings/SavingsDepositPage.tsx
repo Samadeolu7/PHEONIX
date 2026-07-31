@@ -92,7 +92,7 @@ export default function SavingsDepositPage() {
   // ── Cashier accounts ───────────────────────────────────────────────────
   const [cashierAccounts, setCashierAccounts] = useState<CashierAccount[]>([]);
   useEffect(() => {
-    accountService.getAccounts({ account_type: 'ASSET' })
+    accountService.getAccounts({ account_type: 'ASSET', include_subledgers: true })
       .then(list => setCashierAccounts(
         list.map(a => ({ id: Number(a.id), name: a.name, code: a.code }))
       ))

@@ -71,11 +71,7 @@ class AccountViewSet(ScopedModelViewSet):
     """
     permission_module = 'accounts'
     permission_page = 'chart-of-accounts'
-    queryset = (
-    Account.objects
-    .select_related("parent")
-    .exclude(account_type__in=(Account.SAVINGS, Account.LOAN))
-)
+    queryset = Account.objects.select_related("parent")
     serializer_class = AccountSerializer
     READ_ACTIONS = {
     "list",
@@ -83,12 +79,26 @@ class AccountViewSet(ScopedModelViewSet):
     "parents",
     "parent_accounts",
     "children_summary",
-}   
+}
 
     def get_serializer_class(self):
         if self.action in self.READ_ACTIONS:
             return AccountReadSerializer
         return AccountSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        # List views are where per-entity sub-ledgers (one row per loan/
+        # savings account/cashier till) clutter a "pick a GL account"
+        # dropdown — retrieve-by-id and children_summary (drilling into a
+        # parent's own children) are left alone since hiding sub-ledgers
+        # there would either break a page that already knows the specific
+        # id, or defeat the point of that action.
+        if self.action == 'list':
+            include_subledgers = self.request.query_params.get('include_subledgers', '').lower() == 'true'
+            if not include_subledgers:
+                qs = Account.exclude_entity_subledgers(qs)
+        return qs
 
     filterset_fields = ['account_type', 'account_level', 'branch']
     search_fields = ['name', 'code']

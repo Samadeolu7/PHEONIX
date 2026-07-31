@@ -106,7 +106,10 @@ function ApproveModal({ withdrawal, onDone, onClose }: ApproveModalProps) {
 
   useEffect(() => {
     if (needsPaymentMethod) {
-      accountService.getAccounts({ account_type: 'ASSET' }).then(setCashierAccounts).catch(() => {});
+      accountService
+        .getAccounts({ account_type: 'ASSET', include_subledgers: true })
+        .then(setCashierAccounts)
+        .catch(() => {});
     }
   }, [needsPaymentMethod]);
 

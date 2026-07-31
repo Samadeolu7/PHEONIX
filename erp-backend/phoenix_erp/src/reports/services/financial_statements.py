@@ -37,7 +37,29 @@ class FinancialStatementService:
         """
         self.owner = owner
         self.branch = branch
-    
+        self._hidden_subledger_ids_cache = None
+
+    @property
+    def _hidden_subledger_ids(self):
+        """
+        Ids of per-entity sub-ledger accounts (one per loan/savings account/
+        cashier till — see Account.entity_subledger_q) to leave out of
+        report *display* without touching the balance rollup: a parent like
+        "Customer Loan Portfolio" must still sum every child's balance, only
+        which children get attached to the output should change. Computed
+        once per report and cached, rather than once per account in the
+        recursive balance calculation.
+        """
+        if self._hidden_subledger_ids_cache is None:
+            qs = Account.objects.filter(is_deleted=False)
+            if self.branch:
+                qs = qs.filter(branch=self.branch)
+            elif hasattr(self.owner, 'tenant') and self.owner.tenant:
+                qs = qs.filter(tenant=self.owner.tenant)
+            qs = qs.filter(Account.entity_subledger_q())
+            self._hidden_subledger_ids_cache = set(qs.values_list('id', flat=True))
+        return self._hidden_subledger_ids_cache
+
     def generate_trial_balance(
         self,
         start_date: Optional[date] = None,
@@ -97,8 +119,13 @@ class FinancialStatementService:
         elif detail_level == 'detailed':
             # Return parent accounts only; children are nested via include_children=True
             accounts = accounts.filter(account_level=Account.LEVEL_PARENT)
-        # 'all' includes every account as a flat list (no nesting)
-        
+        else:
+            # 'all' includes every account as a flat list (no nesting) — unlike
+            # summary/detailed, this isn't restricted to PARENT rows, so
+            # per-entity sub-ledgers (loan/savings/cashier) would otherwise
+            # show up directly as top-level rows here.
+            accounts = Account.exclude_entity_subledgers(accounts)
+
         # Calculate balances for each account
         account_balances = []
         total_debits = Decimal('0.00')
@@ -729,6 +756,10 @@ class FinancialStatementService:
             # In 'detailed' mode the parent rows include their children nested
             # via the include_children flag passed to _calculate_account_balance.
             accounts = accounts.filter(account_level=Account.LEVEL_PARENT)
+        else:
+            # 'all': flat list, not restricted to PARENT rows — exclude
+            # per-entity sub-ledgers the same way generate_trial_balance does.
+            accounts = Account.exclude_entity_subledgers(accounts)
 
         result = []
         for account in accounts.order_by('code'):
@@ -784,7 +815,11 @@ class FinancialStatementService:
                 total_balance += Decimal(child_data['balance'])
                 total_balance_bf += Decimal(child_data['balance_bf'])
 
-                if include_children:
+                # Sub-ledger children (one per loan/savings account/cashier
+                # till) still contribute their balance to the parent's
+                # rollup above — only their own row is left out of the
+                # display, so the parent total never silently drops them.
+                if include_children and child.id not in self._hidden_subledger_ids:
                     children_data.append(child_data)
 
             # A parent account can itself receive DIRECT postings when
