@@ -168,10 +168,17 @@ function buildJournal(
   const bookValue = cost - accDep;
   const netResult = proceeds - bookValue; // positive = gain, negative = loss
 
+  // Prefer the asset's own per-asset account (populated once its category
+  // is migrated to per-asset tracking — see migrate_category_to_per_asset_
+  // accounts) so this preview matches what the backend will actually post
+  // to, not a stale category-level account name.
   const categoryDetails = asset.category_details;
-  const fixedAssetAccount = categoryDetails?.asset_account_name || 'Fixed Asset A/c';
+  const fixedAssetAccount =
+    asset.account_name || categoryDetails?.asset_account_name || 'Fixed Asset A/c';
   const accDepAccount =
-    categoryDetails?.accumulated_depreciation_account_name || 'Accumulated Depreciation A/c';
+    asset.accumulated_depreciation_account_name ||
+    categoryDetails?.accumulated_depreciation_account_name ||
+    'Accumulated Depreciation A/c';
 
   const lines: JournalLine[] = [];
 

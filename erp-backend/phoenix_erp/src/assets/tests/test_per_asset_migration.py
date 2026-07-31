@@ -217,6 +217,44 @@ class CategoryMigrationTests(PerAssetMigrationTestBase):
         self.assertEqual(self.asset_account.children.count(), 2)
 
 
+class MonthlyDepreciationTaskTests(PerAssetMigrationTestBase):
+    """
+    Regression test for a gap found during review: assets.tasks.
+    post_monthly_depreciation is a separate, hand-rolled posting path (the
+    Celery cron for monthly depreciation) that never called through
+    DepreciationService — it had its own direct
+    `account=asset.category.accumulated_depreciation_account` with no
+    per-asset fallback, so it would have started failing every month for
+    every asset in any migrated category.
+
+    Deliberately does NOT subclass CategoryMigrationTests — that would
+    re-run all of its test methods again under this class too.
+    """
+    def setUp(self):
+        super().setUp()
+        self.starting_depr_balance = Account.objects.get(pk=self.accumulated_depreciation_account.pk).balance
+        call_command('migrate_category_to_per_asset_accounts', category_id=self.category.id)
+        self.asset1.refresh_from_db()
+
+    def test_monthly_depreciation_task_posts_to_per_asset_account(self):
+        from assets.tasks import post_monthly_depreciation
+
+        result = post_monthly_depreciation.apply().get()
+        self.assertEqual(result['errors'], 0)
+        self.assertGreaterEqual(result['processed'], 1)
+
+        self.asset1.accumulated_depreciation_account.refresh_from_db()
+        self.accumulated_depreciation_account.refresh_from_db()
+
+        # Posted to the per-asset account (more negative — see the sign-
+        # convention note on the other depreciation test above)...
+        self.assertLess(self.asset1.accumulated_depreciation_account.balance, Decimal('-12000.00'))
+        # ...and rolled up correctly into the (now-parent) category account,
+        # proving the entry actually landed on the per-asset child, not a
+        # rejected/silently-skipped posting against the sealed parent.
+        self.assertLess(self.accumulated_depreciation_account.balance, self.starting_depr_balance)
+
+
 class SignalFiresAfterMigrationTests(PerAssetMigrationTestBase):
     def test_new_asset_after_migration_gets_provisioned_automatically(self):
         call_command('migrate_category_to_per_asset_accounts', category_id=self.category.id)

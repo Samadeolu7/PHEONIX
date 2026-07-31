@@ -36,8 +36,11 @@ def post_monthly_depreciation(self):  # noqa: ARG002
                              i.e. double-declining balance by default
 
     GL entry posted per asset:
-        Dr.  Depreciation Expense             (category.depreciation_account)
-        Cr.  Accumulated Depreciation         (category.accumulated_depreciation_account)
+        Dr.  Depreciation Expense             (category.depreciation_account — always
+                                                category-level, no per-asset equivalent)
+        Cr.  Accumulated Depreciation         (asset.accumulated_depreciation_account
+                                                once its category is migrated to per-asset
+                                                tracking, else category.accumulated_depreciation_account)
 
     Returns:
         {'processed': int, 'skipped': int, 'errors': int, 'total': int}
@@ -78,6 +81,13 @@ def post_monthly_depreciation(self):  # noqa: ARG002
     for asset_id in candidate_ids:
         try:
             with transaction.atomic():
+                # NOTE: accumulated_depreciation_account is deliberately NOT
+                # in select_related here — it's nullable, and Postgres
+                # rejects SELECT ... FOR UPDATE across a LEFT OUTER JOIN on
+                # the nullable side ("FOR UPDATE cannot be applied to the
+                # nullable side of an outer join"). It's accessed at most
+                # once below, so a lazy follow-up query is the correct
+                # trade-off, not a real cost.
                 asset = (
                     FixedAsset.objects
                     .select_for_update()
@@ -118,26 +128,30 @@ def post_monthly_depreciation(self):  # noqa: ARG002
                     tenant=asset.tenant,
                 )
 
+                # NOTE: TransactionEntry (aliased JournalEntryLine here) has
+                # no `description` field — only Transaction does (set above).
+                # A pre-existing bug here (description= passed to every
+                # TransactionEntry.create() call) meant this task raised
+                # TypeError and posted nothing for every asset, every month,
+                # since it was written — unrelated to per-asset tracking,
+                # found while testing the account= fallback fix above.
                 JournalEntryLine.objects.create(
                     transaction=journal,
                     account=asset.category.depreciation_account,
                     side=JournalEntryLine.DEBIT,
                     amount=dep_amount,
-                    description=(
-                        f'Depreciation expense — {asset.name} '
-                        f'({asset.asset_number}) {period_start:%b %Y}'
-                    ),
                 )
 
                 JournalEntryLine.objects.create(
                     transaction=journal,
-                    account=asset.category.accumulated_depreciation_account,
+                    # Per-asset account once the category is migrated to
+                    # per-asset tracking (see migrate_category_to_per_asset_
+                    # accounts); once migrated, category.accumulated_
+                    # depreciation_account is account_level=PARENT with
+                    # children and can no longer take a direct posting.
+                    account=asset.accumulated_depreciation_account or asset.category.accumulated_depreciation_account,
                     side=JournalEntryLine.CREDIT,
                     amount=dep_amount,
-                    description=(
-                        f'Accumulated depreciation — {asset.name} '
-                        f'({asset.asset_number}) {period_start:%b %Y}'
-                    ),
                 )
 
                 journal.post()
