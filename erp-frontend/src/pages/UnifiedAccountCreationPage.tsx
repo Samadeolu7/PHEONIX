@@ -3,35 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { Info, Plus, Sparkles, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 import { api } from '../services/api';
 
-// Account type configurations with v3's comprehensive config
+// Account type configurations.
+// Savings and Loan accounts are created through their own dedicated,
+// product-linked forms (SavingsAccountFormPage / LoanAccountFormPage) — this
+// generic Chart-of-Accounts wizard only handles plain GL account types.
 const ACCOUNT_TYPE_CONFIG = {
-  SAVINGS: {
-    icon: '💰',
-    color: '#10b981',
-    label: 'Savings Account',
-    category: 'LIABILITY',
-    glSection: 2, // Liabilities section
-    categoryCode: 'SAV', // Auto-link to Savings category
-    fields: ['interest_rate', 'minimum_balance', 'overdraft_limit'],
-    autoGenerate: true,
-  },
-  LOAN: {
-    icon: '💳',
-    color: '#f59e0b',
-    label: 'Loan Account (Given Out)',
-    category: 'ASSET', // Loans receivable are assets
-    glSection: 1, // Assets section
-    categoryCode: 'LR', // Auto-link to Loans Receivable category
-    fields: ['interest_rate', 'term_months', 'repayment_frequency'],
-    autoGenerate: true,
-  },
   INCOME: {
     icon: '📈',
     color: '#3b82f6',
     label: 'Income Account',
     category: 'INCOME',
     glSection: 4, // Income section
-    fields: ['income_category'],
     autoGenerate: true,
   },
   EXPENSE: {
@@ -40,7 +22,6 @@ const ACCOUNT_TYPE_CONFIG = {
     label: 'Expense Account',
     category: 'EXPENSE',
     glSection: 5, // Expenses section
-    fields: ['expense_category'],
     autoGenerate: false,
   },
   ASSET: {
@@ -49,7 +30,6 @@ const ACCOUNT_TYPE_CONFIG = {
     label: 'Asset Account',
     category: 'ASSET',
     glSection: 1, // Assets section
-    fields: ['asset_category', 'depreciation_method'],
     autoGenerate: false,
   },
   LIABILITY: {
@@ -58,7 +38,6 @@ const ACCOUNT_TYPE_CONFIG = {
     label: 'Liability Account',
     category: 'LIABILITY',
     glSection: 2, // Liabilities section
-    fields: [],
     autoGenerate: false,
   },
   EQUITY: {
@@ -67,7 +46,6 @@ const ACCOUNT_TYPE_CONFIG = {
     label: 'Equity Account',
     category: 'EQUITY',
     glSection: 3, // Equity section
-    fields: [],
     autoGenerate: false,
   },
 } as const;
@@ -88,16 +66,7 @@ interface Account {
   name: string;
   account_type: string;
   account_level: string;
-}
-
-interface Product {
-  id: number;
-  name: string;
-  code: string;
-  product_type: string;
-  interest_rate?: number;
-  minimum_amount?: number;
-  maximum_amount?: number;
+  category: number | null;
 }
 
 interface GeneratedComponents {
@@ -125,12 +94,10 @@ const UnifiedAccountCreationPage: React.FC = () => {
     parent: null as number | null,
     category: null as number | null,
   });
-  const [specificData, setSpecificData] = useState<any>({});
 
   // Backend data (from original & v3)
   const [categories, setCategories] = useState<AccountCategory[]>([]);
   const [parentAccounts, setParentAccounts] = useState<Account[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const [createdAccount, setCreatedAccount] = useState<any>(null);
   const [generatedComponents, setGeneratedComponents] = useState<GeneratedComponents>({});
 
@@ -148,28 +115,10 @@ const UnifiedAccountCreationPage: React.FC = () => {
     fetchCategories();
   }, []);
 
-  // Auto-select category for specialized types (SAVINGS, LOAN)
-  useEffect(() => {
-    if (accountType && config && config.categoryCode && categories.length > 0) {
-      // Find the category by code (e.g., 'SAV' for Savings, 'LR' for Loans)
-      const matchingCategory = categories.find(
-        cat => cat.code_prefix === config.categoryCode && cat.section === config.glSection
-      );
-
-      if (matchingCategory && formData.category !== matchingCategory.id) {
-        setFormData(prev => ({ ...prev, category: matchingCategory.id }));
-      }
-    }
-  }, [accountType, categories]);
-
   // Fetch parent accounts when needed
   useEffect(() => {
     if (accountType && accountLevel === 'CHILD') {
       fetchParentAccounts();
-      // Fetch products for SAVINGS, LOAN, and EXPENSE types
-      if (accountType === 'SAVINGS' || accountType === 'LOAN' || accountType === 'EXPENSE') {
-        fetchProducts(accountType);
-      }
     }
   }, [accountType, accountLevel]);
 
@@ -200,21 +149,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
     }
   };
 
-  const fetchProducts = async (type: string) => {
-    try {
-      const productType = type === 'SAVINGS' ? 'SAVINGS' : type === 'LOAN' ? 'LOAN' : 'EXPENSE';
-      const data = await api.get('/products/products/', {
-        product_type: productType,
-        is_active: true,
-      });
-      setProducts(data.results || []);
-      // console.log(data , "product data")
-    } catch (err: unknown) {
-      console.error('Error fetching products:', err);
-      setProducts([]);
-    }
-  };
-
   const handleCreateCategory = async () => {
     if (!newCategoryName.trim()) {
       setCategoryError('Category name is required');
@@ -226,7 +160,7 @@ const UnifiedAccountCreationPage: React.FC = () => {
       setCategoryError(null);
 
       const newCategory = await api.post('/accounts/account-classifications/', {
-        name: newCategoryName,
+        name: newCategoryName.trim(),
         section: newCategorySection,
       });
 
@@ -249,21 +183,22 @@ const UnifiedAccountCreationPage: React.FC = () => {
     setError(null);
 
     try {
+      // Child accounts inherit their category from the selected parent — the
+      // backend also enforces this, but deriving it here keeps the review
+      // screen accurate.
+      const selectedParent =
+        accountLevel === 'CHILD' ? parentAccounts.find(p => p.id === formData.parent) : null;
+
       const payload: any = {
-        name: formData.name,
-        description: formData.description,
+        name: formData.name.trim(),
+        description: formData.description.trim(),
         account_type: accountType,
         account_level: accountLevel,
-        category: formData.category,
+        category: accountLevel === 'CHILD' ? (selectedParent?.category ?? null) : formData.category,
       };
 
       if (accountLevel === 'CHILD' && formData.parent) {
         payload.parent = formData.parent;
-      }
-
-      // Add specific data for child accounts
-      if (accountLevel === 'CHILD' && Object.keys(specificData).length > 0) {
-        payload.specific_data = specificData;
       }
 
       const account = await api.post('/accounts/', payload);
@@ -300,7 +235,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
     setAccountType('');
     setAccountLevel('CHILD');
     setFormData({ name: '', description: '', parent: null, category: null });
-    setSpecificData({});
     setCreatedAccount(null);
     setGeneratedComponents({});
     setSuccess(false);
@@ -510,94 +444,66 @@ const UnifiedAccountCreationPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Category Selector - Auto-selected for SAVINGS/LOAN, optional for others */}
-        {config && (
+        {/* Category Selector - PARENT accounts only; child accounts inherit
+            their category from the parent selected in the next step. */}
+        {config && accountLevel === 'PARENT' && (
           <div>
             <label
               style={{ display: 'block', fontWeight: '500', marginBottom: '8px', color: '#374151' }}
             >
-              Category {config.categoryCode ? '' : '(Optional)'}
-              {config.categoryCode && (
-                <span
-                  style={{ fontSize: '12px', fontWeight: 400, color: '#6b7280', marginLeft: '8px' }}
-                >
-                  (Auto-selected for {config.label})
-                </span>
-              )}
+              Category (Optional)
             </label>
-            {config.categoryCode ? (
-              // Show read-only category for specialized types (SAVINGS, LOAN)
-              <div
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <select
+                value={formData.category || ''}
+                onChange={e => setFormData({ ...formData, category: Number(e.target.value) })}
                 style={{
+                  flex: 1,
                   padding: '12px',
-                  background: '#f0f9ff',
-                  border: '2px solid #bfdbfe',
+                  border: '1px solid #d1d5db',
                   borderRadius: '8px',
                   fontSize: '14px',
-                  color: '#1e40af',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
                 }}
               >
-                <span style={{ fontWeight: 600 }}>🔒</span>
-                {categories.find(cat => cat.code_prefix === config.categoryCode)?.name ||
-                  'Loading...'}
-                <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#6b7280' }}>
-                  ({config.categoryCode})
-                </span>
-              </div>
-            ) : (
-              // Show dropdown for generic types with section filtering
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <select
-                  value={formData.category || ''}
-                  onChange={e => setFormData({ ...formData, category: Number(e.target.value) })}
-                  style={{
-                    flex: 1,
-                    padding: '12px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                  }}
-                >
-                  <option value="">Select a category (or skip for direct GL link)</option>
-                  {categories
-                    .filter(cat => cat.section === config.glSection)
-                    .map(cat => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.code_prefix} - {cat.name}
-                        {cat.is_system_category && ' 🔒'}
-                      </option>
-                    ))}
-                </select>
-                <button
-                  onClick={() => {
-                    setNewCategorySection(config.glSection);
-                    setShowCategoryModal(true);
-                  }}
-                  type="button"
-                  style={{
-                    padding: '12px 16px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '8px',
-                    background: 'white',
-                    color: config?.color || '#3b82f6',
-                    cursor: 'pointer',
-                    fontSize: '14px',
-                    fontWeight: 500,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  + New
-                </button>
-              </div>
-            )}
-            {!config.categoryCode && (
-              <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                Choose a category for organization, or skip to link directly to General Ledger
-              </div>
-            )}
+                <option value="">Select a category (or skip for direct GL link)</option>
+                {categories
+                  .filter(cat => cat.section === config.glSection)
+                  .map(cat => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.code_prefix} - {cat.name}
+                      {cat.is_system_category && ' 🔒'}
+                    </option>
+                  ))}
+              </select>
+              <button
+                onClick={() => {
+                  setNewCategorySection(config.glSection);
+                  setShowCategoryModal(true);
+                }}
+                type="button"
+                style={{
+                  padding: '12px 16px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '8px',
+                  background: 'white',
+                  color: config?.color || '#3b82f6',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                + New
+              </button>
+            </div>
+            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+              Choose a category for organization, or skip to link directly to General Ledger
+            </div>
+          </div>
+        )}
+        {config && accountLevel === 'CHILD' && (
+          <div style={{ fontSize: '12px', color: '#6b7280' }}>
+            Category is inherited from the parent account you'll select next.
           </div>
         )}
 
@@ -612,7 +518,8 @@ const UnifiedAccountCreationPage: React.FC = () => {
             type="text"
             value={formData.name}
             onChange={e => setFormData({ ...formData, name: e.target.value })}
-            placeholder={`e.g., ${accountType === 'SAVINGS' ? 'Member Savings' : accountType === 'LOAN' ? 'Personal Loans' : 'General Income'}`}
+            maxLength={100}
+            placeholder={`e.g., ${accountType === 'EXPENSE' ? 'Office Supplies' : accountType === 'ASSET' ? 'Prepaid Rent' : 'General Income'}`}
             style={{
               width: '100%',
               padding: '12px',
@@ -621,6 +528,9 @@ const UnifiedAccountCreationPage: React.FC = () => {
               fontSize: '14px',
             }}
           />
+          <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', textAlign: 'right' }}>
+            {formData.name.length}/100
+          </div>
         </div>
 
         {/* Description */}
@@ -646,359 +556,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
           />
         </div>
 
-        {/* Product Selection (SAVINGS/LOAN/EXPENSE, CHILD accounts only) */}
-        {(accountType === 'SAVINGS' || accountType === 'LOAN' || accountType === 'EXPENSE') &&
-          accountLevel === 'CHILD' && (
-            <>
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    fontWeight: '500',
-                    marginBottom: '8px',
-                    color: '#374151',
-                  }}
-                >
-                  Product {accountLevel === 'CHILD' ? '*' : ''}
-                </label>
-                <select
-                  value={specificData.product_id || ''}
-                  onChange={e =>
-                    setSpecificData({ ...specificData, product_id: Number(e.target.value) })
-                  }
-                  style={{
-                    width: '100%',
-                    padding: '12px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '8px',
-                    fontSize: '14px',
-                  }}
-                >
-                  <option value="">Select a product</option>
-                  {products.length > 0 &&
-                    products?.map(product => (
-                      <option key={product.id} value={product.id}>
-                        {product.name} ({product.code})
-                        {product.interest_rate && ` - ${product.interest_rate}% interest`}
-                        {product.daily_transaction_limit &&
-                          ` - Daily limit: ₦${product.daily_transaction_limit.toLocaleString()}`}
-                      </option>
-                    ))}
-                </select>
-                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                  {accountType === 'EXPENSE'
-                    ? 'Product determines spending limits and approval requirements'
-                    : 'Product determines default interest rates, limits, and features'}
-                </div>
-              </div>
-
-              {/* Show Product Details */}
-              {specificData.product_id &&
-                (() => {
-                  const selectedProduct = products.find(p => p.id === specificData.product_id);
-                  if (!selectedProduct) return null;
-
-                  return (
-                    <div
-                      style={{
-                        background: '#f0f9ff',
-                        border: '2px solid #bfdbfe',
-                        borderRadius: '8px',
-                        padding: '16px',
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          color: '#1e40af',
-                          marginBottom: '12px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                        }}
-                      >
-                        <Info size={18} />
-                        Product Configuration
-                      </div>
-                      <div
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: 'auto 1fr',
-                          gap: '8px 16px',
-                          fontSize: '14px',
-                        }}
-                      >
-                        {selectedProduct.interest_rate && (
-                          <>
-                            <div style={{ color: '#6b7280', fontWeight: 500 }}>Interest Rate:</div>
-                            <div style={{ color: '#111827' }}>
-                              {selectedProduct.interest_rate}% per annum
-                            </div>
-                          </>
-                        )}
-                        {selectedProduct.minimum_balance && (
-                          <>
-                            <div style={{ color: '#6b7280', fontWeight: 500 }}>Min Balance:</div>
-                            <div style={{ color: '#111827' }}>
-                              ₦{selectedProduct.minimum_balance.toLocaleString()}
-                            </div>
-                          </>
-                        )}
-                        {selectedProduct.daily_transaction_limit && (
-                          <>
-                            <div style={{ color: '#6b7280', fontWeight: 500 }}>Daily Limit:</div>
-                            <div style={{ color: '#111827' }}>
-                              ₦{selectedProduct.daily_transaction_limit.toLocaleString()}
-                            </div>
-                          </>
-                        )}
-                        {selectedProduct.monthly_transaction_limit && (
-                          <>
-                            <div style={{ color: '#6b7280', fontWeight: 500 }}>Monthly Limit:</div>
-                            <div style={{ color: '#111827' }}>
-                              ₦{selectedProduct.monthly_transaction_limit.toLocaleString()}
-                            </div>
-                          </>
-                        )}
-                        {selectedProduct.overdraft_limit && (
-                          <>
-                            <div style={{ color: '#6b7280', fontWeight: 500 }}>Overdraft:</div>
-                            <div style={{ color: '#111827' }}>
-                              ₦{selectedProduct.overdraft_limit.toLocaleString()}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
-
-              {/* SAVINGS-specific fields */}
-              {accountType === 'SAVINGS' && specificData.product_id && (
-                <>
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontWeight: '500',
-                        marginBottom: '8px',
-                        color: '#374151',
-                      }}
-                    >
-                      Interest Rate (%)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={specificData.interest_rate || ''}
-                      onChange={e =>
-                        setSpecificData({ ...specificData, interest_rate: e.target.value })
-                      }
-                      placeholder={
-                        products
-                          .find(p => p.id === specificData.product_id)
-                          ?.interest_rate?.toString() || '5.00'
-                      }
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                      }}
-                    />
-                    <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                      Leave blank to use product default
-                    </div>
-                  </div>
-
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontWeight: '500',
-                        marginBottom: '8px',
-                        color: '#374151',
-                      }}
-                    >
-                      Minimum Balance
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={specificData.minimum_balance || ''}
-                      onChange={e =>
-                        setSpecificData({ ...specificData, minimum_balance: e.target.value })
-                      }
-                      placeholder={
-                        products
-                          .find(p => p.id === specificData.product_id)
-                          ?.minimum_amount?.toString() || '0.00'
-                      }
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <input
-                      type="checkbox"
-                      id="allow_overdraft"
-                      checked={specificData.allow_overdraft || false}
-                      onChange={e =>
-                        setSpecificData({ ...specificData, allow_overdraft: e.target.checked })
-                      }
-                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                    />
-                    <label
-                      htmlFor="allow_overdraft"
-                      style={{ fontWeight: '500', color: '#374151', cursor: 'pointer' }}
-                    >
-                      Allow Overdraft
-                    </label>
-                  </div>
-
-                  {specificData.allow_overdraft && (
-                    <div>
-                      <label
-                        style={{
-                          display: 'block',
-                          fontWeight: '500',
-                          marginBottom: '8px',
-                          color: '#374151',
-                        }}
-                      >
-                        Overdraft Limit
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={specificData.overdraft_limit || ''}
-                        onChange={e =>
-                          setSpecificData({ ...specificData, overdraft_limit: e.target.value })
-                        }
-                        placeholder="0.00"
-                        style={{
-                          width: '100%',
-                          padding: '12px',
-                          border: '1px solid #d1d5db',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                        }}
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* LOAN-specific fields */}
-              {accountType === 'LOAN' && specificData.product_id && (
-                <>
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontWeight: '500',
-                        marginBottom: '8px',
-                        color: '#374151',
-                      }}
-                    >
-                      Interest Rate (%)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={specificData.interest_rate || ''}
-                      onChange={e =>
-                        setSpecificData({ ...specificData, interest_rate: e.target.value })
-                      }
-                      placeholder={
-                        products
-                          .find(p => p.id === specificData.product_id)
-                          ?.interest_rate?.toString() || '12.00'
-                      }
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                      }}
-                    />
-                    <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                      Leave blank to use product default
-                    </div>
-                  </div>
-
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontWeight: '500',
-                        marginBottom: '8px',
-                        color: '#374151',
-                      }}
-                    >
-                      Term (Months)
-                    </label>
-                    <input
-                      type="number"
-                      value={specificData.term_months || ''}
-                      onChange={e =>
-                        setSpecificData({ ...specificData, term_months: e.target.value })
-                      }
-                      placeholder="12"
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                      }}
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      style={{
-                        display: 'block',
-                        fontWeight: '500',
-                        marginBottom: '8px',
-                        color: '#374151',
-                      }}
-                    >
-                      Repayment Frequency
-                    </label>
-                    <select
-                      value={specificData.repayment_frequency || 'monthly'}
-                      onChange={e =>
-                        setSpecificData({ ...specificData, repayment_frequency: e.target.value })
-                      }
-                      style={{
-                        width: '100%',
-                        padding: '12px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                      }}
-                    >
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="biweekly">Bi-weekly</option>
-                      <option value="monthly">Monthly</option>
-                      <option value="quarterly">Quarterly</option>
-                    </select>
-                  </div>
-                </>
-              )}
-            </>
-          )}
-
       </div>
 
       <div style={{ marginTop: '24px', display: 'flex', justifyContent: 'space-between' }}>
@@ -1016,7 +573,7 @@ const UnifiedAccountCreationPage: React.FC = () => {
         </button>
         <button
           onClick={() => {
-            if (!formData.name) {
+            if (!formData.name.trim()) {
               setError('Please fill in all required fields');
               return;
             }
@@ -1031,9 +588,9 @@ const UnifiedAccountCreationPage: React.FC = () => {
             padding: '12px 24px',
             border: 'none',
             borderRadius: '8px',
-            background: formData.name ? config?.color : '#9ca3af',
+            background: formData.name.trim() ? config?.color : '#9ca3af',
             color: 'white',
-            cursor: formData.name ? 'pointer' : 'not-allowed',
+            cursor: formData.name.trim() ? 'pointer' : 'not-allowed',
             fontWeight: '500',
           }}
         >
@@ -1131,24 +688,23 @@ const UnifiedAccountCreationPage: React.FC = () => {
           </button>
           <button
             onClick={() => {
-              if (!formData.parent && parentAccounts.length > 0) {
+              if (!formData.parent) {
                 setError('Please select a parent account');
                 return;
               }
               setError(null);
               setStep(4);
             }}
-            disabled={parentAccounts.length === 0}
+            disabled={parentAccounts.length === 0 || !formData.parent}
             style={{
               padding: '12px 24px',
               border: 'none',
               borderRadius: '8px',
               background:
-                formData.parent || parentAccounts.length === 0 ? config?.color : '#9ca3af',
+                parentAccounts.length === 0 || !formData.parent ? '#9ca3af' : config?.color,
               color: 'white',
-              cursor: formData.parent || parentAccounts.length === 0 ? 'pointer' : 'not-allowed',
+              cursor: parentAccounts.length === 0 || !formData.parent ? 'not-allowed' : 'pointer',
               fontWeight: '500',
-              opacity: parentAccounts.length === 0 ? 0.5 : 1,
             }}
           >
             Next →
@@ -1232,17 +788,6 @@ const UnifiedAccountCreationPage: React.FC = () => {
 
             <div style={{ fontWeight: '600', color: '#6b7280' }}>Account Code:</div>
             <div style={{ color: '#111827', fontFamily: 'monospace' }}>Auto-generated on creation</div>
-
-            {Object.entries(specificData).map(([key, value]: [string, any]) => (
-              <React.Fragment key={key}>
-                <div style={{ fontWeight: '600', color: '#6b7280', textTransform: 'capitalize' }}>
-                  {key.replace(/_/g, ' ')}:
-                </div>
-                <div style={{ color: '#111827' }}>
-                  {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}
-                </div>
-              </React.Fragment>
-            ))}
           </div>
         </div>
 
@@ -1934,6 +1479,7 @@ const UnifiedAccountCreationPage: React.FC = () => {
                   type="text"
                   value={newCategoryName}
                   onChange={e => setNewCategoryName(e.target.value)}
+                  maxLength={100}
                   placeholder="e.g., Current Assets, Fixed Assets"
                   style={{
                     width: '100%',

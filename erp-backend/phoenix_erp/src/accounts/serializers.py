@@ -103,6 +103,14 @@ class AccountSerializer(TenantModelSerializer):
         parent; parent accounts get the next free 4-digit GL code in their
         category's (or account type's) FIRS/IFRS section range.
         """
+        # Child accounts always inherit their category from the parent —
+        # enforced here (not just in the frontend) so it can't drift from a
+        # different client or a manually-crafted request.
+        if validated_data.get('account_level') == Account.LEVEL_CHILD:
+            parent = validated_data.get('parent')
+            if parent is not None:
+                validated_data['category'] = parent.category
+
         if validated_data.get('code'):
             return super().create(validated_data)
 
