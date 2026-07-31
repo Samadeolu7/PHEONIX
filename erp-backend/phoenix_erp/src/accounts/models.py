@@ -589,10 +589,22 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         Returns:
             The newly created child Account instance.
         """
-        parent = cls.objects.select_for_update().get(
+        # Parent GL codes (e.g. '2140') are unique per (tenant, branch), not
+        # globally — every branch gets its own copy of the chart of accounts
+        # via BranchCloneService. Once a tenant has more than one branch, an
+        # unscoped lookup raises MultipleObjectsReturned. Scope by branch/
+        # tenant whenever the caller supplied them on child_data.
+        parent_qs = cls.objects.select_for_update().filter(
             code=parent_code,
             account_level=cls.LEVEL_PARENT
         )
+        branch = child_data.get('branch')
+        if branch is not None:
+            parent_qs = parent_qs.filter(branch=branch)
+        tenant = child_data.get('tenant')
+        if tenant is not None:
+            parent_qs = parent_qs.filter(tenant=tenant)
+        parent = parent_qs.get()
 
         # Auto-generate sub-ledger code if not explicitly supplied
         if 'code' not in child_data:
