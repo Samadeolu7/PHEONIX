@@ -58,6 +58,7 @@ MODULES = [
     ('transactions',    'Transactions',     'ArrowLeftRight',   30),
     ('common',          'System',           'Settings',         31),
     ('widgets',         'Widgets',          'Grid',             32),
+    ('interbranch',     'Inter-Branch Transfers', 'Repeat',     33),
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,6 +209,8 @@ PAGES = [
     ('permissions', 'user-permission-overrides','User Overrides','list',2),
     # notifications
     ('notifications', 'notifications', 'Notifications',      'list',   1),
+    # interbranch
+    ('interbranch', 'transfers',       'Inter-Branch Transfers', 'list', 1),
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -346,6 +349,8 @@ ACTIONS = [
     ('banks','bank-accounts','bank-create',              'Create Bank',     'create'),
     ('banks','bank-accounts','bank-edit',                'Edit Bank',       'edit'),
     ('banks','bank-transfers','bank-approve',            'Approve Bank Transfer','approve'),
+    # ── interbranch ───────────────────────────────────────────────────────────
+    ('interbranch','transfers','interbranch-reverse',    'Reverse Inter-Branch Transfer','approve'),
     ('banks','bank-reconciliation-exceptions','bank-recon-resolve','Resolve Reconciliation Exception','approve'),
     # ── loans ─────────────────────────────────────────────────────────────────
     ('loans','loan-accounts','loan-list',                'List Loans',      'view'),

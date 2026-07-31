@@ -512,7 +512,8 @@ class StockMovement(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     objects = OwnerBranchManager()
     
     def save(self, *args, **kwargs):
-        """Auto-set tenant if not provided"""
+        """Compute total_cost and auto-set tenant if not provided"""
+        self.total_cost = self.quantity * self.unit_cost
         if not self.tenant_id:
             from common.managers import get_current_tenant
             tenant = get_current_tenant()
@@ -525,20 +526,16 @@ class StockMovement(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             elif self.branch and hasattr(self.branch, 'tenant'):
                 self.tenant = self.branch.tenant
         super().save(*args, **kwargs)
-    
+
     class Meta:
         ordering = ['-movement_date', '-created_at']
         indexes = [
             models.Index(fields=['item', 'movement_date']),
             models.Index(fields=['reference_number']),
         ]
-    
+
     def __str__(self):
         return f"{self.movement_type}: {self.item.sku} ({self.quantity})"
-    
-    def save(self, *args, **kwargs):
-        self.total_cost = self.quantity * self.unit_cost
-        super().save(*args, **kwargs)
 
 
 # ================================================================

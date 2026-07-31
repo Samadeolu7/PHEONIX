@@ -135,7 +135,104 @@ class FinancialStatementService:
             },
             'is_balanced': difference == Decimal('0.00')
         }
-    
+
+    def generate_consolidated_trial_balance(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        detail_level: str = 'summary',
+        include_zero_balances: bool = False
+    ) -> Dict:
+        """
+        Tenant-wide trial balance across every branch, with reciprocal
+        inter-branch "Due from / Due to" clearing account pairs (see
+        interbranch.models.InterBranchClearingAccount) eliminated from the
+        totals — each transfer posts an equal-and-opposite pair atomically
+        (interbranch.services.create_interbranch_transfer), so a matched
+        pair's combined contribution is always exactly zero; this is a
+        direct netting, not a reconciliation.
+
+        Each branch's own generate_trial_balance() is untouched — this only
+        merges and eliminates for the combined view.
+        """
+        from branches.models import Branch
+        from interbranch.models import InterBranchClearingAccount
+
+        end_date = end_date or timezone.now().date()
+        tenant = getattr(self.owner, 'tenant', None)
+        branches = Branch.objects.filter(tenant=tenant, is_deleted=False) if tenant else Branch.objects.none()
+
+        # Map (branch_id, counterparty_branch_id, direction) -> account_id,
+        # then pair each due_from with its reciprocal due_to to find the
+        # Account ids to eliminate from the combined totals.
+        clearing_rows = list(
+            InterBranchClearingAccount.objects.filter(branch__tenant=tenant, is_deleted=False)
+            .values('branch_id', 'counterparty_branch_id', 'direction', 'account_id')
+        )
+        by_key = {
+            (r['branch_id'], r['counterparty_branch_id'], r['direction']): r['account_id']
+            for r in clearing_rows
+        }
+        eliminated_account_ids = set()
+        for (branch_id, counterparty_id, direction), account_id in by_key.items():
+            if direction != InterBranchClearingAccount.DUE_FROM:
+                continue
+            reciprocal = by_key.get((counterparty_id, branch_id, InterBranchClearingAccount.DUE_TO))
+            if reciprocal:
+                eliminated_account_ids.add(account_id)
+                eliminated_account_ids.add(reciprocal)
+
+        # generate_trial_balance()'s per-account dicts carry `code`, not the
+        # Account pk, so translate eliminated ids into (branch_id, code) pairs
+        # to match against.
+        eliminated_codes_by_branch = {}
+        if eliminated_account_ids:
+            for row in Account.objects.filter(pk__in=eliminated_account_ids).values('branch_id', 'code'):
+                eliminated_codes_by_branch.setdefault(row['branch_id'], set()).add(row['code'])
+
+        combined_accounts = []
+        total_debits = Decimal('0.00')
+        total_credits = Decimal('0.00')
+
+        for branch in branches:
+            branch_service = FinancialStatementService(self.owner, branch=branch)
+            branch_tb = branch_service.generate_trial_balance(
+                start_date=start_date, end_date=end_date,
+                detail_level=detail_level, include_zero_balances=True,
+            )
+            branch_eliminated_codes = eliminated_codes_by_branch.get(branch.id, set())
+            for acct in branch_tb['accounts']:
+                if not include_zero_balances and Decimal(acct['balance']) == Decimal('0.00'):
+                    continue
+
+                is_eliminated = acct['code'] in branch_eliminated_codes
+                combined_accounts.append({
+                    **acct,
+                    'branch_id': branch.id,
+                    'branch_name': branch.name,
+                    'is_interbranch_eliminated': is_eliminated,
+                })
+                # Eliminated pairs still appear in the list (for audit
+                # visibility) but never contribute to the combined totals —
+                # they're internal claims that net to zero for the tenant.
+                if not is_eliminated:
+                    total_debits += Decimal(acct['debit'])
+                    total_credits += Decimal(acct['credit'])
+
+        difference = total_debits - total_credits
+
+        return {
+            'report_date': end_date,
+            'date_range': {'start': start_date, 'end': end_date},
+            'accounts': combined_accounts,
+            'totals': {
+                'total_debits': str(total_debits),
+                'total_credits': str(total_credits),
+                'difference': str(difference),
+            },
+            'is_balanced': difference == Decimal('0.00'),
+        }
+
     def generate_profit_loss(
         self,
         start_date: date,

@@ -32,8 +32,9 @@ def total_students_count(request):
     GET /api/widgets/students/count/
     Returns total number of active students
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     count = Client.objects.filter(
         owner=owner,
@@ -58,8 +59,9 @@ def outstanding_fees_total(request):
     GET /api/widgets/finance/outstanding-fees/
     Returns total outstanding student fees
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     # Sum all student receivable account balances
     total = Account.objects.filter(
@@ -99,8 +101,9 @@ def monthly_income(request):
     GET /api/widgets/finance/monthly-income/
     Returns income for current month
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     # Get start of current month
     now = timezone.now()
@@ -161,8 +164,9 @@ def debtor_aging_summary(request):
     GET /api/widgets/finance/debtor-aging/
     Returns aging breakdown of receivables
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     now = timezone.now()
     
@@ -250,8 +254,9 @@ def pending_approvals_count(request):
     GET /api/widgets/workflows/pending-approvals/
     Returns count of pending approvals for current user
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     user = request.user
     
     # Count approvals pending for user's roles
@@ -279,8 +284,9 @@ def recent_workflow_runs(request):
     GET /api/widgets/workflows/recent-runs/
     Returns recent workflow runs
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     limit = int(request.GET.get('limit', 5))
     
@@ -318,8 +324,9 @@ def failed_workflows_today(request):
     GET /api/widgets/workflows/failed-today/
     Returns count of failed workflows today
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     today = timezone.now().date()
     
@@ -350,8 +357,9 @@ def low_stock_alerts(request):
     GET /api/widgets/inventory/low-stock/
     Returns count of items below reorder point
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     low_stock_items = InventoryItem.objects.filter(
         owner=owner,
@@ -394,8 +402,9 @@ def total_stock_value(request):
     GET /api/widgets/inventory/stock-value/
     Returns total value of inventory on hand
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     items = InventoryItem.objects.filter(
         owner=owner,
@@ -429,8 +438,9 @@ def total_assets_count(request):
     GET /api/widgets/assets/count/
     Returns total number of active fixed assets
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     count = FixedAsset.objects.filter(
         owner=owner,
@@ -454,8 +464,9 @@ def total_asset_value(request):
     GET /api/widgets/assets/value/
     Returns total value of fixed assets (net book value)
     """
-    owner = request.user.account_owner
-    branch = request.user.current_branch
+    from common.views import resolve_effective_branch
+    owner = request.user
+    branch = resolve_effective_branch(request)
     
     assets = FixedAsset.objects.filter(
         owner=owner,

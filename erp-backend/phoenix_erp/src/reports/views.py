@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.http import HttpResponse, Http404
 
-from common.views import ScopedModelViewSet, resolve_effective_branch
+from common.views import ScopedModelViewSet, resolve_effective_branch, is_elevated_user
 from .models import (
     ReportCategory, ReportTemplate, ReportParameter,
     ReportColumn, ReportChart, ReportExecution, ReportSchedule
@@ -916,7 +916,82 @@ class FinancialReportsViewSet(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+
+    @action(detail=False, methods=['get'], url_path='consolidated_trial_balance')
+    def consolidated_trial_balance(self, request):
+        """
+        Tenant-wide trial balance across every branch, with reciprocal
+        inter-branch Due-from/Due-to clearing pairs eliminated from the
+        totals (see FinancialStatementService.generate_consolidated_trial_balance
+        and interbranch.models.InterBranchClearingAccount).
+
+        GET /api/reports/financial/consolidated_trial_balance/
+
+        Only meaningful for elevated (all-branches) users with no single
+        branch selected in the branch switcher — a single branch has
+        nothing to consolidate.
+
+        Query Parameters: same as trial_balance (start_date, end_date,
+        detail_level, include_zero_balances).
+        """
+        from datetime import datetime
+
+        if not is_elevated_user(request.user):
+            return Response({
+                'success': False,
+                'error': 'Only users with all-branches access can view the consolidated trial balance.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        if resolve_effective_branch(request) is not None:
+            return Response({
+                'success': False,
+                'error': 'Switch to All Branches (clear the branch selector) to view the consolidated trial balance.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        detail_level = request.query_params.get('detail_level', 'summary')
+        include_zero = request.query_params.get('include_zero_balances', 'false').lower() == 'true'
+
+        if start_date:
+            try:
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            except ValueError:
+                return Response({
+                    'success': False,
+                    'error': 'Invalid start_date format. Use YYYY-MM-DD'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        if end_date:
+            try:
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+            except ValueError:
+                return Response({
+                    'success': False,
+                    'error': 'Invalid end_date format. Use YYYY-MM-DD'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        if detail_level not in ['summary', 'detailed', 'all']:
+            return Response({
+                'success': False,
+                'error': 'Invalid detail_level. Use: summary, detailed, or all'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            service = FinancialStatementService(owner=request.user, branch=None)
+            report_data = service.generate_consolidated_trial_balance(
+                start_date=start_date,
+                end_date=end_date,
+                detail_level=detail_level,
+                include_zero_balances=include_zero,
+            )
+            return Response({'success': True, 'data': report_data})
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=['get'], url_path='profit_loss')
     def profit_loss(self, request):
         """

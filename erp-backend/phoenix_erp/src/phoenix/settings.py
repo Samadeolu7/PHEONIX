@@ -201,6 +201,7 @@ INSTALLED_APPS = [
     'cash_management',
     'budgets',  # Budget management and variance reporting
     'banks',  # Bank management system
+    'interbranch',  # Inter-branch transfers
     'internal_api',  # Internal endpoints consumed by Java microservices
     'permissions',  # Granular scope-aware permission system
     'threads',  # Contextual page-anchored discussion threads

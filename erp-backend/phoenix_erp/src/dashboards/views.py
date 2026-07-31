@@ -311,11 +311,13 @@ def _fetch_live_widget_data(widget, request):
     from datetime import timedelta
     from decimal import Decimal
 
+    from common.views import resolve_effective_branch
+
     config  = widget.config or {}
     wt      = widget.widget_type
     title   = (widget.title or '').lower()
-    owner   = getattr(request.user, 'account_owner', None)
-    branch  = getattr(request.user, 'current_branch', None)
+    owner   = request.user
+    branch  = resolve_effective_branch(request)
 
     def _base(extra=None):
         """Filter dict for models that have direct owner/branch fields (Transaction, etc.)."""

@@ -1912,13 +1912,31 @@ class ItemValuationViewSet(viewsets.GenericViewSet):
         GET /api/inventory/items/valuation-report/
         """
         from inventory.services.valuation_service import BatchValuationService
-        
+        from common.views import is_elevated_user, resolve_effective_branch
+
         # Get filters
         branch_id = request.query_params.get('branch_id')
         category_id = request.query_params.get('category_id')
         location_id = request.query_params.get('location_id')
-        
-        branch = request.user.branch if not branch_id else None
+
+        if branch_id:
+            from branches.models import Branch
+            try:
+                branch = Branch.objects.get(
+                    pk=branch_id, tenant=request.user.tenant, is_deleted=False
+                )
+            except (Branch.DoesNotExist, ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid branch_id'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not is_elevated_user(request.user) and branch.id != request.user.branch_id:
+                return Response(
+                    {'error': "You do not have permission to view another branch's valuation."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        else:
+            branch = resolve_effective_branch(request)
         category = None
         if category_id:
             try:

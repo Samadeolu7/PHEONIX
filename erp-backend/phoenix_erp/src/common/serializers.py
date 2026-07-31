@@ -137,6 +137,23 @@ class TenantModelSerializer(serializers.ModelSerializer):
 
         return super().create(validated_data)
 
+    def update(self, instance, validated_data):
+        """
+        owner/branch/tenant must never change via a record edit — these
+        HiddenFields' defaults exist only to populate NEW records. On a full
+        PUT, DRF's HiddenField re-resolves its default from the CURRENT
+        request (see CurrentBranchDefault/CurrentUserDefault/CurrentTenantDefault
+        above) instead of skipping via SkipField the way it does for PATCH —
+        so without this override, any full PUT silently reassigns the
+        record's branch/owner/tenant to whichever user happens to be making
+        the edit. Pop them so update() only ever touches fields the client
+        actually submitted.
+        """
+        validated_data.pop('owner', None)
+        validated_data.pop('branch', None)
+        validated_data.pop('tenant', None)
+        return super().update(instance, validated_data)
+
 
 class MenuItemSerializer(serializers.ModelSerializer):
     class Meta:
