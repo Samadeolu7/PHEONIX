@@ -87,6 +87,16 @@ export interface FixedAsset {
   depreciable_amount?: string;
   book_value?: string;
 
+  // Per-asset GL sub-ledger — null until this asset's category has been
+  // migrated to per-asset tracking (see migrate_category_to_per_asset_accounts).
+  // Until then, the asset posts to its category's shared GL accounts.
+  account?: number | null;
+  account_code?: string | null;
+  account_name?: string | null;
+  accumulated_depreciation_account?: number | null;
+  accumulated_depreciation_account_code?: string | null;
+  accumulated_depreciation_account_name?: string | null;
+
   // Location and assignment
   current_location: string;
   assigned_to: string; // legacy display string

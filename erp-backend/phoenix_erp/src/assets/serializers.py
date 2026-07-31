@@ -52,6 +52,17 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         source='accounts_payable.reference_number', read_only=True, allow_null=True
     )
 
+    # Per-asset GL sub-ledger — null until this asset's category has been
+    # migrated to per-asset tracking (see migrate_category_to_per_asset_accounts).
+    account_code = serializers.CharField(source='account.code', read_only=True, allow_null=True)
+    account_name = serializers.CharField(source='account.name', read_only=True, allow_null=True)
+    accumulated_depreciation_account_code = serializers.CharField(
+        source='accumulated_depreciation_account.code', read_only=True, allow_null=True
+    )
+    accumulated_depreciation_account_name = serializers.CharField(
+        source='accumulated_depreciation_account.name', read_only=True, allow_null=True
+    )
+
     class Meta:
         model = FixedAsset
         fields = [
@@ -66,6 +77,10 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             'accumulated_depreciation', 'book_value', 'depreciable_amount',
             # Depreciation batch grouping
             'depreciation_batch_id',
+            # Per-asset GL sub-ledger
+            'account', 'account_code', 'account_name',
+            'accumulated_depreciation_account', 'accumulated_depreciation_account_code',
+            'accumulated_depreciation_account_name',
             # Location / assignment
             'current_location', 'assigned_to',
             'assigned_to_staff', 'assigned_to_staff_name',
@@ -90,6 +105,10 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             'purchase_order', 'purchase_order_number',
             'accounts_payable', 'accounts_payable_reference',
             'depreciation_batch_id',
+            # Auto-provisioned — see assets.signals / migrate_category_to_per_asset_accounts
+            'account', 'account_code', 'account_name',
+            'accumulated_depreciation_account', 'accumulated_depreciation_account_code',
+            'accumulated_depreciation_account_name',
         ]
     
     def get_current_meter_reading(self, obj):

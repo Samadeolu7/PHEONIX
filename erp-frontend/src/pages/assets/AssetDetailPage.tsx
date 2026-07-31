@@ -499,6 +499,31 @@ const AssetDetailPage: React.FC = () => {
                   )}
                 </div>
 
+                {/* GL Account — only present once this asset's category has been
+                    migrated to per-asset tracking (see
+                    migrate_category_to_per_asset_accounts); otherwise this
+                    asset still posts to its category's shared GL accounts. */}
+                {asset.account_code && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3">GL Account</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-gray-600">Cost Account</p>
+                        <p className="font-medium font-mono text-sm">
+                          {asset.account_code} — {asset.account_name}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-600">Accumulated Depreciation Account</p>
+                        <p className="font-medium font-mono text-sm">
+                          {asset.accumulated_depreciation_account_code} —{' '}
+                          {asset.accumulated_depreciation_account_name}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Depreciation Settings */}
                 <div>
                   <h3 className="text-lg font-semibold mb-3">Depreciation Settings</h3>

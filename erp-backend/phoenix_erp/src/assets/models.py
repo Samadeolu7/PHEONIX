@@ -189,6 +189,29 @@ class FixedAsset(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         default=0
     )
 
+    # ── Per-asset GL sub-ledger (mirrors LoanAccount.account / SavingsAccount.account) ──
+    # Null until the asset's category has been migrated to per-asset tracking
+    # (see assets/management/commands/migrate_category_to_per_asset_accounts.py) —
+    # until then this asset keeps posting to category.asset_account /
+    # category.accumulated_depreciation_account exactly as before, so this is
+    # fully backward compatible and opt-in per category.
+    account = models.OneToOneField(
+        'accounts.Account',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        limit_choices_to={'account_type': 'ASSET', 'account_level': 'CHILD'},
+        related_name='fixed_asset_detail',
+        help_text="This asset's own GL cost account (once its category is migrated to per-asset tracking)"
+    )
+    accumulated_depreciation_account = models.OneToOneField(
+        'accounts.Account',
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        limit_choices_to={'account_type': 'ASSET', 'account_level': 'CHILD'},
+        related_name='fixed_asset_accumulated_depreciation_detail',
+        help_text="This asset's own accumulated-depreciation GL account (contra-asset)"
+    )
+
     # ── Depreciation batch ────────────────────────────────────────────────────
     # Assets bought in the same acquisition posting share this reference.
     # Each asset still depreciates individually (its own start_date / entries).

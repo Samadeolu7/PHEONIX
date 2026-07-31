@@ -175,7 +175,9 @@ class FixedAssetViewSet(ScopedModelViewSet):
         )
         JournalEntryLine.objects.create(
             transaction=journal_entry,
-            account=asset.category.asset_account,
+            # Per-asset account once the category is migrated to per-asset
+            # tracking; falls back to the shared category account otherwise.
+            account=asset.account or asset.category.asset_account,
             side=JournalEntryLine.CREDIT,
             amount=purchase_price,
         )
@@ -186,7 +188,7 @@ class FixedAssetViewSet(ScopedModelViewSet):
         if accum_depr > 0:
             JournalEntryLine.objects.create(
                 transaction=journal_entry,
-                account=asset.category.accumulated_depreciation_account,
+                account=asset.accumulated_depreciation_account or asset.category.accumulated_depreciation_account,
                 side=JournalEntryLine.DEBIT,
                 amount=accum_depr,
             )
@@ -975,10 +977,11 @@ class AssetDepreciationViewSet(ScopedModelViewSet):
             amount=entry.depreciation_amount
         )
         
-        # Cr: Accumulated Depreciation (contra-asset)
+        # Cr: Accumulated Depreciation (contra-asset) — per-asset account once
+        # the category is migrated to per-asset tracking.
         JournalEntryLine.objects.create(
             transaction=journal_entry,
-            account=entry.asset.category.accumulated_depreciation_account,
+            account=entry.asset.accumulated_depreciation_account or entry.asset.category.accumulated_depreciation_account,
             side=JournalEntryLine.CREDIT,
             amount=entry.depreciation_amount
         )
@@ -1341,14 +1344,6 @@ class AssetAcquisitionViewSet(ScopedModelViewSet):
             created_by=user,
         )
 
-        for cat_id, debit_amount in category_totals.items():
-            JournalEntryLine.objects.create(
-                transaction=journal,
-                account=category_accounts[cat_id],
-                side=JournalEntryLine.DEBIT,
-                amount=debit_amount,
-            )
-
         JournalEntryLine.objects.create(
             transaction=journal,
             account=ap_gl_account,
@@ -1356,8 +1351,11 @@ class AssetAcquisitionViewSet(ScopedModelViewSet):
             amount=total_credit,
         )
 
-        journal.post()
-        logger.info(f"Acquisition {acquisition.reference_number}: posted GL entry {journal.pk}")
+        # DEBIT lines are created after step 4 below (once the individual
+        # FixedAsset records — and, for a migrated category, their per-asset
+        # accounts — actually exist), then journal.post() is called once
+        # every line is in place. See the per-category branch after the
+        # asset-creation loop.
 
         # ── 4.  Create / Activate FixedAsset records ─────────────────────────
         # For each line:
@@ -1477,6 +1475,41 @@ class AssetAcquisitionViewSet(ScopedModelViewSet):
             f"Acquisition {acquisition.reference_number}: activated/created "
             f"{len(created_assets)} FixedAsset record(s)"
         )
+
+        # ── 3b.  DEBIT lines — now that every asset (and, for a migrated
+        # category, its own per-asset account) actually exists. A migrated
+        # category's asset_account has per-asset children and can no longer
+        # receive a direct entry (TransactionEntry.clean()), so it gets one
+        # DEBIT line per individual asset instead of one aggregate line.
+        assets_by_category = defaultdict(list)
+        for a in created_assets:
+            assets_by_category[a.category_id].append(a)
+
+        for cat_id, debit_amount in category_totals.items():
+            cat_account = category_accounts[cat_id]
+            # account_level=PARENT alone isn't a reliable "migrated" signal —
+            # a category account can be PARENT-level with zero children and
+            # still be directly postable (TransactionEntry.clean() only
+            # blocks a parent that HAS children). Having children is what
+            # migrate_category_to_per_asset_accounts actually produces.
+            if cat_account.children.exists():
+                for a in assets_by_category[cat_id]:
+                    JournalEntryLine.objects.create(
+                        transaction=journal,
+                        account=a.account,
+                        side=JournalEntryLine.DEBIT,
+                        amount=a.purchase_price,
+                    )
+            else:
+                JournalEntryLine.objects.create(
+                    transaction=journal,
+                    account=cat_account,
+                    side=JournalEntryLine.DEBIT,
+                    amount=debit_amount,
+                )
+
+        journal.post()
+        logger.info(f"Acquisition {acquisition.reference_number}: posted GL entry {journal.pk}")
 
         # ── 5.  Mark acquisition as posted ────────────────────────────────────
         acquisition.purchase_order  = po
@@ -1981,6 +2014,7 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
                 primary.depreciation_batch_id = batch_id
                 primary.save()
                 activated_assets.append(primary)
+                si_assets = [primary]
 
                 # ── Clone additional units (quantity > 1) ───────────────────
                 for seq in range(2, si.quantity + 1):
@@ -2010,14 +2044,32 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
                         tenant=tenant,
                     )
                     activated_assets.append(clone)
+                    si_assets.append(clone)
 
-                # ── DR: Asset Account (one line per asset category × qty × price)
-                JournalEntryLine.objects.create(
-                    transaction=journal,
-                    account=cat.asset_account,
-                    side=JournalEntryLine.DEBIT,
-                    amount=D(str(si.actual_unit_price)) * si.quantity,
-                )
+                # ── DR: Asset Account ──────────────────────────────────────
+                # A migrated category's asset_account has per-asset children
+                # and can no longer receive a direct entry (TransactionEntry.
+                # clean() only blocks a parent that HAS children —
+                # account_level=PARENT alone isn't a reliable "migrated"
+                # signal) — post one line per individual asset instead of one
+                # aggregate line. primary/clones already exist above (and, for
+                # a migrated category, already have their own per-asset
+                # account provisioned by assets.signals on creation).
+                if cat.asset_account.children.exists():
+                    for a in si_assets:
+                        JournalEntryLine.objects.create(
+                            transaction=journal,
+                            account=a.account,
+                            side=JournalEntryLine.DEBIT,
+                            amount=si.actual_unit_price,
+                        )
+                else:
+                    JournalEntryLine.objects.create(
+                        transaction=journal,
+                        account=cat.asset_account,
+                        side=JournalEntryLine.DEBIT,
+                        amount=D(str(si.actual_unit_price)) * si.quantity,
+                    )
 
                 si.is_activated = True
                 si.save(update_fields=['is_activated'])

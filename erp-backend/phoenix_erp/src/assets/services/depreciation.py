@@ -320,7 +320,10 @@ class DepreciationService:
         )
         JournalEntryLine.objects.create(
             transaction=journal_entry,
-            account=asset.category.accumulated_depreciation_account,
+            # Per-asset account once the category is migrated to per-asset
+            # tracking (see migrate_category_to_per_asset_accounts); the
+            # depreciation EXPENSE side above stays category-level always.
+            account=asset.accumulated_depreciation_account or asset.category.accumulated_depreciation_account,
             side=JournalEntryLine.CREDIT,
             amount=entry.depreciation_amount,
         )
