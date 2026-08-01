@@ -74,7 +74,7 @@ const RenderedSidebar: React.FC<RenderedSidebarProps> = ({ config, onNavigate, o
             >
               <img
                 src={BRAND.logoUrl}
-                alt="Example finance"
+                alt={BRAND.shortName}
                 style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '50%' }}
                 onError={e => {
                   const el = e.currentTarget as HTMLImageElement;
@@ -99,7 +99,7 @@ const RenderedSidebar: React.FC<RenderedSidebarProps> = ({ config, onNavigate, o
                   textTransform: 'uppercase',
                 }}
               >
-                Example finance ERP
+                {BRAND.systemLabel}
               </div>
             </div>
           </div>

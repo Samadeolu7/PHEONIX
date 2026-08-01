@@ -622,7 +622,7 @@ const HomePageWithNavigation: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <img
               src={BRAND.logoUrl}
-              alt="Example finance"
+              alt={BRAND.shortName}
               style={{
                 height: '36px',
                 width: '36px',
