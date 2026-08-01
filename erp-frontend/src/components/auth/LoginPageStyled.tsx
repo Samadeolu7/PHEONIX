@@ -361,7 +361,7 @@ const LoginPageStyled: React.FC = () => {
             <div style={S.logoRing}>
               <img
                 src={BRAND.logoUrl}
-                alt="Krystar Trust Logo"
+                alt="Example finance Logo"
                 style={S.logoImg}
                 fetchpriority="high"
                 onError={e => {
@@ -371,7 +371,7 @@ const LoginPageStyled: React.FC = () => {
             </div>
 
             <h1 style={S.schoolName} className="mm-school">
-              <span style={S.highlight}>Krystar Trust</span>
+              <span style={S.highlight}>Example finance</span>
               <br />
               Investment Limited
             </h1>
