@@ -677,7 +677,7 @@ const DashboardBuilderStyled: React.FC = () => {
               >
                 <img
                   src={BRAND.logoUrl}
-                  alt="Krystar Trust"
+                  alt="Example finance"
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                 />
               </div>
@@ -914,7 +914,7 @@ const DashboardBuilderStyled: React.FC = () => {
           >
             <img
               src={BRAND.logoUrl}
-              alt="Krystar Trust"
+              alt="Example finance"
               style={{ width: '100%', height: '100%', objectFit: 'contain' }}
             />
           </div>
