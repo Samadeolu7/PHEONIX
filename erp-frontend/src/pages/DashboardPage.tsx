@@ -347,7 +347,7 @@ const DashboardPage: React.FC = () => {
 
       {/* Main Content */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {/* Header — Krystar Trust branding */}
+        {/* Header — Example finance branding */}
         <header
           style={{
             background: appliedTheme?.primaryColor
@@ -377,7 +377,7 @@ const DashboardPage: React.FC = () => {
             >
               <img
                 src={BRAND.logoUrl}
-                alt="Krystar Trust"
+                alt="Example finance"
                 style={{ width: '100%', height: '100%', objectFit: 'contain' }}
               />
             </div>
