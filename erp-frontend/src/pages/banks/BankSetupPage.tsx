@@ -357,7 +357,7 @@ const BankSetupPage: React.FC = () => {
               <input
                 type="text"
                 title="Account name"
-                placeholder="e.g. Krystar Trust Main Account"
+                placeholder="e.g. Example finance Main Account"
                 value={acct.account_name}
                 onChange={e => setAcctField('account_name', e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"

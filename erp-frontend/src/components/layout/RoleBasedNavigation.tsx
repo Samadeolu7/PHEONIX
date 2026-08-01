@@ -156,7 +156,7 @@ const NAV_MODULES = [
   },
 ];
 
-// Role colours — Krystar Trust brand palette
+// Role colours — Example finance brand palette
 const ROLE_COLORS: Record<string, { primary: string; accent: string }> = {
   Director: { primary: '#0a1857', accent: '#162570' }, // deep navy
   Principal: { primary: '#1a5c3a', accent: '#1e8a57' }, // forest green
@@ -269,7 +269,7 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
           <div className="flex items-center justify-between h-16">
             {/* Left side - Logo and Desktop Navigation */}
             <div className="flex items-center space-x-8">
-              {/* Krystar Trust Logo + Brand — navigates to user's default dashboard */}
+              {/* Example finance Logo + Brand — navigates to user's default dashboard */}
               <button
                 onClick={handleLogoClick}
                 className="flex items-center space-x-2 text-white hover:text-gray-200 transition-colors"
@@ -448,7 +448,7 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
             }}
           >
             <div className="px-4 py-4 space-y-2">
-              {/* Krystar Trust Logo + User Info in mobile menu */}
+              {/* Example finance Logo + User Info in mobile menu */}
               <Link
                 to="/profile"
                 onClick={closeMobileMenu}

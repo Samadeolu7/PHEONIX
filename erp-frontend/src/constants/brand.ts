@@ -1,5 +1,5 @@
 /**
- * Krystar Trust Investment Limited (KTIL)
+ * Example finance investment limited (KTIL)
  * Brand Constants
  *
  * Colour palette sourced directly from the official KTIL logo SVG:
@@ -9,11 +9,11 @@
 
 export const BRAND = {
   // ── Identity ──────────────────────────────────────────────────────────────
-  companyName: 'Krystar Trust Investment Limited',
+  companyName: 'Example finance investment limited',
   shortName: 'KTIL',
   motto: 'Building Trust, Growing Wealth',
   tagline: 'Loans • Savings • Investments • Growth',
-  systemLabel: 'Krystar Trust ERP',
+  systemLabel: 'Example finance ERP',
   govtApproved: 'CBN Compliant',
 
   // ── Assets (relative to /public) ──────────────────────────────────────────

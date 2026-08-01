@@ -172,7 +172,7 @@ export const FunctionalMenuSystem: React.FC<FunctionalMenuSystemProps> = ({
               <div className="flex items-center space-x-2">
                 <img
                   src={BRAND.logoUrl}
-                  alt="Krystar Trust"
+                  alt="Example finance"
                   className="w-8 h-8 rounded-full object-contain"
                   style={{ border: '2px solid #b79758', background: '#0a1857', padding: '2px' }}
                   onError={e => {
