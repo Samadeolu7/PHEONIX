@@ -391,9 +391,13 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
                 if hasattr(user, 'tenant') and user.tenant and 'tenant' in field_names:
                     qs = qs.filter(tenant=user.tenant)
 
-                # Tenant owners see all data within their tenant; skip branch filter
-                is_owner = callable(getattr(user, 'is_owner', None)) and user.is_owner()
-                if not is_owner:
+                # Tenant owners and other elevated (global-scope) users, e.g.
+                # directors/admins, see all branches within their tenant;
+                # skip the branch filter for them. Matches
+                # OwnerBranchManager.for_user()'s bypass rule so models
+                # without a custom manager (e.g. User) scope consistently
+                # with everything else.
+                if not self._is_elevated_user(user):
                     # Filter by the user's branch, always including NULL-branch records
                     # (tenant-wide config like fee structures, loan products, etc.).
                     if hasattr(user, 'branch') and user.branch and 'branch' in field_names:

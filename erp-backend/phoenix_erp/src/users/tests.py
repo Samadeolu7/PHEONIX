@@ -12,7 +12,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from branches.models import Branch
-from users.models import Tenant
+from users.models import Role, Tenant
 
 User = get_user_model()
 
@@ -73,3 +73,54 @@ class StaffUserSearchTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         ids = {u['id'] for u in resp.data}
         self.assertIn(self.staff_b.id, ids)
+
+
+class StaffUserListSecondDirectorTests(TestCase):
+    """
+    Regression test: a second Director — one who holds a global-scope Role
+    but is NOT the literal Tenant.owner FK holder — must see staff created in
+    any branch, both when a specific branch is selected via X-Branch-ID and
+    when viewing "All Branches" (no header). Previously
+    ScopedModelViewSet._scoped_queryset()'s fallback only bypassed the branch
+    filter for user.is_owner(), so a non-owner director was narrowed to their
+    own home branch in both cases, making any staff member created in a
+    different (or new) branch invisible on the /admin/users page.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Second Director Org', slug='second-director-org')
+        self.home_branch = Branch.objects.create(name='Home Branch', code='SD1', tenant=self.tenant)
+        self.new_branch = Branch.objects.create(name='New Branch', code='SD2', tenant=self.tenant)
+
+        owner = User.objects.create_user(
+            username='sd_owner', password='test123', tenant=self.tenant, branch=self.home_branch,
+        )
+        self.tenant.owner = owner
+        self.tenant.save(update_fields=['owner'])
+
+        director_role = Role.objects.create(tenant=self.tenant, name='Director', default_scope='global')
+        self.second_director = User.objects.create_user(
+            username='sd_second_director', password='test123', tenant=self.tenant, branch=self.home_branch,
+        )
+        self.second_director.roles.add(director_role)
+
+        self.staff_new_branch = User.objects.create_user(
+            username='sd_staff_new', password='test123', tenant=self.tenant, branch=self.new_branch,
+        )
+
+    def test_second_director_sees_staff_in_new_branch_when_selected(self):
+        self.client.force_authenticate(user=self.second_director)
+        resp = self.client.get(
+            '/api/users/staff-users/', HTTP_X_BRANCH_ID=str(self.new_branch.id)
+        )
+        self.assertEqual(resp.status_code, 200)
+        ids = {u['id'] for u in resp.data['results']} if 'results' in resp.data else {u['id'] for u in resp.data}
+        self.assertIn(self.staff_new_branch.id, ids)
+
+    def test_second_director_sees_staff_in_new_branch_on_all_branches(self):
+        self.client.force_authenticate(user=self.second_director)
+        resp = self.client.get('/api/users/staff-users/')
+        self.assertEqual(resp.status_code, 200)
+        ids = {u['id'] for u in resp.data['results']} if 'results' in resp.data else {u['id'] for u in resp.data}
+        self.assertIn(self.staff_new_branch.id, ids)

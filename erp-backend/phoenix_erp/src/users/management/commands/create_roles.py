@@ -64,6 +64,7 @@ ROLES = [
         "color": "#1e40af",
         "permission_codes": ["*"],
         "excluded_permission_codes": [],
+        "default_scope": "global",
     },
     {
         "value": "Branch Manager",
@@ -72,6 +73,7 @@ ROLES = [
         "permission_codes": ["*"],
         # Branch Manager has full authority within their branch — no approval exclusions.
         "excluded_permission_codes": [],
+        "default_scope": "own_branch",
     },
     {
         "value": "Supervisor",
@@ -80,6 +82,7 @@ ROLES = [
         "permission_codes": ["*"],
         # Supervisor can initiate and manage everything but cannot give final approvals.
         "excluded_permission_codes": SUPERVISOR_EXCLUDED_PERMISSIONS,
+        "default_scope": "ajo_group",
     },
     {
         "value": "Credit Officer",
@@ -87,6 +90,7 @@ ROLES = [
         "color": "#0891b2",
         "permission_codes": CREDIT_OFFICER_PERMISSIONS,
         "excluded_permission_codes": [],
+        "default_scope": "assigned_clients",
     },
     {
         "value": "Registrar",
@@ -94,6 +98,7 @@ ROLES = [
         "color": "#ea580c",
         "permission_codes": REGISTRAR_PERMISSIONS,
         "excluded_permission_codes": [],
+        "default_scope": "assigned_clients",
     },
 ]
 
@@ -144,6 +149,7 @@ class Command(BaseCommand):
                     color = role_def.get("color")
                     perm_codes = role_def.get("permission_codes", [])
                     excluded_codes = role_def.get("excluded_permission_codes", [])
+                    default_scope = role_def.get("default_scope")
 
                     defaults = {
                         "description": f"Auto-created role. UI color: {color}",
@@ -151,6 +157,8 @@ class Command(BaseCommand):
                         "permission_codes": perm_codes,
                         "excluded_permission_codes": excluded_codes,
                     }
+                    if default_scope:
+                        defaults["default_scope"] = default_scope
 
                     role, created = Role.objects.get_or_create(
                         tenant=tenant,
