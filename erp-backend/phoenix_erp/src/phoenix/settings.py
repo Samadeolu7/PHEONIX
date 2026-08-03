@@ -716,6 +716,18 @@ CELERY_BEAT_SCHEDULE = {
             'expires': 3600,
         }
     },
+
+    # ── Off-box database backup — the only copy of the ledger otherwise
+    # lives on this one VPS's postgres volume. Daily, off-peak, offset from
+    # every other hour=2 job so it doesn't compete with e.g. asset
+    # depreciation for DB/IO. ────────────────────────────────────────────
+    'backup-database': {
+        'task': 'common.tasks.backup_database',
+        'schedule': crontab(hour=2, minute=30),
+        'options': {
+            'expires': 3600,
+        }
+    },
 }
 
 # ==================================================
