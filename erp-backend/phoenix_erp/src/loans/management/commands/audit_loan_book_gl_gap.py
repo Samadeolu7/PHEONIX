@@ -180,6 +180,55 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS('  None — every product routes penalties/fees to a dedicated income account.'))
 
         self.stdout.write('')
+        self.stdout.write(self.style.MIGRATE_HEADING(
+            '3c. Per-loan drift on in-scope loans (Account.balance vs principal+interest)'
+        ))
+        self.stdout.write(
+            '  Absent write-offs/misrouting, each loan\'s GL child balance should exactly equal '
+            '(outstanding_principal + outstanding_interest). Any nonzero difference here is a '
+            'candidate for the unexplained residual below — sums to it exactly if buckets 1-3b '
+            'are the only other causes.'
+        )
+        drift_rows = []
+        for l in in_scope:
+            actual = l.account.balance if l.account_id else Decimal('0.00')
+            expected = l.outstanding_principal + l.outstanding_interest
+            drift = actual - expected
+            if drift != Decimal('0.00'):
+                drift_rows.append((l, actual, expected, drift))
+
+        drift_total = sum((d for _, _, _, d in drift_rows), Decimal('0.00'))
+        if drift_rows:
+            self.stdout.write(self.style.ERROR(
+                f'\n  {len(drift_rows)} in-scope loan(s) have a nonzero GL/app drift, totalling {drift_total:,.2f}:'
+            ))
+            for l, actual, expected, drift in sorted(drift_rows, key=lambda r: -abs(r[3]))[:40]:
+                self.stdout.write(
+                    f'    {l.loan_number:20} status={l.status:10} disb={l.disbursement_date} '
+                    f'gl_balance={actual:>14,.2f}  expected={expected:>14,.2f}  drift={drift:>12,.2f}'
+                )
+            if len(drift_rows) > 40:
+                self.stdout.write(f'    ... and {len(drift_rows) - 40} more.')
+
+            by_product = {}
+            for l, _, _, drift in drift_rows:
+                name = l.product.product.name if l.product.product_id else f'LoanProduct#{l.product_id}'
+                by_product[name] = by_product.get(name, Decimal('0.00')) + drift
+            self.stdout.write('\n  Drift by product:')
+            for name, total in sorted(by_product.items(), key=lambda kv: -abs(kv[1])):
+                self.stdout.write(f'    {name:35} {total:>14,.2f}')
+
+            by_month = {}
+            for l, _, _, drift in drift_rows:
+                key = l.disbursement_date.strftime('%Y-%m') if l.disbursement_date else 'unknown'
+                by_month[key] = by_month.get(key, Decimal('0.00')) + drift
+            self.stdout.write('\n  Drift by disbursement month:')
+            for month, total in sorted(by_month.items()):
+                self.stdout.write(f'    {month:10} {total:>14,.2f}')
+        else:
+            self.stdout.write(self.style.SUCCESS('  None — every in-scope loan\'s GL balance matches principal+interest exactly.'))
+
+        self.stdout.write('')
         self.stdout.write(self.style.MIGRATE_HEADING('4. Reconciliation'))
         explained = in_scope_interest + out_of_scope_total - misrouted_total
         gap = gl_total - dashboard_total
@@ -201,8 +250,7 @@ class Command(BaseCommand):
             ))
         else:
             self.stdout.write(self.style.WARNING(
-                f'\n  {unexplained:,.2f} is NOT explained by any of the three known causes — this is '
-                f'real drift between Account.balance and loan principal/interest fields on in-scope '
-                f'loans (rounding aside). Worth spot-checking a few in-scope loans with '
-                f'`inspect_loan_gl_trace <loan_number>` to find where the postings diverge.'
+                f'\n  {unexplained:,.2f} is NOT explained by any of the three known causes — see '
+                f'section 3c above for the specific in-scope loans carrying that drift. Spot-check '
+                f'a few with `inspect_loan_gl_trace <loan_number>` to find where the postings diverge.'
             ))
