@@ -71,7 +71,31 @@ class Command(BaseCommand):
         for supplier in suppliers:
             # ── 1. Ensure the supplier has its own account ──────────────────
             if not supplier.account_id:
-                if apply_changes:
+                # Some suppliers already have a dedicated liability account
+                # from an earlier data migration (e.g. an opening-balance
+                # import named the account after the vendor, like "KPD
+                # Concept (2026)") — these predate the Supplier.account field
+                # and were never linked to anything. Prefer reusing one of
+                # those (it may carry real historical balance) over creating
+                # a brand-new, empty duplicate. Only auto-link on an
+                # unambiguous single match; anything murkier is left for
+                # `relink_supplier_account` to resolve by hand.
+                legacy_match = self._find_legacy_account(supplier)
+                if legacy_match:
+                    if apply_changes:
+                        supplier.account = legacy_match
+                        supplier.save(update_fields=['account'])
+                        account = legacy_match
+                    else:
+                        self.stdout.write(
+                            f"[DRY-RUN] Would link supplier {supplier.supplier_code} - "
+                            f"{supplier.name} to EXISTING legacy account "
+                            f"'{legacy_match.name}' ({legacy_match.code}) instead of "
+                            f"creating a new one — verify this is the right account."
+                        )
+                        accounts_created += 1
+                        continue
+                elif apply_changes:
                     account = get_or_create_supplier_payable_account(
                         supplier, supplier.owner, supplier.branch
                     )
@@ -178,3 +202,37 @@ class Command(BaseCommand):
         ))
         if not apply_changes:
             self.stdout.write("Re-run with --apply to make these changes.")
+
+    def _find_legacy_account(self, supplier):
+        """
+        Look for an existing, unlinked LIABILITY/CHILD account under "Trade
+        and Other Payables" whose name matches this supplier — the kind of
+        account a prior opening-balance migration would have created,
+        named after the vendor, before Supplier.account existed to link it.
+
+        Only returns a match when there's exactly one candidate and it's not
+        already claimed by a different supplier or another entity subledger
+        (e.g. via Account.entity_subledger_q — a cashier/savings/loan/asset
+        account that just happens to share a name). Anything ambiguous
+        returns None so the caller falls back to creating a fresh account —
+        safer than guessing wrong and silently misattributing a balance.
+        """
+        from accounts.models import Account
+        from procurement.models import Supplier
+
+        scope_filter = {'account_type': 'LIABILITY', 'account_level': Account.LEVEL_CHILD,
+                         'parent__name': 'Trade and Other Payables', 'is_deleted': False}
+        if supplier.branch_id:
+            scope_filter['branch'] = supplier.branch
+
+        candidates = list(
+            Account.objects.filter(**scope_filter, name__istartswith=supplier.name)
+            .exclude(Account.entity_subledger_q())
+        )
+        if len(candidates) != 1:
+            return None
+
+        candidate = candidates[0]
+        if Supplier.objects.filter(account_id=candidate.id).exclude(pk=supplier.pk).exists():
+            return None
+        return candidate
