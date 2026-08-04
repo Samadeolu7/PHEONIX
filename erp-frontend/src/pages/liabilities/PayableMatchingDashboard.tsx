@@ -249,7 +249,7 @@ const PayableMatchingDashboard: React.FC = () => {
                       <td className="px-3 py-2 text-gray-900">{item.vendor_name}</td>
                       <td className="px-3 py-2 text-gray-600">{item.invoice_number}</td>
                       <td className="px-3 py-2 text-right text-gray-900">
-                        ₦{parseFloat(item.total_amount).toLocaleString()}
+                        ₦{parseFloat(item.amount).toLocaleString()}
                       </td>
                       <td className="px-3 py-2">
                         <span

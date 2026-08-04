@@ -68,7 +68,7 @@ const BankPaymentFormPage: React.FC = () => {
 
   // Selected payable record (for info panel + over-payment warning)
   const selectedPayable = payables.find(p => String(p.id) === formData.accounts_payable) ?? null;
-  const payableOutstanding = selectedPayable ? parseFloat(selectedPayable.amount_due) : null;
+  const payableOutstanding = selectedPayable ? parseFloat(selectedPayable.outstanding_amount) : null;
   const paymentAmount = parseFloat(formData.amount);
   const isOverPayment =
     payableOutstanding !== null && !isNaN(paymentAmount) && paymentAmount > payableOutstanding;
@@ -84,14 +84,7 @@ const BankPaymentFormPage: React.FC = () => {
       description: '',
     }));
 
-  const getPayableDue = (payable: AccountsPayableListItem) => {
-    if (payable.amount_due) return payable.amount_due;
-    if (payable.total_amount && payable.amount_paid) {
-      const due = Number(payable.total_amount) - Number(payable.amount_paid);
-      return due > 0 ? due.toFixed(2) : '0.00';
-    }
-    return payable.total_amount;
-  };
+  const getPayableDue = (payable: AccountsPayableListItem) => payable.outstanding_amount;
 
   const handlePayableChange = (id: string) => {
     const payable = payables.find(item => item.id === Number(id));
@@ -271,7 +264,7 @@ const BankPaymentFormPage: React.FC = () => {
                   <option value="">Select payable...</option>
                   {payables.map(item => (
                     <option key={item.id} value={item.id}>
-                      {item.invoice_number} {item.vendor_name} (Due: {item.amount_due})
+                      {item.invoice_number} {item.vendor_name} (Due: {item.outstanding_amount})
                     </option>
                   ))}
                 </select>
@@ -291,7 +284,7 @@ const BankPaymentFormPage: React.FC = () => {
                     Invoice Total
                   </span>
                   <p className="font-medium text-gray-900">
-    ₦{parseFloat(selectedPayable.total_amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+    ₦{parseFloat(selectedPayable.amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div>
@@ -303,7 +296,7 @@ const BankPaymentFormPage: React.FC = () => {
                 <div>
                   <span className="text-blue-600 text-xs uppercase tracking-wide">Outstanding</span>
                   <p className="font-semibold text-red-600">
-                    ₦{parseFloat(selectedPayable.amount_due).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ₦{parseFloat(selectedPayable.outstanding_amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
               </div>

@@ -91,6 +91,7 @@ export interface AccountsPayable {
 
 export interface AccountsPayableListItem {
   id: number;
+  reference_number: string;
   invoice_number: string;
   invoice_date: string;
   due_date: string;

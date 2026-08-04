@@ -49,14 +49,14 @@ const ApplyAdvanceModal: React.FC<ApplyAdvanceModalProps> = ({ payment, onClose,
 
   // Only show APs that still have a remaining balance
   const openPayables: AccountsPayableListItem[] = (payablesData?.results ?? []).filter(
-    ap => parseFloat(ap.amount_due) > 0 && ap.status !== 'paid' && ap.status !== 'cancelled'
+    ap => parseFloat(ap.outstanding_amount) > 0 && ap.status !== 'paid' && ap.status !== 'cancelled'
   );
 
   const advanceRemaining = parseFloat(payment.advance_remaining ?? payment.amount ?? '0');
 
   const selectedAp = openPayables.find(ap => ap.id === selectedApId);
   const maxAmount = selectedAp
-    ? Math.min(advanceRemaining, parseFloat(selectedAp.amount_due)).toFixed(2)
+    ? Math.min(advanceRemaining, parseFloat(selectedAp.outstanding_amount)).toFixed(2)
     : advanceRemaining.toFixed(2);
 
   const handleApplyFull = () => {
@@ -121,7 +121,7 @@ const ApplyAdvanceModal: React.FC<ApplyAdvanceModalProps> = ({ payment, onClose,
             <option value="">— Select invoice —</option>
             {openPayables.map(ap => (
               <option key={ap.id} value={ap.id}>
-                {ap.invoice_number} | Due: {parseFloat(ap.amount_due).toFixed(2)} | Status:{' '}
+                {ap.invoice_number} | Due: {parseFloat(ap.outstanding_amount).toFixed(2)} | Status:{' '}
                 {ap.status}
               </option>
             ))}

@@ -186,7 +186,7 @@ class AccountsPayableListSerializer(serializers.ModelSerializer):
     class Meta:
         model = AccountsPayable
         fields = [
-            'id', 'invoice_number', 'invoice_date', 'due_date',
+            'id', 'reference_number', 'invoice_number', 'invoice_date', 'due_date',
             'amount', 'amount_paid', 'outstanding_amount',
             'vendor_name', 'account_name',
             'status', 'three_way_match_status',
