@@ -248,7 +248,7 @@ class MicrofinanceDashboardStatsView(APIView):
                 module='loans', page='loan-accounts',
             )
 
-            data['active_loans'] = loan_qs.filter(status__in=['active', 'disbursed']).count()
+            data['active_loans'] = loan_qs.filter(status__in=['active', 'disbursed', 'defaulted']).count()
 
             # Gross Loan Portfolio — must match the PAR report's definition
             # (loans/views.py par_summary/cbn_returns), which includes
