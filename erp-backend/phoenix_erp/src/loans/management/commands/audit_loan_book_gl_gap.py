@@ -8,20 +8,36 @@ over loans with status in active/disbursed/defaulted).
 
 There are two independent, legitimate-vs-suspect sources for this gap:
 
-  1. EXPECTED — interest baked into the receivable. At disbursement, when
-     a product has interest_income_account configured but no deferral
-     accounts (the default — see LoanAccount.disburse()), the full
-     scheduled interest is debited into the SAME per-loan GL account as
-     the principal:
+  1. EXPECTED — interest baked into the receivable, but ONLY for loans on
+     the "recognize interest at disbursement" regime (interest_recognized_
+     at_disbursement=True — the default when a product has
+     interest_income_account configured and no deferral accounts; see
+     LoanAccount.disburse()). For those loans, the full scheduled interest
+     is debited into the SAME per-loan GL account as the principal:
          Dr. Loan Receivable  disbursed_amount + total_interest
          Cr. Cash / Interest Income
-     So a loan's GL child-account balance tracks
+     So that loan's GL child-account balance tracks
      (outstanding_principal + outstanding_interest), not principal alone.
-     The dashboard, deliberately, only sums outstanding_principal (it says
-     so in a comment — matches the PAR report's Gross Loan Portfolio
-     definition). This alone explains a GL total that's HIGHER than the
-     dashboard figure by roughly the sum of outstanding_interest across
-     in-scope loans.
+
+     Loans where interest_recognized_at_disbursement is False (interest
+     never posted at disbursement — the "legacy cash-basis fallback": see
+     record_payment()'s interest_account branch) instead recognize interest
+     directly to Income only as it's collected, never touching Loan
+     Receivable at all. For those, GL correctly tracks outstanding_principal
+     ALONE — including its own outstanding_interest would overstate what
+     bucket 1 predicts. Confirmed 2026-08 via inspect_loan_gl_trace on
+     LN-20260702-7802DE: disbursement posted only principal to 1156, no
+     interest line, matching interest_recognized_at_disb=False.
+
+     Loans with interest_deferral_active=True book interest through
+     accrued_interest_account/unearned_interest_income_account instead of
+     Loan Receivable — also excluded here for the same reason.
+
+     The dashboard, deliberately, only sums outstanding_principal regardless
+     of regime (it says so in a comment — matches the PAR report's Gross
+     Loan Portfolio definition). Bucket 1 below only counts
+     outstanding_interest for loans actually on the disbursement-recognition
+     regime, to match what's really sitting in the GL.
 
   2. SUSPECT — orphaned balance on out-of-scope loans. The dashboard only
      sums loans with status in ('active', 'disbursed', 'defaulted'). Any
@@ -104,14 +120,27 @@ class Command(BaseCommand):
 
         in_scope = loans.filter(status__in=IN_SCOPE_STATUSES)
         dashboard_total = in_scope.aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0.00')
-        in_scope_interest = in_scope.aggregate(t=Sum('outstanding_interest'))['t'] or Decimal('0.00')
+
+        # Only loans on the disbursement-recognition regime actually have
+        # their interest baked into the Loan Receivable GL account — see
+        # bucket 1 in the module docstring.
+        recognized_at_disb = in_scope.filter(interest_recognized_at_disbursement=True)
+        cash_basis_or_deferred = in_scope.exclude(interest_recognized_at_disbursement=True)
+        in_scope_interest = recognized_at_disb.aggregate(t=Sum('outstanding_interest'))['t'] or Decimal('0.00')
+        excluded_interest = cash_basis_or_deferred.aggregate(t=Sum('outstanding_interest'))['t'] or Decimal('0.00')
 
         self.stdout.write('')
         self.stdout.write(self.style.MIGRATE_HEADING('2. Dashboard side'))
         self.stdout.write(f'  Loans in dashboard scope (status in {IN_SCOPE_STATUSES}): {in_scope.count()}')
         self.stdout.write(f'  Sum(outstanding_principal) (= dashboard "Loan Book"):    {dashboard_total:,.2f}')
-        self.stdout.write(f'  Sum(outstanding_interest) on those same loans:          {in_scope_interest:,.2f}')
-        self.stdout.write(f'  Sum(principal + interest) on those same loans:         {(dashboard_total + in_scope_interest):,.2f}')
+        self.stdout.write(
+            f'  Sum(outstanding_interest), disbursement-recognized loans only:  {in_scope_interest:,.2f} '
+            f'({recognized_at_disb.count()} loan(s) — this is what\'s actually in the GL)'
+        )
+        self.stdout.write(
+            f'  Sum(outstanding_interest), cash-basis/deferred loans (excluded): {excluded_interest:,.2f} '
+            f'({cash_basis_or_deferred.count()} loan(s) — correctly NOT in Loan Receivable yet)'
+        )
 
         self.stdout.write('')
         self.stdout.write(self.style.MIGRATE_HEADING('3. Out-of-scope loans still carrying a GL balance'))
@@ -181,18 +210,21 @@ class Command(BaseCommand):
 
         self.stdout.write('')
         self.stdout.write(self.style.MIGRATE_HEADING(
-            '3c. Per-loan drift on in-scope loans (Account.balance vs principal+interest)'
+            '3c. Per-loan drift on in-scope loans (Account.balance vs expected)'
         ))
         self.stdout.write(
-            '  Absent write-offs/misrouting, each loan\'s GL child balance should exactly equal '
-            '(outstanding_principal + outstanding_interest). Any nonzero difference here is a '
-            'candidate for the unexplained residual below — sums to it exactly if buckets 1-3b '
-            'are the only other causes.'
+            '  Expected = outstanding_principal + outstanding_interest for loans with '
+            'interest_recognized_at_disbursement=True, else outstanding_principal alone '
+            '(cash-basis/deferred loans never post interest into Loan Receivable). Absent '
+            'write-offs/misrouting, actual should match exactly — any nonzero difference here is a '
+            'candidate for the unexplained residual below.'
         )
         drift_rows = []
         for l in in_scope:
             actual = l.account.balance if l.account_id else Decimal('0.00')
-            expected = l.outstanding_principal + l.outstanding_interest
+            expected = l.outstanding_principal
+            if l.interest_recognized_at_disbursement:
+                expected += l.outstanding_interest
             drift = actual - expected
             if drift != Decimal('0.00'):
                 drift_rows.append((l, actual, expected, drift))
@@ -226,7 +258,7 @@ class Command(BaseCommand):
             for month, total in sorted(by_month.items()):
                 self.stdout.write(f'    {month:10} {total:>14,.2f}')
         else:
-            self.stdout.write(self.style.SUCCESS('  None — every in-scope loan\'s GL balance matches principal+interest exactly.'))
+            self.stdout.write(self.style.SUCCESS('  None — every in-scope loan\'s GL balance matches its expected value exactly.'))
 
         self.stdout.write('')
         self.stdout.write(self.style.MIGRATE_HEADING('4. Reconciliation'))
