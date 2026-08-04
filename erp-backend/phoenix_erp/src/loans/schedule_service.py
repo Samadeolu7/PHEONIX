@@ -15,21 +15,24 @@ Installment count calculation
 Installments are counted by date, not by dividing days by a period length.
 Given a loan term and disbursement date:
   1. Compute the exact maturity date using calendar arithmetic (relativedelta).
-  2. Step through payment dates from the first due date (honouring any buffer)
-     to the maturity date, advancing by one frequency period each step.
-  3. The count of those dates is the number of installments.
+  2. Step through payment dates from the first naturally-occurring due date
+     (disbursement + one frequency period, buffer NOT applied yet) to that
+     maturity date, advancing by one frequency period each step.
+  3. The count of those dates is the number of installments — always driven
+     purely by term ÷ frequency, never by the buffer.
+  4. Only then is the buffer applied: every due date in the list (including
+     the effective maturity) is shifted forward by buffer_days as a block.
 
 This means:
-  • Monthly frequency + 6-month term  → exactly 6 installments
-  • Weekly  frequency + 3-month term  → however many Mondays (or whatever day)
-    fall within the 3-month window after the optional buffer period
-  • The buffer is additive: it is added on top of the first naturally-occurring
-    due date (disbursement + one frequency period), not used as a floor. E.g.
-    weekly frequency + 7-day buffer pushes the first due date to day 14, not
-    day 7 — a buffer equal to (or smaller than) the frequency period is never
-    a no-op. Later installments continue stepping by the normal frequency
-    period from that shifted first due date, so the schedule never runs past
-    the loan's maturity date.
+  • Monthly frequency + 6-month term  → exactly 6 installments, regardless
+    of buffer.
+  • Weekly  frequency + 3-month term  → however many Mondays (or whatever
+    day) fall within the 3-month window, regardless of buffer.
+  • The buffer delays the whole schedule (and therefore pushes the loan's
+    effective maturity out by the same amount) — it never eats an
+    installment. E.g. weekly frequency + 7-day buffer still yields the
+    installment count implied by the term; it just moves every due date,
+    including the last one, one week later than it would otherwise land.
 """
 from __future__ import annotations
 
@@ -68,13 +71,13 @@ def _build_due_dates(disbursement_date, date_increment, maturity_date, buffer_da
     """
     Return the list of payment due dates for a loan.
 
-    Steps forward by date_increment from the first due date (after any buffer)
-    until the maturity date is reached.  The maturity date is inclusive so the
-    final installment can fall exactly on it.
+    Steps forward by date_increment from the first naturally-occurring due
+    date until the (unbuffered) maturity date is reached — this fixes the
+    installment count from term ÷ frequency alone.  The buffer is then
+    applied as a uniform shift across every date in the list, so it delays
+    the schedule without ever dropping an installment.
     """
     first_due = disbursement_date + date_increment
-    if buffer_days > 0:
-        first_due += timedelta(days=buffer_days)
 
     due_dates = []
     current = first_due
@@ -82,9 +85,13 @@ def _build_due_dates(disbursement_date, date_increment, maturity_date, buffer_da
         due_dates.append(current)
         current += date_increment
 
-    # Always at least one payment even if the buffer consumed the whole term
+    # Always at least one payment even for a term shorter than one period
     if not due_dates:
         due_dates = [first_due]
+
+    if buffer_days > 0:
+        shift = timedelta(days=buffer_days)
+        due_dates = [d + shift for d in due_dates]
 
     return due_dates
 
