@@ -61,18 +61,28 @@ class Command(BaseCommand):
         from loans.models import LoanAccount
         from accounts.models import Account
 
-        try:
-            parent = Account.objects.get(code='1150', account_level=Account.LEVEL_PARENT)
-        except Account.DoesNotExist:
+        # Account is branch-scoped, so code='1150' has one PARENT row per
+        # branch, not a single tenant-wide row. Sum across all of them to
+        # match a tenant-wide ("all branches") Trial Balance view.
+        parents = list(Account.objects.filter(code='1150', account_level=Account.LEVEL_PARENT).select_related('branch'))
+        if not parents:
             self.stdout.write(self.style.ERROR("No parent Account with code '1150' found."))
             return
 
-        children = Account.objects.filter(parent=parent, is_deleted=False)
+        children = Account.objects.filter(parent__in=parents, is_deleted=False)
         gl_total = children.aggregate(t=Sum('balance'))['t'] or Decimal('0.00')
         self.stdout.write(self.style.MIGRATE_HEADING('1. GL side'))
-        self.stdout.write(f'  Sum of Account.balance across {children.count()} child account(s) under 1150: {gl_total:,.2f}')
         self.stdout.write(
-            "  (If the Trial Balance shows a different 1150 total than this, the parent itself "
+            f'  Sum of Account.balance across {children.count()} child account(s) under '
+            f'{len(parents)} branch-level 1150 parent(s): {gl_total:,.2f}'
+        )
+        for p in parents:
+            branch_total = Account.objects.filter(parent=p, is_deleted=False).aggregate(
+                t=Sum('balance'))['t'] or Decimal('0.00')
+            branch_name = p.branch.name if p.branch_id else '(no branch)'
+            self.stdout.write(f'    branch={branch_name:20} 1150 total={branch_total:,.2f}')
+        self.stdout.write(
+            "  (If the Trial Balance shows a different 1150 total than this, a parent itself "
             "has direct postings — allow_manual_entries — not modeled by this command.)"
         )
 
