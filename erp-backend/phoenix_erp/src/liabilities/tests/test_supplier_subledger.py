@@ -114,7 +114,7 @@ class SupplierSubledgerTests(TestCase):
         # Simulate the invoice's own GL posting (normally done by the GRN/
         # expense caller): Cr supplier's own account for the invoice amount.
         from transactions.models import TransactionSeries
-        series, _ = TransactionSeries.objects.get_or_create(code='TESTINV', defaults={'description': 'Test invoice'})
+        series, _ = TransactionSeries.objects.get_or_create(code='TINV1', defaults={'description': 'Test invoice'})
         invoice_txn = Transaction.objects.create(
             series=series, date=timezone.now().date(), description='Test invoice posting',
             branch=self.branch, owner=self.user, tenant=self.tenant,
@@ -244,7 +244,7 @@ class SupplierSubledgerTests(TestCase):
             owner=self.user,
         )
         inv_series, _ = TransactionSeries.objects.get_or_create(
-            code='TESTINV2', defaults={'description': 'Test invoice'}
+            code='TINV2', defaults={'description': 'Test invoice'}
         )
         inv_txn = Transaction.objects.create(
             series=inv_series, date=timezone.now().date(),

@@ -118,7 +118,7 @@ class Command(BaseCommand):
         with transaction.atomic():
             if old_account and transfer_amount != 0:
                 series, _ = TransactionSeries.objects.get_or_create(
-                    code='ACCTRF', defaults={'description': 'GL Account Transfer / Correction'},
+                    code='RELNK', defaults={'description': 'GL Account Transfer / Correction'},
                 )
                 journal_entry = JournalEntry.objects.create(
                     series=series,
