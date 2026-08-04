@@ -32,7 +32,19 @@ There are two independent, legitimate-vs-suspect sources for this gap:
      fix_terminal_loan_legacy_balance.py (loans marked terminal by a
      legacy import without the GL being fully cleared).
 
-This command buckets the gap between these two causes and flags anything
+  3. EXPECTED (once identified) — penalties/fees folded into the
+     receivable. record_payment() credits penalty_payment / fee_payment
+     to the Loan Receivable account (loan_account_credit) instead of a
+     dedicated income account whenever LoanProduct.penalty_income_account
+     / fee_income_account is not configured (see loans/models.py
+     ~line 1204-1209) — the same misrouting already documented in
+     audit_penalty_income_gl_mapping.py. Critically, outstanding_penalties
+     and outstanding_fees are separate fields from outstanding_principal/
+     outstanding_interest, so every such payment shrinks the GL balance
+     WITHOUT shrinking (principal + interest) — pushing the GL total
+     BELOW what bucket 1 alone would predict.
+
+This command buckets the gap between these causes and flags anything
 left over as unexplained drift between Account.balance (the cached field
 the Trial Balance report reads for CHILD accounts) and the loan's own
 principal/interest fields, worth a closer look with inspect_loan_gl_trace.
@@ -86,7 +98,9 @@ class Command(BaseCommand):
             "has direct postings — allow_manual_entries — not modeled by this command.)"
         )
 
-        loans = LoanAccount.all_objects.filter(is_deleted=False).select_related('account')
+        loans = LoanAccount.all_objects.filter(is_deleted=False).select_related(
+            'account', 'product__product', 'product__penalty_income_account', 'product__fee_income_account'
+        )
 
         in_scope = loans.filter(status__in=IN_SCOPE_STATUSES)
         dashboard_total = in_scope.aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0.00')
@@ -123,8 +137,51 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS('  None — every out-of-scope loan has a zero GL balance.'))
 
         self.stdout.write('')
+        self.stdout.write(self.style.MIGRATE_HEADING(
+            '3b. Penalties/fees folded into Loan Receivable (no income account configured)'
+        ))
+        misrouted_by_product = {}
+        misrouted_total = Decimal('0.00')
+        for l in in_scope:
+            product = l.product
+            product_name = product.product.name if product.product_id else f'LoanProduct#{product.pk}'
+            entry = misrouted_by_product.setdefault(product_name, {
+                'penalty_unrouted': not product.penalty_income_account_id,
+                'fee_unrouted': not product.fee_income_account_id,
+                'penalties_paid': Decimal('0.00'),
+                'fees_paid': Decimal('0.00'),
+            })
+            if entry['penalty_unrouted']:
+                entry['penalties_paid'] += l.penalties_paid
+                misrouted_total += l.penalties_paid
+            if entry['fee_unrouted']:
+                entry['fees_paid'] += l.fees_paid
+                misrouted_total += l.fees_paid
+
+        any_misrouted = False
+        for product_name, e in misrouted_by_product.items():
+            if e['penalty_unrouted'] and e['penalties_paid'] or e['fee_unrouted'] and e['fees_paid']:
+                any_misrouted = True
+                self.stdout.write(self.style.WARNING(
+                    f'  [{product_name}] penalty_income_account={"NOT SET" if e["penalty_unrouted"] else "set"} '
+                    f'(penalties_paid folded in: {e["penalties_paid"]:,.2f})  '
+                    f'fee_income_account={"NOT SET" if e["fee_unrouted"] else "set"} '
+                    f'(fees_paid folded in: {e["fees_paid"]:,.2f})'
+                ))
+        if any_misrouted:
+            self.stdout.write(self.style.ERROR(
+                f'\n  Total penalties+fees folded into Loan Receivable instead of an income account: '
+                f'{misrouted_total:,.2f}. These reduce the GL balance without reducing '
+                f'outstanding_principal/outstanding_interest (they live in the separate '
+                f'outstanding_penalties/outstanding_fees fields), which pushes GL BELOW what '
+                f'bucket 1 alone predicts. See audit_penalty_income_gl_mapping for the fix path.'
+            ))
+        else:
+            self.stdout.write(self.style.SUCCESS('  None — every product routes penalties/fees to a dedicated income account.'))
+
+        self.stdout.write('')
         self.stdout.write(self.style.MIGRATE_HEADING('4. Reconciliation'))
-        explained = in_scope_interest + out_of_scope_total
+        explained = in_scope_interest + out_of_scope_total - misrouted_total
         gap = gl_total - dashboard_total
         unexplained = gap - explained
         self.stdout.write(f'  GL total (1150):                         {gl_total:,.2f}')
@@ -132,18 +189,20 @@ class Command(BaseCommand):
         self.stdout.write(f'  Gap (GL - dashboard):                     {gap:,.2f}')
         self.stdout.write(f'  Explained by interest-on-receivable:      {in_scope_interest:,.2f}')
         self.stdout.write(f'  Explained by out-of-scope GL balances:    {out_of_scope_total:,.2f}')
+        self.stdout.write(f'  Less: penalties/fees folded into GL:      -{misrouted_total:,.2f}')
         self.stdout.write(f'  Unexplained residual:                     {unexplained:,.2f}')
 
         if abs(unexplained) < Decimal('1.00'):
             self.stdout.write(self.style.SUCCESS(
                 '\n  Gap is fully explained by (1) interest included in the GL receivable but not in '
-                'the dashboard\'s principal-only figure, and (2) out-of-scope loans with a residual '
-                'GL balance. No further action needed unless bucket 3 above should be corrected.'
+                'the dashboard\'s principal-only figure, (2) out-of-scope loans with a residual GL '
+                'balance, and (3) penalties/fees folded into the receivable. Nothing left to fix here '
+                'unless buckets 2/3 above should themselves be corrected.'
             ))
         else:
             self.stdout.write(self.style.WARNING(
-                f'\n  {unexplained:,.2f} is NOT explained by either known cause — this is real drift '
-                f'between Account.balance and loan principal/interest fields on in-scope loans '
-                f'(rounding aside). Worth spot-checking a few in-scope loans with '
+                f'\n  {unexplained:,.2f} is NOT explained by any of the three known causes — this is '
+                f'real drift between Account.balance and loan principal/interest fields on in-scope '
+                f'loans (rounding aside). Worth spot-checking a few in-scope loans with '
                 f'`inspect_loan_gl_trace <loan_number>` to find where the postings diverge.'
             ))
