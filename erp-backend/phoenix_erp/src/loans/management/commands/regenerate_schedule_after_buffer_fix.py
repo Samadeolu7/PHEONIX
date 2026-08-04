@@ -138,7 +138,13 @@ class Command(BaseCommand):
                 old_maturity_date = loan.maturity_date
                 old_installment_amount = loan.installment_amount
 
-                loan.repayment_schedule.all().delete()
+                # LoanRepaymentSchedule uses SoftDeleteQuerySet — plain .delete()
+                # only sets is_deleted=True and leaves the row in place, which
+                # collides with generate()'s fresh installment_number=1 insert
+                # under the (loan_id, installment_number) unique constraint.
+                # These rows have zero payment activity (guaranteed by the safe
+                # bucket above), so a real hard delete is correct here.
+                loan.repayment_schedule.all().hard_delete()
                 RepaymentScheduleService.generate(loan)
 
                 loan.refresh_from_db()
