@@ -1204,7 +1204,6 @@ class AssetAcquisitionViewSet(ScopedModelViewSet):
         from datetime import timedelta
         from decimal import Decimal
         from django.contrib.contenttypes.models import ContentType
-        from accounts.utils.account_creation import get_system_account
         from procurement.models import Supplier, PurchaseOrder
         from inventory.models import Location
         from liabilities.models import AccountsPayable
@@ -1294,7 +1293,7 @@ class AssetAcquisitionViewSet(ScopedModelViewSet):
             )
 
         # ── 2.  Create AccountsPayable ────────────────────────────────────────
-        ap_gl_account = get_system_account('accounts_payable', user, branch)
+        ap_gl_account = AccountsPayable.resolve_vendor_account(supplier, user, branch)
 
         _TERM_DAYS = {'cash': 0, 'net_15': 15, 'net_30': 30, 'net_60': 60, 'net_90': 90}
         terms    = acquisition.payment_terms or supplier.payment_terms or 'net_30'
@@ -1893,7 +1892,6 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
         from datetime import timedelta
         from decimal import Decimal as D
         from django.contrib.contenttypes.models import ContentType
-        from accounts.utils.account_creation import get_system_account
         from transactions.models import (
             Transaction as JournalEntry,
             TransactionEntry as JournalEntryLine,
@@ -1956,7 +1954,6 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
             supplier_line_map[item.supplier_id].append(item)
 
         _TERM_DAYS = {'cash': 0, 'net_15': 15, 'net_30': 30, 'net_60': 60, 'net_90': 90}
-        ap_gl_account = get_system_account('accounts_payable', user, branch)
 
         series, _ = TransactionSeries.objects.get_or_create(
             code='ASACQ',
@@ -1975,6 +1972,8 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
             terms = payment_terms_override or supplier.payment_terms or 'net_30'
             days_due = _TERM_DAYS.get(terms, 30)
             due_date = purchase_date + timedelta(days=days_due)
+
+            ap_gl_account = AccountsPayable.resolve_vendor_account(supplier, user, branch)
 
             supplier_total = sum(D(str(si.actual_unit_price)) * si.quantity for si in supplier_items)
 

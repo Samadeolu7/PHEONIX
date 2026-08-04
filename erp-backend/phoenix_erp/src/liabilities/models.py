@@ -462,6 +462,10 @@ class AccountsPayable(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             )
             journal_entry.post()
 
+            # Expose the posted entry to callers (e.g. BankPayment.post_payment)
+            # that need to link it without posting a second, duplicate entry.
+            self._last_journal_entry = journal_entry
+
         return self.amount_due  # Return remaining balance
     
     @classmethod
@@ -478,6 +482,29 @@ class AccountsPayable(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             is_deleted=False
         )
     
+    @classmethod
+    def resolve_vendor_account(cls, vendor, owner, branch):
+        """
+        Resolve the LIABILITY GL account a new AccountsPayable for *vendor*
+        should post to.
+
+        Supplier vendors get their own dedicated subledger account (see
+        accounts.utils.account_creation.get_or_create_supplier_payable_account)
+        so invoices, on-account advances, and applied payments all land on
+        one account per vendor. Client vendors (legacy — being migrated away,
+        see the `supplier` FK docstring above) keep using the single shared
+        "General Trade Creditors" system account as before.
+        """
+        from procurement.models import Supplier
+        from accounts.utils.account_creation import (
+            get_system_account,
+            get_or_create_supplier_payable_account,
+        )
+
+        if isinstance(vendor, Supplier):
+            return get_or_create_supplier_payable_account(vendor, owner, branch)
+        return get_system_account('accounts_payable', owner, branch)
+
     @classmethod
     def create_for_vendor(cls, vendor, account, invoice_number, invoice_date, due_date, amount, **kwargs):
         """

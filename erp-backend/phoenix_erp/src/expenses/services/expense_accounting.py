@@ -509,9 +509,11 @@ class PrepaidExpenseAccountingService:
         if not self.prepaid_expense.supplier_id:
             raise ValidationError("A supplier must be set to create a payable")
 
+        from liabilities.models import AccountsPayable
+
         prepaid_account = self._get_prepaid_account()
-        ap_account = get_system_account(
-            'accounts_payable',
+        ap_account = AccountsPayable.resolve_vendor_account(
+            self.prepaid_expense.supplier,
             self.prepaid_expense.owner,
             self.prepaid_expense.branch,
         )
@@ -554,8 +556,6 @@ class PrepaidExpenseAccountingService:
         journal_entry.post()
 
         # Create AccountsPayable record so the supplier obligation is tracked
-        from liabilities.models import AccountsPayable
-
         invoice_ref = (
             self.prepaid_expense.supplier_invoice
             or self.prepaid_expense.reference_number

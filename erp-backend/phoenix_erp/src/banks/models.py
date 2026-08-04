@@ -1196,9 +1196,20 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """
         Apply a portion of this on-account advance against an Accounts Payable record.
 
-        Two-step accounting cycle — this handles Step 2:
-          Step 1 (original advance): Dr Supplier Advances / Cr Bank
-          Step 2 (this method):      Dr Accounts Payable  / Cr Supplier Advances
+        Step 1 (original advance) posts Dr supplier's own AP account / Cr Bank
+        (see post_payment's supplier_id branch) — the advance already sits in
+        the SAME account an invoice for that supplier credits, so it nets
+        automatically. When `payable.account` is that same account, this
+        method only needs to update matching metadata (amount_paid/status/
+        advance_applied) — no further GL entry, since one would just be a
+        same-account Dr/Cr wash.
+
+        The one exception: a legacy AccountsPayable row still pointing at the
+        old shared "General Trade Creditors" account (not yet migrated by
+        backfill_supplier_accounts). In that case this posts a real
+        reallocation entry — Dr payable.account / Cr supplier's own account —
+        which both clears the old shared liability and consumes the advance,
+        self-healing that AP onto the correct subledger account on first use.
 
         Args:
             payable: AccountsPayable instance to clear against
@@ -1217,7 +1228,7 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             TransactionEntry as JournalEntryLine,
             TransactionSeries,
         )
-        from accounts.utils.account_creation import get_system_account
+        from liabilities.models import AccountsPayable as _AP
 
         amount = _Dec(str(amount))
 
@@ -1266,45 +1277,48 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     f"Reason: {validation_result.get('summary', 'Critical discrepancies found')}."
                 )
 
-        # ── GL journal: Dr AP / Cr Supplier Advances ──────────────────────────
-        supplier_advance_account = get_system_account('supplier_advance', self.owner, self.branch)
+        # ── GL journal (only if payable isn't already on this supplier's own
+        #    account — see docstring) ───────────────────────────────────────
+        supplier_account = _AP.resolve_vendor_account(self.supplier, self.owner, self.branch)
+        journal_entry = None
 
-        series, _ = TransactionSeries.objects.get_or_create(
-            code='ADVCL',
-            defaults={'description': 'Supplier Advance Clearance'}
-        )
+        if payable.account_id != supplier_account.id:
+            series, _ = TransactionSeries.objects.get_or_create(
+                code='ADVCL',
+                defaults={'description': 'Supplier Advance Clearance'}
+            )
 
-        invoice_ref = payable.reference_number or payable.invoice_number
-        journal_entry = JournalEntry.objects.create(
-            series=series,
-            date=timezone.now().date(),
-            description=(
-                f"Advance Cleared: {self.payment_number} → {invoice_ref} "
-                f"({payable.vendor_name})"
-            ),
-            workflow_reference=f"{self.payment_number}-CLR-{invoice_ref}",
-            branch=self.branch,
-            owner=self.owner,
-            created_by=posted_by,
-        )
+            invoice_ref = payable.reference_number or payable.invoice_number
+            journal_entry = JournalEntry.objects.create(
+                series=series,
+                date=timezone.now().date(),
+                description=(
+                    f"Advance Cleared: {self.payment_number} → {invoice_ref} "
+                    f"({payable.vendor_name})"
+                ),
+                workflow_reference=f"{self.payment_number}-CLR-{invoice_ref}",
+                branch=self.branch,
+                owner=self.owner,
+                created_by=posted_by,
+            )
 
-        # Dr: Accounts Payable — reduces the liability
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=payable.account,
-            side=JournalEntryLine.DEBIT,
-            amount=amount,
-        )
+            # Dr: (legacy) Accounts Payable account — reduces the old liability
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=payable.account,
+                side=JournalEntryLine.DEBIT,
+                amount=amount,
+            )
 
-        # Cr: Supplier Advances — reduces the asset (advance consumed)
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=supplier_advance_account,
-            side=JournalEntryLine.CREDIT,
-            amount=amount,
-        )
+            # Cr: Supplier's own account — reduces the advance (consumed)
+            JournalEntryLine.objects.create(
+                transaction=journal_entry,
+                account=supplier_account,
+                side=JournalEntryLine.CREDIT,
+                amount=amount,
+            )
 
-        journal_entry.post()
+            journal_entry.post()
 
         # ── Update AP record ───────────────────────────────────────────────────
         payable.amount_paid = (_Dec(str(payable.amount_paid)) or _Dec('0')) + amount
@@ -1325,7 +1339,7 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.save(update_fields=['advance_applied'])
 
         return {
-            'journal_entry_id': journal_entry.id,
+            'journal_entry_id': journal_entry.id if journal_entry else None,
             'amount_applied': str(amount),
             'advance_remaining': str(self.advance_remaining),
             'ap_amount_due': str(payable.amount_due),
@@ -1389,43 +1403,20 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if self.accounts_payable_id:
             payable = self.accounts_payable
 
-            # Validate and update payable (3-way match, status, etc.)
+            # Validate and update payable (3-way match, status, etc.) and post
+            # the Dr AP / Cr Bank journal entry — make_payment() does this
+            # internally and exposes it via _last_journal_entry so we don't
+            # post a second, duplicate entry for the same cash movement here.
             payable.make_payment(
                 amount=self.amount,
                 payment_date=self.payment_date,
                 notes=notes or self.description,
                 posted_by=posted_by,
-                bypass_validation=bypass_validation
+                bypass_validation=bypass_validation,
+                bank_gl_account=self.bank_account.gl_account,
             )
 
-            journal_entry = JournalEntry.objects.create(
-                series=series,
-                date=self.payment_date,
-                description=f"Bank Payment: {payable.invoice_number} - {self.description}",
-                workflow_reference=self.payment_number,
-                branch=self.branch,
-                owner=self.owner,
-                created_by=posted_by,
-            )
-
-            # Dr: Accounts Payable (liability decreases)
-            JournalEntryLine.objects.create(
-                transaction=journal_entry,
-                account=payable.account,
-                side=JournalEntryLine.DEBIT,
-                amount=self.amount
-            )
-
-            # Cr: Bank Account (asset decreases)
-            JournalEntryLine.objects.create(
-                transaction=journal_entry,
-                account=self.bank_account.gl_account,
-                side=JournalEntryLine.CREDIT,
-                amount=self.amount
-            )
-
-            journal_entry.post()
-            self.journal_entry = journal_entry
+            self.journal_entry = payable._last_journal_entry
 
         elif self.expense_id:
             expense = self.expense
@@ -1536,10 +1527,13 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             ])
 
         elif self.supplier_id:
-            # Payment on account — Dr Supplier Advances (Asset) / Cr Bank
-            supplier_advance_account = get_system_account(
-                'supplier_advance', self.owner, self.branch
-            )
+            # Payment on account — Dr supplier's own AP subledger account / Cr Bank.
+            # Posting straight to the supplier's own account (rather than a pooled
+            # "Supplier Advances" account) means it nets automatically against any
+            # invoice on the same account — see apply_advance_to_payable(), which
+            # only needs to update matching metadata, not post a second entry.
+            from liabilities.models import AccountsPayable as _AP
+            supplier_account = _AP.resolve_vendor_account(self.supplier, self.owner, self.branch)
 
             journal_entry = JournalEntry.objects.create(
                 series=series,
@@ -1553,10 +1547,10 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 created_by=posted_by,
             )
 
-            # Dr: Supplier Advances (asset increases — we are owed delivery)
+            # Dr: Supplier's own AP account (liability decreases / goes into credit)
             JournalEntryLine.objects.create(
                 transaction=journal_entry,
-                account=supplier_advance_account,
+                account=supplier_account,
                 side=JournalEntryLine.DEBIT,
                 amount=self.amount
             )

@@ -361,6 +361,105 @@ def get_or_create_staff_salary_advance_account(staff, owner, branch):
     return child_account
 
 
+def get_or_create_supplier_payable_account(supplier, owner, branch):
+    """
+    Get or create a dedicated GL child account for one supplier's own
+    Accounts Payable balance, nested under the same shared "Trade and Other
+    Payables" parent that get_system_account('accounts_payable', ...) uses.
+
+    Every supplier gets its own child account so invoices, on-account
+    advances, and applied payments all post to ONE account per vendor —
+    a real subledger, instead of every supplier sharing a single pooled
+    "General Trade Creditors" account. Advances and invoices net against
+    each other automatically since they share the same account (see
+    BankPayment.apply_advance_to_payable, which only updates matching
+    metadata and posts no further journal entry).
+
+    The assigned account is cached on supplier.account so it's only
+    created once per supplier and reused on every subsequent call.
+
+    Parameters
+    ----------
+    supplier : procurement.models.Supplier
+    owner : User
+    branch : Branch
+
+    Returns
+    -------
+    Account
+        This supplier's own child account, ready for postings.
+    """
+    if supplier.account_id:
+        return supplier.account
+
+    tenant = getattr(owner, 'tenant', None)
+    scope_filter = {}
+    if branch is not None:
+        scope_filter['branch'] = branch
+    if tenant is not None:
+        scope_filter['tenant'] = tenant
+
+    cfg = SYSTEM_ACCOUNTS['accounts_payable']
+    PREFERRED_PARENT_CODE = cfg['parent_code']
+    PARENT_NAME = cfg['parent_name']
+
+    with transaction.atomic():
+        # Lock (or create) the parent row so concurrent first-time creations
+        # for two different suppliers can't both compute the same "next free
+        # child code" and collide on the unique (code, tenant, branch)
+        # constraint. Look this up by NAME/LEVEL (not by PREFERRED_PARENT_CODE)
+        # so a prior code collision redirect is still found consistently —
+        # same reasoning as get_or_create_staff_salary_advance_account above.
+        parent_account = Account.objects.select_for_update().filter(
+            **scope_filter, account_level='PARENT', name=PARENT_NAME,
+        ).first()
+
+        if not parent_account:
+            existing_at_code = Account.objects.filter(
+                **scope_filter, code=PREFERRED_PARENT_CODE
+            ).first()
+            parent_code = PREFERRED_PARENT_CODE
+            if existing_at_code is not None:
+                parent_code = _find_nearest_parent_code(
+                    owner, branch, PREFERRED_PARENT_CODE, tenant
+                )
+            parent_account = Account.objects.create(
+                **scope_filter, code=parent_code,
+                name=PARENT_NAME,
+                account_type='LIABILITY',
+                account_level='PARENT',
+                allow_manual_entries=False,
+                is_system_account=True,
+                balance=Decimal('0.00'),
+                owner=owner,
+            )
+            parent_account = Account.objects.select_for_update().get(pk=parent_account.pk)
+
+        # Re-check under the lock in case another request just assigned one
+        # while we were waiting for it (avoids creating a duplicate child).
+        supplier.refresh_from_db(fields=['account'])
+        if supplier.account_id:
+            return supplier.account
+
+        child_code = _find_available_child_code(owner, branch, parent_account.code, tenant)
+        child_account = Account.objects.create(
+            **scope_filter, code=child_code,
+            name=f"Accounts Payable – {supplier.name} ({supplier.supplier_code})",
+            account_type='LIABILITY',
+            account_level='CHILD',
+            parent=parent_account,
+            allow_manual_entries=True,
+            is_system_account=True,
+            balance=Decimal('0.00'),
+            owner=owner,
+        )
+
+        supplier.account = child_account
+        supplier.save(update_fields=['account'])
+
+    return child_account
+
+
 def get_or_create_system_account(code, name, account_type, owner, branch, account_level='PARENT'):
     """
     Get or create a system account by code.

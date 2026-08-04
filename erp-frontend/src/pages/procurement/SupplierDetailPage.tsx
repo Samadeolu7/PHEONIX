@@ -16,12 +16,14 @@ import {
   AlertTriangle,
   ShoppingCart,
   Receipt,
+  BookOpen,
 } from 'lucide-react';
 import { useSupplier } from '../../hooks/useSuppliers';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supplierService, SupplierDocument } from '../../services/supplierService';
 import { procurementService } from '../../services/procurementService';
 import { listPayables } from '../../services/liabilitiesService';
+import { useAccountLedger } from '../../hooks/useLedger';
 
 const SupplierDetailPage: React.FC = () => {
   const navigate = useNavigate();
@@ -47,8 +49,19 @@ const SupplierDetailPage: React.FC = () => {
     enabled: activeTab === 'transactions' && supplierId > 0,
   });
 
+  // Supplier's own GL subledger account statement — invoices, on-account
+  // advances, and applied payments all post here and net in real time, so
+  // this is the actual "supplier account" (unlike the AP table above, which
+  // only shows invoices and would never surface a standalone advance).
+  const { data: ledgerData, isLoading: loadingLedger } = useAccountLedger(
+    supplier?.account ?? 0,
+    undefined,
+    activeTab === 'transactions' && !!supplier?.account
+  );
+
   const supplierPOs = posData?.results ?? [];
   const supplierPayables = apData?.results ?? [];
+  const ledgerEntries = ledgerData?.entries ?? [];
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString();
@@ -490,6 +503,113 @@ const SupplierDetailPage: React.FC = () => {
 
       {activeTab === 'transactions' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* ── Supplier Account Statement ── */}
+          <div
+            style={{
+              background: 'white',
+              borderRadius: '8px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              border: '1px solid #e5e7eb',
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                padding: '1rem 1.5rem',
+                borderBottom: '1px solid #e5e7eb',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+              }}
+            >
+              <BookOpen style={{ width: '1.125rem', height: '1.125rem', color: '#059669' }} />
+              <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, color: '#111827' }}>
+                Supplier Account Statement
+              </h3>
+              {ledgerData && (
+                <span
+                  style={{
+                    marginLeft: 'auto',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    color: '#111827',
+                  }}
+                >
+                  Balance: {formatCurrency(String(ledgerData.closing_balance))}
+                </span>
+              )}
+            </div>
+
+            {!supplier?.account ? (
+              <div style={{ padding: '2.5rem', textAlign: 'center' }}>
+                <p style={{ color: '#6b7280', margin: 0 }}>
+                  No dedicated GL account has been provisioned for this supplier yet.
+                </p>
+              </div>
+            ) : loadingLedger ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#6b7280' }}>
+                Loading statement…
+              </div>
+            ) : ledgerEntries.length === 0 ? (
+              <div style={{ padding: '2.5rem', textAlign: 'center' }}>
+                <BookOpen
+                  style={{
+                    width: '2.5rem',
+                    height: '2.5rem',
+                    color: '#9ca3af',
+                    margin: '0 auto 0.75rem',
+                  }}
+                />
+                <p style={{ color: '#6b7280', margin: 0 }}>No account activity yet.</p>
+              </div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead style={{ background: '#f9fafb' }}>
+                  <tr>
+                    {['Date', 'Reference', 'Description', 'Debit', 'Credit', 'Balance'].map(h => (
+                      <th
+                        key={h}
+                        style={{
+                          padding: '0.625rem 0.75rem',
+                          textAlign: 'left',
+                          fontSize: '0.8rem',
+                          fontWeight: 600,
+                          color: '#374151',
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {ledgerEntries.map((entry, idx) => (
+                    <tr key={`${entry.transaction_id}-${idx}`} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}>
+                        {formatDate(entry.date)}
+                      </td>
+                      <td style={{ padding: '0.625rem 0.75rem', fontSize: '0.875rem', fontWeight: 600 }}>
+                        {entry.reference_number}
+                      </td>
+                      <td style={{ padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}>
+                        {entry.description}
+                      </td>
+                      <td style={{ padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}>
+                        {entry.debit ? formatCurrency(String(entry.debit)) : ''}
+                      </td>
+                      <td style={{ padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}>
+                        {entry.credit ? formatCurrency(String(entry.credit)) : ''}
+                      </td>
+                      <td style={{ padding: '0.625rem 0.75rem', fontSize: '0.875rem', fontWeight: 600 }}>
+                        {formatCurrency(String(entry.balance))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
           {/* ── Purchase Orders ── */}
           <div
             style={{

@@ -12,7 +12,9 @@ export interface Supplier {
   tax_id: string;
   payment_terms: 'cash' | 'net_15' | 'net_30' | 'net_60' | 'net_90' | 'custom';
   credit_limit: string; // Decimal string
-  outstanding_balance: string; // Decimal string - total amount owed to supplier
+  outstanding_balance: string; // Decimal string - total amount owed to supplier (from AP invoices only)
+  account: number | null; // GL account id for this supplier's own subledger (invoices + advances + payments)
+  current_balance: string | null; // Decimal string - real-time balance of `account`, the true supplier statement balance
   is_active: boolean;
   metadata: any; // Additional supplier information
   created_at: string;

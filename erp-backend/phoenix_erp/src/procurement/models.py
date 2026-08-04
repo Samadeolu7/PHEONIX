@@ -77,7 +77,20 @@ class Supplier(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         blank=True,
         help_text="Additional supplier information (bank details, certifications, etc.)"
     )
-    
+
+    # Dedicated subledger GL account — every AP invoice, on-account advance,
+    # and applied payment for this supplier posts here, so the balance is
+    # always correct and a vendor statement is just this account's ledger.
+    # Nullable only until backfill_supplier_accounts has run for legacy rows.
+    account = models.OneToOneField(
+        Account,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='supplier_detail',
+        help_text="Dedicated LIABILITY subledger account for this supplier's payables/advances."
+    )
+
     objects = OwnerBranchManager()
     
     def save(self, *args, **kwargs):

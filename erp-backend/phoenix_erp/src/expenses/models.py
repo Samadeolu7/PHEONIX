@@ -1657,9 +1657,10 @@ class ResourceConsumption(MakerCheckerMixin, TimeStampedModel, BranchScopedModel
         from transactions.models import Transaction as JournalEntry, TransactionEntry as JournalEntryLine
         from accounts.models import Account
         from liabilities.models import AccountsPayable
-        
-        # Get or create Accounts Payable account using centralized utility
-        ap_account = get_system_account('accounts_payable', self.owner, self.branch)
+
+        # Resolve the supplier's own dedicated payable account (or the shared
+        # system account for legacy Client vendors) — see resolve_vendor_account.
+        ap_account = AccountsPayable.resolve_vendor_account(self.supplier, self.owner, self.branch)
         
         # Get or create transaction series for resource consumption
         from transactions.models import TransactionSeries
@@ -1712,13 +1713,10 @@ class ResourceConsumption(MakerCheckerMixin, TimeStampedModel, BranchScopedModel
         payment_terms_str = getattr(self.supplier, 'payment_terms', 'net_30') or 'net_30'
         payment_days = PAYMENT_TERMS_DAYS.get(payment_terms_str, 30)
         due_date = self.consumption_date + timezone.timedelta(days=payment_days)
-        
-        # Get accounts payable account using centralized utility
-        liability_account = get_system_account('accounts_payable', self.owner, self.branch)
-        
+
         accounts_payable = AccountsPayable.create_for_vendor(
             vendor=self.supplier,
-            account=liability_account,
+            account=ap_account,
             invoice_number=self.invoice_number or f"RC-{self.consumption_number}",
             invoice_date=self.consumption_date,
             due_date=due_date,

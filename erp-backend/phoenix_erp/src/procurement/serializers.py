@@ -19,9 +19,19 @@ from inventory.models import InventoryItem, Location
 class SupplierSerializer(serializers.ModelSerializer):
     """Supplier serializer"""
     outstanding_balance = serializers.SerializerMethodField()
+    current_balance = serializers.SerializerMethodField(
+        help_text="Real-time balance of this supplier's own GL subledger account "
+                  "(invoices, on-account advances, and applied payments all net "
+                  "through it) — the true 'supplier account' balance."
+    )
 
     def get_outstanding_balance(self, obj):
         return str(obj.get_outstanding_balance())
+
+    def get_current_balance(self, obj):
+        if obj.account_id:
+            return str(obj.account.balance)
+        return None
 
     class Meta:
         model = Supplier
@@ -29,9 +39,13 @@ class SupplierSerializer(serializers.ModelSerializer):
             'id', 'supplier_code', 'name', 'contact_person',
             'email', 'phone', 'address', 'tax_id',
             'payment_terms', 'credit_limit', 'is_active',
-            'metadata', 'created_at', 'updated_at', 'outstanding_balance'
+            'metadata', 'created_at', 'updated_at', 'outstanding_balance',
+            'account', 'current_balance',
         ]
-        read_only_fields = ['supplier_code', 'created_at', 'updated_at', 'outstanding_balance']
+        read_only_fields = [
+            'supplier_code', 'created_at', 'updated_at', 'outstanding_balance',
+            'account', 'current_balance',
+        ]
     
     def validate(self, attrs):
         """Validate supplier data"""

@@ -756,23 +756,17 @@ class ProcurementService:
         # Create AccountsPayable for the GRN
         from liabilities.models import AccountsPayable
         from accounts.models import Account
-        
-        # Get or create child accounts payable account (2101 under parent 2100)
-        # Parent 2100 is auto-seeded on tenant creation; we only need the posting child.
+
+        # Resolve the supplier's own dedicated payable account (or the shared
+        # system account for legacy Client vendors) — see resolve_vendor_account.
         try:
-            liability_account = get_or_create_child_account(
-                parent_code='2100',
-                child_suffix='001',
-                name='Trade Creditors (Accounts Payable)',
-                account_type='LIABILITY',
-                owner=user,
-                branch=grn.branch if hasattr(grn, 'branch') else None,
-                parent_name='Trade and Other Payables'
+            liability_account = AccountsPayable.resolve_vendor_account(
+                grn.supplier, user, grn.branch if hasattr(grn, 'branch') else None
             )
             logger.info(f"GRN Posting: Liability account retrieved/created: {liability_account.code} - {liability_account.name}")
         except Exception as e:
-            logger.error(f"GRN Posting: Failed to create child Accounts Payable account (2101): {str(e)}")
-            raise ValidationError(f"Failed to create child Accounts Payable account (2101): {str(e)}")
+            logger.error(f"GRN Posting: Failed to resolve Accounts Payable account for supplier {grn.supplier}: {str(e)}")
+            raise ValidationError(f"Failed to resolve Accounts Payable account for supplier {grn.supplier}: {str(e)}")
         
         # Calculate payment due date based on supplier payment terms
         payment_terms_days = 30  # Default
