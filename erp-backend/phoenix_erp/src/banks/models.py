@@ -1196,20 +1196,28 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """
         Apply a portion of this on-account advance against an Accounts Payable record.
 
-        Step 1 (original advance) posts Dr supplier's own AP account / Cr Bank
-        (see post_payment's supplier_id branch) — the advance already sits in
-        the SAME account an invoice for that supplier credits, so it nets
-        automatically. When `payable.account` is that same account, this
-        method only needs to update matching metadata (amount_paid/status/
-        advance_applied) — no further GL entry, since one would just be a
-        same-account Dr/Cr wash.
+        Step 1 (original advance) posts Dr <wherever the advance itself
+        landed> / Cr Bank (see post_payment's supplier_id branch). For an
+        advance posted under the current code that's the supplier's own AP
+        account — the SAME account an invoice for that supplier credits, so
+        it nets automatically and this method only needs to update matching
+        metadata (amount_paid/status/advance_applied), no further GL entry,
+        since one would just be a same-account Dr/Cr wash.
 
-        The one exception: a legacy AccountsPayable row still pointing at the
-        old shared "General Trade Creditors" account (not yet migrated by
-        backfill_supplier_accounts). In that case this posts a real
-        reallocation entry — Dr payable.account / Cr supplier's own account —
-        which both clears the old shared liability and consumes the advance,
-        self-healing that AP onto the correct subledger account on first use.
+        For an advance posted BEFORE per-supplier accounts existed, the
+        advance itself is still sitting in the old shared "Supplier
+        Advances" account — NOT the supplier's own account — even after
+        backfill_supplier_accounts has migrated the AccountsPayable side.
+        Assuming the advance already lives in the supplier's account would
+        silently skip posting anything in that case, while still marking the
+        AP as paid: a permanent, invisible break in the books. So this looks
+        up where THIS payment's advance actually posted (the debit leg of
+        its own journal_entry) rather than assuming, and only skips posting
+        when that account and payable.account are genuinely the same. When
+        they differ (either or both sides still on a legacy shared account),
+        it posts the real reallocation entry — Dr payable.account / Cr the
+        advance's actual account — which correctly self-heals whichever side
+        is stale onto the other.
 
         Args:
             payable: AccountsPayable instance to clear against
@@ -1277,12 +1285,22 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     f"Reason: {validation_result.get('summary', 'Critical discrepancies found')}."
                 )
 
-        # ── GL journal (only if payable isn't already on this supplier's own
-        #    account — see docstring) ───────────────────────────────────────
-        supplier_account = _AP.resolve_vendor_account(self.supplier, self.owner, self.branch)
+        # ── Find where THIS advance actually posted — do not assume it's the
+        #    supplier's own account (see docstring: it may still be the old
+        #    shared "Supplier Advances" account for a pre-migration payment).
+        advance_entry = JournalEntryLine.objects.filter(
+            transaction_id=self.journal_entry_id, side=JournalEntryLine.DEBIT,
+        ).select_related('account').first()
+        if advance_entry:
+            advance_account = advance_entry.account
+        else:
+            # Defensive fallback (should not happen for a posted on-account
+            # payment, which always has a debit leg) — best guess.
+            advance_account = _AP.resolve_vendor_account(self.supplier, self.owner, self.branch)
+
         journal_entry = None
 
-        if payable.account_id != supplier_account.id:
+        if payable.account_id != advance_account.id:
             series, _ = TransactionSeries.objects.get_or_create(
                 code='ADVCL',
                 defaults={'description': 'Supplier Advance Clearance'}
@@ -1302,7 +1320,7 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 created_by=posted_by,
             )
 
-            # Dr: (legacy) Accounts Payable account — reduces the old liability
+            # Dr: Accounts Payable account — reduces the liability
             JournalEntryLine.objects.create(
                 transaction=journal_entry,
                 account=payable.account,
@@ -1310,10 +1328,10 @@ class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 amount=amount,
             )
 
-            # Cr: Supplier's own account — reduces the advance (consumed)
+            # Cr: wherever the advance actually posted — reduces it (consumed)
             JournalEntryLine.objects.create(
                 transaction=journal_entry,
-                account=supplier_account,
+                account=advance_account,
                 side=JournalEntryLine.CREDIT,
                 amount=amount,
             )

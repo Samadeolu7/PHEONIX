@@ -11,6 +11,11 @@ Covers:
     entry, since both already share the same account.
   - The previously-broken BankPayment.post_payment() AP branch (missing
     bank_gl_account, duplicate journal entry) now posts exactly once.
+  - Applying a PRE-MIGRATION advance (posted to the old pooled "Supplier
+    Advances" account, before this supplier had its own account) against an
+    AP that's already been reallocated onto the supplier's own account posts
+    a real clearing entry rather than wrongly assuming the two already share
+    an account and skipping it.
 """
 from decimal import Decimal
 
@@ -179,3 +184,97 @@ class SupplierSubledgerTests(TestCase):
         self.assertIsNotNone(payment.journal_entry_id)
         # Exactly one Dr AP / Cr Bank entry, not two.
         self.assertEqual(Transaction.objects.count(), txn_count_before + 1)
+
+    def test_apply_pre_migration_advance_posts_real_clearing_entry(self):
+        """
+        Reproduces the KPD CONCEPT scenario: a supplier's advance was posted
+        BEFORE this supplier had its own account (Dr the old pooled
+        "Supplier Advances" account), and its AP invoice has since been
+        reallocated onto the supplier's own account (as backfill_supplier_
+        accounts would do). Applying the advance must post a real clearing
+        entry — not silently skip it just because payable.account happens to
+        equal the supplier's account today.
+        """
+        self.supplier.refresh_from_db()
+        from transactions.models import TransactionSeries
+
+        old_advance_account = get_system_account('supplier_advance', self.user, self.branch)
+
+        # ── Simulate the pre-migration advance (old code path) ──────────────
+        adv_series, _ = TransactionSeries.objects.get_or_create(
+            code='BKPAY', defaults={'description': 'Bank Payments'}
+        )
+        adv_txn = Transaction.objects.create(
+            series=adv_series, date=timezone.now().date(),
+            description='Legacy payment on account', branch=self.branch,
+            owner=self.user, tenant=self.tenant,
+        )
+        TransactionEntry.objects.create(
+            transaction=adv_txn, account=old_advance_account,
+            side=TransactionEntry.DEBIT, amount=Decimal('140000.00'),
+        )
+        TransactionEntry.objects.create(
+            transaction=adv_txn, account=self.bank_account.gl_account,
+            side=TransactionEntry.CREDIT, amount=Decimal('140000.00'),
+        )
+        adv_txn.post()
+
+        payment = BankPayment.objects.create(
+            bank_account=self.bank_account,
+            amount=Decimal('140000.00'),
+            description='Legacy payment on account',
+            supplier=self.supplier,
+            status='posted',
+            journal_entry=adv_txn,
+            branch=self.branch,
+            owner=self.user,
+            tenant=self.tenant,
+        )
+
+        # ── Simulate the AP already reallocated onto the supplier's own
+        #    account (post-backfill), with its own 180,000 Cr entry there ──
+        ap = AccountsPayable.create_for_vendor(
+            vendor=self.supplier,
+            account=self.supplier.account,
+            invoice_number='GRN-TEST-0003',
+            invoice_date=timezone.now().date(),
+            due_date=timezone.now().date(),
+            amount=Decimal('180000.00'),
+            branch=self.branch,
+            owner=self.user,
+        )
+        inv_series, _ = TransactionSeries.objects.get_or_create(
+            code='TESTINV2', defaults={'description': 'Test invoice'}
+        )
+        inv_txn = Transaction.objects.create(
+            series=inv_series, date=timezone.now().date(),
+            description='Reallocated invoice', branch=self.branch,
+            owner=self.user, tenant=self.tenant,
+        )
+        TransactionEntry.objects.create(
+            transaction=inv_txn, account=self.supplier.account,
+            side=TransactionEntry.CREDIT, amount=Decimal('180000.00'),
+        )
+        inv_txn.post()
+
+        txn_count_before = Transaction.objects.count()
+
+        result = payment.apply_advance_to_payable(
+            payable=ap, amount=Decimal('140000.00'), posted_by=self.user,
+        )
+
+        # A real clearing entry must have been posted — not skipped.
+        self.assertIsNotNone(result['journal_entry_id'])
+        self.assertEqual(Transaction.objects.count(), txn_count_before + 1)
+
+        ap.refresh_from_db()
+        self.assertEqual(ap.amount_paid, Decimal('140000.00'))
+        self.assertEqual(ap.status, 'partial')
+        self.assertEqual(ap.amount_due, Decimal('40000.00'))
+
+        old_advance_account.refresh_from_db()
+        self.assertEqual(old_advance_account.balance, Decimal('0.00'))
+
+        self.supplier.account.refresh_from_db()
+        # Cr 180,000 (invoice) net Dr 140,000 (clearing) = 40,000 still owed.
+        self.assertEqual(self.supplier.account.balance, Decimal('40000.00'))
