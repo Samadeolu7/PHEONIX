@@ -408,6 +408,9 @@ class ClientRegistrationConfigSerializer(TenantModelSerializer):
     id_fee_income_account_name = serializers.CharField(
         source='id_fee_income_account.name', read_only=True
     )
+    reactivation_income_account_name = serializers.CharField(
+        source='reactivation_income_account.name', read_only=True
+    )
 
     class Meta:
         model = ClientRegistrationConfig
@@ -415,9 +418,11 @@ class ClientRegistrationConfigSerializer(TenantModelSerializer):
             'id',
             'registration_income_account', 'registration_income_account_name',
             'id_fee_income_account', 'id_fee_income_account_name',
+            'reactivation_income_account', 'reactivation_income_account_name',
             'daily_registration_fee', 'daily_id_fee',
             'weekly_registration_fee', 'weekly_id_fee',
             'monthly_registration_fee', 'monthly_id_fee',
+            'reactivation_fee',
             'is_active',
             'owner', 'branch', 'created_at', 'updated_at',
         ]

@@ -126,3 +126,85 @@ def collect_client_registration_fees(
     )
 
     return journal
+
+
+@db_transaction.atomic
+def collect_client_reactivation_fee(
+    *,
+    client: Client,
+    cashier_account,
+    transacted_by,
+    config: ClientRegistrationConfig,
+):
+    """
+    Post the client reactivation fee as a cash transaction.
+
+    Entry:
+      Dr Cashier Account (ASSET)
+      Cr Reactivation Income (INCOME) — falls back to the registration
+         income account when the config doesn't set a dedicated one.
+    """
+    if not cashier_account:
+        raise ValidationError('cashier_account is required to collect the reactivation fee.')
+
+    fee = Decimal(str(config.reactivation_fee or 0))
+    if fee <= 0:
+        return None
+
+    income_account = config.reactivation_income_account or config.registration_income_account
+
+    from transactions.models import (
+        Transaction as JournalEntry,
+        TransactionEntry as JournalEntryLine,
+        TransactionSeries,
+    )
+
+    series, _ = TransactionSeries.objects.get_or_create(
+        code='CLRAC',
+        defaults={'description': 'Client Reactivation Fee Collection'},
+    )
+
+    journal = JournalEntry.objects.create(
+        series=series,
+        date=timezone.now().date(),
+        description=(
+            f"Client reactivation fee - {client.client_id} "
+            f"({client.full_name})"
+        ),
+        owner=client.owner,
+        branch=client.branch,
+        created_by=transacted_by,
+        tenant=client.tenant,
+    )
+
+    JournalEntryLine.objects.create(
+        transaction=journal,
+        account=cashier_account,
+        side=JournalEntryLine.DEBIT,
+        amount=fee,
+    )
+    JournalEntryLine.objects.create(
+        transaction=journal,
+        account=income_account,
+        side=JournalEntryLine.CREDIT,
+        amount=fee,
+    )
+
+    journal.post()
+
+    from common.models import FinancialAuditLog, log_financial_event
+    log_financial_event(
+        FinancialAuditLog.CLIENT_REACTIVATION_FEE,
+        acted_by=transacted_by,
+        record_type='Client',
+        record_id=str(client.pk),
+        amount=fee,
+        description=f"Reactivation fee – {client.client_id} ({client.full_name})",
+        extra={
+            'client_id': str(client.pk),
+            'journal_entry_id': str(journal.pk),
+            'reactivation_fee': str(fee),
+        },
+    )
+
+    return journal

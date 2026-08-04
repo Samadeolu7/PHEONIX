@@ -162,12 +162,15 @@ export interface ClientRegistrationConfig {
   registration_income_account_name?: string;
   id_fee_income_account: number;
   id_fee_income_account_name?: string;
+  reactivation_income_account?: number | null;
+  reactivation_income_account_name?: string;
   daily_registration_fee: string;
   daily_id_fee: string;
   weekly_registration_fee: string;
   weekly_id_fee: string;
   monthly_registration_fee: string;
   monthly_id_fee: string;
+  reactivation_fee: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -517,8 +520,13 @@ export const clientService = {
     return api.post('/clients/clients/bulk-assign-officer/', { client_ids: clientIds, officer_id: officerId });
   },
 
-  async activateClient(id: number): Promise<{ success: boolean; status: string }> {
-    return api.post(`/clients/clients/${id}/activate/`, {});
+  async activateClient(
+    id: number,
+    cashierAccountId?: number
+  ): Promise<{ success: boolean; status: string; reactivation_fee?: string }> {
+    return api.post(`/clients/clients/${id}/activate/`, {
+      cashier_account_id: cashierAccountId,
+    });
   },
 
   async deactivateClient(id: number): Promise<{ success: boolean; status: string }> {

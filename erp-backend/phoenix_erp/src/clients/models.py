@@ -521,6 +521,17 @@ class ClientRegistrationConfig(TimeStampedModel, BranchScopedModel, SoftDeleteMo
         related_name='client_id_fee_income_configs',
         limit_choices_to={'account_type': 'INCOME'},
     )
+    # Falls back to registration_income_account when unset, so reactivation
+    # fee collection works out of the box without requiring a separate
+    # Administration setup step.
+    reactivation_income_account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.PROTECT,
+        related_name='client_reactivation_income_configs',
+        limit_choices_to={'account_type': 'INCOME'},
+        null=True,
+        blank=True,
+    )
 
     # Daily client fees
     daily_registration_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
@@ -533,6 +544,10 @@ class ClientRegistrationConfig(TimeStampedModel, BranchScopedModel, SoftDeleteMo
     # Monthly client fees
     monthly_registration_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
     monthly_id_fee = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    # Flat fee charged when restoring a suspended/inactive/blacklisted/dormant
+    # client to active status.
+    reactivation_fee = models.DecimalField(max_digits=18, decimal_places=2, default=1000)
 
     # Active config marker per branch
     is_active = models.BooleanField(default=True)

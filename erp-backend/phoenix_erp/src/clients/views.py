@@ -33,7 +33,11 @@ from .serializers import (
     ProspectPublicRegistrationSerializer,
     GuarantorSerializer, GuarantorCreateSerializer, GuarantorConversionSerializer,
 )
-from .services import get_active_registration_config, collect_client_registration_fees
+from .services import (
+    get_active_registration_config,
+    collect_client_registration_fees,
+    collect_client_reactivation_fee,
+)
 from cash_management.services.payment_routing import PaymentRoutingService
 
 
@@ -494,11 +498,56 @@ class ClientViewSet(ScopedModelViewSet):
     
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
-        """Activate a client"""
+        """
+        Activate a client and collect the reactivation fee in cash.
+        Posting entry:
+          Dr Cashier Account (ASSET)
+          Cr Reactivation Income
+        """
+        from django.db import transaction as db_transaction
+
         client = self.get_object()
-        client.status = 'active'
-        client.save()
-        return Response({'success': True, 'status': client.status})
+
+        try:
+            cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
+                request.user,
+                owner=client.owner,
+                branch=client.branch,
+                cashier_account_id=request.data.get('cashier_account_id'),
+            )
+        except ValidationError:
+            return Response({'detail': 'Cashier account not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        config = get_active_registration_config(owner=client.owner, branch=client.branch)
+        if not config:
+            return Response(
+                {
+                    'detail': (
+                        'No active registration fee config found for this branch. '
+                        'Please set one up in Administration before reactivating clients.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with db_transaction.atomic():
+            client.status = 'active'
+            client.save(update_fields=['status', 'updated_at'])
+            try:
+                collect_client_reactivation_fee(
+                    client=client,
+                    cashier_account=cashier_account,
+                    transacted_by=request.user,
+                    config=config,
+                )
+            except ValidationError as exc:
+                raise DRFValidationError({'detail': exc.messages})
+
+        return Response({
+            'success': True,
+            'status': client.status,
+            'reactivation_fee': str(config.reactivation_fee or 0),
+        })
     
     @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def bulk_import(self, request):

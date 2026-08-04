@@ -61,13 +61,20 @@ export default function ReactivateClientPage() {
     setError('');
     setSuccess('');
     try {
-      await clientService.activateClient(client.id);
+      const result = await clientService.activateClient(client.id);
+      const fee = Number(result.reactivation_fee || 0);
+      const feeNote = fee > 0 ? ` A reactivation fee of ₦${fee.toLocaleString()} was charged.` : '';
       setSuccess(
-        `${client.first_name} ${client.last_name} (${client.client_id}) has been reactivated successfully.`
+        `${client.first_name} ${client.last_name} (${client.client_id}) has been reactivated successfully.${feeNote}`
       );
       setResults(prev => prev.filter(c => c.id !== client.id));
-    } catch {
-      setError(`Failed to reactivate ${client.first_name} ${client.last_name}.`);
+    } catch (err: any) {
+      const detail = err?.message;
+      setError(
+        detail
+          ? `Failed to reactivate ${client.first_name} ${client.last_name}: ${detail}`
+          : `Failed to reactivate ${client.first_name} ${client.last_name}.`
+      );
     } finally {
       setActivating(null);
     }
