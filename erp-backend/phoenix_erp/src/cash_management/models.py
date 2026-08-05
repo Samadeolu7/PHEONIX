@@ -1998,7 +1998,10 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         Disburse cash to payee and create a GL journal entry.
 
         GL Entry:
-          Dr. Expense Account (per expense_category)
+          Dr. Expense Account(s) — one per distinct expense account across
+                                    this voucher's line items (or the
+                                    voucher's single expense_category for
+                                    legacy vouchers with no lines)
           Cr. Petty Cash Fund GL Account
 
         Expenses are recognised at disbursement so every voucher has its own
@@ -2022,18 +2025,53 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             raise ValidationError(f'Insufficient fund balance: ₦{self.fund.current_balance}')
 
         # --- GL ENTRY ---------------------------------------------------------
-        # Resolve the expense account (debit side)
-        if not self.expense_category_id:
-            raise ValidationError(
-                "Expense category is required for GL posting. "
-                "Please set an expense category on this voucher before disbursing."
-            )
-        expense_account = self.expense_category.expense_account
-        if not expense_account:
-            raise ValidationError(
-                f"Expense category '{self.expense_category.name}' has no GL account "
-                f"configured. Set an expense account on that category first."
-            )
+        # Resolve the debit side: one amount per distinct expense account,
+        # built from this voucher's line items when present, otherwise the
+        # legacy single expense_category/amount pair.
+        lines = list(self.lines.all())
+        debits_by_account = {}
+
+        if lines:
+            total_lines = sum(line.amount for line in lines)
+            if total_lines <= 0:
+                raise ValidationError("Voucher lines must sum to a positive amount")
+            # actual_amount may differ slightly from the requested total (e.g.
+            # custodian gives a rounded-down amount) — scale each line
+            # proportionally so the debit side still equals actual_amount.
+            scale = actual_amount / total_lines if actual_amount != total_lines else Decimal('1')
+            for line in lines:
+                if not line.expense_category_id:
+                    raise ValidationError("Every voucher line requires an expense category")
+                expense_account = line.expense_category.expense_account
+                if not expense_account:
+                    raise ValidationError(
+                        f"Expense category '{line.expense_category.name}' has no GL account "
+                        f"configured. Set an expense account on that category first."
+                    )
+                debits_by_account[expense_account] = (
+                    debits_by_account.get(expense_account, Decimal('0.00'))
+                    + (line.amount * scale).quantize(Decimal('0.01'))
+                )
+            # Rounding from the scale factor can leave the debit side a cent
+            # or two off actual_amount — correct it on the largest account so
+            # the transaction still balances exactly.
+            rounding_diff = actual_amount - sum(debits_by_account.values())
+            if rounding_diff != 0:
+                largest_account = max(debits_by_account, key=debits_by_account.get)
+                debits_by_account[largest_account] += rounding_diff
+        else:
+            if not self.expense_category_id:
+                raise ValidationError(
+                    "Expense category is required for GL posting. "
+                    "Please set an expense category on this voucher before disbursing."
+                )
+            expense_account = self.expense_category.expense_account
+            if not expense_account:
+                raise ValidationError(
+                    f"Expense category '{self.expense_category.name}' has no GL account "
+                    f"configured. Set an expense account on that category first."
+                )
+            debits_by_account[expense_account] = actual_amount
 
         from transactions.models import Transaction, TransactionEntry, TransactionSeries
 
@@ -2053,13 +2091,15 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             tenant=self.tenant,
         )
 
-        # Debit: Expense account (recognises the expense at point of disbursement)
-        TransactionEntry.objects.create(
-            transaction=journal_entry,
-            account=expense_account,
-            side=TransactionEntry.DEBIT,
-            amount=actual_amount,
-        )
+        # Debit: one entry per distinct expense account (recognises the
+        # expense at point of disbursement)
+        for expense_account, debit_amount in debits_by_account.items():
+            TransactionEntry.objects.create(
+                transaction=journal_entry,
+                account=expense_account,
+                side=TransactionEntry.DEBIT,
+                amount=debit_amount,
+            )
 
         # Credit: Petty Cash Fund GL account (reduces fund balance on the GL)
         TransactionEntry.objects.create(
@@ -2087,6 +2127,32 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             'journal_entry',
         ])
     
+    def category_breakdown(self, total=None):
+        """
+        {category_name: Decimal amount} for this voucher, keyed off the
+        real per-category lines when present, falling back to the legacy
+        single expense_category/amount pair for vouchers created before
+        line items existed.
+
+        `total` optionally overrides the amount attributed to the voucher
+        (e.g. callers reporting against receipt_amount rather than the
+        disbursed amount) — line amounts are scaled proportionally so they
+        still sum to it.
+        """
+        lines = list(self.lines.all())
+        if lines:
+            total_lines = sum(line.amount for line in lines)
+            distribute = total if total is not None else total_lines
+            scale = (distribute / total_lines) if total_lines else Decimal('0.00')
+            breakdown = {}
+            for line in lines:
+                name = line.expense_category.name if line.expense_category else 'Uncategorised'
+                breakdown[name] = breakdown.get(name, Decimal('0.00')) + (line.amount * scale)
+            return breakdown
+        amount = total if total is not None else (self.actual_amount_disbursed or self.amount or Decimal('0.00'))
+        name = self.expense_category.name if self.expense_category else 'Uncategorised'
+        return {name: amount}
+
     @db_transaction.atomic
     def retire(self, user, receipt_amount, receipt_date, receipt_reference, variance_explanation=''):
         """Retire voucher by submitting receipt"""
@@ -2109,6 +2175,37 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             'receipt_submitted', 'receipt_amount', 'receipt_date', 'receipt_reference',
             'variance_explanation', 'retired_by', 'retired_at', 'status', 'variance'
         ])
+
+class PettyCashVoucherLine(models.Model):
+    """
+    One expense line on a PettyCashVoucher (e.g. "Transportation - weekly
+    transport - N10,000"). A voucher raised for several kinds of expense in
+    one trip (fuel, water, transport...) records each as its own line so
+    disburse() can debit each line's expense account for its own amount
+    instead of dumping the whole voucher total on a single category.
+
+    No branch/soft-delete of its own — it has no lifecycle independent of
+    its parent voucher (branch already lives on PettyCashVoucher).
+    """
+    voucher = models.ForeignKey(
+        PettyCashVoucher,
+        on_delete=models.CASCADE,
+        related_name='lines',
+    )
+    expense_category = models.ForeignKey(
+        'expenses.ExpenseCategory',
+        on_delete=models.PROTECT,
+        related_name='petty_cash_voucher_lines',
+    )
+    description = models.CharField(max_length=500)
+    amount = models.DecimalField(max_digits=18, decimal_places=2)
+    line_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['line_order', 'id']
+
+    def __str__(self):
+        return f"{self.voucher.voucher_number} line {self.line_order}: {self.expense_category.name} - N{self.amount}"
 
 
 class PettyCashReplenishment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
@@ -2438,13 +2535,13 @@ class PettyCashReplenishment(TimeStampedModel, BranchScopedModel, SoftDeleteMode
         vouchers = self.vouchers.filter(status='retired')
         expense_breakdown = {}
         for voucher in vouchers:
-            if voucher.expense_category:
-                category_name = voucher.expense_category.name
-                amount = voucher.receipt_amount or voucher.actual_amount_disbursed or Decimal('0.00')
+            voucher_total = voucher.receipt_amount or voucher.actual_amount_disbursed or Decimal('0.00')
+            for category_name, amount in voucher.category_breakdown(total=voucher_total).items():
                 if category_name not in expense_breakdown:
                     expense_breakdown[category_name] = {'amount': Decimal('0.00'), 'vouchers': []}
                 expense_breakdown[category_name]['amount'] += amount
-                expense_breakdown[category_name]['vouchers'].append(voucher.voucher_number)
+                if voucher.voucher_number not in expense_breakdown[category_name]['vouchers']:
+                    expense_breakdown[category_name]['vouchers'].append(voucher.voucher_number)
 
         # Create replenishment journal entry
         series, _ = TransactionSeries.objects.get_or_create(

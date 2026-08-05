@@ -254,17 +254,46 @@ export const PettyCashVoucherDetail: React.FC = () => {
                 <p className="text-sm text-gray-600">Payee</p>
                 <p className="font-medium">{voucher.payee_name}</p>
               </div>
-              <div>
-                <p className="text-sm text-gray-600">Expense Category</p>
-                <p className="font-medium">
-                  {voucher.expense_category_name || `Category #${voucher.expense_category}`}
-                </p>
+              {(!voucher.lines || voucher.lines.length === 0) && (
+                <div>
+                  <p className="text-sm text-gray-600">Expense Category</p>
+                  <p className="font-medium">
+                    {voucher.expense_category_name || `Category #${voucher.expense_category}`}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {voucher.lines && voucher.lines.length > 0 ? (
+              <div className="mt-4 pt-4 border-t">
+                <p className="text-sm text-gray-600 mb-2">Expense Line Items</p>
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="text-left text-gray-500">
+                      <th className="py-1.5 pr-3 font-medium">Category</th>
+                      <th className="py-1.5 pr-3 font-medium">Description</th>
+                      <th className="py-1.5 text-right font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {voucher.lines.map(line => (
+                      <tr key={line.id} className="border-t border-gray-100">
+                        <td className="py-1.5 pr-3">{line.expense_category_name ?? `Category #${line.expense_category}`}</td>
+                        <td className="py-1.5 pr-3 text-gray-700">{line.description}</td>
+                        <td className="py-1.5 text-right font-medium">
+                          ${parseFloat(line.amount).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            </div>
-            <div className="mt-4 pt-4 border-t">
-              <p className="text-sm text-gray-600 mb-2">Description</p>
-              <p className="text-gray-900">{voucher.purpose}</p>
-            </div>
+            ) : (
+              <div className="mt-4 pt-4 border-t">
+                <p className="text-sm text-gray-600 mb-2">Description</p>
+                <p className="text-gray-900">{voucher.purpose}</p>
+              </div>
+            )}
           </div>
 
           {/* Workflow History */}

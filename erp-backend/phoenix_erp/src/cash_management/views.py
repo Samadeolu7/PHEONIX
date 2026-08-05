@@ -1514,12 +1514,12 @@ class PettyCashReplenishmentViewSet(viewsets.ModelViewSet):
         # â”€â”€ Build expense breakdown by category â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         expense_breakdown = {}
         for v in selected_vouchers:
-            cat_name = (
-                v.expense_category.name if v.expense_category else 'Uncategorised'
-            )
-            entry = expense_breakdown.setdefault(cat_name, {'amount': Decimal('0'), 'vouchers': []})
-            entry['amount'] += v.actual_amount_disbursed or v.amount or Decimal('0')
-            entry['vouchers'].append(v.voucher_number)
+            v_total = v.actual_amount_disbursed or v.amount or Decimal('0')
+            for cat_name, amount in v.category_breakdown(total=v_total).items():
+                entry = expense_breakdown.setdefault(cat_name, {'amount': Decimal('0'), 'vouchers': []})
+                entry['amount'] += amount
+                if v.voucher_number not in entry['vouchers']:
+                    entry['vouchers'].append(v.voucher_number)
 
         # â”€â”€ Save replenishment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         replenishment = serializer.save(

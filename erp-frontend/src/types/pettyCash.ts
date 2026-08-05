@@ -36,6 +36,15 @@ export interface PettyCashFund {
   updated_at: string;
 }
 
+export interface PettyCashVoucherLine {
+  id: number;
+  expense_category: number;
+  expense_category_name: string | null;
+  description: string;
+  amount: string;
+  line_order: number;
+}
+
 export interface PettyCashVoucher {
   id: number;
   fund: number;
@@ -48,6 +57,7 @@ export interface PettyCashVoucher {
   amount: string;
   expense_category: number | null;
   expense_category_name: string | null;
+  lines: PettyCashVoucherLine[];
   payee_name: string;
   payee_phone: string;
   status: 'draft' | 'pending' | 'approved' | 'rejected' | 'disbursed' | 'retired' | 'cancelled';
@@ -151,10 +161,20 @@ export interface CreatePettyCashFund {
   notes?: string;
 }
 
+export interface CreatePettyCashVoucherLine {
+  expense_category: number;
+  description: string;
+  amount: string | number;
+  line_order?: number;
+}
+
 export interface CreatePettyCashVoucher {
   fund: number;
   purpose: string;
-  amount: string | number;
+  // Either send line-item splits (preferred — each posts to its own GL
+  // account on disbursement) or fall back to a single amount/category.
+  lines?: CreatePettyCashVoucherLine[];
+  amount?: string | number;
   expense_category?: number | null;
   payee_name: string;
   payee_phone?: string;

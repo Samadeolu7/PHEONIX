@@ -17,6 +17,7 @@ from .models import (
     BankReconciliation,
     PettyCashFund,
     PettyCashVoucher,
+    PettyCashVoucherLine,
     PettyCashReplenishment,
     PettyCashReceipt,
     DailyCollectionSheet,
@@ -618,8 +619,24 @@ class PettyCashFundSerializer(serializers.ModelSerializer):
         }
 
 
+class PettyCashVoucherLineSerializer(serializers.ModelSerializer):
+    """One expense line on a voucher (its own category + amount)."""
+    expense_category_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PettyCashVoucherLine
+        fields = ['id', 'expense_category', 'expense_category_name', 'description', 'amount', 'line_order']
+
+    def get_expense_category_name(self, obj):
+        return obj.expense_category.name if obj.expense_category else None
+
+
 class PettyCashVoucherSerializer(serializers.ModelSerializer):
     """Petty Cash Voucher serializer"""
+    lines = PettyCashVoucherLineSerializer(many=True, required=False)
+    # Required at the DB level, but optional on the API when 'lines' is
+    # supplied instead — create()/update() derive it as sum(lines).
+    amount = serializers.DecimalField(max_digits=18, decimal_places=2, required=False)
     fund_name = serializers.SerializerMethodField()
     requested_by_name = serializers.SerializerMethodField()
     expense_category_name = serializers.SerializerMethodField()
@@ -664,14 +681,50 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
             required=False,
             allow_null=True,
         )
-    
+        # Same branch scoping for each line's expense_category.
+        if 'lines' in self.fields:
+            self.fields['lines'].child.fields['expense_category'] = serializers.PrimaryKeyRelatedField(
+                queryset=cat_qs,
+            )
+
+    def validate_lines(self, value):
+        for line in value:
+            if line.get('amount') is not None and line['amount'] <= 0:
+                raise serializers.ValidationError("Each line amount must be greater than zero")
+        return value
+
+    def create(self, validated_data):
+        lines_data = validated_data.pop('lines', None)
+        if lines_data:
+            validated_data['amount'] = sum(Decimal(str(l['amount'])) for l in lines_data)
+            validated_data['expense_category'] = None
+        voucher = super().create(validated_data)
+        if lines_data:
+            for order, line_data in enumerate(lines_data):
+                line_data.setdefault('line_order', order)
+                PettyCashVoucherLine.objects.create(voucher=voucher, **line_data)
+        return voucher
+
+    def update(self, instance, validated_data):
+        lines_data = validated_data.pop('lines', None)
+        if lines_data:
+            validated_data['amount'] = sum(Decimal(str(l['amount'])) for l in lines_data)
+            validated_data['expense_category'] = None
+        voucher = super().update(instance, validated_data)
+        if lines_data is not None:
+            voucher.lines.all().delete()
+            for order, line_data in enumerate(lines_data):
+                line_data.setdefault('line_order', order)
+                PettyCashVoucherLine.objects.create(voucher=voucher, **line_data)
+        return voucher
+
     class Meta:
         from .models import PettyCashVoucher
         model = PettyCashVoucher
         fields = [
             'id', 'fund', 'fund_name', 'voucher_number', 'voucher_date',
             'requested_by', 'requested_by_name', 'purpose', 'amount',
-            'expense_category', 'expense_category_name',
+            'expense_category', 'expense_category_name', 'lines',
             'payee_name', 'payee_phone', 'status',
             'submitted_at', 'approved_by', 'approved_by_name', 'approved_at', 'approval_notes',
             'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',

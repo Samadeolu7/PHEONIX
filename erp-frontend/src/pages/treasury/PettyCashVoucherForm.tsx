@@ -273,14 +273,26 @@ export const PettyCashVoucherForm: React.FC = () => {
       setPayeeName(existingVoucher.payee_name);
       setRequestDate(existingVoucher.voucher_date ?? format(new Date(), 'yyyy-MM-dd'));
       setFundId(existingVoucher.fund);
-      setLineItems([
-        {
-          id: generateId(),
-          category: existingVoucher.expense_category?.toString() ?? '',
-          description: existingVoucher.purpose ?? '',
-          amount: existingVoucher.amount,
-        },
-      ]);
+      if (existingVoucher.lines && existingVoucher.lines.length > 0) {
+        setLineItems(
+          existingVoucher.lines.map(line => ({
+            id: generateId(),
+            category: line.expense_category?.toString() ?? '',
+            description: line.description,
+            amount: line.amount,
+          }))
+        );
+      } else {
+        // Legacy single-category voucher — one synthetic row from the header fields.
+        setLineItems([
+          {
+            id: generateId(),
+            category: existingVoucher.expense_category?.toString() ?? '',
+            description: existingVoucher.purpose ?? '',
+            amount: existingVoucher.amount,
+          },
+        ]);
+      }
     }
   }, [existingVoucher, isEditMode]);
 
@@ -412,15 +424,20 @@ export const PettyCashVoucherForm: React.FC = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  // ── Build single-voucher payload by aggregating all line items
+  // ── Build voucher payload: each row posts to its own GL account via
+  // `lines`; `purpose` stays as a human-readable summary of the whole voucher.
   const buildPayload = (): CreatePettyCashVoucher => {
     const combinedPurpose = lineItems
       .map((item, i) => `${i + 1}. [${getCategoryLabel(item.category)}] ${item.description}`)
       .join('\n');
     return {
       fund: fundId,
-      expense_category: parseInt(lineItems[0]?.category || '0') || null,
-      amount: totalAmount.toFixed(2),
+      lines: lineItems.map((item, i) => ({
+        expense_category: parseInt(item.category || '0'),
+        description: item.description,
+        amount: item.amount,
+        line_order: i,
+      })),
       purpose: combinedPurpose,
       payee_name: payeeName,
       voucher_date: requestDate,

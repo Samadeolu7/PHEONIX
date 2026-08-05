@@ -2,7 +2,7 @@
 from django.contrib import admin
 from .models import (
     CashierAccount, CashCollection, CashTransfer, CashReconciliation,
-    PettyCashFund, PettyCashVoucher, PettyCashReplenishment, PettyCashReceipt
+    PettyCashFund, PettyCashVoucher, PettyCashVoucherLine, PettyCashReplenishment, PettyCashReceipt
 )
 
 
@@ -11,6 +11,12 @@ class PettyCashReceiptInline(admin.TabularInline):
     extra = 0
     fields = ['file', 'description', 'uploaded_by', 'uploaded_at']
     readonly_fields = ['uploaded_by', 'uploaded_at']
+
+
+class PettyCashVoucherLineInline(admin.TabularInline):
+    model = PettyCashVoucherLine
+    extra = 0
+    fields = ['line_order', 'expense_category', 'description', 'amount']
 
 
 @admin.register(CashierAccount)
@@ -191,7 +197,7 @@ class PettyCashVoucherAdmin(admin.ModelAdmin):
         'created_at', 'updated_at'
     ]
     date_hierarchy = 'voucher_date'
-    inlines = [PettyCashReceiptInline]
+    inlines = [PettyCashVoucherLineInline, PettyCashReceiptInline]
     
     fieldsets = (
         ('Voucher Details', {
