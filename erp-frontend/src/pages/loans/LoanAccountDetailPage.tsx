@@ -29,6 +29,7 @@ import {
   Pencil,
   Save,
   Building2,
+  Ban,
 } from 'lucide-react';
 import {
   loanService,
@@ -36,6 +37,7 @@ import {
   LoanGuarantor,
   LoanRepaymentSchedule,
   LoanTransactionRow,
+  LoanPaymentHistoryRow,
   RepayLoanPayload,
   ProposeRestructurePayload,
 } from '../../services/loanService';
@@ -49,6 +51,7 @@ import {
   useLoanSchedule,
   useLoanGuarantors,
   useLoanTransactions,
+  useLoanPaymentHistory,
   useApproveLoan,
   useRejectLoan,
   useRequestDisbursement,
@@ -1140,6 +1143,8 @@ export default function LoanAccountDetailPage() {
   const { data: ledgerData, isLoading: ledgerLoading } = useLoanTransactions(loanId, ledgerPage, LEDGER_PAGE_SIZE);
   const ledger = ledgerData?.results ?? [];
   const ledgerTotal = ledgerData?.count ?? 0;
+  const { data: paymentHistoryData, isLoading: paymentHistoryLoading } = useLoanPaymentHistory(loanId);
+  const paymentHistory = paymentHistoryData?.results ?? [];
   const { data: pendingRestructures = [] } = useLoanRestructureApprovals({ status: 'pending' });
   const { data: corrections = [] } = useLoanDisbursementCorrections();
   const approveLoanMutation = useApproveLoan();
@@ -1857,6 +1862,83 @@ export default function LoanAccountDetailPage() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* Payment History — plain-English confirmation that a payment landed on this loan */}
+        <div className="rounded-xl bg-white shadow-sm">
+          <div className="flex items-center justify-between border-b px-5 py-4">
+            <div className="flex items-center gap-2">
+              <CheckCircle size={16} className="text-green-500" />
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+                Payment History
+              </h2>
+            </div>
+            {paymentHistoryLoading && <Loader2 size={16} className="animate-spin text-gray-400" />}
+          </div>
+
+          {paymentHistory.length === 0 && !paymentHistoryLoading ? (
+            <div className="py-12 text-center text-sm text-gray-400">
+              No repayments recorded yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    <th className="px-4 py-3">Date</th>
+                    <th className="px-4 py-3">Reference</th>
+                    <th className="px-4 py-3 text-right">Amount</th>
+                    <th className="px-4 py-3 text-right">Principal</th>
+                    <th className="px-4 py-3 text-right">Interest</th>
+                    <th className="px-4 py-3 text-right">Fees</th>
+                    <th className="px-4 py-3 text-right">Penalty</th>
+                    <th className="px-4 py-3">Received By</th>
+                    <th className="px-4 py-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {paymentHistory.map((p: LoanPaymentHistoryRow) => (
+                    <tr key={p.journal_entry_id} className={`hover:bg-gray-50 ${p.reversed ? 'opacity-60' : ''}`}>
+                      <td className="px-4 py-2.5 text-gray-600">{fmtDate(p.date)}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-gray-500">
+                        {p.reference}
+                        {p.bank_reference && (
+                          <div className="text-[11px] text-gray-400">Ref: {p.bank_reference}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-gray-900 font-mono">
+                        ₦{fmt(p.amount)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-gray-600">
+                        {parseFloat(p.principal) > 0 ? `₦${fmt(p.principal)}` : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-gray-600">
+                        {parseFloat(p.interest) > 0 ? `₦${fmt(p.interest)}` : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-gray-600">
+                        {parseFloat(p.fees) > 0 ? `₦${fmt(p.fees)}` : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-gray-600">
+                        {parseFloat(p.penalty) > 0 ? `₦${fmt(p.penalty)}` : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-600">{p.received_by ?? '—'}</td>
+                      <td className="px-4 py-2.5">
+                        {p.reversed ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+                            <Ban size={11} /> Reversed
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">
+                            <CheckCircle size={11} /> Applied
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

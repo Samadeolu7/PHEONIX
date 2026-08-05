@@ -19,6 +19,7 @@ import {
   LoanGuarantor,
   LoanCollateral,
   LoanTransactionPage,
+  LoanPaymentHistory,
   RepayLoanPayload,
   RepayLoanResult,
   CreateLoanAccountData,
@@ -71,6 +72,7 @@ export const loanKeys = {
   accountSchedule: (id: number) => [...loanKeys.accounts(), 'schedule', id] as const,
   accountTransactions: (id: number, page: number, pageSize: number) =>
     [...loanKeys.accounts(), 'transactions', id, page, pageSize] as const,
+  accountPaymentHistory: (id: number) => [...loanKeys.accounts(), 'paymentHistory', id] as const,
   accountStatement: (id: number) => [...loanKeys.accounts(), 'statement', id] as const,
 
   // Collections
@@ -359,6 +361,18 @@ export const useLoanTransactions = (
   });
 };
 
+export const useLoanPaymentHistory = (
+  id: number,
+  options?: Omit<UseQueryOptions<LoanPaymentHistory, Error>, 'queryKey' | 'queryFn'>
+) => {
+  return useQuery({
+    queryKey: loanKeys.accountPaymentHistory(id),
+    queryFn: () => loanService.getLoanPaymentHistory(id),
+    enabled: !!id,
+    ...options,
+  });
+};
+
 export const useCreateLoan = (
   options?: Omit<UseMutationOptions<LoanAccount, Error, CreateLoanAccountData>, 'mutationFn'>
 ) => {
@@ -423,6 +437,7 @@ export const useRepayLoan = (
     onSuccess: (_data, { id }) => {
       queryClient.invalidateQueries({ queryKey: loanKeys.accountDetail(id) });
       queryClient.invalidateQueries({ queryKey: loanKeys.accountSchedule(id) });
+      queryClient.invalidateQueries({ queryKey: loanKeys.accountPaymentHistory(id) });
       queryClient.invalidateQueries({ queryKey: loanKeys.accountLists() });
     },
     ...options,

@@ -422,6 +422,25 @@ export interface LoanTransactionPage {
   results: LoanTransactionRow[];
 }
 
+export interface LoanPaymentHistoryRow {
+  journal_entry_id: number;
+  date: string;
+  reference: string;
+  amount: string;
+  principal: string;
+  interest: string;
+  fees: string;
+  penalty: string;
+  bank_reference: string | null;
+  received_by: string | null;
+  reversed: boolean;
+}
+
+export interface LoanPaymentHistory {
+  count: number;
+  results: LoanPaymentHistoryRow[];
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 const BASE = '/loans';
@@ -772,6 +791,10 @@ export const loanService = {
     return api.get(`${BASE}/accounts/${id}/transactions/`, {
       params: { page, page_size: pageSize },
     });
+  },
+
+  async getLoanPaymentHistory(id: number): Promise<LoanPaymentHistory> {
+    return api.get(`${BASE}/accounts/${id}/payment-history/`);
   },
 
   async getPARSummary(): Promise<PARSummary> {

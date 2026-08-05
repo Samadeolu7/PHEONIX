@@ -17,7 +17,7 @@ from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest, LoanRestructure,
     LoanRestructureRequest, OfflinePaymentRecord, LoanDisbursementCorrection,
-    LoanRepaymentReversal,
+    LoanRepaymentReversal, LoanRepaymentAllocation,
 )
 from .serializers import (
     LoanProductSerializer,
@@ -1576,6 +1576,101 @@ class LoanAccountViewSet(ScopedModelViewSet):
             'page_size': page_size,
             'results': rows,
         })
+
+    @action(detail=True, methods=['get'], url_path='payment-history')
+    def payment_history(self, request, pk=None):
+        """
+        One row per real repayment made on this loan — as opposed to
+        `transactions` above, which returns raw GL debit/credit lines (a
+        single repayment can produce up to four separate credit lines: loan
+        receivable, interest, fees, penalty — see record_payment()). This is
+        what a staff member actually wants after recording a payment: "did
+        it go through, and what did it cover?"
+
+        Built from LoanRepaymentAllocation (one row per payment × installment
+        touched — see that model's docstring) grouped by journal_entry, which
+        is the only place the true principal/interest/fees/penalty split for
+        a specific historical payment is recoverable; the loan/schedule
+        aggregate fields only hold running totals. bank_reference and
+        received_by are merged in from the matching FinancialAuditLog(LOAN_REPAY)
+        entry — record_payment() writes exactly one per payment (same pattern
+        used by the remittance_report action above).
+        """
+        from decimal import Decimal
+        from common.models import FinancialAuditLog
+
+        loan = self.get_object()
+
+        allocations = (
+            LoanRepaymentAllocation.objects
+            .filter(loan=loan)
+            .select_related('journal_entry')
+            .order_by('journal_entry__date', 'journal_entry_id')
+        )
+
+        by_journal = {}
+        order = []
+        for alloc in allocations:
+            jid = alloc.journal_entry_id
+            if jid not in by_journal:
+                by_journal[jid] = {
+                    'journal_entry': alloc.journal_entry,
+                    'principal': Decimal('0.00'),
+                    'interest': Decimal('0.00'),
+                    'fees': Decimal('0.00'),
+                    'penalty': Decimal('0.00'),
+                }
+                order.append(jid)
+            row = by_journal[jid]
+            row['principal'] += alloc.principal_applied
+            row['interest'] += alloc.interest_applied
+            row['fees'] += alloc.fees_applied
+            row['penalty'] += alloc.penalty_applied
+
+        audit_by_journal = {}
+        for log in FinancialAuditLog.objects.filter(
+            event_type=FinancialAuditLog.LOAN_REPAY,
+            record_type='LoanAccount',
+            record_id=str(loan.pk),
+        ).select_related('acted_by'):
+            jid_raw = log.extra.get('journal_entry_id')
+            if jid_raw:
+                audit_by_journal[str(jid_raw)] = log
+
+        reversed_journal_ids = set(
+            LoanRepaymentReversal.objects.filter(
+                journal_entry_id__in=order, status=LoanRepaymentReversal.COMPLETED,
+            ).values_list('journal_entry_id', flat=True)
+        )
+
+        results = []
+        for jid in order:
+            row = by_journal[jid]
+            txn = row['journal_entry']
+            total = row['principal'] + row['interest'] + row['fees'] + row['penalty']
+            log = audit_by_journal.get(str(jid))
+            results.append({
+                'journal_entry_id': jid,
+                'date': txn.date,
+                'reference': txn.reference_number,
+                'amount': str(total),
+                'principal': str(row['principal']),
+                'interest': str(row['interest']),
+                'fees': str(row['fees']),
+                'penalty': str(row['penalty']),
+                'bank_reference': (log.extra.get('bank_reference') or None) if log else None,
+                'received_by': (
+                    f"{log.acted_by.first_name} {log.acted_by.last_name}".strip()
+                    if log and log.acted_by else None
+                ),
+                'reversed': jid in reversed_journal_ids,
+            })
+
+        # Most recent payment first — matches how staff will actually use
+        # this (confirming "did the payment I just took just now go through").
+        results.reverse()
+
+        return Response({'count': len(results), 'results': results})
 
     @action(detail=False, methods=['get'], url_path='cbn-returns')
     def cbn_returns(self, request):
