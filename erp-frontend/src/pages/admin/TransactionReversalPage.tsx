@@ -66,7 +66,11 @@ export default function TransactionReversalPage() {
       setReason('');
       setConfirm(false);
     } catch (err: any) {
-      setError(err?.response?.data?.detail ?? 'Failed to reverse transaction. Contact your administrator.');
+      setError(
+        err?.response?.data?.error ??
+          err?.response?.data?.detail ??
+          'Failed to reverse transaction. Contact your administrator.'
+      );
     } finally {
       setReversing(false);
     }

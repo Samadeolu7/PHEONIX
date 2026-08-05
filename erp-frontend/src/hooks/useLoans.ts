@@ -32,6 +32,8 @@ import {
   FeePreviewItem,
   ProposeRestructurePayload,
   RequestCorrectionPayload,
+  LoanRepaymentReversal,
+  RequestRepaymentReversalPayload,
   OfflinePaymentPayload,
   OfflinePaymentRecord,
   VerificationVerdict,
@@ -88,6 +90,11 @@ export const loanKeys = {
   corrections: () => [...loanKeys.all, 'corrections'] as const,
   correctionList: (params?: { status?: string }) =>
     [...loanKeys.corrections(), 'list', params] as const,
+
+  // Repayment Reversals
+  repaymentReversals: () => [...loanKeys.all, 'repaymentReversals'] as const,
+  repaymentReversalList: (params?: { status?: string; loan?: number }) =>
+    [...loanKeys.repaymentReversals(), 'list', params] as const,
 
   // Verification Requests
   verifications: () => [...loanKeys.all, 'verifications'] as const,
@@ -647,6 +654,71 @@ export const useRejectCorrection = (
     mutationFn: ({ id, rejection_reason }) => loanService.rejectCorrection(id, rejection_reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: loanKeys.correctionList() });
+    },
+    ...options,
+  });
+};
+
+// ── Repayment Reversals ────────────────────────────────────────────────────
+
+export const useLoanRepaymentReversals = (
+  params?: { status?: string; loan?: number },
+  options?: Omit<UseQueryOptions<LoanRepaymentReversal[], Error>, 'queryKey' | 'queryFn'>
+) => {
+  return useQuery({
+    queryKey: loanKeys.repaymentReversalList(params),
+    queryFn: () => loanService.listRepaymentReversals(params),
+    ...options,
+  });
+};
+
+export const useRequestRepaymentReversal = (
+  options?: Omit<UseMutationOptions<LoanRepaymentReversal, Error, RequestRepaymentReversalPayload>, 'mutationFn'>
+) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data) => loanService.requestRepaymentReversal(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: loanKeys.repaymentReversals() });
+    },
+    ...options,
+  });
+};
+
+export const useFirstApproveRepaymentReversal = (
+  options?: Omit<UseMutationOptions<LoanRepaymentReversal, Error, { id: number; notes: string }>, 'mutationFn'>
+) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, notes }) => loanService.firstApproveRepaymentReversal(id, notes),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: loanKeys.repaymentReversalList() });
+    },
+    ...options,
+  });
+};
+
+export const useSecondApproveRepaymentReversal = (
+  options?: Omit<UseMutationOptions<LoanRepaymentReversal, Error, { id: number; notes: string }>, 'mutationFn'>
+) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, notes }) => loanService.secondApproveRepaymentReversal(id, notes),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: loanKeys.repaymentReversalList() });
+    },
+    ...options,
+  });
+};
+
+export const useRejectRepaymentReversal = (
+  options?: Omit<UseMutationOptions<LoanRepaymentReversal, Error, { id: number; rejection_reason: string }>, 'mutationFn'>
+) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, rejection_reason }) => loanService.rejectRepaymentReversal(id, rejection_reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: loanKeys.repaymentReversalList() });
     },
     ...options,
   });

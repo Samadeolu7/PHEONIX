@@ -575,6 +575,7 @@ const LoanRepaymentApprovalsPage = lazy(() => import('./pages/loans/LoanRepaymen
 // Loan restructure approvals (director inbox)
 const LoanRestructureApprovalsPage = lazy(() => import('./pages/loans/LoanRestructureApprovalsPage'));
 const LoanDisbursementCorrectionsPage = lazy(() => import('./pages/loans/LoanDisbursementCorrectionsPage'));
+const LoanRepaymentReversalsPage = lazy(() => import('./pages/loans/LoanRepaymentReversalsPage'));
 
 // Loan new application form & products
 const LoanAccountFormPage = lazy(() => import('./pages/loans/LoanAccountFormPage'));
@@ -4179,6 +4180,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-disbursement-corrections" action="approve">
                                       <LoanDisbursementCorrectionsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Repayment reversals (approvals inbox, dual approval) */}
+                                <Route
+                                  path="/loans/repayment-reversals"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-repayment-reversals" action="approve">
+                                      <LoanRepaymentReversalsPage />
                                     </ProtectedRoute>
                                   }
                                 />

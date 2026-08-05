@@ -19,6 +19,7 @@ import {
   AlertCircleIcon,
   ClockIcon,
   UserIcon,
+  UndoIcon,
 } from 'lucide-react';
 import {
   usePettyCashVoucher,
@@ -27,10 +28,14 @@ import {
   useRejectVoucher,
   useDisburseVoucher,
   useRetireVoucher,
+  useRequestVoucherReversal,
+  useApproveVoucherReversal,
+  useRejectVoucherReversal,
   useDeletePettyCashVoucher,
 } from '../../hooks/usePettyCash';
 import PettyCashReceiptUpload from '../../components/treasury/PettyCashReceiptUpload';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
+import { useAuth } from '../../hooks/useAuth';
 
 const STATUS_INFO = {
   draft: { color: 'bg-gray-100 text-gray-800', icon: ClockIcon, label: 'Draft' },
@@ -39,6 +44,11 @@ const STATUS_INFO = {
   rejected: { color: 'bg-red-100 text-red-800', icon: XCircleIcon, label: 'Rejected' },
   disbursed: { color: 'bg-blue-100 text-blue-800', icon: BanknoteIcon, label: 'Disbursed' },
   retired: { color: 'bg-purple-100 text-purple-800', icon: CheckCircle2Icon, label: 'Retired' },
+  reversal_pending: {
+    color: 'bg-amber-100 text-amber-800',
+    icon: ClockIcon,
+    label: 'Reversal Pending Approval',
+  },
   cancelled: { color: 'bg-gray-100 text-gray-600', icon: XCircleIcon, label: 'Cancelled' },
 };
 
@@ -49,7 +59,15 @@ export const PettyCashVoucherDetail: React.FC = () => {
 
   const [actionDialog, setActionDialog] = useState<{
     visible: boolean;
-    type: 'approve' | 'reject' | 'disburse' | 'retire' | null;
+    type:
+      | 'approve'
+      | 'reject'
+      | 'disburse'
+      | 'retire'
+      | 'request_reversal'
+      | 'approve_reversal'
+      | 'reject_reversal'
+      | null;
   }>({ visible: false, type: null });
   const [actionComments, setActionComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -58,6 +76,8 @@ export const PettyCashVoucherDetail: React.FC = () => {
   // Fetch voucher data
   const { data: voucher, isLoading } = usePettyCashVoucher(voucherId);
   const { canUserApprove } = useApprovalGuard();
+  const { user: currentUser } = useAuth();
+  const currentUserId = currentUser?.id != null ? Number(currentUser.id) : null;
 
   // Mutations
   const submitMutation = useSubmitVoucher();
@@ -65,6 +85,9 @@ export const PettyCashVoucherDetail: React.FC = () => {
   const rejectMutation = useRejectVoucher();
   const disburseMutation = useDisburseVoucher();
   const retireMutation = useRetireVoucher();
+  const requestReversalMutation = useRequestVoucherReversal();
+  const approveReversalMutation = useApproveVoucherReversal();
+  const rejectReversalMutation = useRejectVoucherReversal();
   const deleteMutation = useDeletePettyCashVoucher();
 
   const handleSubmit = async () => {
@@ -91,7 +114,12 @@ export const PettyCashVoucherDetail: React.FC = () => {
     setSubmitting(true);
     setError('');
     try {
-      const data = { notes: actionComments };
+      // reject/request_reversal/reject_reversal are validated server-side
+      // against `reason`, not `notes`
+      const reasonBased = ['reject', 'request_reversal', 'reject_reversal'];
+      const data = reasonBased.includes(actionDialog.type)
+        ? { reason: actionComments }
+        : { notes: actionComments };
 
       switch (actionDialog.type) {
         case 'approve':
@@ -105,6 +133,15 @@ export const PettyCashVoucherDetail: React.FC = () => {
           break;
         case 'retire':
           await retireMutation.mutateAsync({ id: voucherId, data });
+          break;
+        case 'request_reversal':
+          await requestReversalMutation.mutateAsync({ id: voucherId, data });
+          break;
+        case 'approve_reversal':
+          await approveReversalMutation.mutateAsync(voucherId);
+          break;
+        case 'reject_reversal':
+          await rejectReversalMutation.mutateAsync({ id: voucherId, data });
           break;
       }
 
@@ -180,6 +217,17 @@ export const PettyCashVoucherDetail: React.FC = () => {
   const canReject = canUserApprove && voucher.status === 'pending';
   const canDisburse = canUserApprove && voucher.status === 'approved';
   const canRetire = voucher.status === 'disbursed';
+  // Maker step: stage a reversal request. Anyone who could disburse can request one.
+  const canRequestReversal =
+    canUserApprove &&
+    (voucher.status === 'disbursed' || voucher.status === 'retired') &&
+    !voucher.replenishment;
+  // Checker step: a *different* authorised user approves/rejects. The backend
+  // enforces the different-user rule; the frontend just hides the obvious case.
+  const canActOnReversal =
+    canUserApprove &&
+    voucher.status === 'reversal_pending' &&
+    voucher.reversal_requested_by !== currentUserId;
   const canDelete = voucher.status === 'draft';
 
   return (
@@ -501,6 +549,45 @@ export const PettyCashVoucherDetail: React.FC = () => {
                 </button>
               )}
 
+              {canRequestReversal && (
+                <button
+                  onClick={() => setActionDialog({ visible: true, type: 'request_reversal' })}
+                  disabled={submitting}
+                  className="w-full px-4 py-2 border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50 flex items-center gap-2 justify-center disabled:opacity-50"
+                >
+                  <UndoIcon className="h-4 w-4" />
+                  Request Reversal
+                </button>
+              )}
+
+              {voucher.status === 'reversal_pending' && !canActOnReversal && (
+                <p className="text-xs text-gray-500 text-center px-2">
+                  Reversal requested by {voucher.reversal_requested_by_name ?? 'another user'} —
+                  a different authorised user must approve or reject it.
+                </p>
+              )}
+
+              {canActOnReversal && (
+                <>
+                  <button
+                    onClick={() => setActionDialog({ visible: true, type: 'approve_reversal' })}
+                    disabled={submitting}
+                    className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2 justify-center disabled:opacity-50"
+                  >
+                    <UndoIcon className="h-4 w-4" />
+                    Approve Reversal
+                  </button>
+                  <button
+                    onClick={() => setActionDialog({ visible: true, type: 'reject_reversal' })}
+                    disabled={submitting}
+                    className="w-full px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 flex items-center gap-2 justify-center disabled:opacity-50"
+                  >
+                    <XCircleIcon className="h-4 w-4" />
+                    Reject Reversal
+                  </button>
+                </>
+              )}
+
               {canDelete && (
                 <button
                   onClick={handleDelete}
@@ -530,6 +617,11 @@ export const PettyCashVoucherDetail: React.FC = () => {
                 'Cash has been disbursed. Waiting for receipts to be submitted.'}
               {voucher.status === 'retired' &&
                 'Receipts have been submitted. This voucher can be included in reimbursement.'}
+              {voucher.status === 'reversal_pending' &&
+                'A reversal has been requested and is awaiting approval from a different authorised user.'}
+              {voucher.status === 'cancelled' &&
+                voucher.reversed_at &&
+                'This disbursement has been reversed and the amount restored to the fund.'}
             </p>
           </div>
         </div>
@@ -544,19 +636,56 @@ export const PettyCashVoucherDetail: React.FC = () => {
               {actionDialog.type === 'reject' && 'Reject Voucher'}
               {actionDialog.type === 'disburse' && 'Disburse Cash'}
               {actionDialog.type === 'retire' && 'Retire with Receipts'}
+              {actionDialog.type === 'request_reversal' && 'Request Reversal'}
+              {actionDialog.type === 'approve_reversal' && 'Approve Reversal'}
+              {actionDialog.type === 'reject_reversal' && 'Reject Reversal'}
             </h3>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Comments {actionDialog.type === 'reject' ? '(Required)' : '(Optional)'}
-              </label>
-              <textarea
-                value={actionComments}
-                onChange={e => setActionComments(e.target.value)}
-                rows={4}
-                placeholder="Add any relevant comments..."
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            {actionDialog.type === 'request_reversal' && (
+              <p className="text-sm text-gray-600 mb-4">
+                This stages a reversal request — nothing changes yet. A different authorised user
+                must approve it before the GL entry is reversed and the fund's cash balance
+                restored.
+              </p>
+            )}
+            {actionDialog.type === 'approve_reversal' && (
+              <p className="text-sm text-gray-600 mb-4">
+                Reason for this request: "{voucher.reversal_reason}"
+                <br />
+                Approving posts an offsetting GL entry, restores the amount to the fund's cash
+                balance, and cancels this voucher. It cannot be undone.
+              </p>
+            )}
+            {(actionDialog.type === 'request_reversal' ||
+              actionDialog.type === 'reject_reversal') && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Reason (Required)
+                </label>
+                <textarea
+                  value={actionComments}
+                  onChange={e => setActionComments(e.target.value)}
+                  rows={4}
+                  placeholder="Add any relevant comments..."
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
+            {actionDialog.type !== 'approve_reversal' &&
+              actionDialog.type !== 'request_reversal' &&
+              actionDialog.type !== 'reject_reversal' && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Comments {actionDialog.type === 'reject' ? '(Required)' : '(Optional)'}
+                  </label>
+                  <textarea
+                    value={actionComments}
+                    onChange={e => setActionComments(e.target.value)}
+                    rows={4}
+                    placeholder="Add any relevant comments..."
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              )}
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => {
@@ -570,15 +699,24 @@ export const PettyCashVoucherDetail: React.FC = () => {
               </button>
               <button
                 onClick={handleAction}
-                disabled={submitting || (actionDialog.type === 'reject' && !actionComments.trim())}
+                disabled={
+                  submitting ||
+                  (['reject', 'request_reversal', 'reject_reversal'].includes(
+                    actionDialog.type ?? ''
+                  ) &&
+                    !actionComments.trim())
+                }
                 className={`px-4 py-2 rounded-lg text-white disabled:opacity-50 ${
                   actionDialog.type === 'approve'
                     ? 'bg-green-600 hover:bg-green-700'
-                    : actionDialog.type === 'reject'
+                    : actionDialog.type === 'reject' || actionDialog.type === 'approve_reversal'
                       ? 'bg-red-600 hover:bg-red-700'
                       : actionDialog.type === 'disburse'
                         ? 'bg-blue-600 hover:bg-blue-700'
-                        : 'bg-purple-600 hover:bg-purple-700'
+                        : actionDialog.type === 'request_reversal' ||
+                            actionDialog.type === 'reject_reversal'
+                          ? 'bg-amber-600 hover:bg-amber-700'
+                          : 'bg-purple-600 hover:bg-purple-700'
                 }`}
               >
                 {submitting ? 'Processing...' : 'Confirm'}

@@ -106,17 +106,34 @@ class TransactionViewSet(ScopedModelViewSet):
         """
         transaction = self.get_object()
         reason = request.data.get('reason', '').strip()
-        
+
         if not reason:
             return Response({
                 'error': 'Reason is required for transaction reversal'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         if len(reason) < 10:
             return Response({
                 'error': 'Please provide a detailed reason (minimum 10 characters)'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
+        # A bare GL reversal only undoes the debit/credit entries. If a loan,
+        # petty cash voucher, payroll entry, etc. is keyed off this
+        # transaction it carries its own state (schedules, balances,
+        # statuses) that this generic action would leave stale/inconsistent.
+        # Refuse and point at that domain's own reversal flow instead.
+        side_effects = transaction.get_domain_side_effects()
+        if side_effects:
+            relations = ', '.join(name for name, _ in side_effects)
+            return Response({
+                'error': (
+                    f"This transaction is linked to other records ({relations}) that a plain "
+                    "GL reversal would not update, leaving them out of sync. Reverse it from "
+                    "the module that created it instead (e.g. the loan account, petty cash "
+                    "voucher, or payroll record)."
+                )
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             reversal_txn = transaction.reverse(
                 user=request.user,

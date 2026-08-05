@@ -60,7 +60,15 @@ export interface PettyCashVoucher {
   lines: PettyCashVoucherLine[];
   payee_name: string;
   payee_phone: string;
-  status: 'draft' | 'pending' | 'approved' | 'rejected' | 'disbursed' | 'retired' | 'cancelled';
+  status:
+    | 'draft'
+    | 'pending'
+    | 'approved'
+    | 'rejected'
+    | 'disbursed'
+    | 'retired'
+    | 'reversal_pending'
+    | 'cancelled';
   submitted_at: string | null;
   approved_by: number | null;
   approved_by_name: string | null;
@@ -86,6 +94,17 @@ export interface PettyCashVoucher {
   variance_explanation: string;
   replenishment: number | null;
   replenishment_number: string | null;
+  reversal_requested_by: number | null;
+  reversal_requested_by_name: string | null;
+  reversal_requested_at: string | null;
+  reversed_at: string | null;
+  reversed_by: number | null;
+  reversed_by_name: string | null;
+  reversal_reason: string;
+  reversal_rejected_by: number | null;
+  reversal_rejected_by_name: string | null;
+  reversal_rejected_at: string | null;
+  reversal_rejection_reason: string;
   branch: number;
   branch_name: string;
   notes: string;

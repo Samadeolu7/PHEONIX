@@ -170,6 +170,7 @@ PAGES = [
     ('loans', 'loan-accounts',         'Loan Accounts',      'list',   1),
     ('loans', 'loan-disbursements',    'Loan Disbursements', 'list',   2),
     ('loans', 'loan-disbursement-corrections', 'Disbursement Corrections', 'list', 3),
+    ('loans', 'loan-repayment-reversals', 'Repayment Reversals', 'list', 4),
     # budgets
     ('budgets', 'budget-periods',      'Budget Periods',     'list',   1),
     ('budgets', 'budget-lines',        'Budget Lines',       'list',   2),
@@ -362,6 +363,7 @@ ACTIONS = [
     ('loans','loan-disbursements','loan-disbursement-list',  'List Disbursements','view'),
     ('loans','loan-disbursements','loan-disbursement-approve','Approve Disbursement','approve'),
     ('loans','loan-disbursement-corrections','loan-correction-approve','Approve Disbursement Correction','approve'),
+    ('loans','loan-repayment-reversals','loan-repayment-reversal-approve','Approve Repayment Reversal','approve'),
     # ── budgets ───────────────────────────────────────────────────────────────
     ('budgets','budget-periods','budget-list',           'List Budgets',    'view'),
     ('budgets','budget-periods','budget-create',         'Create Budget',   'create'),

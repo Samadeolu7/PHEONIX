@@ -3,7 +3,7 @@ import re
 from decimal import Decimal
 from django.conf import settings
 from django.db import models, connection, transaction as txt
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, ObjectDoesNotExist
 from django.db.models import JSONField
 from django.utils import timezone
 from django.apps import apps
@@ -329,6 +329,60 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     def __str__(self):
         return self.reference_number
+
+    # Reverse relations that are pure GL bookkeeping on Transaction itself -
+    # never a domain record that would go stale if this transaction is
+    # reversed without also being told to a business object.
+    _SAFE_REVERSE_RELATIONS = {'entries', 'original_transaction', 'reversed_by_transaction', 'payment_reversal_request'}
+
+    # Series whose posting method mutates other domain state (schedules,
+    # balances, statuses) but never stores a queryable FK back to the specific
+    # Transaction it created, so the reverse-relation scan below can't see
+    # it. Populated by actually reading the posting code, not guessed - see
+    # loans.LoanAccount.record_payment. Other series may have the same gap
+    # and simply haven't been audited yet; this list is not exhaustive.
+    _UNTRACKED_SIDE_EFFECT_SERIES = {
+        'LNPMT': "loan repayment schedule rows and balances (LoanAccount.record_payment)",
+        'LNACC': "loan early-payoff interest recognition (LoanAccount.record_payment)",
+    }
+
+    def get_domain_side_effects(self):
+        """
+        List (relation_name, detail) for every reverse FK/O2O pointing at this
+        transaction outside of _SAFE_REVERSE_RELATIONS - e.g. a loan's
+        repayment schedule, a petty cash voucher, a payroll entry - plus any
+        series known to mutate domain state without leaving a traceable FK
+        (_UNTRACKED_SIDE_EFFECT_SERIES).
+
+        A non-empty result means some domain record is keyed off this
+        transaction and carries its own state (schedule rows, balances,
+        statuses) that a bare GL reversal never touches. Callers should
+        refuse a plain reverse() in that case and point at that domain's own
+        reversal flow instead - see TransactionViewSet.reverse().
+        """
+        found = []
+        for rel in self._meta.related_objects:
+            accessor = rel.get_accessor_name()
+            if not accessor or accessor in self._SAFE_REVERSE_RELATIONS:
+                continue
+            try:
+                related = getattr(self, accessor)
+            except ObjectDoesNotExist:
+                continue
+            except Exception:
+                continue
+            if hasattr(related, 'all'):
+                count = related.all().count()
+            else:
+                count = 1 if related is not None else 0
+            if count:
+                found.append((accessor, count))
+
+        series_code = getattr(self.series, 'code', None) if self.series_id else None
+        if series_code in self._UNTRACKED_SIDE_EFFECT_SERIES:
+            found.append((series_code, self._UNTRACKED_SIDE_EFFECT_SERIES[series_code]))
+
+        return found
 
     @txt.atomic
     def reverse(self, user, reason=''):

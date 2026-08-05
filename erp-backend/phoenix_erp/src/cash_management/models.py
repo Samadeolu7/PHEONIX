@@ -1758,6 +1758,7 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         ('rejected', 'Rejected'),
         ('disbursed', 'Cash Disbursed'),
         ('retired', 'Retired (Receipt Submitted)'),
+        ('reversal_pending', 'Reversal Pending Approval'),
         ('cancelled', 'Cancelled'),
     ]
     status = models.CharField(
@@ -1879,6 +1880,38 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         related_name='petty_cash_vouchers',
         help_text="GL transaction created when cash is disbursed"
     )
+
+    # Reversal (undoes a disbursement) - maker/checker: request_reversal()
+    # stages it, a *different* authorised user must approve_reversal() before
+    # the GL entry is actually reversed and the fund balance restored.
+    reversal_requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='requested_petty_cash_voucher_reversals'
+    )
+    reversal_requested_at = models.DateTimeField(null=True, blank=True)
+    # Status to restore to if the reversal request is rejected.
+    reversal_previous_status = models.CharField(max_length=20, blank=True)
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reversed_petty_cash_vouchers'
+    )
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversal_reason = models.TextField(blank=True)
+    reversal_rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rejected_petty_cash_voucher_reversals'
+    )
+    reversal_rejected_at = models.DateTimeField(null=True, blank=True)
+    reversal_rejection_reason = models.TextField(blank=True)
 
     notes = models.TextField(blank=True)
     
@@ -2175,6 +2208,96 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             'receipt_submitted', 'receipt_amount', 'receipt_date', 'receipt_reference',
             'variance_explanation', 'retired_by', 'retired_at', 'status', 'variance'
         ])
+
+    @db_transaction.atomic
+    def request_reversal(self, user, reason):
+        """
+        Step 1 (maker) - stage a reversal of this disbursement. Does not
+        touch the GL or the fund balance yet; a *different* authorised user
+        must call approve_reversal() before anything actually changes.
+
+        Only allowed for vouchers not yet pulled into a replenishment - once
+        a replenishment references a voucher's amounts, unwinding it here
+        would desync the replenishment's totals.
+        """
+        if self.status not in ('disbursed', 'retired'):
+            raise ValidationError(
+                "Only disbursed or retired vouchers can have their reversal requested"
+            )
+
+        if self.replenishment_id:
+            raise ValidationError(
+                "This voucher is already attached to a replenishment and can "
+                "no longer be reversed on its own."
+            )
+
+        if not reason:
+            raise ValidationError("A reason is required to request a reversal")
+
+        if not self.is_authorized_to_disburse(user, self.fund):
+            raise ValidationError(
+                "Only the fund custodian, alternate custodian, or a director can request a reversal"
+            )
+
+        if not self.journal_entry_id:
+            raise ValidationError("This voucher has no GL journal entry to reverse")
+
+        self.reversal_previous_status = self.status
+        self.status = 'reversal_pending'
+        self.reversal_requested_by = user
+        self.reversal_requested_at = timezone.now()
+        self.reversal_reason = reason
+        self.save(update_fields=[
+            'status', 'reversal_previous_status', 'reversal_requested_by',
+            'reversal_requested_at', 'reversal_reason',
+        ])
+
+    @db_transaction.atomic
+    def approve_reversal(self, user):
+        """
+        Step 2a (checker) - post the offsetting GL entry (via
+        Transaction.reverse, so the ledger keeps both sides rather than
+        mutating history), restore the cash to the fund's physical balance,
+        and move the voucher to 'cancelled'.
+
+        Must be a different user than whoever called request_reversal() -
+        the same maker/checker separation used elsewhere in this codebase
+        (see incomes.PaymentReversalRequest).
+        """
+        if self.status != 'reversal_pending':
+            raise ValidationError("This voucher has no pending reversal request")
+
+        if user.pk == self.reversal_requested_by_id:
+            raise ValidationError(
+                "A different authorised user must approve this reversal"
+            )
+
+        self.journal_entry.reverse(user, reason=self.reversal_reason)
+
+        self.fund.current_balance += self.actual_amount_disbursed or self.amount
+        self.fund.save(update_fields=['current_balance'])
+
+        self.status = 'cancelled'
+        self.reversed_by = user
+        self.reversed_at = timezone.now()
+        self.save(update_fields=['status', 'reversed_by', 'reversed_at'])
+
+    @db_transaction.atomic
+    def reject_reversal(self, user, reason=''):
+        """Step 2b (checker) - decline a pending reversal request, restoring
+        the voucher to whatever status it was in before the request."""
+        if self.status != 'reversal_pending':
+            raise ValidationError("This voucher has no pending reversal request")
+
+        self.status = self.reversal_previous_status or 'disbursed'
+        self.reversal_rejected_by = user
+        self.reversal_rejected_at = timezone.now()
+        self.reversal_rejection_reason = reason
+        self.save(update_fields=[
+            'status', 'reversal_rejected_by', 'reversal_rejected_at',
+            'reversal_rejection_reason',
+        ])
+
 
 class PettyCashVoucherLine(models.Model):
     """

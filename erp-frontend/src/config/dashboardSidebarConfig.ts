@@ -304,6 +304,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Repayment Approvals', '/loans/repayment-approvals'),
         leaf('Restructure Approvals', '/loans/restructure-approvals'),
         leaf('Disbursement Corrections', '/loans/disbursement-corrections'),
+        leaf('Repayment Reversals', '/loans/repayment-reversals'),
       ]),
       grp('btn-loans-rpt', 'REPORT', 'file-text', [
         leaf('Debtors Report', '/reports/loans/debtors'),

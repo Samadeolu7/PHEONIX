@@ -584,6 +584,29 @@ export const loanService = {
     return api.post(`${BASE}/disbursement-corrections/${id}/reject/`, { rejection_reason });
   },
 
+  // ===== REPAYMENT REVERSALS (undo a specific loan payment, dual approval) =====
+
+  async requestRepaymentReversal(data: RequestRepaymentReversalPayload): Promise<LoanRepaymentReversal> {
+    return api.post(`${BASE}/repayment-reversals/`, data);
+  },
+
+  async listRepaymentReversals(params?: { status?: string; loan?: number }): Promise<LoanRepaymentReversal[]> {
+    const res = await api.get(`${BASE}/repayment-reversals/`, { params });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  async firstApproveRepaymentReversal(id: number, notes: string): Promise<LoanRepaymentReversal> {
+    return api.post(`${BASE}/repayment-reversals/${id}/first_approve/`, { notes });
+  },
+
+  async secondApproveRepaymentReversal(id: number, notes: string): Promise<LoanRepaymentReversal> {
+    return api.post(`${BASE}/repayment-reversals/${id}/second_approve/`, { notes });
+  },
+
+  async rejectRepaymentReversal(id: number, rejection_reason: string): Promise<LoanRepaymentReversal> {
+    return api.post(`${BASE}/repayment-reversals/${id}/reject/`, { rejection_reason });
+  },
+
   // ===== OFFLINE PAYMENT RECORDS (field collection) =====
 
   async createOfflinePayment(data: OfflinePaymentPayload): Promise<OfflinePaymentRecord> {
@@ -958,6 +981,51 @@ export interface LoanDisbursementCorrection {
   reversal_journal_entry: number | null;
   new_loan: number | null;
   new_loan_number: string | null;
+  notes: string;
+  owner: number;
+  branch: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Repayment Reversal (undo a specific loan payment, dual approval) ────────
+
+export type RepaymentReversalStatus = 'pending' | 'awaiting_second_approval' | 'completed' | 'rejected';
+
+export interface RequestRepaymentReversalPayload {
+  journal_entry: number;
+  loan?: number;
+  reason: string;
+}
+
+export interface LoanRepaymentReversal {
+  id: number;
+  reference_number: string;
+  loan: number;
+  loan_number: string;
+  client_name: string;
+  journal_entry: number;
+  journal_entry_reference: string;
+  journal_entry_date: string;
+  amount: string;
+  reason: string;
+  status: RepaymentReversalStatus;
+  requested_by: number;
+  requested_by_name: string | null;
+  requested_at: string;
+  first_approved_by: number | null;
+  first_approved_by_name: string | null;
+  first_approved_at: string | null;
+  first_approval_notes: string;
+  second_approved_by: number | null;
+  second_approved_by_name: string | null;
+  second_approved_at: string | null;
+  second_approval_notes: string;
+  rejected_by: number | null;
+  rejected_by_name: string | null;
+  rejected_at: string | null;
+  rejection_reason: string;
+  reversal_journal_entry: number | null;
   notes: string;
   owner: number;
   branch: number;

@@ -286,6 +286,45 @@ export const useRetireVoucher = () => {
   });
 };
 
+export const useRequestVoucherReversal = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: VoucherActionData }) =>
+      pettyCashService.requestVoucherReversal(id, data),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.voucherDetail(id) });
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.vouchers() });
+    },
+  });
+};
+
+export const useApproveVoucherReversal = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => pettyCashService.approveVoucherReversal(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.voucherDetail(id) });
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.vouchers() });
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.funds() }); // Update fund balance
+    },
+  });
+};
+
+export const useRejectVoucherReversal = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: VoucherActionData }) =>
+      pettyCashService.rejectVoucherReversal(id, data),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.voucherDetail(id) });
+      queryClient.invalidateQueries({ queryKey: pettyCashKeys.vouchers() });
+    },
+  });
+};
+
 // ============================================
 // PETTY CASH REPLENISHMENT HOOKS
 // ============================================

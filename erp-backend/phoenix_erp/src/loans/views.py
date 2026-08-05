@@ -17,6 +17,7 @@ from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest, LoanRestructure,
     LoanRestructureRequest, OfflinePaymentRecord, LoanDisbursementCorrection,
+    LoanRepaymentReversal,
 )
 from .serializers import (
     LoanProductSerializer,
@@ -27,6 +28,7 @@ from .serializers import (
     LoanRestructureRequestSerializer,
     OfflinePaymentRecordSerializer,
     LoanDisbursementCorrectionSerializer,
+    LoanRepaymentReversalSerializer,
 )
 from .utils import LoanVerifier
 from cash_management.services.payment_routing import PaymentRoutingService
@@ -2966,3 +2968,172 @@ class LoanDisbursementCorrectionViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(LoanDisbursementCorrectionSerializer(req, context={'request': request}).data)
+
+
+class LoanRepaymentReversalViewSet(ScopedModelViewSet):
+    """
+    Approval-gated reversal of a single loan repayment (LNPMT) transaction —
+    see LoanRepaymentReversal's docstring (loans/models.py) for why this
+    can't just be a generic GL reversal.
+
+    POST /api/loans/repayment-reversals/                     — request a reversal
+    GET  /api/loans/repayment-reversals/                     — list (filter ?status=&loan=)
+    POST /api/loans/repayment-reversals/:id/first_approve/   — first sign-off
+    POST /api/loans/repayment-reversals/:id/second_approve/  — second, different sign-off —
+                                                                 executes the reversal
+    POST /api/loans/repayment-reversals/:id/reject/          — either approver rejects
+
+    Always requires two different, authorized approvers. Neither the
+    requester nor the first approver may act as the second approver.
+    """
+    permission_module = 'loans'
+    permission_page = 'loan-repayment-reversals'
+    queryset = LoanRepaymentReversal.objects.select_related(
+        'loan', 'loan__client', 'journal_entry', 'reversal_journal_entry',
+        'requested_by', 'first_approved_by', 'second_approved_by', 'rejected_by',
+    ).all()
+    serializer_class = LoanRepaymentReversalSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+
+    def get_queryset(self):
+        qs = LoanRepaymentReversal.objects.select_related(
+            'loan', 'loan__client', 'journal_entry', 'reversal_journal_entry',
+            'requested_by', 'first_approved_by', 'second_approved_by', 'rejected_by',
+        ).all()
+        qs = _build_scoped_qs(qs, getattr(self.request, 'user', None))
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        loan_filter = self.request.query_params.get('loan')
+        if loan_filter:
+            qs = qs.filter(loan_id=loan_filter)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        """
+        Body:
+          - journal_entry (int, required): the LNPMT Transaction id to reverse.
+          - loan (int, optional): the LoanAccount this payment belongs to —
+            inferred from the transaction's LoanRepaymentAllocation rows when
+            omitted, so callers that only know the transaction (e.g. the
+            ledger view) don't need to look up the loan first.
+          - reason (str, required): why this repayment is being reversed.
+
+        Goes through LoanRepaymentReversal.submit(), which validates the
+        transaction is an actual repayment on this loan with allocation rows
+        to reverse — not the default ModelSerializer.create() path, since the
+        amount is server-computed from those allocations, not client-supplied.
+        """
+        loan_id = request.data.get('loan')
+        journal_entry_id = request.data.get('journal_entry')
+        reason = (request.data.get('reason') or '').strip()
+
+        if not journal_entry_id:
+            return Response(
+                {'error': 'journal_entry is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from transactions.models import Transaction as JournalEntry
+        try:
+            journal_entry = JournalEntry.objects.select_related('series').get(pk=journal_entry_id)
+        except JournalEntry.DoesNotExist:
+            return Response({'error': 'Transaction not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        loan_qs = _build_scoped_qs(LoanAccount.objects.all(), request.user)
+        if loan_id:
+            try:
+                loan = loan_qs.get(pk=loan_id)
+            except LoanAccount.DoesNotExist:
+                return Response({'error': 'Loan not found'}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            from .models import LoanRepaymentAllocation
+            allocation = LoanRepaymentAllocation.objects.filter(
+                journal_entry=journal_entry, loan__in=loan_qs,
+            ).select_related('loan').first()
+            if not allocation:
+                return Response(
+                    {'error': (
+                        'Could not determine which loan this payment belongs to — no allocation '
+                        'records exist for this transaction, so it can\'t be reversed through this flow.'
+                    )},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            loan = allocation.loan
+
+        try:
+            req = LoanRepaymentReversal.submit(
+                loan=loan, journal_entry=journal_entry, reason=reason, user=request.user,
+            )
+        except ValidationError as exc:
+            return Response(
+                {'error': exc.messages if hasattr(exc, 'messages') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(
+            LoanRepaymentReversalSerializer(req, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=['post'])
+    def first_approve(self, request, pk=None):
+        from common.approval_permissions import can_user_approve
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'error': 'You do not have approval authority for loan repayment reversals.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        req = self.get_object()
+        notes = request.data.get('notes', '')
+        try:
+            req.first_approve(request.user, notes=notes)
+        except ValidationError as exc:
+            return Response(
+                {'error': exc.messages if hasattr(exc, 'messages') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(LoanRepaymentReversalSerializer(req, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def second_approve(self, request, pk=None):
+        from common.approval_permissions import can_user_approve
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'error': 'You do not have approval authority for loan repayment reversals.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        req = self.get_object()
+        notes = request.data.get('notes', '')
+        try:
+            req.second_approve(request.user, notes=notes)
+        except ValidationError as exc:
+            return Response(
+                {'error': exc.messages if hasattr(exc, 'messages') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(LoanRepaymentReversalSerializer(req, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        from common.approval_permissions import can_user_approve
+
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'error': 'You do not have approval authority for loan repayment reversals.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        req = self.get_object()
+        reason = request.data.get('rejection_reason', '')
+        try:
+            req.reject(request.user, reason=reason)
+        except ValidationError as exc:
+            return Response(
+                {'error': exc.messages if hasattr(exc, 'messages') else str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(LoanRepaymentReversalSerializer(req, context={'request': request}).data)

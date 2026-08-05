@@ -167,6 +167,30 @@ export const pettyCashService = {
     return response;
   },
 
+  async requestVoucherReversal(id: number, data: VoucherActionData): Promise<PettyCashVoucher> {
+    const response = await api.post(
+      `/cash-management/petty-cash-vouchers/${id}/request_reversal/`,
+      data
+    );
+    return response;
+  },
+
+  async approveVoucherReversal(id: number): Promise<PettyCashVoucher> {
+    const response = await api.post(
+      `/cash-management/petty-cash-vouchers/${id}/approve_reversal/`,
+      {}
+    );
+    return response;
+  },
+
+  async rejectVoucherReversal(id: number, data: VoucherActionData): Promise<PettyCashVoucher> {
+    const response = await api.post(
+      `/cash-management/petty-cash-vouchers/${id}/reject_reversal/`,
+      data
+    );
+    return response;
+  },
+
   // ============================================
   // PETTY CASH REPLENISHMENTS
   // ============================================

@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { journalVoucherService, JournalVoucher } from '../services/journalVoucherService';
+import { usePermission } from '../hooks/usePermissions';
+import { useRequestRepaymentReversal } from '../hooks/useLoans';
 
 interface TransactionDetail {
   id: number;
@@ -63,8 +65,28 @@ const AccountLedgerPage: React.FC = () => {
   const [selectedEntry, setSelectedEntry] = useState<LedgerEntry | null>(null);
   const [txnDetail, setTxnDetail] = useState<JournalVoucher | null>(null);
   const [txnDetailLoading, setTxnDetailLoading] = useState(false);
+  const [reverseReason, setReverseReason] = useState('');
+  const [reverseConfirming, setReverseConfirming] = useState(false);
+  const [reversing, setReversing] = useState(false);
+  const [reverseError, setReverseError] = useState('');
+  const [loanReversalReason, setLoanReversalReason] = useState('');
+  const [loanReversalConfirming, setLoanReversalConfirming] = useState(false);
+  const [loanReversalError, setLoanReversalError] = useState('');
+  const [loanReversalSuccess, setLoanReversalSuccess] = useState('');
+
+  const { hasPageAccess } = usePermission();
+  const canReverseTxn = hasPageAccess('common', 'business-day', 'edit');
+  const requestRepaymentReversalMutation = useRequestRepaymentReversal();
 
   useEffect(() => {
+    setReverseReason('');
+    setReverseConfirming(false);
+    setReverseError('');
+    setLoanReversalReason('');
+    setLoanReversalConfirming(false);
+    setLoanReversalError('');
+    setLoanReversalSuccess('');
+
     const txnId = selectedEntry?.transaction?.id ?? selectedEntry?.id;
     if (!txnId) {
       setTxnDetail(null);
@@ -169,6 +191,47 @@ const AccountLedgerPage: React.FC = () => {
 
   const handleFilter = () => {
     fetchAccountAndTransactions();
+  };
+
+  const handleRequestLoanRepaymentReversal = async () => {
+    if (!selectedEntry || !loanReversalReason.trim()) return;
+    const txnId = selectedEntry.transaction?.id ?? selectedEntry.id;
+    setLoanReversalError('');
+    try {
+      await requestRepaymentReversalMutation.mutateAsync({
+        journal_entry: txnId,
+        reason: loanReversalReason,
+      });
+      setLoanReversalConfirming(false);
+      setLoanReversalReason('');
+      setLoanReversalSuccess(
+        'Reversal requested — a different, second approver must confirm it from Loans → Repayment Reversals before anything actually changes.'
+      );
+    } catch (err: any) {
+      setLoanReversalError(
+        err?.response?.data?.error || err?.response?.data?.detail || 'Failed to request reversal.'
+      );
+    }
+  };
+
+  const handleReverseTransaction = async () => {
+    if (!selectedEntry || !reverseReason.trim()) return;
+    const txnId = selectedEntry.transaction?.id ?? selectedEntry.id;
+    setReversing(true);
+    setReverseError('');
+    try {
+      await api.post(`/transactions/transactions/${txnId}/reverse/`, { reason: reverseReason });
+      setSelectedEntry(null);
+      setReverseReason('');
+      setReverseConfirming(false);
+      await fetchAccountAndTransactions();
+    } catch (err: any) {
+      setReverseError(
+        err?.response?.data?.error || err?.response?.data?.detail || 'Failed to reverse transaction.'
+      );
+    } finally {
+      setReversing(false);
+    }
   };
 
   const handleExportCSV = () => {
@@ -1104,6 +1167,238 @@ const AccountLedgerPage: React.FC = () => {
                   </span>
                 </div>
               )}
+              {canReverseTxn &&
+                !selectedEntry.is_reversed &&
+                !selectedEntry.transaction?.is_reversal &&
+                selectedEntry.transaction?.series === 'LNPMT' && (
+                  <div
+                    style={{
+                      marginTop: '16px',
+                      padding: '14px',
+                      background: '#fffbeb',
+                      border: '1px solid #fde68a',
+                      borderRadius: '8px',
+                    }}
+                  >
+                    <p style={{ margin: '0 0 10px', fontSize: '12px', color: '#92400e' }}>
+                      This is a loan repayment — reversing it also has to unwind the repayment
+                      schedule and loan balances, so it goes through Loans → Repayment Reversals
+                      and always needs two different approvers. Nothing changes until then.
+                    </p>
+                    {loanReversalSuccess && (
+                      <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#065f46' }}>
+                        {loanReversalSuccess}
+                      </p>
+                    )}
+                    {loanReversalError && (
+                      <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#b91c1c' }}>
+                        {loanReversalError}
+                      </p>
+                    )}
+                    {!loanReversalSuccess && (
+                      !loanReversalConfirming ? (
+                        <button
+                          onClick={() => setLoanReversalConfirming(true)}
+                          style={{
+                            width: '100%',
+                            padding: '9px',
+                            background: 'white',
+                            color: '#92400e',
+                            border: '1px solid #d97706',
+                            borderRadius: '8px',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Request Loan Repayment Reversal
+                        </button>
+                      ) : (
+                        <>
+                          <label
+                            style={{
+                              display: 'block',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              color: '#92400e',
+                              marginBottom: '6px',
+                            }}
+                          >
+                            Reason for reversal (required)
+                          </label>
+                          <textarea
+                            value={loanReversalReason}
+                            onChange={e => setLoanReversalReason(e.target.value)}
+                            rows={2}
+                            placeholder="Explain why this repayment is being reversed…"
+                            style={{
+                              width: '100%',
+                              padding: '8px',
+                              fontSize: '13px',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '6px',
+                              marginBottom: '10px',
+                              fontFamily: 'inherit',
+                            }}
+                          />
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              onClick={() => {
+                                setLoanReversalConfirming(false);
+                                setLoanReversalReason('');
+                                setLoanReversalError('');
+                              }}
+                              disabled={requestRepaymentReversalMutation.isPending}
+                              style={{
+                                flex: 1,
+                                padding: '9px',
+                                background: 'white',
+                                color: '#374151',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '8px',
+                                fontSize: '13px',
+                                fontWeight: 500,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleRequestLoanRepaymentReversal}
+                              disabled={requestRepaymentReversalMutation.isPending || !loanReversalReason.trim()}
+                              style={{
+                                flex: 1,
+                                padding: '9px',
+                                background:
+                                  requestRepaymentReversalMutation.isPending || !loanReversalReason.trim()
+                                    ? '#fca5a5'
+                                    : '#dc2626',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '8px',
+                                fontSize: '13px',
+                                fontWeight: 600,
+                                cursor:
+                                  requestRepaymentReversalMutation.isPending || !loanReversalReason.trim()
+                                    ? 'not-allowed'
+                                    : 'pointer',
+                              }}
+                            >
+                              {requestRepaymentReversalMutation.isPending ? 'Submitting…' : 'Submit Request'}
+                            </button>
+                          </div>
+                        </>
+                      )
+                    )}
+                  </div>
+                )}
+              {canReverseTxn &&
+                !selectedEntry.is_reversed &&
+                !selectedEntry.transaction?.is_reversal &&
+                selectedEntry.transaction?.series !== 'LNPMT' && (
+                  <div
+                    style={{
+                      marginTop: '16px',
+                      padding: '14px',
+                      background: '#fffbeb',
+                      border: '1px solid #fde68a',
+                      borderRadius: '8px',
+                    }}
+                  >
+                    {reverseError && (
+                      <p style={{ margin: '0 0 10px', fontSize: '13px', color: '#b91c1c' }}>
+                        {reverseError}
+                      </p>
+                    )}
+                    {!reverseConfirming ? (
+                      <button
+                        onClick={() => setReverseConfirming(true)}
+                        style={{
+                          width: '100%',
+                          padding: '9px',
+                          background: 'white',
+                          color: '#92400e',
+                          border: '1px solid #d97706',
+                          borderRadius: '8px',
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Reverse This Transaction
+                      </button>
+                    ) : (
+                      <>
+                        <label
+                          style={{
+                            display: 'block',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            color: '#92400e',
+                            marginBottom: '6px',
+                          }}
+                        >
+                          Reason for reversal (required)
+                        </label>
+                        <textarea
+                          value={reverseReason}
+                          onChange={e => setReverseReason(e.target.value)}
+                          rows={2}
+                          placeholder="Explain why this transaction is being reversed…"
+                          style={{
+                            width: '100%',
+                            padding: '8px',
+                            fontSize: '13px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            marginBottom: '10px',
+                            fontFamily: 'inherit',
+                          }}
+                        />
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            onClick={() => {
+                              setReverseConfirming(false);
+                              setReverseReason('');
+                              setReverseError('');
+                            }}
+                            disabled={reversing}
+                            style={{
+                              flex: 1,
+                              padding: '9px',
+                              background: 'white',
+                              color: '#374151',
+                              border: '1px solid #d1d5db',
+                              borderRadius: '8px',
+                              fontSize: '13px',
+                              fontWeight: 500,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleReverseTransaction}
+                            disabled={reversing || !reverseReason.trim()}
+                            style={{
+                              flex: 1,
+                              padding: '9px',
+                              background: reversing || !reverseReason.trim() ? '#fca5a5' : '#dc2626',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '8px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              cursor: reversing || !reverseReason.trim() ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            {reversing ? 'Reversing…' : 'Confirm Reversal'}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
             </div>
 
             {/* Footer */}

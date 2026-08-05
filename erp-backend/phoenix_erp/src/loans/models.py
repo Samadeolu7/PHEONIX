@@ -1281,12 +1281,17 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         # Update schedule and arrears — pass the per-component breakdown so each
         # installment row records the correct principal/interest/fee/penalty split.
+        # journal_entry is passed through so each installment touched gets a
+        # LoanRepaymentAllocation row - the only record of exactly what this
+        # specific payment did, which a future reversal needs to undo it
+        # precisely instead of guessing from the aggregate totals.
         self._update_schedule_with_payment(
             amount, payment_date,
             penalty=penalty_payment,
             interest=interest_payment,
             fees=fee_payment,
             principal=principal_payment,
+            journal_entry=journal_entry,
         )
 
         # ── Early-payoff catch-up: recognize any remaining unearned interest ──
@@ -1383,6 +1388,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         interest: Decimal = Decimal('0'),
         fees: Decimal = Decimal('0'),
         principal: Decimal = Decimal('0'),
+        journal_entry=None,
     ):
         """
         Apply a payment across schedule installments in due-date order.
@@ -1449,8 +1455,20 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 schedule.status = 'partial'
 
             schedule.save()
+
+            if journal_entry is not None and payment_to_schedule > 0:
+                LoanRepaymentAllocation.objects.create(
+                    loan=self,
+                    schedule=schedule,
+                    journal_entry=journal_entry,
+                    principal_applied=principal_applied,
+                    interest_applied=interest_applied,
+                    fees_applied=fees_applied,
+                    penalty_applied=penalty_applied,
+                )
+
             remaining -= payment_to_schedule
-    
+
     def mark_overdue_installments(self):
         """
         Bulk-update past-due pending/partial installments to 'overdue'.
@@ -2155,6 +2173,41 @@ class LoanRepaymentSchedule(TimeStampedModel, BranchScopedModel, SoftDeleteModel
     def amount_remaining(self) -> Decimal:
         """Amount remaining to be paid"""
         return self.total_due - self.total_paid
+
+
+class LoanRepaymentAllocation(TimeStampedModel):
+    """
+    Exactly how one repayment (one LNPMT journal entry) was split across
+    principal/interest/fees/penalty on one schedule installment it touched.
+
+    record_payment() only mutates running totals on LoanAccount and
+    LoanRepaymentSchedule - nothing else remembers which installments a
+    specific historical payment affected or by how much. Without this row,
+    reversing one payment out of a loan's history isn't just imprecise, it's
+    not mechanically possible. One row per (payment, installment) pair - see
+    LoanAccount._update_schedule_with_payment, and LoanRepaymentReversal for
+    the reversal that reads these back.
+    """
+    loan = models.ForeignKey(
+        'LoanAccount', on_delete=models.CASCADE, related_name='repayment_allocations'
+    )
+    schedule = models.ForeignKey(
+        'LoanRepaymentSchedule', on_delete=models.CASCADE, related_name='payment_allocations'
+    )
+    journal_entry = models.ForeignKey(
+        'transactions.Transaction', on_delete=models.PROTECT,
+        related_name='loan_repayment_allocations',
+    )
+    principal_applied = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    interest_applied = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    fees_applied = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    penalty_applied = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    class Meta:
+        indexes = [models.Index(fields=['journal_entry'])]
+
+    def __str__(self):
+        return f"Allocation of {self.journal_entry_id} to {self.schedule}"
 
 
 class LoanCollateral(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
@@ -3517,3 +3570,380 @@ class LoanDisbursementCorrection(TimeStampedModel, BranchScopedModel, SoftDelete
 
         self.reversal_journal_entry = reversal_journal
         self.new_loan = new_loan
+
+
+class LoanRepaymentReversal(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Approval-gated reversal of a single loan repayment (LNPMT) transaction.
+
+    record_payment() only mutates running totals on LoanAccount and
+    LoanRepaymentSchedule - see LoanRepaymentAllocation for why precisely
+    undoing one historical payment depends on allocation rows recorded at
+    payment time. A payment made before LoanRepaymentAllocation existed has
+    no allocation rows and can't be reversed through this flow.
+
+    Always requires two different, authorized approvers, matching
+    LoanDisbursementCorrection - reversing a repayment moves real GL,
+    schedule, and balance state, exactly the kind of action a single
+    mistaken or compromised approval shouldn't be able to trigger alone.
+
+    Workflow:
+        PENDING -> (first approve)  -> AWAITING_SECOND_APPROVAL
+                -> (second approve) -> COMPLETED  (executes the reversal)
+        PENDING | AWAITING_SECOND_APPROVAL -> (reject) -> REJECTED
+    """
+    PENDING = 'pending'
+    AWAITING_SECOND = 'awaiting_second_approval'
+    COMPLETED = 'completed'
+    REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (PENDING, 'Pending First Approval'),
+        (AWAITING_SECOND, 'Awaiting Second Approval'),
+        (COMPLETED, 'Completed'),
+        (REJECTED, 'Rejected'),
+    ]
+
+    reference_number = models.CharField(
+        max_length=50, unique=True, db_index=True,
+        help_text='Auto-generated reference (e.g. LREV-A1B2C3D4)',
+    )
+
+    loan = models.ForeignKey(
+        LoanAccount,
+        on_delete=models.PROTECT,
+        related_name='repayment_reversals',
+    )
+    journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        on_delete=models.PROTECT,
+        related_name='loan_repayment_reversal_requests',
+        help_text='The LNPMT payment transaction being reversed',
+    )
+    amount = models.DecimalField(
+        max_digits=18, decimal_places=2,
+        help_text='Total amount of the payment being reversed (for display/audit)',
+    )
+    reason = models.TextField(help_text='Why this repayment is being reversed')
+
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default=PENDING, db_index=True)
+
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='loan_repayment_reversals_requested',
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+
+    first_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_repayment_reversals_first_approved',
+    )
+    first_approved_at = models.DateTimeField(null=True, blank=True)
+    first_approval_notes = models.TextField(blank=True)
+
+    second_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_repayment_reversals_second_approved',
+    )
+    second_approved_at = models.DateTimeField(null=True, blank=True)
+    second_approval_notes = models.TextField(blank=True)
+
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_repayment_reversals_rejected',
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+
+    # Result — set by _execute() on second approval
+    reversal_journal_entry = models.ForeignKey(
+        'transactions.Transaction',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='loan_repayment_reversal_results',
+        help_text="The reversal of the original payment's journal entry",
+    )
+
+    notes = models.TextField(blank=True)
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-requested_at']
+        indexes = [
+            models.Index(fields=['status', 'requested_at']),
+            models.Index(fields=['loan', 'status']),
+            models.Index(fields=['journal_entry', 'status']),
+        ]
+        verbose_name = 'Loan Repayment Reversal'
+        verbose_name_plural = 'Loan Repayment Reversals'
+
+    def __str__(self):
+        return f"{self.reference_number} — {self.loan.loan_number} [{self.status}]"
+
+    def save(self, *args, **kwargs):
+        if not self.reference_number:
+            import uuid
+            self.reference_number = f"LREV-{uuid.uuid4().hex[:8].upper()}"
+        super().save(*args, **kwargs)
+
+    MIN_REASON_LENGTH = 10
+
+    @classmethod
+    def _reason_too_short(cls, text):
+        return not text or len(text.strip()) < cls.MIN_REASON_LENGTH
+
+    @classmethod
+    @transaction.atomic
+    def submit(cls, loan, journal_entry, reason, user):
+        """
+        Create a pending reversal request for one of `loan`'s repayment
+        transactions. Validates that the transaction is actually a repayment
+        on this loan, has allocation rows to reverse (see
+        LoanRepaymentAllocation), hasn't already been reversed, and isn't
+        already awaiting approval.
+        """
+        if cls._reason_too_short(reason):
+            raise ValidationError(f'A reason (at least {cls.MIN_REASON_LENGTH} characters) is required.')
+
+        if getattr(journal_entry.series, 'code', None) != 'LNPMT':
+            raise ValidationError('This transaction is not a loan repayment.')
+
+        if journal_entry.is_reversed:
+            raise ValidationError('This payment has already been reversed.')
+
+        allocations = LoanRepaymentAllocation.objects.filter(
+            journal_entry=journal_entry, loan=loan,
+        )
+        if not allocations.exists():
+            raise ValidationError(
+                'No allocation records exist for this payment, so it can\'t be reversed '
+                'precisely through this flow — it predates reversal support, or belongs '
+                'to a different loan. Contact accounting for a manual adjustment.'
+            )
+
+        if cls.objects.filter(
+            journal_entry=journal_entry, status__in=[cls.PENDING, cls.AWAITING_SECOND],
+        ).exists():
+            raise ValidationError('A reversal request for this payment is already pending approval.')
+
+        total = allocations.aggregate(
+            total=Sum('principal_applied') + Sum('interest_applied')
+            + Sum('fees_applied') + Sum('penalty_applied')
+        )['total'] or Decimal('0.00')
+
+        return cls.objects.create(
+            loan=loan,
+            journal_entry=journal_entry,
+            amount=total,
+            reason=reason,
+            requested_by=user,
+            owner=loan.owner,
+            branch=loan.branch,
+            tenant=loan.tenant,
+        )
+
+    @transaction.atomic
+    def first_approve(self, user, notes=''):
+        """First of two required approvals. Requester cannot approve their own request."""
+        if self.status != self.PENDING:
+            raise ValidationError('Only pending reversals can be first-approved.')
+        if user.pk == self.requested_by_id:
+            raise ValidationError(
+                'The person who requested this reversal cannot also approve it (maker-checker violation).'
+            )
+        if self._reason_too_short(notes):
+            raise ValidationError(f'Approval notes (at least {self.MIN_REASON_LENGTH} characters) are required.')
+
+        self.first_approved_by = user
+        self.first_approved_at = timezone.now()
+        self.first_approval_notes = notes
+        self.status = self.AWAITING_SECOND
+        self.save(update_fields=[
+            'first_approved_by', 'first_approved_at', 'first_approval_notes', 'status', 'updated_at',
+        ])
+
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.LOAN_BALANCE_CORRECTION,
+            acted_by=user,
+            record_type='LoanRepaymentReversal',
+            record_id=str(self.pk),
+            description=f'Reversal {self.reference_number} for loan {self.loan.loan_number} — first approval',
+            extra={'reference_number': self.reference_number, 'loan': self.loan.loan_number},
+        )
+
+    @transaction.atomic
+    def second_approve(self, user, notes=''):
+        """
+        Second, different approver confirms — this is what actually executes
+        the reversal. Neither the requester nor the first approver may act here.
+        """
+        if self.status != self.AWAITING_SECOND:
+            raise ValidationError('This reversal has not been through a first approval yet.')
+        if user.pk == self.requested_by_id:
+            raise ValidationError(
+                'The person who requested this reversal cannot also approve it (maker-checker violation).'
+            )
+        if user.pk == self.first_approved_by_id:
+            raise ValidationError('The second approver must be a different person from the first approver.')
+        if self._reason_too_short(notes):
+            raise ValidationError(f'Approval notes (at least {self.MIN_REASON_LENGTH} characters) are required.')
+
+        self.second_approved_by = user
+        self.second_approved_at = timezone.now()
+        self.second_approval_notes = notes
+
+        self._execute(user)
+
+        self.status = self.COMPLETED
+        self.save(update_fields=[
+            'second_approved_by', 'second_approved_at', 'second_approval_notes',
+            'status', 'reversal_journal_entry', 'updated_at',
+        ])
+
+        from common.models import FinancialAuditLog, log_financial_event
+        log_financial_event(
+            FinancialAuditLog.LOAN_BALANCE_CORRECTION,
+            acted_by=user,
+            record_type='LoanRepaymentReversal',
+            record_id=str(self.pk),
+            amount=self.amount,
+            description=f'Reversal {self.reference_number}: reversed a ₦{self.amount} payment on {self.loan.loan_number}',
+            extra={
+                'reference_number': self.reference_number,
+                'loan': self.loan.loan_number,
+                'original_journal_entry_id': str(self.journal_entry_id),
+                'reversal_journal_entry_id': str(self.reversal_journal_entry_id),
+                'requested_by': str(self.requested_by_id),
+                'first_approved_by': str(self.first_approved_by_id),
+                'second_approved_by': str(self.second_approved_by_id),
+            },
+        )
+
+    def reject(self, user, reason=''):
+        if self.status not in (self.PENDING, self.AWAITING_SECOND):
+            raise ValidationError('Only pending or awaiting-second-approval reversals can be rejected.')
+        if self._reason_too_short(reason):
+            raise ValidationError(f'A rejection reason (at least {self.MIN_REASON_LENGTH} characters) is required.')
+
+        self.status = self.REJECTED
+        self.rejected_by = user
+        self.rejected_at = timezone.now()
+        self.rejection_reason = reason
+        self.save(update_fields=['status', 'rejected_by', 'rejected_at', 'rejection_reason', 'updated_at'])
+
+    def _execute(self, executing_user):
+        """
+        Reverse the payment's GL entry and unwind exactly what it did to the
+        loan's schedule and balances, using the LoanRepaymentAllocation rows
+        recorded at payment time. Called only from second_approve(), inside
+        its atomic block.
+        """
+        loan = LoanAccount.objects.select_for_update().get(pk=self.loan_id)
+        journal_entry = self.journal_entry
+
+        if journal_entry.is_reversed:
+            raise ValidationError('This payment has already been reversed.')
+
+        allocations = list(
+            LoanRepaymentAllocation.objects.select_related('schedule').filter(
+                journal_entry=journal_entry, loan=loan,
+            )
+        )
+        if not allocations:
+            raise ValidationError('No allocation records exist for this payment.')
+
+        # Guard: an early-payoff interest catch-up (LNACC) may have run inside
+        # the same record_payment() call that posted this LNPMT entry — it
+        # isn't linked back to it by FK, so detect it by the same date +
+        # description record_payment() used and refuse rather than silently
+        # leaving its Interest Receivable / Unearned Income entries stale.
+        catchup_exists = journal_entry.__class__.objects.filter(
+            series__code='LNACC',
+            branch=loan.branch,
+            date=journal_entry.date,
+            description__icontains=loan.loan_number,
+        ).exists()
+        if catchup_exists:
+            raise ValidationError(
+                'This payment triggered an early-payoff interest recognition entry, which this '
+                'automated flow cannot unwind. Contact accounting for a manual adjustment.'
+            )
+
+        # ── 1. Reverse the payment's GL entry ───────────────────────────────
+        reversal_journal = journal_entry.reverse(
+            executing_user,
+            reason=f"Loan repayment reversal {self.reference_number}: {self.reason}",
+        )
+
+        # ── 2. Unwind each touched installment by exactly what this payment
+        #      applied to it ────────────────────────────────────────────────
+        today = timezone.now().date()
+        total_principal = Decimal('0.00')
+        total_interest = Decimal('0.00')
+        total_fees = Decimal('0.00')
+        total_penalty = Decimal('0.00')
+        installments_reopened = 0
+
+        for allocation in allocations:
+            schedule = LoanRepaymentSchedule.objects.select_for_update().get(pk=allocation.schedule_id)
+            was_paid = schedule.status == 'paid'
+
+            schedule.principal_paid = max(Decimal('0.00'), schedule.principal_paid - allocation.principal_applied)
+            schedule.interest_paid = max(Decimal('0.00'), schedule.interest_paid - allocation.interest_applied)
+            schedule.fees_paid = max(Decimal('0.00'), schedule.fees_paid - allocation.fees_applied)
+            schedule.penalty_paid = max(Decimal('0.00'), schedule.penalty_paid - allocation.penalty_applied)
+            schedule.total_paid = max(Decimal('0.00'), schedule.total_paid - (
+                allocation.principal_applied + allocation.interest_applied
+                + allocation.fees_applied + allocation.penalty_applied
+            ))
+
+            if schedule.total_paid <= 0:
+                schedule.status = 'overdue' if schedule.due_date < today else 'pending'
+                schedule.payment_date = None
+                schedule.days_late = 0
+            elif schedule.total_paid < schedule.total_due:
+                schedule.status = 'partial'
+                schedule.payment_date = None
+                schedule.days_late = 0
+            schedule.save()
+
+            if was_paid and schedule.status != 'paid':
+                installments_reopened += 1
+
+            total_principal += allocation.principal_applied
+            total_interest += allocation.interest_applied
+            total_fees += allocation.fees_applied
+            total_penalty += allocation.penalty_applied
+
+        # ── 3. Unwind the loan's aggregate balances ─────────────────────────
+        loan.outstanding_principal += total_principal
+        loan.principal_paid = max(Decimal('0.00'), loan.principal_paid - total_principal)
+        loan.outstanding_interest += total_interest
+        loan.interest_paid = max(Decimal('0.00'), loan.interest_paid - total_interest)
+        loan.outstanding_fees += total_fees
+        loan.fees_paid = max(Decimal('0.00'), loan.fees_paid - total_fees)
+        loan.outstanding_penalties += total_penalty
+        loan.penalties_paid = max(Decimal('0.00'), loan.penalties_paid - total_penalty)
+        loan.total_paid = max(Decimal('0.00'), loan.total_paid - (
+            total_principal + total_interest + total_fees + total_penalty
+        ))
+        loan.installments_paid = max(0, loan.installments_paid - installments_reopened)
+
+        if loan.status == 'paid_off':
+            loan.status = 'active'
+            loan.closed_date = None
+
+        loan.save()
+        loan._calculate_arrears()
+        loan.save(update_fields=['arrears_amount', 'days_in_arrears'])
+
+        self.reversal_journal_entry = reversal_journal

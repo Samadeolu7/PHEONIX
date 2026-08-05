@@ -644,6 +644,9 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
     rejected_by_name = serializers.SerializerMethodField()
     disbursed_by_name = serializers.SerializerMethodField()
     retired_by_name = serializers.SerializerMethodField()
+    reversed_by_name = serializers.SerializerMethodField()
+    reversal_requested_by_name = serializers.SerializerMethodField()
+    reversal_rejected_by_name = serializers.SerializerMethodField()
     replenishment_number = serializers.SerializerMethodField()
     branch_name = serializers.SerializerMethodField()
     transaction_reference = serializers.SerializerMethodField()
@@ -733,6 +736,10 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
             'receipt_attachment', 'retired_at', 'retired_by', 'retired_by_name',
             'variance', 'variance_explanation', 'replenishment', 'replenishment_number',
             'journal_entry', 'transaction_reference',
+            'reversal_requested_by', 'reversal_requested_by_name', 'reversal_requested_at',
+            'reversed_at', 'reversed_by', 'reversed_by_name', 'reversal_reason',
+            'reversal_rejected_by', 'reversal_rejected_by_name', 'reversal_rejected_at',
+            'reversal_rejection_reason',
             'branch', 'branch_name', 'notes', 'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -743,6 +750,9 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
             'disbursed_at', 'disbursed_by',
             'retired_at', 'retired_by',
             'variance', 'journal_entry',
+            'reversal_requested_by', 'reversal_requested_at',
+            'reversed_at', 'reversed_by', 'reversal_reason',
+            'reversal_rejected_by', 'reversal_rejected_at', 'reversal_rejection_reason',
             'transaction_reference', 'created_at', 'updated_at'
         ]
     
@@ -766,7 +776,16 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
     
     def get_retired_by_name(self, obj):
         return obj.retired_by.get_full_name() if obj.retired_by else None
-    
+
+    def get_reversed_by_name(self, obj):
+        return obj.reversed_by.get_full_name() if obj.reversed_by else None
+
+    def get_reversal_requested_by_name(self, obj):
+        return obj.reversal_requested_by.get_full_name() if obj.reversal_requested_by else None
+
+    def get_reversal_rejected_by_name(self, obj):
+        return obj.reversal_rejected_by.get_full_name() if obj.reversal_rejected_by else None
+
     def get_replenishment_number(self, obj):
         return obj.replenishment.replenishment_number if obj.replenishment else None
     

@@ -7,7 +7,7 @@ from .models import (
     LoanVerificationRequest, LoanDisbursement,
     LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
     LoanRepaymentRequest, LoanRestructure, LoanRestructureRequest, OfflinePaymentRecord,
-    LoanDisbursementCorrection,
+    LoanDisbursementCorrection, LoanRepaymentReversal,
 )
 
 
@@ -838,4 +838,55 @@ class LoanDisbursementCorrectionSerializer(TenantModelSerializer):
                 {'correct_client': "The correct client must be different from the loan's current client."}
             )
         return attrs
+
+
+class LoanRepaymentReversalSerializer(TenantModelSerializer):
+    loan_number = serializers.CharField(source='loan.loan_number', read_only=True)
+    client_name = serializers.CharField(source='loan.client.full_name', read_only=True)
+    journal_entry_reference = serializers.CharField(source='journal_entry.reference_number', read_only=True)
+    journal_entry_date = serializers.DateField(source='journal_entry.date', read_only=True)
+    requested_by_name = serializers.SerializerMethodField()
+    first_approved_by_name = serializers.SerializerMethodField()
+    second_approved_by_name = serializers.SerializerMethodField()
+    rejected_by_name = serializers.SerializerMethodField()
+
+    def get_requested_by_name(self, obj):
+        return obj.requested_by.get_full_name() if obj.requested_by else None
+
+    def get_first_approved_by_name(self, obj):
+        return obj.first_approved_by.get_full_name() if obj.first_approved_by else None
+
+    def get_second_approved_by_name(self, obj):
+        return obj.second_approved_by.get_full_name() if obj.second_approved_by else None
+
+    def get_rejected_by_name(self, obj):
+        return obj.rejected_by.get_full_name() if obj.rejected_by else None
+
+    class Meta:
+        model = LoanRepaymentReversal
+        fields = [
+            'id', 'reference_number',
+            'loan', 'loan_number', 'client_name',
+            'journal_entry', 'journal_entry_reference', 'journal_entry_date',
+            'amount', 'reason', 'status',
+            'requested_by', 'requested_by_name', 'requested_at',
+            'first_approved_by', 'first_approved_by_name', 'first_approved_at', 'first_approval_notes',
+            'second_approved_by', 'second_approved_by_name', 'second_approved_at', 'second_approval_notes',
+            'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',
+            'reversal_journal_entry',
+            'notes',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'reference_number',
+            'loan_number', 'client_name',
+            'journal_entry_reference', 'journal_entry_date',
+            'amount', 'status',
+            'requested_by', 'requested_by_name', 'requested_at',
+            'first_approved_by', 'first_approved_by_name', 'first_approved_at', 'first_approval_notes',
+            'second_approved_by', 'second_approved_by_name', 'second_approved_at', 'second_approval_notes',
+            'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',
+            'reversal_journal_entry',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
 

@@ -1345,6 +1345,81 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
+    @action(detail=True, methods=['post'], url_path='request_reversal')
+    def request_reversal(self, request, pk=None):
+        """Step 1 (maker) - stage a reversal request for a disbursed voucher.
+        Does not touch the GL or fund balance; requires a separate approval."""
+        from .serializers import PettyCashVoucherActionSerializer
+
+        voucher = self.get_object()
+        action_serializer = PettyCashVoucherActionSerializer(data=request.data)
+        action_serializer.is_valid(raise_exception=True)
+
+        reason = action_serializer.validated_data.get('reason', '')
+        if not reason:
+            return Response(
+                {'error': 'A reason is required to request a reversal'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            voucher.request_reversal(user=request.user, reason=reason)
+            serializer = self.get_serializer(voucher)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': _error_message(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['post'], url_path='approve_reversal')
+    def approve_reversal(self, request, pk=None):
+        """Step 2a (checker) - approve a pending reversal request. Requires
+        approval authority, and must be a different user than the requester."""
+        from common.approval_permissions import IsApprover as _IsApprover
+        if not _IsApprover().has_permission(request, self):
+            return Response(
+                {'error': 'You do not have permission to approve reversals'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        voucher = self.get_object()
+        try:
+            voucher.approve_reversal(user=request.user)
+            serializer = self.get_serializer(voucher)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': _error_message(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @action(detail=True, methods=['post'], url_path='reject_reversal')
+    def reject_reversal(self, request, pk=None):
+        """Step 2b (checker) - decline a pending reversal request."""
+        from common.approval_permissions import IsApprover as _IsApprover
+        from .serializers import PettyCashVoucherActionSerializer
+        if not _IsApprover().has_permission(request, self):
+            return Response(
+                {'error': 'You do not have permission to reject reversals'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        voucher = self.get_object()
+        action_serializer = PettyCashVoucherActionSerializer(data=request.data)
+        action_serializer.is_valid(raise_exception=True)
+        reason = action_serializer.validated_data.get('reason', '')
+
+        try:
+            voucher.reject_reversal(user=request.user, reason=reason)
+            serializer = self.get_serializer(voucher)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': _error_message(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
     @action(detail=True, methods=['post'])
     def upload_receipt(self, request, pk=None):
         """Upload a receipt file for the voucher"""
