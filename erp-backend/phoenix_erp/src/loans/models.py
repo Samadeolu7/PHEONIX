@@ -991,7 +991,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             Cr. Loan Receivable / Income accounts     — loan portion
             Cr. Member Savings (spillover GL account) — excess credited to savings
 
-        Payments are applied in priority order: penalties → interest → fees → principal.
+        The penalty balance is no longer collected in full before anything
+        else. Instead, each payment is split between the penalty balance and
+        the principal/interest/fees balance in proportion to each one's
+        share of total_outstanding — so a client behind on penalties isn't
+        forced to clear 100% of the penalty before a cent goes toward their
+        loan balance. A full payoff still clears both in full (the ratio
+        collapses to exactly outstanding_penalties : everything else).
+        Within the non-penalty share, installments are applied in due-date
+        order, interest → fees → principal (see below for the NPL override).
 
         GL entry (LN-PMT series):
             Dr. Cash / Bank (payment_account)         — ASSET goes up, money received
@@ -1060,15 +1068,33 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         payment_date = payment_date or timezone.now().date()
 
-        # ── Apply payment in priority order ──────────────────────────────
+        # ── Split the penalty out of the payment proportionally ───────────
         # CBN NPL rule: when interest is suspended (90+ DPD), apply cash to
         # principal first so the loan balance reduces before income is recognised.
-        remaining = amount
-
-        penalty_payment = min(remaining, self.outstanding_penalties)
+        #
+        # Penalty used to be taken off the top in full before anything else,
+        # which meant a partial payment smaller than the penalty balance
+        # posted entirely to Penalty Income with zero principal/interest
+        # reduction — confusing on statements and unfair to a client trying
+        # to bring a loan current. Instead, share the payment between the
+        # penalty balance and everything else (principal+interest+fees) in
+        # proportion to their share of total_outstanding. This is exact —
+        # not an estimate — because it's derived from the same
+        # total_outstanding figure already validated against `amount` above,
+        # so a full payoff (amount == total_outstanding) still clears the
+        # penalty balance in full, it just isn't privileged over the rest.
+        if total_outstanding > 0:
+            penalty_payment = (
+                amount * self.outstanding_penalties / total_outstanding
+            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        else:
+            penalty_payment = Decimal('0.00')
+        # Rounding must never manufacture a penalty payment bigger than what's
+        # actually owed or bigger than the cash actually received.
+        penalty_payment = min(penalty_payment, self.outstanding_penalties, amount)
         self.outstanding_penalties -= penalty_payment
         self.penalties_paid += penalty_payment
-        remaining -= penalty_payment
+        remaining = amount - penalty_payment
 
         # Interest/fees/principal are allocated against unpaid installments in
         # due-date order — NOT the loan's whole-term aggregate outstanding_*
