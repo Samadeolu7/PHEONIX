@@ -35,6 +35,7 @@ import {
   RequestCorrectionPayload,
   LoanRepaymentReversal,
   RequestRepaymentReversalPayload,
+  LoanRepaymentAllocation,
   OfflinePaymentPayload,
   OfflinePaymentRecord,
   VerificationVerdict,
@@ -97,6 +98,11 @@ export const loanKeys = {
   repaymentReversals: () => [...loanKeys.all, 'repaymentReversals'] as const,
   repaymentReversalList: (params?: { status?: string; loan?: number }) =>
     [...loanKeys.repaymentReversals(), 'list', params] as const,
+
+  // Repayment Allocations (read-only)
+  repaymentAllocations: () => [...loanKeys.all, 'repaymentAllocations'] as const,
+  repaymentAllocationList: (params?: { loan?: number; schedule?: number }) =>
+    [...loanKeys.repaymentAllocations(), 'list', params] as const,
 
   // Verification Requests
   verifications: () => [...loanKeys.all, 'verifications'] as const,
@@ -687,6 +693,17 @@ export const useLoanRepaymentReversals = (
   });
 };
 
+export const useLoanRepaymentAllocations = (
+  params?: { loan?: number; schedule?: number },
+  options?: Omit<UseQueryOptions<LoanRepaymentAllocation[], Error>, 'queryKey' | 'queryFn'>
+) => {
+  return useQuery({
+    queryKey: loanKeys.repaymentAllocationList(params),
+    queryFn: () => loanService.listRepaymentAllocations(params),
+    ...options,
+  });
+};
+
 export const useRequestRepaymentReversal = (
   options?: Omit<UseMutationOptions<LoanRepaymentReversal, Error, RequestRepaymentReversalPayload>, 'mutationFn'>
 ) => {
@@ -728,6 +745,7 @@ export const useSecondApproveRepaymentReversal = (
       queryClient.invalidateQueries({ queryKey: loanKeys.accountSchedule(data.loan) });
       queryClient.invalidateQueries({ queryKey: loanKeys.accountPaymentHistory(data.loan) });
       queryClient.invalidateQueries({ queryKey: [...loanKeys.accounts(), 'transactions', data.loan] });
+      queryClient.invalidateQueries({ queryKey: loanKeys.repaymentAllocations() });
     },
     ...options,
   });

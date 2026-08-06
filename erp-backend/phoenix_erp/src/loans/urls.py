@@ -10,6 +10,7 @@ from .views import (
     OfflinePaymentRecordViewSet,
     LoanDisbursementCorrectionViewSet,
     LoanRepaymentReversalViewSet,
+    LoanRepaymentAllocationViewSet,
 )
 
 router = DefaultRouter()
@@ -29,6 +30,7 @@ router.register(r'restructure-requests', LoanRestructureRequestViewSet, basename
 router.register(r'offline-payments', OfflinePaymentRecordViewSet, basename='offlinepaymentrecord')
 router.register(r'disbursement-corrections', LoanDisbursementCorrectionViewSet, basename='loandisbursementcorrection')
 router.register(r'repayment-reversals', LoanRepaymentReversalViewSet, basename='loanrepaymentreversal')
+router.register(r'repayment-allocations', LoanRepaymentAllocationViewSet, basename='loanrepaymentallocation')
 
 app_name = 'loans'
 

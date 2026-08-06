@@ -7,7 +7,7 @@ from .models import (
     LoanVerificationRequest, LoanDisbursement,
     LoanProductFee, LoanProductSavingsRequirement, LoanFeeApplication,
     LoanRepaymentRequest, LoanRestructure, LoanRestructureRequest, OfflinePaymentRecord,
-    LoanDisbursementCorrection, LoanRepaymentReversal,
+    LoanDisbursementCorrection, LoanRepaymentReversal, LoanRepaymentAllocation,
 )
 
 
@@ -889,4 +889,40 @@ class LoanRepaymentReversalSerializer(TenantModelSerializer):
             'reversal_journal_entry',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
+
+
+class LoanRepaymentAllocationSerializer(serializers.ModelSerializer):
+    """
+    Read-only: how much of one payment (journal_entry) landed on one
+    installment (schedule) — see LoanRepaymentAllocation, loans/models.py.
+    schedule/installment_number are null for the "leftover" portion of a
+    payment that had nowhere on the schedule to land.
+
+    Used to show, per installment on the Repayment Schedule, every payment
+    that contributed to it — so if reversing the payment someone actually
+    meant to undo fails (e.g. it predates allocation tracking), the ones
+    that also touched that installment and *do* have allocation rows are
+    still visible as an alternative.
+    """
+    installment_number = serializers.SerializerMethodField()
+    journal_entry_reference = serializers.CharField(source='journal_entry.reference_number', read_only=True)
+    journal_entry_date = serializers.DateField(source='journal_entry.date', read_only=True)
+    journal_entry_is_reversed = serializers.BooleanField(source='journal_entry.is_reversed', read_only=True)
+    total_applied = serializers.SerializerMethodField()
+
+    def get_installment_number(self, obj):
+        return obj.schedule.installment_number if obj.schedule_id else None
+
+    def get_total_applied(self, obj):
+        return str(obj.principal_applied + obj.interest_applied + obj.fees_applied + obj.penalty_applied)
+
+    class Meta:
+        model = LoanRepaymentAllocation
+        fields = [
+            'id', 'loan', 'schedule', 'installment_number',
+            'journal_entry', 'journal_entry_reference', 'journal_entry_date', 'journal_entry_is_reversed',
+            'principal_applied', 'interest_applied', 'fees_applied', 'penalty_applied', 'total_applied',
+            'created_at',
+        ]
+        read_only_fields = fields
 

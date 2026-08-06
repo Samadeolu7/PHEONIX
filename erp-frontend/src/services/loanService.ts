@@ -626,6 +626,13 @@ export const loanService = {
     return api.post(`${BASE}/repayment-reversals/${id}/reject/`, { rejection_reason });
   },
 
+  // ===== REPAYMENT ALLOCATIONS (which payment(s) landed on which installment, read-only) =====
+
+  async listRepaymentAllocations(params?: { loan?: number; schedule?: number }): Promise<LoanRepaymentAllocation[]> {
+    const res = await api.get(`${BASE}/repayment-allocations/`, { params });
+    return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
   // ===== OFFLINE PAYMENT RECORDS (field collection) =====
 
   async createOfflinePayment(data: OfflinePaymentPayload): Promise<OfflinePaymentRecord> {
@@ -1054,6 +1061,25 @@ export interface LoanRepaymentReversal {
   branch: number;
   created_at: string;
   updated_at: string;
+}
+
+// ── Repayment Allocation (which payment(s) landed on which installment) ─────
+
+export interface LoanRepaymentAllocation {
+  id: number;
+  loan: number;
+  schedule: number | null;
+  installment_number: number | null;
+  journal_entry: number;
+  journal_entry_reference: string;
+  journal_entry_date: string;
+  journal_entry_is_reversed: boolean;
+  principal_applied: string;
+  interest_applied: string;
+  fees_applied: string;
+  penalty_applied: string;
+  total_applied: string;
+  created_at: string;
 }
 
 export interface LoanStatement {

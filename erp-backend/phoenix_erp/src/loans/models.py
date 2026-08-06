@@ -1469,6 +1469,31 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
             remaining -= payment_to_schedule
 
+        # Leftover: record_payment()'s aggregate penalty/interest/fees/principal
+        # split always lands in full on the loan's outstanding_*/*_paid fields,
+        # but the loop above can only mirror it onto installments still in
+        # pending/partial/overdue. If the schedule was already exhausted, or
+        # a row's own due amounts couldn't absorb its full proportional share
+        # (schedule/aggregate drift — see record_payment()'s docstring), some
+        # of the split has no installment to land on. Record it against no
+        # schedule row rather than letting it vanish untracked, so a reversal
+        # can still find it and undo the aggregate-level effect.
+        if journal_entry is not None:
+            leftover_penalty = max(Decimal('0.00'), remaining_penalty)
+            leftover_interest = max(Decimal('0.00'), remaining_interest)
+            leftover_fees = max(Decimal('0.00'), remaining_fees)
+            leftover_principal = max(Decimal('0.00'), remaining_principal)
+            if leftover_penalty or leftover_interest or leftover_fees or leftover_principal:
+                LoanRepaymentAllocation.objects.create(
+                    loan=self,
+                    schedule=None,
+                    journal_entry=journal_entry,
+                    principal_applied=leftover_principal,
+                    interest_applied=leftover_interest,
+                    fees_applied=leftover_fees,
+                    penalty_applied=leftover_penalty,
+                )
+
     def mark_overdue_installments(self):
         """
         Bulk-update past-due pending/partial installments to 'overdue'.
@@ -2187,12 +2212,22 @@ class LoanRepaymentAllocation(TimeStampedModel):
     not mechanically possible. One row per (payment, installment) pair - see
     LoanAccount._update_schedule_with_payment, and LoanRepaymentReversal for
     the reversal that reads these back.
+
+    schedule may be null: record_payment()'s aggregate split (penalty/interest/
+    fees/principal) always applies in full to the loan's outstanding_*/*_paid
+    fields regardless of schedule state, but _update_schedule_with_payment()
+    can only mirror that onto installments still in pending/partial/overdue —
+    if the schedule was already exhausted (or drifted out of sync with the
+    aggregates, e.g. legacy-imported loans) some of that amount has nowhere on
+    the schedule to land. A null-schedule row records that leftover so it's
+    still visible to a reversal instead of silently vanishing untracked.
     """
     loan = models.ForeignKey(
         'LoanAccount', on_delete=models.CASCADE, related_name='repayment_allocations'
     )
     schedule = models.ForeignKey(
-        'LoanRepaymentSchedule', on_delete=models.CASCADE, related_name='payment_allocations'
+        'LoanRepaymentSchedule', on_delete=models.CASCADE, related_name='payment_allocations',
+        null=True, blank=True,
     )
     journal_entry = models.ForeignKey(
         'transactions.Transaction', on_delete=models.PROTECT,
@@ -3700,15 +3735,56 @@ class LoanRepaymentReversal(TimeStampedModel, BranchScopedModel, SoftDeleteModel
     def _reason_too_short(cls, text):
         return not text or len(text.strip()) < cls.MIN_REASON_LENGTH
 
+    @staticmethod
+    def _latest_active_payment(loan, journal_entry):
+        """The loan's most recent LNPMT payment still in effect (not itself a
+        reversal, not already reversed) — the only payment a no-allocation
+        reversal can safely target, since without allocation rows there's no
+        way to know which installment(s) an older payment touched versus
+        what a later payment has since built on top of."""
+        return journal_entry.__class__.objects.filter(
+            series__code='LNPMT',
+            branch=loan.branch,
+            description__icontains=loan.loan_number,
+            is_reversal=False,
+            is_reversed=False,
+        ).order_by('-date', '-id').first()
+
+    @staticmethod
+    def _amount_that_hit_loan(journal_entry):
+        """
+        Sum of this payment's credit lines that reduced the loan itself
+        (Loan Receivable + any income accounts) — excludes any credit line to
+        a client's savings account (spillover). journal_entry.reverse()
+        reverses every line of the entry symmetrically, so the savings side
+        corrects itself automatically; this is only the amount the fallback
+        no-allocation path needs to unwind from the schedule/loan aggregates.
+        """
+        from transactions.models import TransactionEntry
+        from savings.models import SavingsAccount
+
+        savings_account_ids = set(SavingsAccount.objects.values_list('account_id', flat=True))
+        return TransactionEntry.objects.filter(
+            transaction=journal_entry, side=TransactionEntry.CREDIT,
+        ).exclude(account_id__in=savings_account_ids).aggregate(
+            total=Sum('amount')
+        )['total'] or Decimal('0.00')
+
     @classmethod
     @transaction.atomic
     def submit(cls, loan, journal_entry, reason, user):
         """
         Create a pending reversal request for one of `loan`'s repayment
         transactions. Validates that the transaction is actually a repayment
-        on this loan, has allocation rows to reverse (see
-        LoanRepaymentAllocation), hasn't already been reversed, and isn't
-        already awaiting approval.
+        on this loan, hasn't already been reversed, and isn't already
+        awaiting approval.
+
+        Prefers LoanRepaymentAllocation rows (see that model) for an exact,
+        per-installment reversal. When none exist — the payment predates
+        allocation tracking, or hit the pre-migration-0027 leftover gap —
+        falls back to a less precise path that's only safe when this is the
+        loan's most recent still-applied payment (see _latest_active_payment);
+        _execute() does the actual unwind either way.
         """
         if cls._reason_too_short(reason):
             raise ValidationError(f'A reason (at least {cls.MIN_REASON_LENGTH} characters) is required.')
@@ -3722,22 +3798,29 @@ class LoanRepaymentReversal(TimeStampedModel, BranchScopedModel, SoftDeleteModel
         allocations = LoanRepaymentAllocation.objects.filter(
             journal_entry=journal_entry, loan=loan,
         )
-        if not allocations.exists():
-            raise ValidationError(
-                'No allocation records exist for this payment, so it can\'t be reversed '
-                'precisely through this flow — it predates reversal support, or belongs '
-                'to a different loan. Contact accounting for a manual adjustment.'
-            )
+        has_allocations = allocations.exists()
+        if not has_allocations:
+            latest = cls._latest_active_payment(loan, journal_entry)
+            if not latest or latest.pk != journal_entry.pk:
+                raise ValidationError(
+                    'No allocation records exist for this payment, and it isn\'t the loan\'s '
+                    'most recent payment, so which installment(s) it touched can\'t be '
+                    'determined safely (a later payment may have built on top of it). '
+                    'Contact accounting for a manual adjustment.'
+                )
 
         if cls.objects.filter(
             journal_entry=journal_entry, status__in=[cls.PENDING, cls.AWAITING_SECOND],
         ).exists():
             raise ValidationError('A reversal request for this payment is already pending approval.')
 
-        total = allocations.aggregate(
-            total=Sum('principal_applied') + Sum('interest_applied')
-            + Sum('fees_applied') + Sum('penalty_applied')
-        )['total'] or Decimal('0.00')
+        if has_allocations:
+            total = allocations.aggregate(
+                total=Sum('principal_applied') + Sum('interest_applied')
+                + Sum('fees_applied') + Sum('penalty_applied')
+            )['total'] or Decimal('0.00')
+        else:
+            total = cls._amount_that_hit_loan(journal_entry)
 
         return cls.objects.create(
             loan=loan,
@@ -3842,10 +3925,21 @@ class LoanRepaymentReversal(TimeStampedModel, BranchScopedModel, SoftDeleteModel
 
     def _execute(self, executing_user):
         """
-        Reverse the payment's GL entry and unwind exactly what it did to the
-        loan's schedule and balances, using the LoanRepaymentAllocation rows
-        recorded at payment time. Called only from second_approve(), inside
-        its atomic block.
+        Reverse the payment's GL entry and unwind what it did to the loan's
+        schedule and balances. Called only from second_approve(), inside its
+        atomic block.
+
+        Two paths, chosen by whether LoanRepaymentAllocation rows exist:
+          - Precise: unwind exactly the installments this payment's
+            allocation rows recorded, by exactly the amounts recorded.
+          - Fallback (no allocation rows — submit() already confirmed this is
+            the loan's most recent still-applied payment): unwind the
+            schedule's tail, most-recent-due-date-first, by the amount that
+            actually hit the loan (GL-derived, excludes savings spillover —
+            journal_entry.reverse() corrects that side on its own). Exact on
+            the total; the principal/interest/fees/penalty split per
+            installment is a best-effort peel-off (principal, then fees,
+            then interest, then penalty) rather than a recorded fact.
         """
         loan = LoanAccount.objects.select_for_update().get(pk=self.loan_id)
         journal_entry = self.journal_entry
@@ -3859,7 +3953,13 @@ class LoanRepaymentReversal(TimeStampedModel, BranchScopedModel, SoftDeleteModel
             )
         )
         if not allocations:
-            raise ValidationError('No allocation records exist for this payment.')
+            latest = self._latest_active_payment(loan, journal_entry)
+            if not latest or latest.pk != journal_entry.pk:
+                raise ValidationError(
+                    'No allocation records exist for this payment, and it is no longer the '
+                    'loan\'s most recent payment (one may have been recorded since this '
+                    'reversal was requested). Contact accounting for a manual adjustment.'
+                )
 
         # Guard: an early-payoff interest catch-up (LNACC) may have run inside
         # the same record_payment() call that posted this LNPMT entry — it
@@ -3893,36 +3993,112 @@ class LoanRepaymentReversal(TimeStampedModel, BranchScopedModel, SoftDeleteModel
         total_penalty = Decimal('0.00')
         installments_reopened = 0
 
-        for allocation in allocations:
-            schedule = LoanRepaymentSchedule.objects.select_for_update().get(pk=allocation.schedule_id)
-            was_paid = schedule.status == 'paid'
+        if allocations:
+            for allocation in allocations:
+                # schedule_id is None for the "leftover" portion of a payment
+                # that never landed on any installment (schedule already
+                # exhausted, or schedule/aggregate drift) — see
+                # _update_schedule_with_payment. Nothing to unwind on the
+                # schedule for that portion, just fold it into the
+                # loan-aggregate totals below.
+                if allocation.schedule_id is None:
+                    total_principal += allocation.principal_applied
+                    total_interest += allocation.interest_applied
+                    total_fees += allocation.fees_applied
+                    total_penalty += allocation.penalty_applied
+                    continue
 
-            schedule.principal_paid = max(Decimal('0.00'), schedule.principal_paid - allocation.principal_applied)
-            schedule.interest_paid = max(Decimal('0.00'), schedule.interest_paid - allocation.interest_applied)
-            schedule.fees_paid = max(Decimal('0.00'), schedule.fees_paid - allocation.fees_applied)
-            schedule.penalty_paid = max(Decimal('0.00'), schedule.penalty_paid - allocation.penalty_applied)
-            schedule.total_paid = max(Decimal('0.00'), schedule.total_paid - (
-                allocation.principal_applied + allocation.interest_applied
-                + allocation.fees_applied + allocation.penalty_applied
-            ))
+                schedule = LoanRepaymentSchedule.objects.select_for_update().get(pk=allocation.schedule_id)
+                was_paid = schedule.status == 'paid'
 
-            if schedule.total_paid <= 0:
-                schedule.status = 'overdue' if schedule.due_date < today else 'pending'
-                schedule.payment_date = None
-                schedule.days_late = 0
-            elif schedule.total_paid < schedule.total_due:
-                schedule.status = 'partial'
-                schedule.payment_date = None
-                schedule.days_late = 0
-            schedule.save()
+                schedule.principal_paid = max(Decimal('0.00'), schedule.principal_paid - allocation.principal_applied)
+                schedule.interest_paid = max(Decimal('0.00'), schedule.interest_paid - allocation.interest_applied)
+                schedule.fees_paid = max(Decimal('0.00'), schedule.fees_paid - allocation.fees_applied)
+                schedule.penalty_paid = max(Decimal('0.00'), schedule.penalty_paid - allocation.penalty_applied)
+                schedule.total_paid = max(Decimal('0.00'), schedule.total_paid - (
+                    allocation.principal_applied + allocation.interest_applied
+                    + allocation.fees_applied + allocation.penalty_applied
+                ))
 
-            if was_paid and schedule.status != 'paid':
-                installments_reopened += 1
+                if schedule.total_paid <= 0:
+                    schedule.status = 'overdue' if schedule.due_date < today else 'pending'
+                    schedule.payment_date = None
+                    schedule.days_late = 0
+                elif schedule.total_paid < schedule.total_due:
+                    schedule.status = 'partial'
+                    schedule.payment_date = None
+                    schedule.days_late = 0
+                schedule.save()
 
-            total_principal += allocation.principal_applied
-            total_interest += allocation.interest_applied
-            total_fees += allocation.fees_applied
-            total_penalty += allocation.penalty_applied
+                if was_paid and schedule.status != 'paid':
+                    installments_reopened += 1
+
+                total_principal += allocation.principal_applied
+                total_interest += allocation.interest_applied
+                total_fees += allocation.fees_applied
+                total_penalty += allocation.penalty_applied
+        else:
+            # Fallback: peel the amount that hit the loan off the schedule's
+            # tail, most-recent-due-date-first among rows still carrying a
+            # balance — the mirror image of record_payment()'s forward,
+            # oldest-due-first application. Safe only because submit()/the
+            # guard above already confirmed nothing has been paid since.
+            remaining = self._amount_that_hit_loan(journal_entry)
+            touched_schedules = LoanRepaymentSchedule.objects.select_for_update().filter(
+                loan=loan, status__in=['paid', 'partial'],
+            ).order_by('-due_date')
+
+            for schedule in touched_schedules:
+                if remaining <= 0:
+                    break
+                take = min(remaining, schedule.total_paid)
+                if take <= 0:
+                    continue
+                was_paid = schedule.status == 'paid'
+
+                # Peel off in the reverse of record_payment()'s forward
+                # priority (penalty → interest → fees → principal), i.e.
+                # principal first — a best-effort split, not a recorded one.
+                p = min(take, schedule.principal_paid)
+                schedule.principal_paid -= p
+                take -= p
+                f = min(take, schedule.fees_paid)
+                schedule.fees_paid -= f
+                take -= f
+                i = min(take, schedule.interest_paid)
+                schedule.interest_paid -= i
+                take -= i
+                n = min(take, schedule.penalty_paid)
+                schedule.penalty_paid -= n
+                take -= n
+
+                applied = p + f + i + n
+                schedule.total_paid -= applied
+                remaining -= applied
+
+                if schedule.total_paid <= 0:
+                    schedule.status = 'overdue' if schedule.due_date < today else 'pending'
+                    schedule.payment_date = None
+                    schedule.days_late = 0
+                elif schedule.total_paid < schedule.total_due:
+                    schedule.status = 'partial'
+                    schedule.payment_date = None
+                    schedule.days_late = 0
+                schedule.save()
+
+                if was_paid and schedule.status != 'paid':
+                    installments_reopened += 1
+
+                total_principal += p
+                total_fees += f
+                total_interest += i
+                total_penalty += n
+
+            if remaining > 0:
+                # Schedule couldn't absorb the full amount (drift) — same
+                # defensive fallback record_payment() itself uses: attribute
+                # whatever's left to principal rather than leaving it stuck.
+                total_principal += remaining
 
         # ── 3. Unwind the loan's aggregate balances ─────────────────────────
         loan.outstanding_principal += total_principal

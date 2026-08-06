@@ -17,7 +17,7 @@ from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest, LoanRestructure,
     LoanRestructureRequest, OfflinePaymentRecord, LoanDisbursementCorrection,
-    LoanRepaymentReversal,
+    LoanRepaymentReversal, LoanRepaymentAllocation,
 )
 from .serializers import (
     LoanProductSerializer,
@@ -29,6 +29,7 @@ from .serializers import (
     OfflinePaymentRecordSerializer,
     LoanDisbursementCorrectionSerializer,
     LoanRepaymentReversalSerializer,
+    LoanRepaymentAllocationSerializer,
 )
 from .utils import LoanVerifier
 from cash_management.services.payment_routing import PaymentRoutingService
@@ -3221,3 +3222,58 @@ class LoanRepaymentReversalViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(LoanRepaymentReversalSerializer(req, context={'request': request}).data)
+
+
+class LoanRepaymentAllocationViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only: which payment(s) contributed to which installment — see
+    LoanRepaymentAllocation's docstring (loans/models.py).
+
+    GET /api/loans/repayment-allocations/?loan=<id>       — every allocation for a loan
+    GET /api/loans/repayment-allocations/?schedule=<id>   — just one installment's contributors
+
+    Lets the Repayment Schedule UI show, per installment, every payment that
+    touched it — so if the payment someone meant to reverse turns out to have
+    no allocation rows of its own (predates the feature — see
+    LoanRepaymentReversal), any other payment that also landed on the same
+    installment and *does* have allocation rows is still visible as a way in.
+    """
+    permission_module = 'loans'
+    permission_page = 'loan-repayment-reversals'
+    serializer_class = LoanRepaymentAllocationSerializer
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser]
+
+    def get_queryset(self):
+        # LoanRepaymentAllocation has no tenant/branch of its own — deliberately
+        # lean, it's an internal ledger row (see the model's docstring) — so
+        # scope through the loan it belongs to instead of _build_scoped_qs,
+        # which assumes those fields exist directly on the model.
+        qs = LoanRepaymentAllocation.objects.select_related(
+            'loan', 'schedule', 'journal_entry',
+        ).order_by('-created_at')
+        user = getattr(self.request, 'user', None)
+        if not user or not getattr(user, 'is_authenticated', False):
+            return qs.none()
+
+        tenant = getattr(user, 'tenant', None)
+        if tenant:
+            qs = qs.filter(Q(loan__tenant=tenant) | Q(loan__tenant__isnull=True))
+
+        is_owner = callable(getattr(user, 'is_owner', None)) and user.is_owner()
+        has_global_role = False
+        try:
+            has_global_role = user.roles.filter(is_active=True, default_scope='global').exists()
+        except Exception:
+            pass
+        if not (is_owner or has_global_role):
+            branch = getattr(user, 'branch', None)
+            if branch:
+                qs = qs.filter(Q(loan__branch=branch) | Q(loan__branch__isnull=True))
+
+        loan_filter = self.request.query_params.get('loan')
+        if loan_filter:
+            qs = qs.filter(loan_id=loan_filter)
+        schedule_filter = self.request.query_params.get('schedule')
+        if schedule_filter:
+            qs = qs.filter(schedule_id=schedule_filter)
+        return qs

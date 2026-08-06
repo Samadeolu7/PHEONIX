@@ -41,6 +41,7 @@ import {
   LoanTransactionRow,
   LoanPaymentHistoryRow,
   LoanRepaymentReversal,
+  LoanRepaymentAllocation,
   RepayLoanPayload,
   ProposeRestructurePayload,
 } from '../../services/loanService';
@@ -63,6 +64,7 @@ import {
   useLoanDisbursementCorrections,
   useLoanRepaymentReversals,
   useRequestRepaymentReversal,
+  useLoanRepaymentAllocations,
 } from '../../hooks/useLoans';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -732,6 +734,15 @@ function CorrectionModal({ loan, onClose, onSuccess }: CorrectionModalProps) {
   );
 }
 
+// A payment reference minimal enough to come from either the Payment History
+// row or a single LoanRepaymentAllocation entry (Repayment Schedule view).
+interface ReversalPaymentRef {
+  journal_entry_id: number;
+  reference: string;
+  amount: string;
+  date: string;
+}
+
 // ── Repayment Reversal Modal ─────────────────────────────────────────────
 // Requests a reversal of a single, already-posted payment. Only creates the
 // request — a different approver must give a first approval, then a second,
@@ -741,7 +752,7 @@ function CorrectionModal({ loan, onClose, onSuccess }: CorrectionModalProps) {
 
 interface ReversalModalProps {
   loanId: number;
-  payment: LoanPaymentHistoryRow;
+  payment: ReversalPaymentRef;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -1224,7 +1235,7 @@ export default function LoanAccountDetailPage() {
   const [showRestructureModal, setShowRestructureModal] = useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [showAddGuarantorModal, setShowAddGuarantorModal] = useState(false);
-  const [reversalTarget, setReversalTarget] = useState<LoanPaymentHistoryRow | null>(null);
+  const [reversalTarget, setReversalTarget] = useState<ReversalPaymentRef | null>(null);
 
   // Client bank details inline edit
   const [bankEditMode, setBankEditMode] = useState(false);
@@ -1244,6 +1255,7 @@ export default function LoanAccountDetailPage() {
   const { data: pendingRestructures = [] } = useLoanRestructureApprovals({ status: 'pending' });
   const { data: corrections = [] } = useLoanDisbursementCorrections();
   const { data: repaymentReversals = [] } = useLoanRepaymentReversals({ loan: loanId });
+  const { data: repaymentAllocations = [] } = useLoanRepaymentAllocations({ loan: loanId });
   const approveLoanMutation = useApproveLoan();
   const rejectLoanMutation = useRejectLoan();
   const requestDisbursementMutation = useRequestDisbursement();
@@ -1274,6 +1286,20 @@ export default function LoanAccountDetailPage() {
     }
     return m;
   }, [repaymentReversals]);
+
+  // Which payment(s) contributed to each installment — lets the schedule
+  // offer an alternative payment to reverse if the "obvious" one turns out
+  // to predate allocation tracking (see LoanRepaymentAllocation).
+  const allocationsBySchedule = useMemo(() => {
+    const m = new Map<number, LoanRepaymentAllocation[]>();
+    for (const a of repaymentAllocations) {
+      if (a.schedule == null) continue;
+      const list = m.get(a.schedule) ?? [];
+      list.push(a);
+      m.set(a.schedule, list);
+    }
+    return m;
+  }, [repaymentAllocations]);
 
   const error = loanError ? ((loanError as any)?.response?.data?.detail || loanError.message || 'Failed to load loan details.') : null;
 
@@ -2221,6 +2247,7 @@ export default function LoanAccountDetailPage() {
                     <th className="px-4 py-3 text-right">Total Paid</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Payment Date</th>
+                    <th className="px-4 py-3">Contributing Payments</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -2228,6 +2255,7 @@ export default function LoanAccountDetailPage() {
                     .sort((a, b) => a.installment_number - b.installment_number)
                     .map((row) => {
                       const isRowOverdue = row.status === 'overdue';
+                      const contributions = allocationsBySchedule.get(row.id) ?? [];
                       return (
                         <tr
                           key={row.id}
@@ -2256,6 +2284,50 @@ export default function LoanAccountDetailPage() {
                           </td>
                           <td className="px-4 py-3 text-gray-500">
                             {fmtDate(row.paid_date)}
+                          </td>
+                          <td className="px-4 py-3">
+                            {contributions.length === 0 ? (
+                              <span className="text-xs text-gray-400">—</span>
+                            ) : (
+                              <div className="flex flex-col gap-1">
+                                {contributions.map(a => {
+                                  const pendingReversal = reversalByJournalEntry.get(a.journal_entry);
+                                  const inFlight = pendingReversal
+                                    && (pendingReversal.status === 'pending' || pendingReversal.status === 'awaiting_second_approval');
+                                  return (
+                                    <div key={a.id} className="flex items-center gap-2 text-xs">
+                                      <span className="font-mono text-gray-500">{a.journal_entry_reference}</span>
+                                      <span className="text-gray-600">₦{fmt(a.total_applied)}</span>
+                                      {a.journal_entry_is_reversed ? (
+                                        <span className="text-gray-400">Reversed</span>
+                                      ) : inFlight && pendingReversal ? (
+                                        <Link
+                                          to="/loans/repayment-reversals"
+                                          className="font-medium text-amber-700 hover:underline"
+                                          title={`${pendingReversal.reference_number} — ${pendingReversal.reason}`}
+                                        >
+                                          {pendingReversal.status === 'pending' ? '1st pending' : '2nd pending'}
+                                        </Link>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => setReversalTarget({
+                                            journal_entry_id: a.journal_entry,
+                                            reference: a.journal_entry_reference,
+                                            amount: a.total_applied,
+                                            date: a.journal_entry_date,
+                                          })}
+                                          className="flex items-center gap-1 font-medium text-red-700 hover:underline"
+                                        >
+                                          <RotateCcw size={10} />
+                                          Reverse
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       );
