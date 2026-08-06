@@ -6,6 +6,23 @@ from django.db import transaction
 logger = logging.getLogger(__name__)
 
 
+@receiver(post_save, sender='threads.Thread')
+def notify_oversight_of_new_thread(sender, instance, created, **kwargs):
+    """Directors and the initiating branch's Branch Manager learn about every
+    new thread as it starts, even when nobody tagged them in — see
+    threads/views.py's user_can_initiate_thread (anyone can start a thread
+    now) and the matching oversight carve-out in ThreadViewSet.get_queryset
+    that lets them actually open what this notifies them about."""
+    if not created or instance.is_deleted:
+        return
+    try:
+        def _send():
+            _fire_oversight_notifications(instance)
+        transaction.on_commit(_send)
+    except Exception:
+        logger.exception('Failed to queue oversight notifications for thread %s', instance.pk)
+
+
 @receiver(post_save, sender='threads.ThreadParticipant')
 def notify_participant_added(sender, instance, created, **kwargs):
     """Send in-app notification when a user is tagged into a thread."""
@@ -113,3 +130,57 @@ def _fire_message_notifications(message):
             Notification.objects.bulk_create(notifications, ignore_conflicts=True)
     except Exception:
         logger.exception('Failed to create message notifications for message %s', message.pk)
+
+
+def _fire_oversight_notifications(thread):
+    """Notify every director and the thread's own branch manager that a new
+    discussion started — regardless of whether they were tagged as a
+    participant. Skips anyone already notified via
+    _fire_participant_notification (tagged participants) to avoid a
+    duplicate ping for the same thread."""
+    try:
+        from django.contrib.contenttypes.models import ContentType
+        from notifications.models import Notification, NotificationChannel
+        from threads.views import _directors_for_tenant, _branch_managers_for_branch
+
+        channel = NotificationChannel.objects.filter(code='in_app', is_active=True).first()
+        if not channel:
+            return
+
+        initiator = thread.initiated_by
+        initiator_name = (initiator.get_full_name() or initiator.username) if initiator else 'Someone'
+
+        oversight_users = (
+            _directors_for_tenant(thread.tenant) | _branch_managers_for_branch(thread.tenant, thread.branch)
+        ).exclude(pk=initiator.pk if initiator else 0).distinct()
+
+        already_notified_ids = set(
+            thread.participants.filter(is_deleted=False).values_list('user_id', flat=True)
+        )
+
+        thread_content_type = ContentType.objects.get_for_model(thread.__class__)
+        notifications = []
+        for u in oversight_users:
+            if u.pk in already_notified_ids:
+                continue
+            notifications.append(Notification(
+                channel=channel,
+                recipient_user=u,
+                recipient_name=u.get_full_name() or u.username,
+                recipient_contact='',
+                subject='New discussion started',
+                message=f'{initiator_name} started a discussion: "{thread.title}"',
+                priority='normal',
+                status='pending',
+                owner=thread.owner,
+                branch=thread.branch,
+                created_by=initiator,
+                tenant=thread.tenant,
+                content_type=thread_content_type,
+                object_id=str(thread.pk),
+            ))
+
+        if notifications:
+            Notification.objects.bulk_create(notifications, ignore_conflicts=True)
+    except Exception:
+        logger.exception('Failed to create oversight notifications for thread %s', thread.pk)

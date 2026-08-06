@@ -207,15 +207,14 @@ class ModulePage(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             raise ValidationError("page_config.thread.require_reason must be a boolean.")
 
     def user_can_initiate_thread(self, user):
-        if not self.is_threadable:
-            return False
-        allowed_roles = self.get_thread_config().get('who_can_initiate', [])
-        if not allowed_roles:
-            return True
-        try:
-            return user.roles.filter(is_active=True, name__in=allowed_roles).exists()
-        except Exception:
-            return True
+        # Any user who can see a threadable page may start a discussion on
+        # it — role-gating via page_config.thread.who_can_initiate used to
+        # block this (a branch manager was locked out by a stale config),
+        # so initiation is intentionally unrestricted now. Directors and the
+        # relevant branch manager are notified of every new thread instead
+        # (see threads/signals.py), which covers the oversight need without
+        # blocking anyone from starting one.
+        return self.is_threadable
 
 
 class PageWidget(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

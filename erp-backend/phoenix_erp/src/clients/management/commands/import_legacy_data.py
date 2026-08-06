@@ -1078,6 +1078,11 @@ class Command(BaseCommand):
         "Closed":               "paid_off",
     }
 
+    # Mirrors LoanAccount's own terminal-status set (models.py _TERMINAL) —
+    # a loan mapped to one of these has no real outstanding debt regardless
+    # of what the legacy export's balance field says.
+    _TERMINAL_LOAN_STATUSES = frozenset(['paid_off', 'written_off', 'rejected', 'cancelled'])
+
     def _import_loans(self, loans_data, schedules_data, LoanAccount, Account, products, client_map, gl, ctx, ob_entries):
         """
         Create one LoanAccount + child LOAN Account per loan, then rebuild
@@ -1174,6 +1179,18 @@ class Command(BaseCommand):
             old_status = rec.get("status", "Active")
             new_status = self._LOAN_STATUS_MAP.get(old_status, "active")
 
+            # The legacy "Closed" label isn't trustworthy on its own — some
+            # closed loans still carried a real nonzero (or negative/credit)
+            # balance in the old system. A loan with money still owed is not
+            # paid_off regardless of what the source status said, so let the
+            # balance (the actual debt figure) override a terminal mapping
+            # rather than silently zeroing it to make the status fit.
+            # (Found on LN-76/66/156/89, 2026-06-30 import — confirmed via
+            # OBMIG-20260630-0023: balances of +38,933.33 / -4,000 / -4,000 /
+            # -5,000 imported alongside status=paid_off.)
+            if new_status in self._TERMINAL_LOAN_STATUSES and balance != Decimal("0.00"):
+                new_status = "active"
+
             # ── GL child account ─────────────────────────────────────────
             child_code = next(code_gen)
             child_acct = Account.objects.create(
@@ -1187,7 +1204,7 @@ class Command(BaseCommand):
                 branch=ctx["branch"],
                 created_by=ctx["owner"],
             )
-            cur_balance = _d(rec.get("balance"))
+            cur_balance = balance
             if cur_balance:
                 ob_entries.append((child_acct, cur_balance, cur_balance, 'DR'))
                 loan_ob_total += cur_balance

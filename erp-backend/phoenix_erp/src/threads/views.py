@@ -43,6 +43,30 @@ def _is_branch_manager(user):
         return False
 
 
+def _directors_for_tenant(tenant):
+    """All director-equivalent users for a tenant — same criteria as _is_director,
+    expressed as a queryset for bulk notification fan-out."""
+    from django.contrib.auth import get_user_model
+    UserModel = get_user_model()
+    return UserModel.objects.filter(tenant=tenant, is_active=True).filter(
+        Q(is_system_admin=True) |
+        Q(tenant_owned__isnull=False) |
+        Q(roles__is_active=True, roles__default_scope='global')
+    ).distinct()
+
+
+def _branch_managers_for_branch(tenant, branch):
+    """Branch Manager users scoped to one specific branch (not tenant-wide)."""
+    from django.contrib.auth import get_user_model
+    UserModel = get_user_model()
+    if not branch:
+        return UserModel.objects.none()
+    return UserModel.objects.filter(
+        tenant=tenant, branch=branch, is_active=True,
+        roles__name='Branch Manager', roles__is_active=True,
+    ).distinct()
+
+
 # ── Thread ViewSet ────────────────────────────────────────────────────────────
 
 class ThreadViewSet(ScopedModelViewSet):
@@ -118,9 +142,19 @@ class ThreadViewSet(ScopedModelViewSet):
             'participants__user', 'participants__user__roles',
         )
 
-        # Directors see all; everyone else sees only threads they're in
+        # Directors see all. Branch Managers additionally see every thread in
+        # their own branch (read-only oversight) even when not tagged as a
+        # participant — they're notified of every new thread on their branch
+        # (see threads/signals.py) and need to actually be able to open it.
+        # Everyone else sees only threads they're a participant in.
         if not _is_director(user):
-            qs = qs.filter(participants__user=user, participants__is_deleted=False)
+            if _is_branch_manager(user) and getattr(user, 'branch', None):
+                qs = qs.filter(
+                    Q(participants__user=user, participants__is_deleted=False) |
+                    Q(branch=user.branch)
+                )
+            else:
+                qs = qs.filter(participants__user=user, participants__is_deleted=False)
 
         params = self.request.query_params
         if params.get('status'):
@@ -562,10 +596,19 @@ class ThreadMessageViewSet(ScopedModelViewSet):
         if thread_id:
             qs = qs.filter(thread_id=thread_id)
             if not _is_director(user):
-                qs = qs.filter(
-                    thread__participants__user=user,
-                    thread__participants__is_deleted=False,
-                )
+                if _is_branch_manager(user) and getattr(user, 'branch', None):
+                    # Same oversight carve-out as ThreadViewSet.get_queryset —
+                    # a Branch Manager reading a thread in their own branch
+                    # they were only notified about, not tagged into.
+                    qs = qs.filter(
+                        Q(thread__participants__user=user, thread__participants__is_deleted=False) |
+                        Q(thread__branch=user.branch)
+                    )
+                else:
+                    qs = qs.filter(
+                        thread__participants__user=user,
+                        thread__participants__is_deleted=False,
+                    )
 
         # Polling support: ?after=<message_id>
         after_id = self.request.query_params.get('after')

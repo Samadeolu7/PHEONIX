@@ -30,7 +30,6 @@ interface Role {
 }
 
 interface ThreadConfig {
-  who_can_initiate: string[];
   auto_include_roles: string[];
   max_open_threads: number;
   require_reason: boolean;
@@ -101,7 +100,6 @@ export default function PageDiscussionsPage() {
         for (const page of mod.pages || []) {
           const tc = page.page_config?.thread || {};
           initialConfigs[page.id] = {
-            who_can_initiate: tc.who_can_initiate || [],
             auto_include_roles: tc.auto_include_roles || [],
             max_open_threads: tc.max_open_threads ?? 0,
             require_reason: tc.require_reason ?? false,
@@ -168,12 +166,11 @@ export default function PageDiscussionsPage() {
 
   const toggleRole = (
     pageId: number,
-    field: 'who_can_initiate' | 'auto_include_roles',
+    field: 'auto_include_roles',
     code: string
   ) => {
     setConfigs(prev => {
       const cfg = prev[pageId] ?? {
-        who_can_initiate: [],
         auto_include_roles: [],
         max_open_threads: 0,
         require_reason: false,
@@ -192,7 +189,7 @@ export default function PageDiscussionsPage() {
   const updateConfig = (pageId: number, patch: Partial<ThreadConfig>) => {
     setConfigs(prev => ({
       ...prev,
-      [pageId]: { ...(prev[pageId] ?? { who_can_initiate: [], auto_include_roles: [], max_open_threads: 0, require_reason: false }), ...patch },
+      [pageId]: { ...(prev[pageId] ?? { auto_include_roles: [], max_open_threads: 0, require_reason: false }), ...patch },
     }));
   };
 
@@ -229,9 +226,9 @@ export default function PageDiscussionsPage() {
           </div>
         </div>
         <p className="text-sm text-gray-600 max-w-2xl leading-relaxed">
-          Enable contextual discussion threads on individual pages. When enabled, users
-          can start threaded conversations attached to any record on that page. Configure
-          who can initiate threads and which roles are auto-included.
+          Enable contextual discussion threads on individual pages. When enabled, any user
+          who can see the page can start a threaded conversation on any record on it.
+          Configure which roles are auto-included when one starts.
         </p>
       </div>
 
@@ -305,39 +302,6 @@ export default function PageDiscussionsPage() {
                   {expandedPages.has(page.id) && page.is_threadable && (
                     <div className="bg-indigo-50/40 border-t border-indigo-100 px-4 pb-4 pt-3">
                       <div className="grid sm:grid-cols-2 gap-5">
-                        {/* who_can_initiate */}
-                        <div>
-                          <p className="text-xs font-semibold text-gray-700 mb-1">
-                            Who can start a thread
-                          </p>
-                          <p className="text-xs text-gray-400 mb-2">
-                            Leave empty to allow all roles.
-                          </p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {roles.map(role => {
-                              const isSelected = (
-                                configs[page.id]?.who_can_initiate ?? []
-                              ).includes(role.name);
-                              return (
-                                <button
-                                  key={role.id}
-                                  type="button"
-                                  onClick={() =>
-                                    toggleRole(page.id, 'who_can_initiate', role.name)
-                                  }
-                                  className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                                    isSelected
-                                      ? 'bg-indigo-600 border-indigo-600 text-white'
-                                      : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'
-                                  }`}
-                                >
-                                  {role.name}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-
                         {/* auto_include_roles */}
                         <div>
                           <p className="text-xs font-semibold text-gray-700 mb-1">

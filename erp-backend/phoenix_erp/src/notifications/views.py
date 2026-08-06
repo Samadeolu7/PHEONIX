@@ -85,29 +85,53 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def mark_read(self, request, pk=None):
         """Mark a notification as read"""
         notification = self.get_object()
-        
+
         if notification.status != 'read':
             notification.mark_read()
-        
+            self._sync_thread_read_state([notification.object_id] if notification.object_id else [], request.user)
+
         return Response({
             'status': 'success',
             'message': 'Notification marked as read'
         })
-    
+
     @action(detail=False, methods=['post'])
     def mark_all_read(self, request):
         """Mark all notifications as read"""
         queryset = self.get_queryset().exclude(status='read')
+        thread_ids = list(
+            queryset.filter(content_type__model='thread').values_list('object_id', flat=True)
+        )
         count = queryset.update(
             status='read',
             read_at=timezone.now()
         )
-        
+        self._sync_thread_read_state(thread_ids, request.user)
+
         return Response({
             'status': 'success',
             'message': f'{count} notifications marked as read',
             'count': count
         })
+
+    @staticmethod
+    def _sync_thread_read_state(thread_object_ids, user):
+        """
+        A discussion thread's own unread badge (ThreadParticipant.last_read_at)
+        and this bell's Notification.status are two independent read-states
+        (see threads/signals.py) — clearing a thread notification here without
+        this left the Discuss button showing a stale red badge even after the
+        bell had been cleared for it.
+        """
+        if not thread_object_ids:
+            return
+        try:
+            from threads.models import ThreadParticipant
+            ThreadParticipant.objects.filter(
+                thread_id__in=thread_object_ids, user=user, is_deleted=False,
+            ).update(last_read_at=timezone.now())
+        except Exception:
+            pass
     
     @action(detail=False, methods=['get'])
     def unread_count(self, request):

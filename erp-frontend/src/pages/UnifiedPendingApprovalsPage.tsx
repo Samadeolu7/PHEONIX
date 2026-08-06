@@ -60,6 +60,9 @@ interface ApprovalItem {
   onApprove?: (notes: string) => Promise<void>;
   /** Called when the user confirms an inline reject */
   onReject?: (reason: string) => Promise<void>;
+  /** Some approvals (e.g. loan repayment reversal) require non-empty approval
+   * notes server-side — the generic modal otherwise treats approve notes as optional. */
+  requireApproveNote?: boolean;
 }
 
 interface ApprovalSection {
@@ -111,6 +114,8 @@ interface ActionModalProps {
   onConfirm: (note: string) => void;
   onClose: () => void;
   isBusy: boolean;
+  /** Approve-side only: some flows (e.g. loan repayment reversal) require notes server-side. */
+  noteRequired?: boolean;
 }
 
 const ActionModal: React.FC<ActionModalProps> = ({
@@ -119,9 +124,11 @@ const ActionModal: React.FC<ActionModalProps> = ({
   onConfirm,
   onClose,
   isBusy,
+  noteRequired,
 }) => {
   const [note, setNote] = useState('');
   const isReject = type === 'reject';
+  const requireNote = isReject || !!noteRequired;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -132,7 +139,9 @@ const ActionModal: React.FC<ActionModalProps> = ({
         <textarea
           className="w-full border border-gray-300 rounded-lg p-3 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400"
           rows={3}
-          placeholder={isReject ? 'Reason for rejection (required)' : 'Notes (optional)'}
+          placeholder={
+            isReject ? 'Reason for rejection (required)' : requireNote ? 'Notes (required)' : 'Notes (optional)'
+          }
           value={note}
           onChange={e => setNote(e.target.value)}
         />
@@ -146,7 +155,7 @@ const ActionModal: React.FC<ActionModalProps> = ({
           </button>
           <button
             onClick={() => onConfirm(note)}
-            disabled={isBusy || (isReject && !note.trim())}
+            disabled={isBusy || (requireNote && !note.trim())}
             className={`px-4 py-2 text-sm rounded-lg text-white disabled:opacity-50 ${
               isReject ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
             }`}
@@ -217,6 +226,7 @@ const ApprovalRow: React.FC<ApprovalRowProps> = ({ item, onRefresh }) => {
           onConfirm={handleConfirm}
           onClose={() => setModal(null)}
           isBusy={busy}
+          noteRequired={modal.type === 'approve' && item.requireApproveNote}
         />
       )}
       <div className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50 transition-colors rounded-lg group">
@@ -516,6 +526,22 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
         queryFn: () => loanService.listRepaymentRequests({ status: 'pending' }),
         staleTime: 30_000,
       },
+      // 22 – Petty Cash Voucher Reversal Requests
+      {
+        queryKey: ['pending-approvals-petty-cash-voucher-reversals'],
+        queryFn: () => pettyCashService.getVouchers({ status: 'reversal_pending' }),
+        staleTime: 30_000,
+      },
+      // 23 – Loan Repayment Reversals (pending 1st approval + awaiting 2nd approval)
+      {
+        queryKey: ['pending-approvals-loan-repayment-reversals'],
+        queryFn: () =>
+          Promise.all([
+            loanService.listRepaymentReversals({ status: 'pending' }),
+            loanService.listRepaymentReversals({ status: 'awaiting_second_approval' }),
+          ]).then(([pending, awaitingSecond]) => [...pending, ...awaitingSecond]),
+        staleTime: 30_000,
+      },
     ],
   });
 
@@ -542,6 +568,8 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
     loanDisbursementsQ,
     savingsWithdrawalsQ,
     loanRepaymentRequestsQ,
+    pettyCashVoucherReversalsQ,
+    loanRepaymentReversalsQ,
   ] = results;
 
   // Invalidate helper – re-run all queries
@@ -908,6 +936,45 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
     ),
   }));
 
+  const pettyCashReversalItems: ApprovalItem[] = (
+    Array.isArray(pettyCashVoucherReversalsQ.data) ? pettyCashVoucherReversalsQ.data : []
+  ).map((v: any) => ({
+    id: v.id,
+    title: v.voucher_number || `Voucher #${v.id}`,
+    subtitle: `Reverse disbursement — ${v.reversal_reason || v.purpose || ''}`,
+    amount: fmt(v.amount),
+    date: fmtDate(v.reversal_requested_at || v.created_at),
+    viewPath: `/treasury/petty-cash/vouchers/${v.id}`,
+    onApprove: act((_notes: string) => pettyCashService.approveVoucherReversal(v.id).then(() => {})),
+    onReject: act((reason: string) =>
+      pettyCashService.rejectVoucherReversal(v.id, { reason }).then(() => {})
+    ),
+  }));
+
+  const loanRepaymentReversalItems: ApprovalItem[] = (
+    Array.isArray(loanRepaymentReversalsQ.data) ? loanRepaymentReversalsQ.data : []
+  ).map((r: any) => ({
+    id: r.id,
+    title: `${r.loan_number || `Loan #${r.loan}`} — ${
+      r.status === 'awaiting_second_approval' ? '2nd Approval (executes)' : '1st Approval'
+    }`,
+    subtitle: `${r.client_name ? r.client_name + ' — ' : ''}${r.journal_entry_reference} · ${r.reason}`,
+    amount: fmt(r.amount),
+    date: fmtDate(r.requested_at || r.created_at),
+    urgency: r.status === 'awaiting_second_approval' ? 'high' : 'normal',
+    viewPath: `/loans/repayment-reversals`,
+    requireApproveNote: true,
+    onApprove: act((notes: string) =>
+      (r.status === 'awaiting_second_approval'
+        ? loanService.secondApproveRepaymentReversal(r.id, notes)
+        : loanService.firstApproveRepaymentReversal(r.id, notes)
+      ).then(() => {})
+    ),
+    onReject: act((reason: string) =>
+      loanService.rejectRepaymentReversal(r.id, reason).then(() => {})
+    ),
+  }));
+
   // ── Build sections ─────────────────────────────────────────────────────────
 
   const sections: ApprovalSection[] = [
@@ -1130,6 +1197,26 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       isLoading: loanRepaymentRequestsQ.isLoading,
       isError: loanRepaymentRequestsQ.isError && !isForbidden(loanRepaymentRequestsQ),
       isForbidden: isForbidden(loanRepaymentRequestsQ),
+    },
+    {
+      id: 'petty-cash-voucher-reversals',
+      label: 'Petty Cash Reversal Requests',
+      icon: <RotateCcw className="w-4 h-4" />,
+      color: 'bg-amber-700',
+      items: pettyCashReversalItems,
+      isLoading: pettyCashVoucherReversalsQ.isLoading,
+      isError: pettyCashVoucherReversalsQ.isError && !isForbidden(pettyCashVoucherReversalsQ),
+      isForbidden: isForbidden(pettyCashVoucherReversalsQ),
+    },
+    {
+      id: 'loan-repayment-reversals',
+      label: 'Loan Repayment Reversals',
+      icon: <RotateCcw className="w-4 h-4" />,
+      color: 'bg-rose-700',
+      items: loanRepaymentReversalItems,
+      isLoading: loanRepaymentReversalsQ.isLoading,
+      isError: loanRepaymentReversalsQ.isError && !isForbidden(loanRepaymentReversalsQ),
+      isForbidden: isForbidden(loanRepaymentReversalsQ),
     },
   ];
 

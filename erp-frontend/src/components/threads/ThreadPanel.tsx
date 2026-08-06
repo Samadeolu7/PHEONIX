@@ -118,9 +118,18 @@ export const ThreadPanel: React.FC = () => {
       // still fetches on remount/enable transitions, but must not silently
       // consume unread messages the user hasn't looked at yet.
       if (panelState === 'open') {
-        threadService.markRead(selectedThreadId!).catch(() => {});
-        queryClient.invalidateQueries({ queryKey: ['threads', 'list'] });
-        queryClient.invalidateQueries({ queryKey: ['notifications'] });
+        // Wait for the mark-read POST to actually land before invalidating —
+        // firing these in parallel let the refetch race ahead of the write,
+        // so the bell/badge would refetch the still-unread count and then
+        // sit on that stale value until the next poll tick, making it look
+        // like the notification "stayed" even though the thread was read.
+        threadService
+          .markRead(selectedThreadId!)
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey: ['threads', 'list'] });
+            queryClient.invalidateQueries({ queryKey: ['notifications'] });
+          })
+          .catch(() => {});
       }
       lastMsgIdRef.current = msgs.length ? msgs[msgs.length - 1].id : 0;
       return msgs;
@@ -326,6 +335,10 @@ export const ThreadPanel: React.FC = () => {
 
   // ── Full panel ────────────────────────────────────────────────────────────
   const isClosed = selectedThread?.status === 'closed';
+  // Branch Managers/Directors can land here on a thread they were only
+  // notified about, not tagged into (see threads/views.py's oversight
+  // queryset carve-out) — posting would 403, so show read-only instead.
+  const isParticipant = (selectedThread?.participants ?? []).some(p => p.user === user?.id);
   const requiresReason = pageConfig?.thread?.require_reason ?? false;
   const canInitiate = pageConfig?.can_initiate ?? false;
 
@@ -738,6 +751,10 @@ export const ThreadPanel: React.FC = () => {
                   <Unlock className="w-3 h-3" /> Reopen
                 </button>
               </div>
+            ) : !isParticipant ? (
+              <p className="text-xs text-gray-500 flex items-center gap-1">
+                <Users className="w-3 h-3" /> You're viewing this discussion as an observer — ask to be added to reply.
+              </p>
             ) : (
               <>
                 {attachFile && (
