@@ -17,7 +17,7 @@ from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
     LoanVerificationRequest, LoanDisbursement, LoanRepaymentRequest, LoanRestructure,
     LoanRestructureRequest, OfflinePaymentRecord, LoanDisbursementCorrection,
-    LoanRepaymentReversal, LoanRepaymentAllocation,
+    LoanRepaymentReversal,
 )
 from .serializers import (
     LoanProductSerializer,
@@ -1587,89 +1587,78 @@ class LoanAccountViewSet(ScopedModelViewSet):
         what a staff member actually wants after recording a payment: "did
         it go through, and what did it cover?"
 
-        Built from LoanRepaymentAllocation (one row per payment × installment
-        touched — see that model's docstring) grouped by journal_entry, which
-        is the only place the true principal/interest/fees/penalty split for
-        a specific historical payment is recoverable; the loan/schedule
-        aggregate fields only hold running totals. bank_reference and
-        received_by are merged in from the matching FinancialAuditLog(LOAN_REPAY)
-        entry — record_payment() writes exactly one per payment (same pattern
-        used by the remittance_report action above).
+        Sourced from FinancialAuditLog(LOAN_REPAY) — record_payment() writes
+        exactly one of these per payment, unconditionally, with the exact
+        principal/interest/fees/penalty split computed at that moment (see
+        record_payment()'s log_financial_event call). This is deliberately
+        NOT built from LoanRepaymentAllocation: that model only exists from
+        migration 0026 onward, so any payment made before it shipped has no
+        allocation rows and would silently vanish from this list (found
+        while testing on LN-714, whose payments predate it — the first
+        version of this endpoint returned an empty list for a loan with
+        3 real payments). FinancialAuditLog has covered every repayment,
+        old and new, since long before allocations existed.
         """
-        from decimal import Decimal
         from common.models import FinancialAuditLog
+        from transactions.models import Transaction as JournalEntry
 
         loan = self.get_object()
 
-        allocations = (
-            LoanRepaymentAllocation.objects
-            .filter(loan=loan)
-            .select_related('journal_entry')
-            .order_by('journal_entry__date', 'journal_entry_id')
+        logs = list(
+            FinancialAuditLog.objects.filter(
+                event_type=FinancialAuditLog.LOAN_REPAY,
+                record_type='LoanAccount',
+                record_id=str(loan.pk),
+            ).select_related('acted_by').order_by('-timestamp')
         )
 
-        by_journal = {}
-        order = []
-        for alloc in allocations:
-            jid = alloc.journal_entry_id
-            if jid not in by_journal:
-                by_journal[jid] = {
-                    'journal_entry': alloc.journal_entry,
-                    'principal': Decimal('0.00'),
-                    'interest': Decimal('0.00'),
-                    'fees': Decimal('0.00'),
-                    'penalty': Decimal('0.00'),
-                }
-                order.append(jid)
-            row = by_journal[jid]
-            row['principal'] += alloc.principal_applied
-            row['interest'] += alloc.interest_applied
-            row['fees'] += alloc.fees_applied
-            row['penalty'] += alloc.penalty_applied
-
-        audit_by_journal = {}
-        for log in FinancialAuditLog.objects.filter(
-            event_type=FinancialAuditLog.LOAN_REPAY,
-            record_type='LoanAccount',
-            record_id=str(loan.pk),
-        ).select_related('acted_by'):
+        journal_ids = []
+        for log in logs:
             jid_raw = log.extra.get('journal_entry_id')
             if jid_raw:
-                audit_by_journal[str(jid_raw)] = log
+                try:
+                    journal_ids.append(int(jid_raw))
+                except (TypeError, ValueError):
+                    pass
 
+        journals = {j.pk: j for j in JournalEntry.objects.filter(pk__in=journal_ids)}
         reversed_journal_ids = set(
             LoanRepaymentReversal.objects.filter(
-                journal_entry_id__in=order, status=LoanRepaymentReversal.COMPLETED,
+                journal_entry_id__in=journal_ids, status=LoanRepaymentReversal.COMPLETED,
             ).values_list('journal_entry_id', flat=True)
         )
 
         results = []
-        for jid in order:
-            row = by_journal[jid]
-            txn = row['journal_entry']
-            total = row['principal'] + row['interest'] + row['fees'] + row['penalty']
-            log = audit_by_journal.get(str(jid))
+        for log in logs:
+            extra = log.extra or {}
+            jid_raw = extra.get('journal_entry_id')
+            jid = None
+            if jid_raw:
+                try:
+                    jid = int(jid_raw)
+                except (TypeError, ValueError):
+                    jid = None
+            txn = journals.get(jid) if jid else None
             results.append({
                 'journal_entry_id': jid,
-                'date': txn.date,
-                'reference': txn.reference_number,
-                'amount': str(total),
-                'principal': str(row['principal']),
-                'interest': str(row['interest']),
-                'fees': str(row['fees']),
-                'penalty': str(row['penalty']),
-                'bank_reference': (log.extra.get('bank_reference') or None) if log else None,
+                'date': txn.date if txn else log.timestamp.date(),
+                'reference': txn.reference_number if txn else None,
+                'amount': str(log.amount) if log.amount is not None else None,
+                'principal': extra.get('principal', '0.00'),
+                'interest': extra.get('interest', '0.00'),
+                'fees': extra.get('fees', '0.00'),
+                'penalty': extra.get('penalty', '0.00'),
+                'bank_reference': extra.get('bank_reference') or None,
                 'received_by': (
                     f"{log.acted_by.first_name} {log.acted_by.last_name}".strip()
-                    if log and log.acted_by else None
+                    if log.acted_by else None
                 ),
-                'reversed': jid in reversed_journal_ids,
+                'reversed': jid in reversed_journal_ids if jid else False,
             })
 
-        # Most recent payment first — matches how staff will actually use
-        # this (confirming "did the payment I just took just now go through").
-        results.reverse()
-
+        # Already newest-first (FinancialAuditLog default ordering / our
+        # explicit -timestamp) — matches how staff will actually use this
+        # (confirming "did the payment I just took just now go through").
         return Response({'count': len(results), 'results': results})
 
     @action(detail=False, methods=['get'], url_path='cbn-returns')
