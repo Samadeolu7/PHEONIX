@@ -423,7 +423,9 @@ def initiate_withdrawal(
     Create a SavingsWithdrawalRequest and pre-populate the approval steps.
 
     Enforces:
-    - only_account_manager_can_withdraw: requested_by must be the client's account_manager
+    - only_account_manager_can_withdraw: requested_by must be the client's
+      account_manager or assigned_officer (account officer) — the two roles
+      are frequently held by the same person, so either is accepted
     - Sufficient balance check (including any cycle break penalty)
     - At least one matching approval tier must exist
 
@@ -442,10 +444,15 @@ def initiate_withdrawal(
 
     # ── Permission check ─────────────────────────────────────────────────────
     if config and config.only_account_manager_can_withdraw:
-        client_manager = savings_account.client.account_manager
-        if not client_manager or client_manager.pk != requested_by.pk:
+        client = savings_account.client
+        allowed_staff_ids = {
+            staff.pk for staff in (client.account_manager, client.assigned_officer) if staff
+        }
+        requester_staff = getattr(requested_by, 'staff_profile', None)
+        if not requester_staff or requester_staff.pk not in allowed_staff_ids:
             raise ValidationError(
-                "Only the client's account manager may initiate a withdrawal on this product."
+                "Only the client's account manager or account officer may initiate "
+                "a withdrawal on this product."
             )
 
     # ── Balance check (holds-aware) ───────────────────────────────────────────

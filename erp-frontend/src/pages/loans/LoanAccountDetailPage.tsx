@@ -2242,8 +2242,8 @@ export default function LoanAccountDetailPage() {
                     <th className="px-4 py-3 text-right">Principal</th>
                     <th className="px-4 py-3 text-right">Interest</th>
                     <th className="px-4 py-3 text-right">Total Due</th>
-                    <th className="px-4 py-3 text-right">Penalty</th>
-                    <th className="px-4 py-3 text-right">Amount Owed</th>
+                    <th className="px-4 py-3 text-right">Penalty Remaining</th>
+                    <th className="px-4 py-3 text-right">Balance Remaining</th>
                     <th className="px-4 py-3 text-right">Total Paid</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Payment Date</th>
@@ -2256,6 +2256,16 @@ export default function LoanAccountDetailPage() {
                     .map((row) => {
                       const isRowOverdue = row.status === 'overdue';
                       const contributions = allocationsBySchedule.get(row.id) ?? [];
+                      // Penalty due/paid are tracked separately from total_due/total_paid
+                      // (see LoanRepaymentSchedule) — 'Paid' status only reflects
+                      // principal+interest+fees, so penalty needs its own paid-vs-
+                      // remaining check rather than just showing the static due amount.
+                      const penaltyDue = parseFloat(row.penalty_due) || 0;
+                      const penaltyPaid = parseFloat(row.penalty_paid) || 0;
+                      const penaltyRemaining = Math.max(0, penaltyDue - penaltyPaid);
+                      const totalDue = parseFloat(row.total_due) || 0;
+                      const totalPaid = parseFloat(row.total_paid) || 0;
+                      const balanceRemaining = Math.max(0, totalDue - totalPaid) + penaltyRemaining;
                       return (
                         <tr
                           key={row.id}
@@ -2268,11 +2278,26 @@ export default function LoanAccountDetailPage() {
                           <td className="px-4 py-3 text-right text-gray-700">₦{fmt(row.principal_due)}</td>
                           <td className="px-4 py-3 text-right text-gray-700">₦{fmt(row.interest_due)}</td>
                           <td className="px-4 py-3 text-right font-medium text-gray-900">₦{fmt(row.total_due)}</td>
-                          <td className={`px-4 py-3 text-right ${parseFloat(row.penalty_due) > 0 ? 'font-medium text-red-700' : 'text-gray-400'}`}>
-                            {parseFloat(row.penalty_due) > 0 ? `₦${fmt(row.penalty_due)}` : '—'}
+                          <td className="px-4 py-3 text-right">
+                            {penaltyDue <= 0 ? (
+                              <span className="text-gray-400">—</span>
+                            ) : penaltyRemaining <= 0 ? (
+                              <span className="font-medium text-green-700" title="Penalty paid in full">
+                                ₦{fmt(row.penalty_due)} <span className="text-[11px] font-normal">(paid)</span>
+                              </span>
+                            ) : (
+                              <span className="font-medium text-red-700">
+                                ₦{fmt(penaltyRemaining)}
+                                {penaltyPaid > 0 && (
+                                  <span className="block text-[11px] font-normal text-gray-400">
+                                    of ₦{fmt(row.penalty_due)}
+                                  </span>
+                                )}
+                              </span>
+                            )}
                           </td>
-                          <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                            ₦{fmt(parseFloat(row.total_due) + parseFloat(row.penalty_due))}
+                          <td className={`px-4 py-3 text-right font-semibold ${balanceRemaining <= 0 ? 'text-green-700' : 'text-gray-900'}`}>
+                            ₦{fmt(balanceRemaining)}
                           </td>
                           <td className={`px-4 py-3 text-right font-medium ${parseFloat(row.total_paid) > 0 ? 'text-green-700' : 'text-gray-400'}`}>
                             {parseFloat(row.total_paid) > 0 ? `₦${fmt(row.total_paid)}` : '—'}
