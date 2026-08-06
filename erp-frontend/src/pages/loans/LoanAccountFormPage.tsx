@@ -76,7 +76,7 @@ export default function LoanAccountFormPage() {
   const [success, setSuccess] = useState(false);
 
   // React Query hooks
-  const { data: products = [], isLoading: loadingProducts } = useLoanProducts({ is_active: true });
+  const { data: products = [], isLoading: loadingProducts, refetch: refetchProducts } = useLoanProducts({ is_active: true });
   const pid = parseInt(productId);
   const amt = parseFloat(requestedAmount);
   const { data: feePreviews = [], isLoading: loadingFees } = useFeesPreview(
@@ -382,7 +382,7 @@ export default function LoanAccountFormPage() {
                     {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.code}) -- {p.default_interest_rate}%</option>)}
                   </select>
                 ) : (
-                  <button type="button" onClick={loadProducts}
+                  <button type="button" onClick={() => refetchProducts()}
                     className="w-full border border-dashed border-red-300 rounded-lg px-3 py-2 text-sm text-red-500 text-left hover:bg-red-50">
                     Failed to load products — click to retry
                   </button>
