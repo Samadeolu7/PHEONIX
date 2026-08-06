@@ -521,12 +521,9 @@ export const clientService = {
   },
 
   async activateClient(
-    id: number,
-    cashierAccountId?: number
+    id: number
   ): Promise<{ success: boolean; status: string; reactivation_fee?: string }> {
-    return api.post(`/clients/clients/${id}/activate/`, {
-      cashier_account_id: cashierAccountId,
-    });
+    return api.post(`/clients/clients/${id}/activate/`, {});
   },
 
   async deactivateClient(id: number): Promise<{ success: boolean; status: string }> {

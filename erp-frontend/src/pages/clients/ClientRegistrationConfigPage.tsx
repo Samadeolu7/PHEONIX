@@ -191,7 +191,9 @@ const ClientRegistrationConfigPage: React.FC = () => {
           <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 4 }}>Reactivation Fee</h2>
           <p style={{ color: '#6b7280', marginBottom: 12, fontSize: '0.875rem' }}>
             Charged when a suspended, inactive, blacklisted, or dormant client is restored to active status.
-            Falls back to the Registration Income Account above when no dedicated account is selected.
+            Deducted directly from the client's savings balance (no cash changes hands) — reactivation
+            fails if their savings balance can't cover it. Falls back to the Registration Income Account
+            above when no dedicated account is selected.
           </p>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>

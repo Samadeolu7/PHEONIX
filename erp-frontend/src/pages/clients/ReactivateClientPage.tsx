@@ -63,7 +63,7 @@ export default function ReactivateClientPage() {
     try {
       const result = await clientService.activateClient(client.id);
       const fee = Number(result.reactivation_fee || 0);
-      const feeNote = fee > 0 ? ` A reactivation fee of ₦${fee.toLocaleString()} was charged.` : '';
+      const feeNote = fee > 0 ? ` A reactivation fee of ₦${fee.toLocaleString()} was deducted from their savings balance.` : '';
       setSuccess(
         `${client.first_name} ${client.last_name} (${client.client_id}) has been reactivated successfully.${feeNote}`
       );

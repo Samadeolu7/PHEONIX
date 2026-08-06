@@ -132,24 +132,33 @@ def collect_client_registration_fees(
 def collect_client_reactivation_fee(
     *,
     client: Client,
-    cashier_account,
+    savings_account,
     transacted_by,
     config: ClientRegistrationConfig,
 ):
     """
-    Post the client reactivation fee as a cash transaction.
+    Charge the client reactivation fee directly out of their savings balance
+    (no cash changes hands — this mirrors SavingsAccount cycle-break penalties).
 
     Entry:
-      Dr Cashier Account (ASSET)
+      Dr Member Savings account          (savings_account.account)
       Cr Reactivation Income (INCOME) — falls back to the registration
          income account when the config doesn't set a dedicated one.
     """
-    if not cashier_account:
-        raise ValidationError('cashier_account is required to collect the reactivation fee.')
-
     fee = Decimal(str(config.reactivation_fee or 0))
     if fee <= 0:
         return None
+
+    if not savings_account:
+        raise ValidationError(
+            'Client has no active savings account to charge the reactivation fee from.'
+        )
+
+    if savings_account.current_balance < fee:
+        raise ValidationError(
+            f"Insufficient savings balance to charge the ₦{fee:,.2f} reactivation fee. "
+            f"Current balance: ₦{savings_account.current_balance:,.2f}."
+        )
 
     income_account = config.reactivation_income_account or config.registration_income_account
 
@@ -177,12 +186,14 @@ def collect_client_reactivation_fee(
         tenant=client.tenant,
     )
 
+    # Debit: Member Savings (SAVINGS/LIABILITY) — balance decreases
     JournalEntryLine.objects.create(
         transaction=journal,
-        account=cashier_account,
+        account=savings_account.account,
         side=JournalEntryLine.DEBIT,
         amount=fee,
     )
+    # Credit: Reactivation Income (INCOME)
     JournalEntryLine.objects.create(
         transaction=journal,
         account=income_account,
@@ -191,6 +202,9 @@ def collect_client_reactivation_fee(
     )
 
     journal.post()
+
+    savings_account.last_transaction_date = timezone.now().date()
+    savings_account.save(update_fields=['last_transaction_date'])
 
     from common.models import FinancialAuditLog, log_financial_event
     log_financial_event(
@@ -204,6 +218,7 @@ def collect_client_reactivation_fee(
             'client_id': str(client.pk),
             'journal_entry_id': str(journal.pk),
             'reactivation_fee': str(fee),
+            'savings_account_id': str(savings_account.pk),
         },
     )
 

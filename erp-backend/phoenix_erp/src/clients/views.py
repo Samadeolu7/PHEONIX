@@ -499,24 +499,15 @@ class ClientViewSet(ScopedModelViewSet):
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         """
-        Activate a client and collect the reactivation fee in cash.
+        Activate a client and charge the reactivation fee out of their savings balance.
         Posting entry:
-          Dr Cashier Account (ASSET)
+          Dr Member Savings account
           Cr Reactivation Income
         """
         from django.db import transaction as db_transaction
+        from savings.models import SavingsAccount
 
         client = self.get_object()
-
-        try:
-            cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
-                request.user,
-                owner=client.owner,
-                branch=client.branch,
-                cashier_account_id=request.data.get('cashier_account_id'),
-            )
-        except ValidationError:
-            return Response({'detail': 'Cashier account not found.'}, status=status.HTTP_400_BAD_REQUEST)
 
         config = get_active_registration_config(owner=client.owner, branch=client.branch)
         if not config:
@@ -530,13 +521,20 @@ class ClientViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        savings_account = (
+            SavingsAccount.objects
+            .filter(client=client, status='active')
+            .order_by('opened_on')
+            .first()
+        )
+
         with db_transaction.atomic():
             client.status = 'active'
             client.save(update_fields=['status', 'updated_at'])
             try:
                 collect_client_reactivation_fee(
                     client=client,
-                    cashier_account=cashier_account,
+                    savings_account=savings_account,
                     transacted_by=request.user,
                     config=config,
                 )
