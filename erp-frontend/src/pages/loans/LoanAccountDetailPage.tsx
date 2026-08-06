@@ -30,6 +30,8 @@ import {
   Save,
   Building2,
   Ban,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import {
   loanService,
@@ -38,6 +40,7 @@ import {
   LoanRepaymentSchedule,
   LoanTransactionRow,
   LoanPaymentHistoryRow,
+  LoanRepaymentReversal,
   RepayLoanPayload,
   ProposeRestructurePayload,
 } from '../../services/loanService';
@@ -58,6 +61,8 @@ import {
   useDeleteGuarantor,
   useLoanRestructureApprovals,
   useLoanDisbursementCorrections,
+  useLoanRepaymentReversals,
+  useRequestRepaymentReversal,
 } from '../../hooks/useLoans';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -727,6 +732,95 @@ function CorrectionModal({ loan, onClose, onSuccess }: CorrectionModalProps) {
   );
 }
 
+// ── Repayment Reversal Modal ─────────────────────────────────────────────
+// Requests a reversal of a single, already-posted payment. Only creates the
+// request — a different approver must give a first approval, then a second,
+// different approver must confirm before the GL entry, repayment schedule,
+// and loan balances actually get unwound (see LoanRepaymentReversal,
+// loans/models.py). Reviewed from Loans → Repayment Reversals.
+
+interface ReversalModalProps {
+  loanId: number;
+  payment: LoanPaymentHistoryRow;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function RepaymentReversalModal({ loanId, payment, onClose, onSuccess }: ReversalModalProps) {
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const requestMutation = useRequestRepaymentReversal();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (reason.trim().length < 10) {
+      setError('Explain why this payment is being reversed (at least 10 characters).');
+      return;
+    }
+    setError(null);
+    try {
+      await requestMutation.mutateAsync({
+        loan: loanId,
+        journal_entry: payment.journal_entry_id,
+        reason: reason.trim(),
+      });
+      onSuccess();
+    } catch (e: unknown) {
+      setError(extractApiError(e, 'Could not submit the reversal request.'));
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <button type="button" aria-label="Close" onClick={onClose}
+          className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100">
+          <X size={18} />
+        </button>
+        <h2 className="mb-1 text-lg font-semibold text-gray-900">Reverse Payment</h2>
+        <p className="mb-4 text-sm text-gray-500">
+          {payment.reference} — ₦{fmt(payment.amount)} on {fmtDate(payment.date)}
+        </p>
+
+        <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+          This only creates a request. Two different approvers must sign off — from Loans →
+          Repayment Reversals — before the GL entry, repayment schedule, and loan balances are
+          actually unwound.
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label htmlFor="rev-reason" className="mb-1 block text-sm font-medium text-gray-700">
+              Reason
+            </label>
+            <textarea id="rev-reason" title="Reason for the reversal" value={reason} onChange={e => setReason(e.target.value)} rows={3}
+              placeholder="e.g. Payment was recorded against the wrong loan account."
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle size={14} />{error}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose} disabled={requestMutation.isPending}
+              className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+              Cancel
+            </button>
+            <button type="submit" disabled={requestMutation.isPending}
+              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+              {requestMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+              Submit Request
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Add Guarantor Modal ────────────────────────────────────────────────────
 
 /** Pulls the most user-readable message from a thrown api.ts error. */
@@ -1125,10 +1219,12 @@ export default function LoanAccountDetailPage() {
 
   const LEDGER_PAGE_SIZE = 25;
   const [ledgerPage, setLedgerPage] = useState(1);
+  const [ledgerExpanded, setLedgerExpanded] = useState(false);
   const [showRepayModal, setShowRepayModal] = useState(false);
   const [showRestructureModal, setShowRestructureModal] = useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [showAddGuarantorModal, setShowAddGuarantorModal] = useState(false);
+  const [reversalTarget, setReversalTarget] = useState<LoanPaymentHistoryRow | null>(null);
 
   // Client bank details inline edit
   const [bankEditMode, setBankEditMode] = useState(false);
@@ -1147,6 +1243,7 @@ export default function LoanAccountDetailPage() {
   const paymentHistory = paymentHistoryData?.results ?? [];
   const { data: pendingRestructures = [] } = useLoanRestructureApprovals({ status: 'pending' });
   const { data: corrections = [] } = useLoanDisbursementCorrections();
+  const { data: repaymentReversals = [] } = useLoanRepaymentReversals({ loan: loanId });
   const approveLoanMutation = useApproveLoan();
   const rejectLoanMutation = useRejectLoan();
   const requestDisbursementMutation = useRequestDisbursement();
@@ -1163,6 +1260,20 @@ export default function LoanAccountDetailPage() {
     );
     return match ? match.reference_number : null;
   }, [corrections, loanId]);
+
+  // Latest reversal request per payment (journal_entry) — a payment can only
+  // have one active (non-rejected) request at a time (see LoanRepaymentReversal.submit),
+  // but a prior rejected one shouldn't block re-requesting, so pick the most recent.
+  const reversalByJournalEntry = useMemo(() => {
+    const m = new Map<number, LoanRepaymentReversal>();
+    for (const r of repaymentReversals) {
+      const existing = m.get(r.journal_entry);
+      if (!existing || new Date(r.requested_at) > new Date(existing.requested_at)) {
+        m.set(r.journal_entry, r);
+      }
+    }
+    return m;
+  }, [repaymentReversals]);
 
   const error = loanError ? ((loanError as any)?.response?.data?.detail || loanError.message || 'Failed to load loan details.') : null;
 
@@ -1292,6 +1403,18 @@ export default function LoanAccountDetailPage() {
           onSuccess={() => {
             setShowCorrectionModal(false);
             refetchLoan();
+          }}
+        />
+      )}
+
+      {reversalTarget && (
+        <RepaymentReversalModal
+          loanId={loanId}
+          payment={reversalTarget}
+          onClose={() => setReversalTarget(null)}
+          onSuccess={() => {
+            setReversalTarget(null);
+            toast.success('Reversal requested — a different, second approver must confirm it from Loans → Repayment Reversals before anything actually changes.');
           }}
         />
       )}
@@ -1896,10 +2019,15 @@ export default function LoanAccountDetailPage() {
                     <th className="px-4 py-3 text-right">Penalty</th>
                     <th className="px-4 py-3">Received By</th>
                     <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {paymentHistory.map((p: LoanPaymentHistoryRow) => (
+                  {paymentHistory.map((p: LoanPaymentHistoryRow) => {
+                    const pendingReversal = reversalByJournalEntry.get(p.journal_entry_id);
+                    const reversalInFlight = pendingReversal
+                      && (pendingReversal.status === 'pending' || pendingReversal.status === 'awaiting_second_approval');
+                    return (
                     <tr key={p.journal_entry_id} className={`hover:bg-gray-50 ${p.reversed ? 'opacity-60' : ''}`}>
                       <td className="px-4 py-2.5 text-gray-600">{fmtDate(p.date)}</td>
                       <td className="px-4 py-2.5 font-mono text-xs text-gray-500">
@@ -1935,17 +2063,48 @@ export default function LoanAccountDetailPage() {
                           </span>
                         )}
                       </td>
+                      <td className="px-4 py-2.5 text-right">
+                        {p.reversed ? (
+                          <span className="text-xs text-gray-400">—</span>
+                        ) : reversalInFlight && pendingReversal ? (
+                          <Link
+                            to="/loans/repayment-reversals"
+                            className="text-xs font-medium text-amber-700 hover:underline"
+                            title={`${pendingReversal.reference_number} — ${pendingReversal.reason}`}
+                          >
+                            {pendingReversal.status === 'pending' ? 'Pending 1st Approval' : 'Awaiting 2nd Approval'}
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setReversalTarget(p)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                          >
+                            <RotateCcw size={12} />
+                            Reverse
+                          </button>
+                        )}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           )}
         </div>
 
-        {/* Loan Ledger */}
+        {/* Loan Ledger — collapsed by default: raw double-entry GL lines (one
+            payment can fan out into up to 4 credit rows across separate
+            accounts), meant for accounts staff reconciling the books, not
+            for a credit officer's day-to-day "did the payment go through"
+            check — that's what Payment History above is for. */}
         <div className="rounded-xl bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b px-5 py-4">
+          <button
+            type="button"
+            onClick={() => setLedgerExpanded((v) => !v)}
+            className={`flex w-full items-center justify-between px-5 py-4 text-left ${ledgerExpanded ? 'border-b' : ''}`}
+          >
             <div className="flex items-center gap-2">
               <BookOpen size={16} className="text-indigo-500" />
               <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
@@ -1954,11 +2113,21 @@ export default function LoanAccountDetailPage() {
               <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
                 GL Entries
               </span>
+              <span className="text-xs font-normal normal-case text-gray-400">
+                Raw double-entry postings — for reconciliation, not everyday use
+              </span>
             </div>
-            {ledgerLoading && <Loader2 size={16} className="animate-spin text-gray-400" />}
-          </div>
+            <div className="flex items-center gap-2">
+              {ledgerLoading && <Loader2 size={16} className="animate-spin text-gray-400" />}
+              {ledgerExpanded ? (
+                <ChevronUp size={16} className="text-gray-400" />
+              ) : (
+                <ChevronDown size={16} className="text-gray-400" />
+              )}
+            </div>
+          </button>
 
-          {ledger.length === 0 && !ledgerLoading ? (
+          {!ledgerExpanded ? null : ledger.length === 0 && !ledgerLoading ? (
             <div className="py-12 text-center text-sm text-gray-400">
               No GL entries posted yet.
             </div>

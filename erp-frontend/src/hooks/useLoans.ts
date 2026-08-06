@@ -719,8 +719,15 @@ export const useSecondApproveRepaymentReversal = (
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, notes }) => loanService.secondApproveRepaymentReversal(id, notes),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: loanKeys.repaymentReversalList() });
+      // Second approval actually executes the reversal — GL, schedule, and
+      // balances all change on data.loan, so anything already rendering that
+      // loan needs to refetch rather than show stale pre-reversal state.
+      queryClient.invalidateQueries({ queryKey: loanKeys.accountDetail(data.loan) });
+      queryClient.invalidateQueries({ queryKey: loanKeys.accountSchedule(data.loan) });
+      queryClient.invalidateQueries({ queryKey: loanKeys.accountPaymentHistory(data.loan) });
+      queryClient.invalidateQueries({ queryKey: [...loanKeys.accounts(), 'transactions', data.loan] });
     },
     ...options,
   });
