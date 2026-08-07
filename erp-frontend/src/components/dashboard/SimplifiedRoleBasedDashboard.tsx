@@ -271,7 +271,12 @@ function buildStatsCards(role: string, s: MicrofinanceDashboardStats) {
         },
         {
           id: 'loan-book',
-          title: 'Loan Book',
+          // Director view reads the Trial Balance's GL loan portfolio
+          // balance (see analytics/views.py total_loan_book_source ===
+          // 'trial_balance'), not the same outstanding_principal figure
+          // the other roles' "Loan Portfolio" cards show — label it so
+          // it isn't mistaken for the same number.
+          title: 'Loan Book (GL)',
           value: formatNaira(s.total_loan_book),
           icon: DollarSign,
           color: 'blue' as const,
@@ -1464,7 +1469,17 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
             {/* 4 headline figures */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
               {[
-                { label: 'Loan Book', value: formatNaira(liveStats.total_loan_book) },
+                {
+                  // Source varies by viewer: global-scope users (Director/
+                  // admin/owner) get the Trial Balance's GL figure here;
+                  // everyone else gets the outstanding_principal-based one
+                  // (see MicrofinanceDashboardStats.total_loan_book_source).
+                  label:
+                    liveStats.total_loan_book_source === 'trial_balance'
+                      ? 'Loan Book (GL)'
+                      : 'Loan Book',
+                  value: formatNaira(liveStats.total_loan_book),
+                },
                 { label: 'Active Loans', value: liveStats.active_loans.toLocaleString() },
                 {
                   label: 'Disbursed (Mo.)',

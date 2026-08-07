@@ -253,9 +253,43 @@ class MicrofinanceDashboardStatsView(APIView):
             # Gross Loan Portfolio — must match the PAR report's definition
             # (loans/views.py par_summary/cbn_returns), which includes
             # 'defaulted' loans since they still carry outstanding balances.
+            # Kept as the PAR30 denominator below regardless of what
+            # total_loan_book displays — that ratio needs a numerator/
+            # denominator on the same (principal-only) basis to mean anything.
             active_qs = loan_qs.filter(status__in=['active', 'disbursed', 'defaulted'])
             glp = active_qs.aggregate(t=Sum('outstanding_principal'))['t'] or Decimal('0.00')
-            data['total_loan_book'] = str(glp)
+
+            # "Loan Book" displayed figure: for global-scope users (director/
+            # admin/owner — see _is_global_user), show the Trial Balance's own
+            # "Customer Loan Portfolio" (GL account 1150) total instead of the
+            # app-level outstanding_principal sum, so the dashboard headline
+            # matches what Finance sees on the Trial Balance report. This is
+            # NOT the same number as `glp` above by design — the GL receivable
+            # also carries recognized-at-disbursement interest, and (until
+            # cleaned up) any residual balance on loans a legacy import marked
+            # terminal without zeroing the GL — see audit_loan_book_gl_gap for
+            # the full breakdown of that gap.
+            #
+            # Branch-manager and officer views keep the outstanding_principal
+            # figure: the GL has no per-officer split, and a branch total
+            # would misrepresent an individual officer's own book.
+            if _is_global_user(user):
+                from accounts.models import Account
+                tb_parents = Account.objects.filter(
+                    code='1150', account_level=Account.LEVEL_PARENT, is_deleted=False,
+                )
+                if branch:
+                    tb_parents = tb_parents.filter(branch=branch)
+                elif req_tenant and not getattr(user, 'tenant', None):
+                    tb_parents = tb_parents.filter(tenant=req_tenant)
+                trial_balance_loan_total = Account.objects.filter(
+                    parent__in=tb_parents, is_deleted=False,
+                ).aggregate(t=Sum('balance'))['t'] or Decimal('0.00')
+                data['total_loan_book'] = str(trial_balance_loan_total)
+                data['total_loan_book_source'] = 'trial_balance'
+            else:
+                data['total_loan_book'] = str(glp)
+                data['total_loan_book_source'] = 'outstanding_principal'
 
             disbursed_this_month = loan_qs.filter(
                 disbursement_date__year=today.year,
@@ -309,6 +343,7 @@ class MicrofinanceDashboardStatsView(APIView):
             data.update({
                 'active_loans': 0,
                 'total_loan_book': '0.00',
+                'total_loan_book_source': 'outstanding_principal',
                 'total_disbursed_this_month': '0.00',
                 'overdue_loans': 0,
                 'defaulting_loans': 0,

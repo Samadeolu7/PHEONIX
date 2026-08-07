@@ -15,7 +15,13 @@ export interface MicrofinanceDashboardStats {
 
   // Loan portfolio
   active_loans: number;
-  total_loan_book: string;          // total outstanding principal
+  // For global-scope users (director/admin/owner) this is the Trial Balance's
+  // "Customer Loan Portfolio" (GL 1150) balance, matching the Trial Balance
+  // report. For branch-manager/officer views it's outstanding_principal —
+  // the GL has no per-officer split. Check total_loan_book_source to tell
+  // which one a given response is.
+  total_loan_book: string;
+  total_loan_book_source?: 'trial_balance' | 'outstanding_principal';
   total_disbursed_this_month: string;
   overdue_loans: number;
   loan_repayment_rate: number;       // percentage 0-100
