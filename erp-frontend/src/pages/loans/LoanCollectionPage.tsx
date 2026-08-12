@@ -624,7 +624,7 @@ function GroupCollectionPanel() {
           >
             <option value="">— Select a group —</option>
             {groups.map((g) => (
-              <option key={g.id} value={g.id}>{g.name} ({g.group_code})</option>
+              <option key={g.id} value={g.id}>{g.name} ({g.code})</option>
             ))}
           </select>
           <input

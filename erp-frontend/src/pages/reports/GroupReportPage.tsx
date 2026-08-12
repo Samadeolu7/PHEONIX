@@ -186,10 +186,10 @@ export default function GroupReportPage() {
       ['Group Name', 'Code', 'Meeting Day', 'Leader', 'Members', 'Active'],
       ...filtered.map(g => [
         g.name,
-        g.group_code,
+        g.code,
         g.meeting_day ?? '',
-        g.group_leader_name ?? '',
-        String(g.members_count),
+        g.leader_name ?? '',
+        String(g.member_count),
         g.is_active ? 'Yes' : 'No',
       ]),
     ];
@@ -225,8 +225,8 @@ export default function GroupReportPage() {
 
   const filtered = groups.filter(g =>
     g.name.toLowerCase().includes(search.toLowerCase()) ||
-    g.group_code.toLowerCase().includes(search.toLowerCase()) ||
-    (g.group_leader_name ?? '').toLowerCase().includes(search.toLowerCase())
+    g.code.toLowerCase().includes(search.toLowerCase()) ||
+    (g.leader_name ?? '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -336,17 +336,14 @@ export default function GroupReportPage() {
                         }
                       </td>
                       <td className="px-4 py-3 font-medium text-gray-900">{group.name}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-600">{group.group_code}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-600">{group.code}</td>
                       <td className="px-4 py-3 text-gray-600 capitalize">
                         {group.meeting_day ?? '—'}
-                        {group.meeting_frequency && (
-                          <span className="ml-1 text-xs text-gray-400">({group.meeting_frequency})</span>
-                        )}
                       </td>
-                      <td className="px-4 py-3 text-gray-700">{group.group_leader_name ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-700">{group.leader_name ?? '—'}</td>
                       <td className="px-4 py-3 text-center">
                         <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
-                          {group.members_count}
+                          {group.member_count}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">

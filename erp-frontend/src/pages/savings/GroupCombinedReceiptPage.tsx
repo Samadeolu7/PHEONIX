@@ -456,7 +456,7 @@ export default function GroupCombinedReceiptPage() {
               <option value="">— Select a group —</option>
               {groups.map(g => (
                 <option key={g.id} value={g.id}>
-                  {g.name} ({g.group_code}) — {g.members_count} members
+                  {g.name} ({g.code}) — {g.member_count} members
                 </option>
               ))}
             </select>

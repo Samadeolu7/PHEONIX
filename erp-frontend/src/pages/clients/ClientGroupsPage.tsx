@@ -25,14 +25,10 @@ const MEETING_DAYS = [
 
 const emptyForm = (): Partial<ClientGroupPayload> => ({
   name: '',
-  group_code: '',
+  code: '',
   meeting_day: null,
-  meeting_frequency: '',
-  meeting_location: '',
-  meeting_time: '',
-  group_leader: null,
-  contribution_amount: '',
-  target_amount: '',
+  leader: null,
+  description: '',
   is_active: true,
 });
 
@@ -105,14 +101,10 @@ const ClientGroupsPage: React.FC = () => {
     setEditingGroup(group);
     setFormData({
       name: group.name,
-      group_code: group.group_code,
+      code: group.code,
       meeting_day: group.meeting_day,
-      meeting_frequency: group.meeting_frequency,
-      meeting_location: group.meeting_location ?? '',
-      meeting_time: group.meeting_time ?? '',
-      group_leader: group.group_leader,
-      contribution_amount: group.contribution_amount,
-      target_amount: group.target_amount,
+      leader: group.leader,
+      description: group.description ?? '',
       is_active: group.is_active,
     });
     setShowModal(true);
@@ -331,7 +323,7 @@ const ClientGroupsPage: React.FC = () => {
             <div>
               <p className="text-sm text-gray-600">Total Members</p>
               <p className="text-2xl font-bold text-gray-600">
-                {groups.reduce((s, g) => s + (g.members_count ?? 0), 0)}
+                {groups.reduce((s, g) => s + (g.member_count ?? 0), 0)}
               </p>
             </div>
             <Users className="w-8 h-8 text-gray-400" />
@@ -492,7 +484,7 @@ const ClientGroupsPage: React.FC = () => {
                         {group.meeting_day || '—'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {group.group_leader_name || '—'}
+                        {group.leader_name || '—'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         {group.assigned_officer_name ? (
@@ -701,8 +693,8 @@ const ClientGroupsPage: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Code</label>
                   <input
                     type="text"
-                    value={formData.group_code || ''}
-                    onChange={e => setField('group_code', e.target.value)}
+                    value={formData.code || ''}
+                    onChange={e => setField('code', e.target.value)}
                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                     placeholder="e.g. GRP-001"
                   />
@@ -725,9 +717,9 @@ const ClientGroupsPage: React.FC = () => {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Leader</label>
                   <select
-                    value={formData.group_leader ?? ''}
+                    value={formData.leader ?? ''}
                     onChange={e =>
-                      setField('group_leader', e.target.value ? Number(e.target.value) : null)
+                      setField('leader', e.target.value ? Number(e.target.value) : null)
                     }
                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                   >
@@ -744,8 +736,8 @@ const ClientGroupsPage: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Description / Location</label>
                   <input
                     type="text"
-                    value={formData.meeting_location || ''}
-                    onChange={e => setField('meeting_location', e.target.value)}
+                    value={formData.description || ''}
+                    onChange={e => setField('description', e.target.value)}
                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                     placeholder="Meeting location or description"
                   />

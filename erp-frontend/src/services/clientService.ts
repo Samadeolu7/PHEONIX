@@ -211,19 +211,12 @@ export interface ClientGroup {
   id: number;
   name: string;
   code: string;
-  group_code: string;
-  client_type: string;
-  meeting_frequency: string;
   meeting_day: string | null;
-  meeting_time: string | null;
-  meeting_location: string | null;
-  group_leader: number | null;
-  group_leader_name: string | null;
-  contribution_amount: string;
-  target_amount: string;
+  leader: number | null;
+  leader_name: string | null;
+  description: string;
   is_active: boolean;
   member_count: number;
-  members_count: number;
   assigned_officer: number | null;
   assigned_officer_name: string | null;
   /** Full officer roster for this group (primary + any additional members). */
@@ -234,15 +227,10 @@ export interface ClientGroup {
 
 export interface ClientGroupPayload {
   name: string;
-  group_code?: string;
-  client_type?: string;
-  meeting_frequency?: string;
+  code?: string;
   meeting_day?: string | null;
-  meeting_time?: string | null;
-  meeting_location?: string | null;
-  group_leader?: number | null;
-  contribution_amount?: string;
-  target_amount?: string;
+  leader?: number | null;
+  description?: string;
   is_active?: boolean;
 }
 
