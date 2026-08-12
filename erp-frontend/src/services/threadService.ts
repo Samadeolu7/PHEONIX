@@ -44,6 +44,10 @@ export const threadService = {
     return api.post(`${BASE}/${id}/reopen/`, {});
   },
 
+  requestJoin(id: number): Promise<{ status: string }> {
+    return api.post(`${BASE}/${id}/request-join/`, {});
+  },
+
   markRead(id: number): Promise<{ status: string }> {
     return api.post(`${BASE}/${id}/read/`, {});
   },

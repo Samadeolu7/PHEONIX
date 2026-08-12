@@ -15,56 +15,14 @@ from .serializers import (
     ThreadParticipantSerializer, ThreadMessageSerializer,
     ThreadMessageUpdateSerializer,
 )
+from .permissions import (
+    is_director as _is_director,
+    is_branch_manager as _is_branch_manager,
+    directors_for_tenant as _directors_for_tenant,
+    branch_managers_for_branch as _branch_managers_for_branch,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ── Role helpers ──────────────────────────────────────────────────────────────
-
-def _is_director(user):
-    """True if the user has global scope (director / owner / system admin)."""
-    if getattr(user, 'is_system_admin', False):
-        return True
-    if callable(getattr(user, 'is_owner', None)) and user.is_owner():
-        return True
-    try:
-        return user.roles.filter(is_active=True, default_scope='global').exists()
-    except Exception:
-        return False
-
-
-def _is_branch_manager(user):
-    """True if the user is a branch manager (or any higher role)."""
-    if _is_director(user):
-        return True
-    try:
-        return user.roles.filter(is_active=True, name__icontains='manager').exists()
-    except Exception:
-        return False
-
-
-def _directors_for_tenant(tenant):
-    """All director-equivalent users for a tenant — same criteria as _is_director,
-    expressed as a queryset for bulk notification fan-out."""
-    from django.contrib.auth import get_user_model
-    UserModel = get_user_model()
-    return UserModel.objects.filter(tenant=tenant, is_active=True).filter(
-        Q(is_system_admin=True) |
-        Q(tenant_owned__isnull=False) |
-        Q(roles__is_active=True, roles__default_scope='global')
-    ).distinct()
-
-
-def _branch_managers_for_branch(tenant, branch):
-    """Branch Manager users scoped to one specific branch (not tenant-wide)."""
-    from django.contrib.auth import get_user_model
-    UserModel = get_user_model()
-    if not branch:
-        return UserModel.objects.none()
-    return UserModel.objects.filter(
-        tenant=tenant, branch=branch, is_active=True,
-        roles__name='Branch Manager', roles__is_active=True,
-    ).distinct()
 
 
 # ── Thread ViewSet ────────────────────────────────────────────────────────────
@@ -346,6 +304,67 @@ class ThreadViewSet(ScopedModelViewSet):
         )
         return Response(ThreadSerializer(thread, context={'request': request}).data)
 
+    @action(detail=True, methods=['post'], url_path='request-join')
+    def request_join(self, request, pk=None):
+        """An observer (someone who can see the thread via Director/Branch
+        Manager oversight but isn't a tagged participant) asks to be added,
+        instead of hitting a dead end. Notifies the initiator and anyone who
+        already has can_add_participants — the same audience authorized to
+        actually add them (see ThreadParticipantViewSet.perform_create)."""
+        thread = self.get_object()
+        user = request.user
+
+        already_participant = thread.participants.filter(user=user, is_deleted=False).exists()
+        if already_participant:
+            return Response({'detail': 'You are already a participant in this thread.'},
+                             status=status.HTTP_400_BAD_REQUEST)
+
+        self._notify_join_request(thread, user)
+
+        return Response({'status': 'requested'})
+
+    @staticmethod
+    def _notify_join_request(thread, requester):
+        try:
+            from django.contrib.contenttypes.models import ContentType
+            from notifications.models import Notification
+            from notifications.services import get_in_app_channel
+
+            channel = get_in_app_channel()
+            if not channel:
+                return
+
+            requester_name = requester.get_full_name() or requester.username
+            adders = thread.participants.filter(
+                Q(user=thread.initiated_by) | Q(can_add_participants=True),
+                is_deleted=False,
+            ).exclude(user=requester).select_related('user')
+
+            thread_content_type = ContentType.objects.get_for_model(Thread)
+            notifications = [
+                Notification(
+                    channel=channel,
+                    recipient_user=p.user,
+                    recipient_name=p.user.get_full_name() or p.user.username,
+                    recipient_contact='',
+                    subject='Request to join a discussion',
+                    message=f'{requester_name} asked to join: "{thread.title}"',
+                    priority='normal',
+                    status='pending',
+                    owner=thread.owner,
+                    branch=thread.branch,
+                    created_by=requester,
+                    tenant=thread.tenant,
+                    content_type=thread_content_type,
+                    object_id=str(thread.pk),
+                )
+                for p in adders
+            ]
+            if notifications:
+                Notification.objects.bulk_create(notifications, ignore_conflicts=True)
+        except Exception:
+            logger.exception('Failed to notify join request for thread %s', thread.pk)
+
     @action(detail=True, methods=['post'])
     def read(self, request, pk=None):
         """Mark all messages in this thread as read for the current user."""
@@ -398,7 +417,7 @@ class ThreadViewSet(ScopedModelViewSet):
     def page_config(self, request, page_id=None):
         """
         GET /api/threads/threads/page-config/{page_id}/
-        Returns thread configuration for the given page (is_threadable, who_can_initiate, etc.)
+        Returns thread configuration for the given page (is_threadable, auto_include_roles, etc.)
         Used by the frontend to decide whether to show the thread icon on a page.
         """
         from pages.models import ModulePage
@@ -647,7 +666,7 @@ class ThreadMessageViewSet(ScopedModelViewSet):
             raise PermissionDenied('Only the author or a Director can edit this message.')
         if instance.is_system_message:
             raise ValidationError({'detail': 'System messages cannot be edited.'})
-        serializer.save()
+        serializer.save(edited_at=timezone.now())
 
     def perform_destroy(self, instance):
         user = self.request.user

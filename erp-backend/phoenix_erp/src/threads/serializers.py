@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 
 from common.serializers import TenantModelSerializer
 from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt
+from .permissions import thread_permissions_for_user
 
 User = get_user_model()
 
@@ -39,9 +40,9 @@ class ThreadMessageSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'thread', 'author', 'author_name', 'body',
             'attachment', 'attachment_url', 'is_system_message',
-            'created_at', 'read_by',
+            'created_at', 'edited_at', 'read_by',
         ]
-        read_only_fields = ['is_system_message', 'created_at', 'author']
+        read_only_fields = ['is_system_message', 'created_at', 'edited_at', 'author']
 
     def get_author_name(self, obj):
         if obj.author:
@@ -89,6 +90,7 @@ class ThreadSerializer(serializers.ModelSerializer):
     linked_record_repr = serializers.SerializerMethodField()
     initiated_by_name = serializers.SerializerMethodField()
     closed_by_name = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
 
     class Meta:
         model = Thread
@@ -98,13 +100,22 @@ class ThreadSerializer(serializers.ModelSerializer):
             'title', 'reason',
             'initiated_by', 'initiated_by_name',
             'status', 'closed_by', 'closed_by_name', 'closed_at',
-            'participants', 'last_message', 'unread_count',
+            'participants', 'last_message', 'unread_count', 'permissions',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'title', 'initiated_by', 'status',
             'closed_by', 'closed_at', 'created_at', 'updated_at',
         ]
+
+    def get_permissions(self, obj):
+        request = self.context.get('request')
+        if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
+            return {
+                'can_edit': False, 'can_close': False, 'can_reopen': False,
+                'can_add_participants': False, 'is_participant': False, 'is_observer': False,
+            }
+        return thread_permissions_for_user(obj, request.user)
 
     def get_last_message(self, obj):
         msg = obj.messages.filter(is_deleted=False).order_by('-created_at').first()
@@ -212,3 +223,12 @@ class ThreadCreateSerializer(serializers.ModelSerializer):
             # the same generic page title.
             'title': {'required': False, 'max_length': 300},
         }
+
+    def validate(self, attrs):
+        page = attrs.get('page')
+        if page is not None and page.get_thread_config().get('require_reason'):
+            if not attrs.get('reason'):
+                raise serializers.ValidationError(
+                    {'reason': 'This page requires a reason to be selected when starting a discussion.'}
+                )
+        return attrs

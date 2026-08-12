@@ -94,6 +94,7 @@ export const ThreadPanel: React.FC = () => {
     enabled: !!activeTarget,
     staleTime: 60_000,
   });
+  const requiresReason = pageConfig?.thread?.require_reason ?? false;
 
   const listParams = activeTarget
     ? { page_id: activeTarget.pageId, ...(activeTarget.objectId ? { object_id: activeTarget.objectId } : {}) }
@@ -185,6 +186,11 @@ export const ThreadPanel: React.FC = () => {
     onError: (e: any) => setActionError(e?.response?.data?.detail ?? 'Failed to reopen thread.'),
   });
 
+  const requestJoinMutation = useMutation({
+    mutationFn: threadService.requestJoin,
+    onError: (e: any) => setActionError(e?.response?.data?.detail ?? 'Failed to send request.'),
+  });
+
   const postMessageMutation = useMutation({
     mutationFn: ({ threadId, body, attachment }: { threadId: number; body: string; attachment?: File }) =>
       threadService.postMessage(threadId, body, attachment),
@@ -235,6 +241,12 @@ export const ThreadPanel: React.FC = () => {
     setCreating(false);
   }, [activeTarget]);
 
+  // ── Reset the "Request to join" button when switching threads ─────────────
+  useEffect(() => {
+    requestJoinMutation.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedThreadId]);
+
   // ── Scroll to bottom when messages arrive ─────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -256,6 +268,10 @@ export const ThreadPanel: React.FC = () => {
   // ── Create new thread ─────────────────────────────────────────────────────
   const handleCreateThread = useCallback(async () => {
     if (!activeTarget) return;
+    if (requiresReason && !createReason) {
+      setCreateError('Please select a reason for this discussion.');
+      return;
+    }
     setCreateError('');
     createMutation.mutate({
       page: activeTarget.pageId,
@@ -265,7 +281,7 @@ export const ThreadPanel: React.FC = () => {
       reason: createReason || undefined,
       participant_ids: createParticipants.map(p => p.id),
     });
-  }, [activeTarget, createTitle, createReason, createParticipants, createMutation]);
+  }, [activeTarget, createTitle, createReason, createParticipants, createMutation, requiresReason]);
 
   // ── Close / Reopen thread ─────────────────────────────────────────────────
   const handleClose = useCallback(async () => {
@@ -279,6 +295,12 @@ export const ThreadPanel: React.FC = () => {
     setActionError('');
     reopenMutation.mutate(selectedThreadId);
   }, [selectedThreadId, reopenMutation]);
+
+  const handleRequestJoin = useCallback(async () => {
+    if (!selectedThreadId) return;
+    setActionError('');
+    requestJoinMutation.mutate(selectedThreadId);
+  }, [selectedThreadId, requestJoinMutation]);
 
   // ── Not visible ───────────────────────────────────────────────────────────
   if (panelState === 'hidden') return null;
@@ -338,8 +360,11 @@ export const ThreadPanel: React.FC = () => {
   // Branch Managers/Directors can land here on a thread they were only
   // notified about, not tagged into (see threads/views.py's oversight
   // queryset carve-out) — posting would 403, so show read-only instead.
-  const isParticipant = (selectedThread?.participants ?? []).some(p => p.user === user?.id);
-  const requiresReason = pageConfig?.thread?.require_reason ?? false;
+  // Server-computed (threads/permissions.py) so the UI never guesses at
+  // something that'll 403 — see ThreadSerializer.get_permissions.
+  const permissions = selectedThread?.permissions;
+  const isParticipant = permissions?.is_participant ?? false;
+  const isObserver = permissions?.is_observer ?? false;
   const canInitiate = pageConfig?.can_initiate ?? false;
 
   return (
@@ -617,9 +642,10 @@ export const ThreadPanel: React.FC = () => {
               <select
                 value={createReason}
                 onChange={e => setCreateReason(e.target.value as ThreadReason | '')}
+                required={requiresReason}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0a1857]"
               >
-                <option value="">Select reason (optional)</option>
+                <option value="">{requiresReason ? 'Select a reason' : 'Select reason (optional)'}</option>
                 {(Object.entries(REASON_LABELS) as [ThreadReason, string][]).map(([k, v]) => (
                   <option key={k} value={k}>
                     {v}
@@ -744,16 +770,32 @@ export const ThreadPanel: React.FC = () => {
                 <p className="text-xs text-gray-500 flex items-center gap-1">
                   <Lock className="w-3 h-3" /> Thread is closed
                 </p>
+                {permissions?.can_reopen && (
+                  <button
+                    onClick={handleReopen}
+                    className="text-xs text-[#0a1857] hover:underline flex items-center gap-1"
+                  >
+                    <Unlock className="w-3 h-3" /> Reopen
+                  </button>
+                )}
+              </div>
+            ) : isObserver ? (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-gray-500 flex items-center gap-1">
+                  <Users className="w-3 h-3" /> You're viewing this discussion as an observer.
+                </p>
                 <button
-                  onClick={handleReopen}
-                  className="text-xs text-[#0a1857] hover:underline flex items-center gap-1"
+                  onClick={handleRequestJoin}
+                  disabled={requestJoinMutation.isPending || requestJoinMutation.isSuccess}
+                  className="text-xs text-[#0a1857] hover:underline flex items-center gap-1 disabled:text-gray-400 disabled:no-underline shrink-0"
                 >
-                  <Unlock className="w-3 h-3" /> Reopen
+                  <UserPlus className="w-3 h-3" />
+                  {requestJoinMutation.isSuccess ? 'Requested' : 'Request to join'}
                 </button>
               </div>
             ) : !isParticipant ? (
               <p className="text-xs text-gray-500 flex items-center gap-1">
-                <Users className="w-3 h-3" /> You're viewing this discussion as an observer — ask to be added to reply.
+                <Users className="w-3 h-3" /> You don't have access to reply in this discussion.
               </p>
             ) : (
               <>
@@ -814,7 +856,7 @@ export const ThreadPanel: React.FC = () => {
                 />
 
                 {/* Close thread action */}
-                {selectedThread.initiated_by === user?.id && (
+                {permissions?.can_close && (
                   <div className="mt-2 flex justify-end">
                     <button
                       onClick={handleClose}

@@ -78,6 +78,11 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
         >
           <span className="text-xs font-medium text-gray-700">{message.author_name}</span>
           <span className="text-[10px] text-gray-400">{time}</span>
+          {message.edited_at && (
+            <span className="text-[10px] text-gray-400 italic" title={`Edited ${new Date(message.edited_at).toLocaleString()}`}>
+              (edited)
+            </span>
+          )}
           {isOwn && !editing && (
             <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
               <button

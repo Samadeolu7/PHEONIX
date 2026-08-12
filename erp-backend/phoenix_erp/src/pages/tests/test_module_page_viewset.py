@@ -95,11 +95,25 @@ class ModulePageViewSetCatalogVisibilityTests(TestCase):
         self.client.force_authenticate(user=self.director)
         resp = self.client.patch(
             f'/api/pages/module-pages/{self.page.id}/thread-config/',
-            {'is_threadable': True, 'who_can_initiate': ['Director'], 'max_open_threads': 3},
+            {'is_threadable': True, 'auto_include_roles': ['Director'], 'max_open_threads': 3},
             format='json',
         )
         self.assertEqual(resp.status_code, 200)
         self.page.refresh_from_db()
         self.assertTrue(self.page.is_threadable)
-        self.assertEqual(self.page.page_config['thread']['who_can_initiate'], ['Director'])
+        self.assertEqual(self.page.page_config['thread']['auto_include_roles'], ['Director'])
         self.assertEqual(self.page.page_config['thread']['max_open_threads'], 3)
+
+    def test_thread_config_patch_ignores_retired_who_can_initiate(self):
+        # who_can_initiate was retired (see pages/models.py validate_thread_config)
+        # after it locked a branch manager out via a stale config — the PATCH
+        # endpoint silently drops it rather than storing or erroring on it.
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.patch(
+            f'/api/pages/module-pages/{self.page.id}/thread-config/',
+            {'is_threadable': True, 'who_can_initiate': ['Director']},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.page.refresh_from_db()
+        self.assertNotIn('who_can_initiate', self.page.page_config.get('thread', {}))

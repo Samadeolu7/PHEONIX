@@ -188,14 +188,19 @@ class ModulePage(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             return  # No thread config — that's fine
         if not isinstance(thread, dict):
             raise ValidationError("page_config.thread must be a JSON object.")
-        valid_keys = {'who_can_initiate', 'auto_include_roles', 'max_open_threads', 'require_reason'}
+        # who_can_initiate was intentionally retired (not just left unenforced)
+        # — role-gating who could start a thread previously locked a branch
+        # manager out via a stale config (see user_can_initiate_thread below).
+        # It's no longer a recognized key so admins can't configure something
+        # that silently does nothing.
+        valid_keys = {'auto_include_roles', 'max_open_threads', 'require_reason'}
         unknown = set(thread.keys()) - valid_keys
         if unknown:
             raise ValidationError(
                 f"Unknown key(s) in page_config.thread: {', '.join(sorted(unknown))}. "
                 f"Valid keys: {', '.join(sorted(valid_keys))}."
             )
-        for list_key in ('who_can_initiate', 'auto_include_roles'):
+        for list_key in ('auto_include_roles',):
             val = thread.get(list_key)
             if val is not None and not isinstance(val, list):
                 raise ValidationError(f"page_config.thread.{list_key} must be a list of strings.")

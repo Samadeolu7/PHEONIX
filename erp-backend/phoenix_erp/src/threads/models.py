@@ -151,6 +151,7 @@ class ThreadMessage(TimeStampedModel, SoftDeleteModel):
     body = models.TextField(max_length=1000, blank=True)
     attachment = models.FileField(upload_to='threads/attachments/', null=True, blank=True)
     is_system_message = models.BooleanField(default=False, db_index=True)
+    edited_at = models.DateTimeField(null=True, blank=True)
 
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)

@@ -13,6 +13,26 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def get_in_app_channel():
+    """Single lookup point for the 'in_app' NotificationChannel row, used by
+    any code path (e.g. threads/signals.py) that creates in-app notifications
+    directly rather than through NotificationService.send_from_template.
+
+    The row is now deploy-guaranteed by migration 0004_seed_in_app_channel,
+    but callers used to do this lookup independently and silently no-op on a
+    miss with no log trace at all — logging a warning here means a
+    misconfigured/deactivated channel is at least visible in logs instead of
+    notifications just silently never arriving.
+    """
+    channel = NotificationChannel.objects.filter(code='in_app', is_active=True).first()
+    if not channel:
+        logger.warning(
+            "No active 'in_app' NotificationChannel found — in-app notifications "
+            "will not be created until one exists (see migration 0004_seed_in_app_channel)."
+        )
+    return channel
+
+
 class NotificationService:
     """
     Main service for creating and sending notifications

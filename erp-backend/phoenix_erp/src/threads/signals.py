@@ -57,10 +57,11 @@ def _fire_participant_notification(participant, thread):
     """Create an in-app Notification for a newly tagged participant."""
     try:
         from django.contrib.contenttypes.models import ContentType
-        from notifications.models import Notification, NotificationChannel
+        from notifications.models import Notification
+        from notifications.services import get_in_app_channel
         added_by = participant.added_by
         adder_name = (added_by.get_full_name() or added_by.username) if added_by else 'Someone'
-        channel = NotificationChannel.objects.filter(code='in_app', is_active=True).first()
+        channel = get_in_app_channel()
         if not channel:
             return
         Notification.objects.create(
@@ -90,9 +91,10 @@ def _fire_message_notifications(message):
     """Create in-app Notifications for all participants except the message author."""
     try:
         from django.contrib.contenttypes.models import ContentType
-        from notifications.models import Notification, NotificationChannel
+        from notifications.models import Notification
+        from notifications.services import get_in_app_channel
         thread = message.thread
-        channel = NotificationChannel.objects.filter(code='in_app', is_active=True).first()
+        channel = get_in_app_channel()
         if not channel:
             return
 
@@ -140,10 +142,12 @@ def _fire_oversight_notifications(thread):
     duplicate ping for the same thread."""
     try:
         from django.contrib.contenttypes.models import ContentType
-        from notifications.models import Notification, NotificationChannel
-        from threads.views import _directors_for_tenant, _branch_managers_for_branch
+        from notifications.models import Notification
+        from notifications.services import get_in_app_channel
+        from threads.permissions import directors_for_tenant as _directors_for_tenant
+        from threads.permissions import branch_managers_for_branch as _branch_managers_for_branch
 
-        channel = NotificationChannel.objects.filter(code='in_app', is_active=True).first()
+        channel = get_in_app_channel()
         if not channel:
             return
 

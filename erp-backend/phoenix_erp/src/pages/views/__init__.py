@@ -221,7 +221,7 @@ class ModulePageViewSet(viewsets.ReadOnlyModelViewSet):
              Returns current thread configuration for this page.
 
         PATCH /api/pages/module-pages/{id}/thread-config/
-              Body: { is_threadable, who_can_initiate, auto_include_roles,
+              Body: { is_threadable, auto_include_roles,
                       max_open_threads, require_reason }
               Directors/Principals only.
         """
@@ -260,7 +260,7 @@ class ModulePageViewSet(viewsets.ReadOnlyModelViewSet):
         if 'is_threadable' in data:
             page.is_threadable = bool(data['is_threadable'])
 
-        thread_keys = ['who_can_initiate', 'auto_include_roles', 'max_open_threads', 'require_reason']
+        thread_keys = ['auto_include_roles', 'max_open_threads', 'require_reason']
         config = page.page_config or {}
         thread_cfg = config.get('thread', {})
         for key in thread_keys:

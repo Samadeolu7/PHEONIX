@@ -26,6 +26,7 @@ export interface ThreadMessageItem {
   attachment_url: string | null;
   is_system_message: boolean;
   created_at: string;
+  edited_at: string | null;
   read_by: MessageReadReceiptItem[];
 }
 
@@ -55,6 +56,17 @@ export interface LastMessagePreview {
   created_at: string;
 }
 
+export interface ThreadPermissions {
+  can_edit: boolean;
+  can_close: boolean;
+  can_reopen: boolean;
+  can_add_participants: boolean;
+  is_participant: boolean;
+  // Oversight visibility (Director/Branch Manager) without being a tagged
+  // participant — see ThreadViewSet.get_queryset / threads/permissions.py.
+  is_observer: boolean;
+}
+
 export interface Thread {
   id: number;
   page: number;
@@ -78,6 +90,7 @@ export interface Thread {
   participants: ThreadParticipantItem[];
   last_message: LastMessagePreview | null;
   unread_count: number;
+  permissions: ThreadPermissions;
   created_at: string;
   updated_at: string;
 }
@@ -106,7 +119,6 @@ export interface PageThreadConfig {
   is_threadable: boolean;
   can_initiate: boolean;
   thread: {
-    who_can_initiate?: string[];
     auto_include_roles?: string[];
     max_open_threads?: number;
     require_reason?: boolean;

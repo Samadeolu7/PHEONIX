@@ -15,6 +15,7 @@ import {
   Plus,
   Hash,
   ChevronRight,
+  UserPlus,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { threadService } from '../services/threadService';
@@ -358,10 +359,27 @@ function ConversationPane({
     } finally { setActionLoading(false); }
   };
 
+  const [joinRequested, setJoinRequested] = useState(false);
+  const handleRequestJoin = async () => {
+    setActionLoading(true);
+    try {
+      await threadService.requestJoin(local.id);
+      setJoinRequested(true);
+    } finally { setActionLoading(false); }
+  };
+
   const isClosed = local.status === 'closed';
-  const isInitiator = local.initiated_by === currentUserId;
-  const canClose = !isClosed && (isDirector || isInitiator);
-  const canReopen = isClosed && isDirector;
+  // Server-computed (threads/permissions.py via ThreadSerializer) — replaces
+  // the old isDirector-only reopen check here, which missed Branch Managers
+  // reopening threads in their own branch (the backend already allows that;
+  // this UI just never showed the button for it). See ThreadPanel.tsx for
+  // the same fix applied to the slide-over panel.
+  const canClose = !isClosed && (local.permissions?.can_close ?? false);
+  const canReopen = isClosed && (local.permissions?.can_reopen ?? false);
+  // Directors/Branch Managers can land here via oversight visibility without
+  // being a tagged participant — the composer would 403 on submit, so gate
+  // it the same way ThreadPanel.tsx does.
+  const isObserver = local.permissions?.is_observer ?? false;
 
   // Group messages by calendar day
   const grouped: Array<{ date: string; items: ThreadMessageItem[] }> = [];
@@ -569,7 +587,22 @@ function ConversationPane({
 
       {/* Compose */}
       <div className="px-6 pb-5 pt-3 flex-shrink-0 border-t border-gray-100 bg-white">
-        {!isClosed ? (
+        {isObserver && !isClosed ? (
+          <div className="flex items-center justify-between gap-2 py-1">
+            <p className="text-xs text-gray-400 flex items-center gap-1">
+              <Users className="w-3 h-3" /> You're viewing this discussion as an observer.
+            </p>
+            <button
+              type="button"
+              onClick={handleRequestJoin}
+              disabled={actionLoading || joinRequested}
+              className="text-xs text-[#0a1857] hover:underline font-medium disabled:text-gray-400 disabled:no-underline flex items-center gap-1 flex-shrink-0"
+            >
+              <UserPlus className="w-3 h-3" />
+              {joinRequested ? 'Requested' : 'Request to join'}
+            </button>
+          </div>
+        ) : !isClosed ? (
           <div className="flex items-end gap-3 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 focus-within:border-[#0a1857]/30 focus-within:ring-2 focus-within:ring-[#0a1857]/10 transition-all">
             <UserAvatar name={currentUserName} size={7} />
             <textarea
