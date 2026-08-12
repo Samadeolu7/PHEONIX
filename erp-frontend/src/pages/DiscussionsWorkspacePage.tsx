@@ -26,12 +26,17 @@ import { threadService } from '../services/threadService';
 import { useAuth } from '../contexts/AuthContext';
 import { getRoleRank } from '../types/roles';
 import { useResponsive } from '../hooks/useResponsive';
+import { useThreadSocket } from '../hooks/useRealtimeSocket';
 import type { Thread, ThreadMessageItem } from '../types/threads';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MSG_POLL_MS = 8000;
-const LIST_POLL_MS = 30000;
+// The active conversation is pushed live by useThreadSocket below (see
+// ConversationPane) — MSG_POLL_MS is now only the fallback interval for a
+// disconnected socket. The sidebar's thread list has no per-thread push
+// target of its own, so LIST_POLL_MS stays a plain (now longer) poll.
+const MSG_POLL_MS = 120000;
+const LIST_POLL_MS = 120000;
 const MAX_TABS = 6;
 
 type FilterTab = 'mine' | 'unread' | 'all' | 'closed';
@@ -355,6 +360,10 @@ function ConversationPane({
       setLoadingMsgs(false);
     }
   }, [local.id]);
+
+  // Live-pushed refetch — this pane only exists while its tab is active
+  // (see the comment above), so joining unconditionally is fine.
+  useThreadSocket(local.id, () => { fetchMessages(); });
 
   useEffect(() => {
     setLoadingMsgs(true);

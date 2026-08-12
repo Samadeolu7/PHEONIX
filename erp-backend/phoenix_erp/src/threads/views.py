@@ -409,6 +409,7 @@ class ThreadViewSet(ScopedModelViewSet):
             from django.contrib.contenttypes.models import ContentType
             from notifications.models import Notification
             from notifications.services import get_in_app_channel
+            from notifications.realtime import push_notification_event
 
             channel = get_in_app_channel()
             if not channel:
@@ -421,8 +422,10 @@ class ThreadViewSet(ScopedModelViewSet):
             ).exclude(user=requester).select_related('user')
 
             thread_content_type = ContentType.objects.get_for_model(Thread)
-            notifications = [
-                Notification(
+            notifications = []
+            notified_user_ids = []
+            for p in adders:
+                notifications.append(Notification(
                     channel=channel,
                     recipient_user=p.user,
                     recipient_name=p.user.get_full_name() or p.user.username,
@@ -437,11 +440,12 @@ class ThreadViewSet(ScopedModelViewSet):
                     tenant=thread.tenant,
                     content_type=thread_content_type,
                     object_id=str(thread.pk),
-                )
-                for p in adders
-            ]
+                ))
+                notified_user_ids.append(p.user_id)
             if notifications:
                 Notification.objects.bulk_create(notifications, ignore_conflicts=True)
+                for user_id in notified_user_ids:
+                    push_notification_event(user_id)
         except Exception:
             logger.exception('Failed to notify join request for thread %s', thread.pk)
 
@@ -469,6 +473,13 @@ class ThreadViewSet(ScopedModelViewSet):
             MessageReadReceipt.objects.bulk_create(receipts, ignore_conflicts=True)
 
         self._mark_related_notifications_read(thread, user)
+
+        if receipts:
+            from django.db import transaction
+            from notifications.realtime import push_thread_event
+            transaction.on_commit(
+                lambda: push_thread_event(thread.pk, 'thread.read_receipt', user_id=user.pk)
+            )
 
         return Response({'status': 'ok'})
 
@@ -774,6 +785,15 @@ class ThreadMessageViewSet(ScopedModelViewSet):
 
         self._auto_add_mentioned_participants(thread, mentioned_ids, user, tenant)
 
+        from django.db import transaction
+        from notifications.realtime import push_thread_event
+        # Deferred past commit — this view runs inside ATOMIC_REQUESTS, so a
+        # push fired immediately here could reach a client before the
+        # transaction is visible to a subsequent GET.
+        transaction.on_commit(
+            lambda: push_thread_event(thread.pk, 'thread.message.new', message_id=message.pk, author_id=user.pk)
+        )
+
     @staticmethod
     def _auto_add_mentioned_participants(thread, mentioned_ids, user, tenant):
         if not mentioned_ids:
@@ -800,7 +820,13 @@ class ThreadMessageViewSet(ScopedModelViewSet):
             raise PermissionDenied('Only the author or a Director can edit this message.')
         if instance.is_system_message:
             raise ValidationError({'detail': 'System messages cannot be edited.'})
-        serializer.save(edited_at=timezone.now())
+        message = serializer.save(edited_at=timezone.now())
+
+        from django.db import transaction
+        from notifications.realtime import push_thread_event
+        transaction.on_commit(
+            lambda: push_thread_event(message.thread_id, 'thread.message.updated', message_id=message.pk)
+        )
 
     def perform_destroy(self, instance):
         user = self.request.user
@@ -810,6 +836,12 @@ class ThreadMessageViewSet(ScopedModelViewSet):
             raise ValidationError({'detail': 'System messages cannot be deleted.'})
         instance.is_deleted = True
         instance.save(update_fields=['is_deleted'])
+
+        from django.db import transaction
+        from notifications.realtime import push_thread_event
+        transaction.on_commit(
+            lambda: push_thread_event(instance.thread_id, 'thread.message.deleted', message_id=instance.pk)
+        )
 
 
 # ── ThreadParticipant ViewSet ─────────────────────────────────────────────────

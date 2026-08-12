@@ -116,6 +116,60 @@ services:
       - "traefik.http.services.phoenix-kti-api.loadbalancer.healthcheck.path=/api/common/health/"
       - "traefik.http.services.phoenix-kti-api.loadbalancer.healthcheck.interval=10s"
       - "traefik.docker.network=traefik_public"
+
+  # Real-time WebSocket notifications/thread updates (Django Channels) — a
+  # separate daphne process rather than switching `backend` above to an
+  # ASGI/uvicorn worker, so the existing gunicorn/WSGI HTTP path (which all
+  # current production traffic relies on) is completely untouched. Traefik
+  # routes only the /ws path prefix here; every other request keeps going
+  # to `backend`. Shares the same image/DB/Redis as `backend`.
+  backend_ws:
+    image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+          cd /app/src
+          exec daphne -b 0.0.0.0 -p 8001 phoenix.asgi:application
+    environment:
+      - DJANGO_SETTINGS_MODULE=phoenix.settings
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=${DEBUG:-False}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/1
+      - PYTHONPATH=/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        # Same reasoning as celery_worker/celery_beat below — wait for
+        # entrypoint.sh's migrate step (via backend's healthcheck) so this
+        # never queries against a stale/mid-migration schema.
+        condition: service_healthy
+    stop_grace_period: 30s
+    networks:
+      - phoenix_kti_backend
+      - traefik_public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.phoenix-kti-ws.rule=Host(`api.kti.krystartrust.ng`) && PathPrefix(`/ws`)"
+      - "traefik.http.routers.phoenix-kti-ws.entrypoints=websecure"
+      - "traefik.http.routers.phoenix-kti-ws.tls=true"
+      - "traefik.http.routers.phoenix-kti-ws.tls.certresolver=letsencrypt"
+      # Explicit priority (rather than relying on Traefik's implicit
+      # rule-length ordering) so /ws always wins over the plain Host(...)
+      # rule on the `backend` service above, even if either rule changes.
+      - "traefik.http.routers.phoenix-kti-ws.priority=10"
+      - "traefik.http.services.phoenix-kti-ws.loadbalancer.server.port=8001"
+      - "traefik.docker.network=traefik_public"
+
   celery_worker:
     image: ${DOCKER_IMAGE_BACKEND:-samadeolu7/phoenix-kti-backend:latest}
     restart: unless-stopped

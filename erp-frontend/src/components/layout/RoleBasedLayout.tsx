@@ -2,12 +2,14 @@
 import React, { useState } from 'react';
 import { GitBranch } from 'lucide-react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { RoleBasedNavigation } from './RoleBasedNavigation';
 import { useAuth } from '../../contexts/AuthContext';
 import RoleSidebarPanel from '../dashboard/RoleSidebarPanel';
 import { ThreadProvider } from '../../contexts/ThreadContext';
 import { ThreadPanel } from '../threads/ThreadPanel';
 import { GlobalThreadToggle } from '../threads/GlobalThreadToggle';
+import { useNotificationSocket } from '../../hooks/useRealtimeSocket';
 
 interface RoleBasedLayoutProps {
   children?: React.ReactNode;
@@ -18,6 +20,16 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const queryClient = useQueryClient();
+
+  // Single app-wide notification socket (replaces the bell's/Discussions
+  // badge's polling with a push — see NotificationDropdown.tsx,
+  // ThreadWidget.tsx). No-ops internally while logged out (see
+  // useRealtimeSocket: it only connects once an access token exists).
+  useNotificationSocket(() => {
+    queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    queryClient.invalidateQueries({ queryKey: ['threads'] });
+  });
 
   // Don't show navigation on auth pages
   const isAuthPage =

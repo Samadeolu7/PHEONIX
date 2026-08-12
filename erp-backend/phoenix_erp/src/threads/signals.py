@@ -59,12 +59,13 @@ def _fire_participant_notification(participant, thread):
         from django.contrib.contenttypes.models import ContentType
         from notifications.models import Notification
         from notifications.services import get_in_app_channel
+        from notifications.realtime import push_notification_event
         added_by = participant.added_by
         adder_name = (added_by.get_full_name() or added_by.username) if added_by else 'Someone'
         channel = get_in_app_channel()
         if not channel:
             return
-        Notification.objects.create(
+        notification = Notification.objects.create(
             channel=channel,
             recipient_user=participant.user,
             recipient_name=participant.user.get_full_name() or participant.user.username,
@@ -83,6 +84,7 @@ def _fire_participant_notification(participant, thread):
             content_type=ContentType.objects.get_for_model(thread.__class__),
             object_id=str(thread.pk),
         )
+        push_notification_event(participant.user_id, notification_id=notification.pk)
     except Exception:
         logger.exception('Failed to create participant notification for thread %s', thread.pk)
 
@@ -93,6 +95,7 @@ def _fire_message_notifications(message):
         from django.contrib.contenttypes.models import ContentType
         from notifications.models import Notification
         from notifications.services import get_in_app_channel
+        from notifications.realtime import push_notification_event
         thread = message.thread
         channel = get_in_app_channel()
         if not channel:
@@ -106,6 +109,7 @@ def _fire_message_notifications(message):
         thread_content_type = ContentType.objects.get_for_model(thread.__class__)
 
         notifications = []
+        notified_user_ids = []
         for p in participants:
             # Only notify if they haven't read recent messages (simple unread check)
             if p.last_read_at and p.last_read_at >= message.created_at:
@@ -127,9 +131,17 @@ def _fire_message_notifications(message):
                 content_type=thread_content_type,
                 object_id=str(thread.pk),
             ))
+            notified_user_ids.append(p.user_id)
 
         if notifications:
+            # bulk_create's returned instances don't reliably carry real PKs
+            # across every backend (see notifications/realtime.py's docstring
+            # on why pushes carry ids, not full payloads) — the push here
+            # intentionally omits notification_id for the same reason; the
+            # frontend just refetches its unread count/list on receipt.
             Notification.objects.bulk_create(notifications, ignore_conflicts=True)
+            for user_id in notified_user_ids:
+                push_notification_event(user_id)
     except Exception:
         logger.exception('Failed to create message notifications for message %s', message.pk)
 
@@ -144,6 +156,7 @@ def _fire_oversight_notifications(thread):
         from django.contrib.contenttypes.models import ContentType
         from notifications.models import Notification
         from notifications.services import get_in_app_channel
+        from notifications.realtime import push_notification_event
         from threads.permissions import directors_for_tenant as _directors_for_tenant
         from threads.permissions import branch_managers_for_branch as _branch_managers_for_branch
 
@@ -164,6 +177,7 @@ def _fire_oversight_notifications(thread):
 
         thread_content_type = ContentType.objects.get_for_model(thread.__class__)
         notifications = []
+        notified_user_ids = []
         for u in oversight_users:
             if u.pk in already_notified_ids:
                 continue
@@ -183,8 +197,11 @@ def _fire_oversight_notifications(thread):
                 content_type=thread_content_type,
                 object_id=str(thread.pk),
             ))
+            notified_user_ids.append(u.pk)
 
         if notifications:
             Notification.objects.bulk_create(notifications, ignore_conflicts=True)
+            for user_id in notified_user_ids:
+                push_notification_event(user_id)
     except Exception:
         logger.exception('Failed to create oversight notifications for thread %s', thread.pk)

@@ -149,6 +149,10 @@ DEFAULT_TENANT_SLUG = os.environ.get('DEFAULT_TENANT_SLUG', 'mt')
 # ==================================================
 
 INSTALLED_APPS = [
+    # Must come before django.contrib.staticfiles so Channels can override
+    # the `runserver` command with its own dev-server (serves ASGI locally).
+    'channels',
+
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -828,6 +832,37 @@ else:
     }
     # Use database sessions instead of cache to avoid Redis connection issues
     SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+
+# ==================================================
+# CHANNELS / WEBSOCKET CONFIGURATION
+# ==================================================
+
+ASGI_APPLICATION = 'phoenix.asgi.application'
+
+# Same DEBUG-branching rationale as CACHES above: don't require a local
+# Redis server just to run the dev server. InMemoryChannelLayer only works
+# within a single process, which is exactly what `manage.py runserver` is.
+if 'test' in sys.argv or (DEBUG and not os.environ.get('FORCE_REDIS_CACHE')):
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        }
+    }
+else:
+    # Distinct Redis DB index from the cache (/1) and Celery broker (/0) to
+    # keep keyspaces from colliding — same Redis instance, different logical
+    # database. Derived from REDIS_URL (already set by docker-compose.yml
+    # for the cache above) rather than a new required env var.
+    _cache_redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379/1')
+    _channel_layer_redis_url = _cache_redis_url.rsplit('/', 1)[0] + '/2'
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [_channel_layer_redis_url],
+            },
+        }
+    }
 
 # ==================================================
 # ADMINS & MANAGERS

@@ -25,7 +25,9 @@ export const ThreadWidget: React.FC = () => {
   const { data: summary, isLoading: loading, isError: error, refetch } = useQuery<ThreadWidgetSummary>({
     queryKey: ['threads', 'widgetSummary'],
     queryFn: threadService.widgetSummary,
-    refetchInterval: 30_000,
+    // Pushed live by useNotificationSocket (RoleBasedLayout.tsx) via query
+    // invalidation — fallback-only interval now, not the primary update path.
+    refetchInterval: 120_000,
     staleTime: 10_000,
   });
 

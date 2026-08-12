@@ -6,7 +6,9 @@ import { cn } from '../../lib/utils';
 import { useThreadContext } from '../../contexts/ThreadContext';
 import { threadService } from '../../services/threadService';
 
-const BADGE_POLL_MS = 20_000;
+// Pushed live by useNotificationSocket (RoleBasedLayout.tsx) via query
+// invalidation — this is only a fallback for a disconnected socket now.
+const BADGE_POLL_MS = 120_000;
 
 interface Props {
   /** The ModulePage id for this detail page */

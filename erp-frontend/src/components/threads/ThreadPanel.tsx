@@ -20,6 +20,7 @@ import { useThreadContext } from '../../contexts/ThreadContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { threadService } from '../../services/threadService';
 import { useThreadDraft } from '../../hooks/useThreadDraft';
+import { useThreadSocket } from '../../hooks/useRealtimeSocket';
 import { ThreadMessageBubble } from './ThreadMessageBubble';
 import type {
   Thread,
@@ -28,8 +29,11 @@ import type {
   ThreadReason,
 } from '../../types/threads';
 
-const POLL_INTERVAL_MS = 8000;
-const THREAD_LIST_POLL_MS = 15000;
+// Pushed live by useThreadSocket below (joins the open thread's/list's
+// group while the panel is open) — these are now only the fallback
+// interval for a disconnected socket, not the primary update path.
+const POLL_INTERVAL_MS = 120000;
+const THREAD_LIST_POLL_MS = 120000;
 
 const REASON_LABELS: Record<ThreadReason, string> = {
   query: 'Query',
@@ -110,6 +114,16 @@ export const ThreadPanel: React.FC = () => {
     messages: (threadId: number) => ['threads', 'messages', threadId] as const,
     searchUsers: (q: string) => ['threads', 'searchUsers', q] as const,
   };
+
+  // Join the open thread's live-update group only while the panel is
+  // actually open (mirrors the polling gate below) — no point subscribing
+  // to a thread nobody is looking at right now.
+  useThreadSocket(panelState === 'open' ? selectedThreadId : null, () => {
+    if (selectedThreadId) {
+      queryClient.invalidateQueries({ queryKey: threadKeys.messages(selectedThreadId) });
+    }
+    queryClient.invalidateQueries({ queryKey: ['threads', 'list'] });
+  });
 
   const { data: pageConfig } = useQuery({
     queryKey: threadKeys.pageConfig(activeTarget?.pageId ?? 0),

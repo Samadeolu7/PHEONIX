@@ -43,6 +43,15 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
         },
+        // Real-time notifications/thread updates (Django Channels) — see
+        // src/hooks/useRealtimeSocket.ts. `ws: true` tells Vite's proxy to
+        // upgrade the connection instead of treating it as plain HTTP.
+        '/ws': {
+          target: env.VITE_PROXY_TARGET || 'http://localhost:8000',
+          changeOrigin: true,
+          secure: false,
+          ws: true,
+        },
       },
     },
     preview: {
@@ -52,6 +61,12 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_PROXY_TARGET || 'http://localhost:8000',
           changeOrigin: true,
           secure: false,
+        },
+        '/ws': {
+          target: env.VITE_PROXY_TARGET || 'http://localhost:8000',
+          changeOrigin: true,
+          secure: false,
+          ws: true,
         },
       },
     },

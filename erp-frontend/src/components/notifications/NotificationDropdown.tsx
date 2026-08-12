@@ -61,7 +61,10 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ variant = '
   const { data: unread } = useQuery({
     queryKey: ['notifications', 'unreadCount'],
     queryFn: () => notificationService.unreadCount(),
-    refetchInterval: 30_000, // poll every 30 s
+    // Pushed live by useNotificationSocket (RoleBasedLayout.tsx) via query
+    // invalidation — this interval is only a fallback for a disconnected
+    // socket, not the primary update mechanism anymore.
+    refetchInterval: 120_000,
     staleTime: 10_000,
     retry: 1,
   });

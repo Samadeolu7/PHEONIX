@@ -52,7 +52,9 @@ export const ThreadInboxPage: React.FC = () => {
   const { data: threads = [], isLoading: loading, refetch } = useQuery<Thread[]>({
     queryKey: ['threads', 'inbox', activeTab, search],
     queryFn: () => threadService.list(buildParams()),
-    refetchInterval: 30_000,
+    // Pushed live by useNotificationSocket (RoleBasedLayout.tsx) via query
+    // invalidation — fallback-only interval now, not the primary update path.
+    refetchInterval: 120_000,
     staleTime: 5_000,
   });
 
