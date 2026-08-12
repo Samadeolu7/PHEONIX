@@ -4,7 +4,8 @@ Management command: update_loan_status
 Run daily (cron/Celery beat). For every active loan:
   1. Recalculates arrears (days_in_arrears, arrears_amount, overdue installments)
   2. Updates CBN risk classification + provision amount
-  3. Applies late-payment penalties per product configuration
+  3. Applies late-payment penalties per product configuration and accrues
+     them to GL immediately (income recognized on assessment, not on payment)
   4. Flags status='defaulted' for loans 90+ DPD (configurable via --default-threshold)
 
 Interest is recognized in full at disbursement (see LoanAccount.disburse()), so
@@ -12,6 +13,24 @@ there is no periodic interest accrual to suspend/reinstate on NPL loans — this
 command intentionally does not touch LoanAccount.interest_suspended. status
 still transitions to 'defaulted' as before (used by AR aging / portfolio
 dashboards); repayments remain postable on defaulted loans either way.
+
+Penalty accrual (LNPEN series) — one journal entry per overdue INSTALLMENT
+(not lumped per loan), so each month's/period's penalty charge is individually
+traceable in the ledger. Posted whenever a schedule row's assessed penalty
+(delta = new_penalty - sched.penalty_due) moves, for a product with
+penalty_income_account configured:
+    Fresh/increased charge (delta > 0):
+        Dr. Loan Receivable (loan.account)            — ASSET goes up
+        Cr. Penalty Income  (product.penalty_income_account) — INCOME goes up
+    Self-correction lowering a previously-assessed amount (delta < 0):
+        Dr. Penalty Income  (product.penalty_income_account)
+        Cr. Loan Receivable (loan.account)
+Once a loan has had at least one such entry posted, LoanAccount.penalty_accrual_active
+is set True permanently, so LoanAccount.record_payment() stops re-crediting
+Penalty Income for that loan's penalty collections (already recognized here) and
+instead collects straight against Loan Receivable — see record_payment()'s
+docstring. Loans on products without penalty_income_account configured keep the
+legacy cash-basis behavior (income recognized only when the penalty is paid).
 
 Usage:
     python manage.py update_loan_status
@@ -44,6 +63,7 @@ class Command(BaseCommand):
             TransactionEntry as JournalEntryLine,
             TransactionSeries,
         )
+        from common.models import FinancialAuditLog, log_financial_event
 
         dry_run = options['dry_run']
         default_threshold = options['default_threshold']
@@ -60,7 +80,14 @@ class Command(BaseCommand):
         total = loans.count()
         self.stdout.write(f'Processing {total} loans as of {today}…')
 
-        stats = dict(updated=0, penalised=0, defaulted=0, errors=0)
+        series = None
+        if not dry_run:
+            series, _ = TransactionSeries.objects.get_or_create(
+                code='LNPEN',
+                defaults={'description': 'Loan Penalty Accrual'},
+            )
+
+        stats = dict(updated=0, penalised=0, accrued=0, defaulted=0, errors=0)
 
         for loan in loans:
             try:
@@ -91,6 +118,8 @@ class Command(BaseCommand):
                     # since penalty_due is an absolute (not incremental) figure.
                     overdue_schedules = loan.repayment_schedule.filter(status='overdue')
                     penalty_delta_total = Decimal('0.00')
+                    penalty_account = loan.product.penalty_income_account
+                    loan_had_accrual = False
                     for sched in overdue_schedules:
                         days_late = (today - sched.due_date).days
                         new_penalty = loan.product.calculate_late_penalty(
@@ -98,16 +127,85 @@ class Command(BaseCommand):
                             loan.repayment_frequency,
                         )
                         delta = new_penalty - sched.penalty_due
-                        if delta != 0:
-                            sched.penalty_due = new_penalty
-                            sched.save(update_fields=['penalty_due', 'updated_at'])
-                            penalty_delta_total += delta
+                        if delta == 0:
+                            continue
+                        sched.penalty_due = new_penalty
+                        sched.save(update_fields=['penalty_due', 'updated_at'])
+                        penalty_delta_total += delta
+
+                        # 3b. Accrue THIS installment's penalty delta to GL now, on
+                        # assessment, instead of waiting for the client to pay it (see
+                        # module docstring) — one entry per installment, not lumped per
+                        # loan, so each month's charge is separately traceable. Only for
+                        # products with penalty_income_account configured — loans on
+                        # products without one keep the legacy cash-basis behavior,
+                        # income recognized by record_payment() when actually collected.
+                        if not penalty_account:
+                            continue
+
+                        amount = abs(delta)
+                        if delta > 0:
+                            debit_account, credit_account = loan.account, penalty_account
+                        else:
+                            debit_account, credit_account = penalty_account, loan.account
+
+                        if dry_run:
+                            self.stdout.write(
+                                f'  [{loan.loan_number}] would accrue penalty ₦{delta} for '
+                                f'installment due {sched.due_date} '
+                                f'(Dr {debit_account} / Cr {credit_account} ₦{amount})'
+                            )
+                        else:
+                            journal = JournalEntry.objects.create(
+                                series=series,
+                                date=today,
+                                description=(
+                                    f'Loan penalty accrual — {loan.loan_number} '
+                                    f'(installment due {sched.due_date})'
+                                ),
+                                owner=loan.owner,
+                                branch=loan.branch,
+                            )
+                            JournalEntryLine.objects.create(
+                                transaction=journal, account=debit_account,
+                                side=JournalEntryLine.DEBIT, amount=amount,
+                            )
+                            JournalEntryLine.objects.create(
+                                transaction=journal, account=credit_account,
+                                side=JournalEntryLine.CREDIT, amount=amount,
+                            )
+                            journal.post()
+
+                            log_financial_event(
+                                FinancialAuditLog.LOAN_PENALTY_ACCRUAL,
+                                acted_by=None,
+                                record_type='LoanAccount',
+                                record_id=str(loan.pk),
+                                amount=delta,
+                                description=(
+                                    f'Penalty accrual on {loan.loan_number} '
+                                    f'(installment due {sched.due_date})'
+                                ),
+                                extra={
+                                    'loan_number': loan.loan_number,
+                                    'client_id': str(loan.client_id),
+                                    'schedule_id': str(sched.pk),
+                                    'installment_due_date': str(sched.due_date),
+                                    'journal_entry_id': str(journal.pk),
+                                },
+                            )
+
+                        loan_had_accrual = True
 
                     if penalty_delta_total != 0:
                         loan.outstanding_penalties = max(
                             Decimal('0.00'), loan.outstanding_penalties + penalty_delta_total,
                         )
                         stats['penalised'] += 1
+
+                    if loan_had_accrual:
+                        loan.penalty_accrual_active = True
+                        stats['accrued'] += 1
 
                     # 4. Mark defaulted at threshold
                     if (
@@ -122,7 +220,7 @@ class Command(BaseCommand):
 
                     loan.save(update_fields=[
                         'risk_classification', 'provision_pct', 'provision_amount',
-                        'outstanding_penalties', 'status', 'updated_at',
+                        'outstanding_penalties', 'penalty_accrual_active', 'status', 'updated_at',
                     ])
                     stats['updated'] += 1
 
@@ -136,5 +234,5 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(
             f'Done. updated={stats["updated"]} penalised={stats["penalised"]} '
-            f'defaulted={stats["defaulted"]} errors={stats["errors"]}'
+            f'accrued={stats["accrued"]} defaulted={stats["defaulted"]} errors={stats["errors"]}'
         ))

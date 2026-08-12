@@ -9,7 +9,10 @@ update_loan_status_task
     `update_loan_status` management command — the single source of truth for
     arrears, CBN risk classification, interest suspension/reinstatement, and
     per-installment late-payment penalties (using each product's own configured
-    penalty type/rate and grace period). See loans/management/commands/update_loan_status.py.
+    penalty type/rate and grace period) — penalties are recognized as income
+    on an accrual basis here (GL entries posted as they're assessed), not
+    when the client eventually pays. See
+    loans/management/commands/update_loan_status.py.
 
 update_all_loan_arrears, apply_daily_loan_penalties
     Older, separate implementations of overlapping functionality. Left defined

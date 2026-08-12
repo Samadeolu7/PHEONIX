@@ -381,6 +381,7 @@ class FinancialAuditLog(models.Model):
     USER_ROLE_CHANGE    = 'user_role_change'
     CLIENT_REGISTRATION_FEE = 'client_registration_fee'
     CLIENT_REACTIVATION_FEE = 'client_reactivation_fee'
+    LOAN_PENALTY_ACCRUAL = 'loan_penalty_accrual'
 
     EVENT_CHOICES = [
         (LOAN_APPROVE,      'Loan Approved'),
@@ -395,6 +396,7 @@ class FinancialAuditLog(models.Model):
         (USER_ROLE_CHANGE,  'User Role Changed'),
         (CLIENT_REGISTRATION_FEE, 'Client Registration Fee Collected'),
         (CLIENT_REACTIVATION_FEE, 'Client Reactivation Fee Collected'),
+        (LOAN_PENALTY_ACCRUAL, 'Loan Penalty Accrued'),
     ]
 
     event_type      = models.CharField(max_length=30, choices=EVENT_CHOICES, db_index=True)

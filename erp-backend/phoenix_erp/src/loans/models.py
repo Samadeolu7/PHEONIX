@@ -631,6 +631,22 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         ),
     )
 
+    # ── Penalty accrued on assessment, not on payment (set the first time an ──
+    # accrual entry is posted for this loan — see update_loan_status.py). Once
+    # True, permanently locks this loan onto the accrual GL flow regardless of
+    # later product reconfiguration, same reasoning as interest_deferral_active.
+    penalty_accrual_active = models.BooleanField(
+        default=False,
+        help_text=(
+            'True once this loan has had at least one late-payment penalty '
+            'recognized as income at assessment time (Dr. Loan Receivable / '
+            'Cr. Penalty Income — see update_loan_status.py), instead of at '
+            'payment time. record_payment() then collects the penalty portion '
+            'straight against the Loan Receivable instead of crediting Income '
+            'again, since it was already booked when the penalty accrued.'
+        ),
+    )
+
     # ── Origin (audit/reporting only — does not gate any GL/posting logic) ─
     ORIGIN_NATIVE = 'native'
     ORIGIN_LEGACY_IMPORT = 'legacy_import'
@@ -1006,7 +1022,8 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             Cr. Loan Receivable (self.account)         — LOAN/ASSET goes down (principal)
             Cr. Interest Income (interest_income_acct) — INCOME goes up
             Cr. Fee Income (fee_income_acct)           — INCOME goes up
-            Cr. Penalty Income (penalty_income_acct)   — INCOME goes up
+            Cr. Penalty Income (penalty_income_acct)   — INCOME goes up (only when
+                penalty_accrual_active is False — see below)
 
         When an income account is not configured on the Loan Product the
         corresponding amount is credited to the Loan Receivable account instead
@@ -1017,6 +1034,12 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         Loan Receivable credit instead of touching Income at all — Income was
         already booked in full and permanently at disbursement, so this is a
         plain Bank <-> Loan Receivable reduction, matching the legacy system.
+        Penalty is treated the same way whenever penalty_accrual_active is True:
+        income was already recognized when the penalty was assessed (accrual
+        basis — see update_loan_status.py's LNPEN entries), so the penalty
+        portion here folds into the Loan Receivable credit instead of
+        re-crediting Penalty Income. Loans that have never had a penalty
+        accrued to GL keep the legacy cash-basis behavior below.
 
         When interest_deferral_active is True instead (see disburse()), the interest
         credit line above targets accrued_interest_account (Interest Receivable)
@@ -1222,7 +1245,20 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             # was configured on its product) — recognize it now, as it's collected.
             interest_account = self.product.interest_income_account
         fee_account       = self.product.fee_income_account
-        penalty_account   = self.product.penalty_income_account
+        if self.penalty_accrual_active:
+            # Income was already booked when the penalty was assessed (see
+            # update_loan_status.py) — this payment is a plain Bank <-> Loan
+            # Receivable reduction, matching how interest_recognized_at_disbursement
+            # is handled above. `None` falls through to the "no dedicated income
+            # account" fallback below, folding the amount into loan_account_credit
+            # instead of crediting Income again.
+            penalty_account = None
+        else:
+            # Legacy cash-basis fallback: this loan has never had a penalty
+            # accrued to GL (e.g. product never had penalty_income_account
+            # configured while a penalty was outstanding) — recognize it now,
+            # as it's collected.
+            penalty_account = self.product.penalty_income_account
 
         # Principal → always goes to Loan Receivable
         loan_account_credit = principal_payment
