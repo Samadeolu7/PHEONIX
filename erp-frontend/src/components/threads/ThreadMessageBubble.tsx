@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Paperclip, ChevronDown, ChevronUp, Pencil, Trash2, Check, X } from 'lucide-react';
+import { Paperclip, ChevronDown, ChevronUp, Pencil, Trash2, Check, X, Reply, FileText } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { threadService } from '../../services/threadService';
 import type { ThreadMessageItem } from '../../types/threads';
@@ -10,9 +10,17 @@ interface Props {
   isOwn: boolean;
   onUpdated: (msg: ThreadMessageItem) => void;
   onDeleted: (msgId: number) => void;
+  onReply?: (msg: ThreadMessageItem) => void;
+  onJumpTo?: (messageId: number) => void;
 }
 
-export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated, onDeleted }) => {
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated, onDeleted, onReply, onJumpTo }) => {
   const [showReaders, setShowReaders] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState(message.body);
@@ -56,6 +64,8 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
     );
   }
 
+  const attachments = message.attachments ?? [];
+
   return (
     <div className={cn('flex gap-2 mb-3 group', isOwn ? 'flex-row-reverse' : 'flex-row')}>
       {/* Avatar */}
@@ -83,22 +93,35 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
               (edited)
             </span>
           )}
-          {isOwn && !editing && (
+          {!editing && (
             <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button
-                onClick={() => { setEditing(true); setEditBody(message.body); }}
-                title="Edit message"
-                className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
-              >
-                <Pencil className="w-3 h-3" />
-              </button>
-              <button
-                onClick={handleDelete}
-                title="Delete message"
-                className="p-0.5 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
+              {onReply && (
+                <button
+                  onClick={() => onReply(message)}
+                  title="Reply"
+                  className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                >
+                  <Reply className="w-3 h-3" />
+                </button>
+              )}
+              {isOwn && (
+                <>
+                  <button
+                    onClick={() => { setEditing(true); setEditBody(message.body); }}
+                    title="Edit message"
+                    className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={handleDelete}
+                    title="Delete message"
+                    className="p-0.5 rounded hover:bg-red-100 text-gray-400 hover:text-red-600"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </>
+              )}
             </span>
           )}
         </div>
@@ -141,8 +164,26 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
                 : 'bg-gray-100 text-gray-900 rounded-tl-sm'
             )}
           >
+            {message.reply_to_preview && (
+              <button
+                onClick={() => onJumpTo?.(message.reply_to_preview!.id)}
+                className={cn(
+                  'block w-full text-left mb-1.5 px-2 py-1 rounded-lg border-l-2 text-xs truncate',
+                  isOwn
+                    ? 'border-white/40 bg-white/10 text-blue-100'
+                    : 'border-[#0a1857]/30 bg-black/5 text-gray-500'
+                )}
+              >
+                <span className="font-medium">{message.reply_to_preview.author_name}</span>
+                {': '}
+                {message.reply_to_preview.body || '(empty message)'}
+              </button>
+            )}
+
             {message.body}
-            {message.attachment_url && (
+
+            {/* Legacy single attachment (messages sent before multi-attachment support) */}
+            {message.attachment_url && attachments.length === 0 && (
               <a
                 href={message.attachment_url}
                 target="_blank"
@@ -155,6 +196,41 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
                 <Paperclip className="w-3 h-3" />
                 Attachment
               </a>
+            )}
+
+            {attachments.length > 0 && (
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                {attachments.map(att => {
+                  const isImage = att.content_type.startsWith('image/');
+                  if (isImage && att.url) {
+                    return (
+                      <a key={att.id} href={att.url} target="_blank" rel="noreferrer">
+                        <img
+                          src={att.url}
+                          alt={att.filename}
+                          className="max-w-[220px] max-h-[220px] rounded-lg border border-black/10 object-cover"
+                        />
+                      </a>
+                    );
+                  }
+                  return (
+                    <a
+                      key={att.id}
+                      href={att.url ?? undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={cn(
+                        'flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs',
+                        isOwn ? 'bg-white/10 text-blue-100 hover:bg-white/20' : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                      )}
+                    >
+                      <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate flex-1">{att.filename}</span>
+                      <span className="text-[10px] opacity-70 flex-shrink-0">{formatSize(att.size)}</span>
+                    </a>
+                  );
+                })}
+              </div>
             )}
           </div>
         )}

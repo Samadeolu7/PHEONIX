@@ -17,6 +17,9 @@ import {
   ChevronRight,
   ChevronLeft,
   UserPlus,
+  Reply,
+  Paperclip,
+  FileText,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { threadService } from '../services/threadService';
@@ -272,7 +275,6 @@ interface ConversationPaneProps {
   thread: Thread;
   currentUserId: number;
   currentUserName: string;
-  isDirector: boolean;
   onStatusChange: (updated: Thread) => void;
   // Set only on mobile (see the main page component) — renders a back
   // button in the header so the conversation can hand the screen back to
@@ -285,7 +287,6 @@ function ConversationPane({
   thread,
   currentUserId,
   currentUserName,
-  isDirector,
   onStatusChange,
   onBack,
 }: ConversationPaneProps) {
@@ -295,9 +296,46 @@ function ConversationPane({
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [attachFiles, setAttachFiles] = useState<File[]>([]);
+  const [replyTarget, setReplyTarget] = useState<ThreadMessageItem | null>(null);
+  const [mentionedIds, setMentionedIds] = useState<Map<number, string>>(new Map());
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevCount = useRef(0);
+
+  const [mentionSuggestions, setMentionSuggestions] = useState<
+    { id: number; username: string; full_name: string }[]
+  >([]);
+  useEffect(() => {
+    if (mentionQuery === null) {
+      setMentionSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    threadService.searchUsers(mentionQuery || undefined).then(results => {
+      if (!cancelled) setMentionSuggestions(results);
+    }).catch(() => { if (!cancelled) setMentionSuggestions([]); });
+    return () => { cancelled = true; };
+  }, [mentionQuery]);
+
+  const handleDraftChange = (value: string) => {
+    setDraft(value);
+    const cursor = textareaRef.current?.selectionStart ?? value.length;
+    const upToCursor = value.slice(0, cursor);
+    const match = upToCursor.match(/(?:^|\s)@([\w.]*)$/);
+    setMentionQuery(match ? match[1] : null);
+  };
+
+  const handleSelectMention = (u: { id: number; username: string; full_name: string }) => {
+    const cursor = textareaRef.current?.selectionStart ?? draft.length;
+    const upToCursor = draft.slice(0, cursor);
+    const replaced = upToCursor.replace(/(?:^|\s)@([\w.]*)$/, (m) => (m.startsWith(' ') ? ' ' : '') + `@${u.username} `);
+    setDraft(replaced + draft.slice(cursor));
+    setMentionedIds(prev => new Map(prev).set(u.id, u.username));
+    setMentionQuery(null);
+  };
 
   useEffect(() => { setLocal(thread); }, [thread]);
 
@@ -328,6 +366,13 @@ function ConversationPane({
   }, [fetchMessages, local.id]);
 
   useEffect(() => {
+    setAttachFiles([]);
+    setReplyTarget(null);
+    setMentionedIds(new Map());
+    setMentionQuery(null);
+  }, [local.id]);
+
+  useEffect(() => {
     if (!loadingMsgs && messages.length > prevCount.current) {
       prevCount.current = messages.length;
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -336,12 +381,19 @@ function ConversationPane({
 
   const handleSend = async () => {
     const body = draft.trim();
-    if (!body || sending) return;
+    if ((!body && attachFiles.length === 0) || sending) return;
     setSending(true);
     try {
-      const msg = await threadService.postMessage(local.id, body);
+      const msg = await threadService.postMessage(local.id, body, {
+        attachments: attachFiles.length > 0 ? attachFiles : undefined,
+        mentionedUserIds: mentionedIds.size > 0 ? Array.from(mentionedIds.keys()) : undefined,
+        replyToId: replyTarget?.id,
+      });
       setMessages(prev => [...prev, msg]);
       setDraft('');
+      setAttachFiles([]);
+      setReplyTarget(null);
+      setMentionedIds(new Map());
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     } finally {
       setSending(false);
@@ -376,6 +428,33 @@ function ConversationPane({
     } finally { setActionLoading(false); }
   };
 
+  const handleLock = async () => {
+    setActionLoading(true);
+    try {
+      const updated = await threadService.lock(local.id);
+      setLocal(updated);
+      onStatusChange(updated);
+    } finally { setActionLoading(false); }
+  };
+
+  const handleEscalate = async () => {
+    setActionLoading(true);
+    try {
+      const updated = await threadService.escalate(local.id);
+      setLocal(updated);
+      onStatusChange(updated);
+    } finally { setActionLoading(false); }
+  };
+
+  const handleUnlock = async () => {
+    setActionLoading(true);
+    try {
+      const updated = await threadService.unlock(local.id);
+      setLocal(updated);
+      onStatusChange(updated);
+    } finally { setActionLoading(false); }
+  };
+
   const isClosed = local.status === 'closed';
   // Server-computed (threads/permissions.py via ThreadSerializer) — replaces
   // the old isDirector-only reopen check here, which missed Branch Managers
@@ -383,11 +462,14 @@ function ConversationPane({
   // this UI just never showed the button for it). See ThreadPanel.tsx for
   // the same fix applied to the slide-over panel.
   const canClose = !isClosed && (local.permissions?.can_close ?? false);
-  const canReopen = isClosed && (local.permissions?.can_reopen ?? false);
+  const canReopen = isClosed && !local.is_locked && (local.permissions?.can_reopen ?? false);
+  const canLock = isClosed && (local.permissions?.can_lock ?? false);
+  const canUnlock = local.is_locked && (local.permissions?.can_unlock ?? false);
   // Directors/Branch Managers can land here via oversight visibility without
   // being a tagged participant — the composer would 403 on submit, so gate
   // it the same way ThreadPanel.tsx does.
   const isObserver = local.permissions?.is_observer ?? false;
+  const isParticipant = local.permissions?.is_participant ?? false;
 
   // Group messages by calendar day
   const grouped: Array<{ date: string; items: ThreadMessageItem[] }> = [];
@@ -458,6 +540,18 @@ function ConversationPane({
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+          {isParticipant && (
+            <button
+              type="button"
+              onClick={handleEscalate}
+              disabled={actionLoading}
+              title="Pull all Directors into this discussion"
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 transition-colors font-medium"
+            >
+              <UserPlus className="w-3 h-3" />
+              Escalate
+            </button>
+          )}
           {canClose && (
             <button
               type="button"
@@ -480,6 +574,29 @@ function ConversationPane({
               Reopen
             </button>
           )}
+          {canLock && (
+            <button
+              type="button"
+              onClick={handleLock}
+              disabled={actionLoading}
+              title="Prevent this thread from reopening on reply"
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 transition-colors font-medium"
+            >
+              <Lock className="w-3 h-3" />
+              Lock
+            </button>
+          )}
+          {canUnlock && (
+            <button
+              type="button"
+              onClick={handleUnlock}
+              disabled={actionLoading}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-green-200 text-green-600 bg-green-50 hover:bg-green-100 disabled:opacity-40 transition-colors font-medium"
+            >
+              <Unlock className="w-3 h-3" />
+              Unlock
+            </button>
+          )}
         </div>
       </div>
 
@@ -488,7 +605,7 @@ function ConversationPane({
         <div className="flex items-center gap-3 px-6 py-2.5 bg-amber-50 border-b border-amber-100 flex-shrink-0">
           <Lock className="w-4 h-4 text-amber-500 flex-shrink-0" />
           <p className="text-sm text-amber-800">
-            Closed{local.closed_by_name ? ` by ${local.closed_by_name}` : ''}
+            {local.is_locked ? 'Locked' : 'Closed'}{local.closed_by_name ? ` by ${local.closed_by_name}` : ''}
             {local.closed_at ? ` · ${fmtAge(local.closed_at)}` : ''}.
             {canReopen && (
               <button
@@ -498,6 +615,16 @@ function ConversationPane({
                 className="ml-2 underline text-amber-700 hover:text-amber-900 disabled:opacity-50"
               >
                 Reopen to reply
+              </button>
+            )}
+            {canUnlock && (
+              <button
+                type="button"
+                onClick={handleUnlock}
+                disabled={actionLoading}
+                className="ml-2 underline text-amber-700 hover:text-amber-900 disabled:opacity-50"
+              >
+                Unlock
               </button>
             )}
           </p>
@@ -555,6 +682,7 @@ function ConversationPane({
               return (
                 <div
                   key={msg.id}
+                  id={`msg-${msg.id}`}
                   className={cn(
                     'flex items-end gap-3 group',
                     isOwn ? 'flex-row-reverse' : 'flex-row',
@@ -579,6 +707,15 @@ function ConversationPane({
                         <span className="text-[10px] text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity">
                           {fmtTime(msg.created_at)}
                         </span>
+                        {!isClosed && isParticipant && (
+                          <button
+                            onClick={() => setReplyTarget(msg)}
+                            title="Reply"
+                            className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Reply className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     )}
                     <div className={cn(
@@ -587,7 +724,64 @@ function ConversationPane({
                         ? 'bg-[#0a1857] text-white rounded-br-sm'
                         : 'bg-gray-100 text-gray-800 rounded-bl-sm'
                     )}>
+                      {msg.reply_to_preview && (
+                        <button
+                          onClick={() => document.getElementById(`msg-${msg.reply_to_preview!.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+                          className={cn(
+                            'block w-full text-left mb-1.5 px-2 py-1 rounded-lg border-l-2 text-xs truncate whitespace-nowrap',
+                            isOwn ? 'border-white/40 bg-white/10 text-blue-100' : 'border-[#0a1857]/30 bg-black/5 text-gray-500'
+                          )}
+                        >
+                          <span className="font-medium">{msg.reply_to_preview.author_name}</span>
+                          {': '}
+                          {msg.reply_to_preview.body || '(empty message)'}
+                        </button>
+                      )}
                       {msg.body}
+                      {msg.attachment_url && (msg.attachments ?? []).length === 0 && (
+                        <a
+                          href={msg.attachment_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className={cn('flex items-center gap-1 mt-1 text-xs underline', isOwn ? 'text-blue-200' : 'text-blue-600')}
+                        >
+                          <Paperclip className="w-3 h-3" />
+                          Attachment
+                        </a>
+                      )}
+                      {(msg.attachments ?? []).length > 0 && (
+                        <div className="mt-1.5 flex flex-col gap-1.5">
+                          {msg.attachments.map(att => {
+                            const isImage = att.content_type.startsWith('image/');
+                            if (isImage && att.url) {
+                              return (
+                                <a key={att.id} href={att.url} target="_blank" rel="noreferrer">
+                                  <img
+                                    src={att.url}
+                                    alt={att.filename}
+                                    className="max-w-[220px] max-h-[220px] rounded-lg border border-black/10 object-cover"
+                                  />
+                                </a>
+                              );
+                            }
+                            return (
+                              <a
+                                key={att.id}
+                                href={att.url ?? undefined}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={cn(
+                                  'flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs',
+                                  isOwn ? 'bg-white/10 text-blue-100 hover:bg-white/20' : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+                                )}
+                              >
+                                <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                                <span className="truncate flex-1">{att.filename}</span>
+                              </a>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                     {!showHeader && (
                       <span className="text-[10px] text-gray-400 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -608,7 +802,7 @@ function ConversationPane({
         {isObserver && !isClosed ? (
           <div className="flex items-center justify-between gap-2 py-1">
             <p className="text-xs text-gray-400 flex items-center gap-1">
-              <Users className="w-3 h-3" /> You're viewing this discussion as an observer.
+              <Users className="w-3 h-3" /> You&apos;re viewing this discussion as an observer.
             </p>
             <button
               type="button"
@@ -621,46 +815,122 @@ function ConversationPane({
             </button>
           </div>
         ) : !isClosed ? (
-          <div className="flex items-end gap-3 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 focus-within:border-[#0a1857]/30 focus-within:ring-2 focus-within:ring-[#0a1857]/10 transition-all">
-            <UserAvatar name={currentUserName} size={7} />
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={e => {
-                setDraft(e.target.value);
-                const el = e.target;
-                el.style.height = 'auto';
-                el.style.height = `${el.scrollHeight}px`;
-              }}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder="Reply to this thread… (Enter to send, Shift+Enter for new line)"
-              rows={1}
-              className="flex-1 bg-transparent resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none py-0.5"
-              style={{ minHeight: '24px', maxHeight: '120px' }}
-            />
-            <button
-              type="button"
-              onClick={handleSend}
-              disabled={sending || !draft.trim()}
-              className="p-2 bg-[#0a1857] text-white rounded-xl hover:bg-[#0a1857]/90 disabled:opacity-30 transition-all flex-shrink-0"
-              title="Send (Enter)"
-            >
-              {sending ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Send className="w-4 h-4" />
+          <div>
+            {replyTarget && (
+              <div className="flex items-start gap-2 mb-2 px-3 py-1.5 bg-gray-50 border-l-2 border-[#0a1857]/40 rounded-lg text-xs">
+                <Reply className="w-3 h-3 mt-0.5 text-gray-400 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="font-medium text-gray-600">{replyTarget.author_name}</span>
+                  <p className="text-gray-500 truncate">{replyTarget.body || '(empty message)'}</p>
+                </div>
+                <button onClick={() => setReplyTarget(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+            {attachFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {attachFiles.map((f, idx) => (
+                  <div key={`${f.name}-${idx}`} className="flex items-center gap-1.5 px-2 py-1 bg-gray-100 rounded-lg text-xs text-gray-600">
+                    <Paperclip className="w-3 h-3" />
+                    <span className="truncate max-w-[140px]">{f.name}</span>
+                    <button
+                      onClick={() => setAttachFiles(prev => prev.filter((_, i) => i !== idx))}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-end gap-3 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 focus-within:border-[#0a1857]/30 focus-within:ring-2 focus-within:ring-[#0a1857]/10 transition-all relative">
+              {mentionQuery !== null && mentionSuggestions.length > 0 && (
+                <ul className="absolute bottom-full left-4 right-16 mb-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto z-10">
+                  {mentionSuggestions.map(u => (
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectMention(u)}
+                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
+                      >
+                        <span className="font-medium">{u.full_name}</span>{' '}
+                        <span className="text-gray-400">@{u.username}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
-            </button>
+              <UserAvatar name={currentUserName} size={7} />
+              <textarea
+                ref={textareaRef}
+                value={draft}
+                onChange={e => {
+                  handleDraftChange(e.target.value);
+                  const el = e.target;
+                  el.style.height = 'auto';
+                  el.style.height = `${el.scrollHeight}px`;
+                }}
+                onKeyDown={e => {
+                  if (mentionQuery !== null && mentionSuggestions.length > 0 && (e.key === 'Enter' || e.key === 'Tab')) {
+                    e.preventDefault();
+                    handleSelectMention(mentionSuggestions[0]);
+                    return;
+                  }
+                  if (e.key === 'Escape' && mentionQuery !== null) {
+                    setMentionQuery(null);
+                    return;
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                placeholder="Reply to this thread… (Enter to send, @ to mention)"
+                rows={1}
+                className="flex-1 bg-transparent resize-none text-sm text-gray-800 placeholder-gray-400 focus:outline-none py-0.5"
+                style={{ minHeight: '24px', maxHeight: '120px' }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach files"
+                className="p-2 text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={sending || (!draft.trim() && attachFiles.length === 0)}
+                className="p-2 bg-[#0a1857] text-white rounded-xl hover:bg-[#0a1857]/90 disabled:opacity-30 transition-all flex-shrink-0"
+                title="Send (Enter)"
+              >
+                {sending ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={e => {
+                  const files = Array.from(e.target.files ?? []);
+                  if (files.length) setAttachFiles(prev => [...prev, ...files]);
+                  e.target.value = '';
+                }}
+              />
+            </div>
           </div>
         ) : (
           <div className="text-center py-3">
             <p className="text-xs text-gray-400">
-              This discussion is closed.{' '}
+              {local.is_locked
+                ? 'This discussion is locked — a Director must unlock it before it can be replied to.'
+                : 'This discussion is closed.'}{' '}
               {canReopen && (
                 <button
                   type="button"
@@ -669,6 +939,16 @@ function ConversationPane({
                   className="text-[#0a1857] hover:underline font-medium disabled:opacity-50"
                 >
                   Reopen to reply
+                </button>
+              )}
+              {canUnlock && (
+                <button
+                  type="button"
+                  onClick={handleUnlock}
+                  disabled={actionLoading}
+                  className="text-[#0a1857] hover:underline font-medium disabled:opacity-50"
+                >
+                  Unlock
                 </button>
               )}
             </p>
@@ -843,7 +1123,6 @@ export default function DiscussionsWorkspacePage() {
                   thread={activeThread}
                   currentUserId={currentUserId}
                   currentUserName={currentUserName}
-                  isDirector={isDirector}
                   onStatusChange={handleStatusChange}
                   onBack={isMobile ? () => setActiveId(null) : undefined}
                 />

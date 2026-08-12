@@ -76,4 +76,9 @@ def thread_permissions_for_user(thread, user):
         # Oversight visibility (Director/Branch Manager can see it) without
         # being a tagged participant — see ThreadViewSet.get_queryset.
         'is_observer': not is_participant and (director or branch_manager),
+        # Locking is Director-only, deliberately narrower than can_close —
+        # see Thread.lock/unlock and the auto-reopen-on-reply behavior in
+        # ThreadMessageViewSet.perform_create that locking is meant to block.
+        'can_lock': director and thread.status == thread.STATUS_CLOSED and not thread.is_locked,
+        'can_unlock': director and thread.is_locked,
     }

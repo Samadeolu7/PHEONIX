@@ -16,6 +16,20 @@ export interface MessageReadReceiptItem {
   read_at: string;
 }
 
+export interface MessageAttachmentItem {
+  id: number;
+  url: string | null;
+  filename: string;
+  content_type: string;
+  size: number;
+}
+
+export interface ReplyToPreview {
+  id: number;
+  author_name: string;
+  body: string;
+}
+
 export interface ThreadMessageItem {
   id: number;
   thread: number;
@@ -24,6 +38,9 @@ export interface ThreadMessageItem {
   body: string;
   attachment: string | null;
   attachment_url: string | null;
+  attachments: MessageAttachmentItem[];
+  reply_to: number | null;
+  reply_to_preview: ReplyToPreview | null;
   is_system_message: boolean;
   created_at: string;
   edited_at: string | null;
@@ -65,6 +82,11 @@ export interface ThreadPermissions {
   // Oversight visibility (Director/Branch Manager) without being a tagged
   // participant — see ThreadViewSet.get_queryset / threads/permissions.py.
   is_observer: boolean;
+  // Director-only escape hatch for a thread that must actually stay closed
+  // — see Thread.lock/unlock and the auto-reopen-on-reply behavior it
+  // overrides.
+  can_lock: boolean;
+  can_unlock: boolean;
 }
 
 export interface Thread {
@@ -87,6 +109,7 @@ export interface Thread {
   closed_by: number | null;
   closed_by_name: string | null;
   closed_at: string | null;
+  is_locked: boolean;
   participants: ThreadParticipantItem[];
   last_message: LastMessagePreview | null;
   unread_count: number;

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
 from common.serializers import TenantModelSerializer
-from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt
+from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt, ThreadMessageAttachment
 from .permissions import thread_permissions_for_user
 
 User = get_user_model()
@@ -30,16 +30,49 @@ class MessageReadReceiptSerializer(serializers.ModelSerializer):
         return obj.participant.get_full_name() or obj.participant.username
 
 
+class ThreadMessageAttachmentSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+    filename = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ThreadMessageAttachment
+        fields = ['id', 'url', 'filename', 'content_type', 'size']
+
+    def get_url(self, obj):
+        request = self.context.get('request')
+        if request and obj.file:
+            return request.build_absolute_uri(obj.file.url)
+        return None
+
+    def get_filename(self, obj):
+        import os
+        return os.path.basename(obj.file.name) if obj.file else ''
+
+
 class ThreadMessageSerializer(serializers.ModelSerializer):
     author_name = serializers.SerializerMethodField()
     read_by = serializers.SerializerMethodField()
     attachment_url = serializers.SerializerMethodField()
+    attachments = ThreadMessageAttachmentSerializer(many=True, read_only=True)
+    reply_to_preview = serializers.SerializerMethodField()
+    # Not a model field — collected here so it validates through the normal
+    # create flow, then popped and applied in
+    # ThreadMessageViewSet.perform_create (same pattern as ThreadViewSet's
+    # participant_ids on create).
+    mentioned_user_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False,
+        default=list,
+    )
 
     class Meta:
         model = ThreadMessage
         fields = [
             'id', 'thread', 'author', 'author_name', 'body',
-            'attachment', 'attachment_url', 'is_system_message',
+            'attachment', 'attachment_url', 'attachments',
+            'reply_to', 'reply_to_preview', 'mentioned_user_ids',
+            'is_system_message',
             'created_at', 'edited_at', 'read_by',
         ]
         read_only_fields = ['is_system_message', 'created_at', 'edited_at', 'author']
@@ -61,6 +94,23 @@ class ThreadMessageSerializer(serializers.ModelSerializer):
             if request:
                 return request.build_absolute_uri(obj.attachment.url)
         return None
+
+    def get_reply_to_preview(self, obj):
+        if not obj.reply_to_id:
+            return None
+        original = obj.reply_to
+        return {
+            'id': original.pk,
+            'author_name': (original.author.get_full_name() or original.author.username) if original.author else 'System',
+            'body': original.body[:80],
+        }
+
+    def validate(self, attrs):
+        reply_to = attrs.get('reply_to')
+        thread = attrs.get('thread')
+        if reply_to is not None and thread is not None and reply_to.thread_id != thread.pk:
+            raise serializers.ValidationError({'reply_to': 'Cannot reply to a message from a different thread.'})
+        return attrs
 
 
 class ThreadParticipantSerializer(serializers.ModelSerializer):
@@ -99,13 +149,13 @@ class ThreadSerializer(serializers.ModelSerializer):
             'content_type', 'object_id', 'linked_record_repr',
             'title', 'reason',
             'initiated_by', 'initiated_by_name',
-            'status', 'closed_by', 'closed_by_name', 'closed_at',
+            'status', 'closed_by', 'closed_by_name', 'closed_at', 'is_locked',
             'participants', 'last_message', 'unread_count', 'permissions',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'title', 'initiated_by', 'status',
-            'closed_by', 'closed_at', 'created_at', 'updated_at',
+            'closed_by', 'closed_at', 'is_locked', 'created_at', 'updated_at',
         ]
 
     def get_permissions(self, obj):

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt
+from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt, ThreadMessageAttachment
 
 
 class ThreadParticipantInline(admin.TabularInline):
@@ -36,3 +36,9 @@ class ThreadMessageAdmin(admin.ModelAdmin):
 class MessageReadReceiptAdmin(admin.ModelAdmin):
     list_display = ('message', 'participant', 'read_at')
     readonly_fields = ('read_at',)
+
+
+@admin.register(ThreadMessageAttachment)
+class ThreadMessageAttachmentAdmin(admin.ModelAdmin):
+    list_display = ('message', 'content_type', 'size', 'created_at')
+    readonly_fields = ('created_at',)

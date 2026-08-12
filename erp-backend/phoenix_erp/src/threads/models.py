@@ -50,6 +50,11 @@ class Thread(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     )
     closed_at = models.DateTimeField(null=True, blank=True)
     reason = models.CharField(max_length=20, choices=REASON_CHOICES, blank=True)
+    # A closed-but-unlocked thread auto-reopens the moment a participant (or
+    # Director) posts to it again — see ThreadMessageViewSet.perform_create.
+    # is_locked is the explicit, Director-only escape hatch for threads that
+    # must actually stay closed (audit-finalized, compliance-sensitive).
+    is_locked = models.BooleanField(default=False)
 
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
@@ -95,6 +100,20 @@ class Thread(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.closed_by = None
         self.closed_at = None
         self.save(update_fields=['status', 'closed_by', 'closed_at', 'updated_at'])
+
+    def lock(self, user):
+        if self.status != self.STATUS_CLOSED:
+            raise ValidationError("Only a closed thread can be locked.")
+        if self.is_locked:
+            raise ValidationError("Thread is already locked.")
+        self.is_locked = True
+        self.save(update_fields=['is_locked', 'updated_at'])
+
+    def unlock(self, user):
+        if not self.is_locked:
+            raise ValidationError("Thread is not locked.")
+        self.is_locked = False
+        self.save(update_fields=['is_locked', 'updated_at'])
 
 
 class ThreadParticipant(TimeStampedModel, SoftDeleteModel):
@@ -149,9 +168,18 @@ class ThreadMessage(TimeStampedModel, SoftDeleteModel):
         null=True, blank=True,  # null for system messages
     )
     body = models.TextField(max_length=1000, blank=True)
+    # Legacy single-attachment field — no longer written to by new messages
+    # (see ThreadMessageAttachment below), kept only so already-sent messages
+    # keep rendering. New attachments always go through ThreadMessageAttachment.
     attachment = models.FileField(upload_to='threads/attachments/', null=True, blank=True)
     is_system_message = models.BooleanField(default=False, db_index=True)
     edited_at = models.DateTimeField(null=True, blank=True)
+    reply_to = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='replies',
+    )
 
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
@@ -163,6 +191,22 @@ class ThreadMessage(TimeStampedModel, SoftDeleteModel):
         if self.is_system_message:
             return f"[system] {self.body[:60]}"
         return f"{self.author} @ {self.created_at:%H:%M}: {self.body[:60]}"
+
+
+class ThreadMessageAttachment(TimeStampedModel, SoftDeleteModel):
+    message = models.ForeignKey(ThreadMessage, on_delete=models.CASCADE, related_name='attachments')
+    file = models.FileField(upload_to='threads/attachments/')
+    content_type = models.CharField(max_length=100, blank=True)
+    size = models.PositiveIntegerField(default=0)
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return self.file.name
 
 
 class MessageReadReceipt(models.Model):

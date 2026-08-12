@@ -9,7 +9,7 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Q, OuterRef, Subquery, IntegerField
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from common.views import ScopedModelViewSet
-from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt
+from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt, ThreadMessageAttachment
 from .serializers import (
     ThreadSerializer, ThreadCreateSerializer, ThreadUpdateSerializer,
     ThreadParticipantSerializer, ThreadMessageSerializer,
@@ -282,6 +282,12 @@ class ThreadViewSet(ScopedModelViewSet):
         thread = self.get_object()
         user = request.user
 
+        if thread.is_locked:
+            return Response(
+                {'detail': 'This thread is locked. Unlock it first before reopening.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         can_reopen = _is_director(user)
         if not can_reopen and _is_branch_manager(user):
             can_reopen = (thread.branch == getattr(user, 'branch', None))
@@ -301,6 +307,80 @@ class ThreadViewSet(ScopedModelViewSet):
             body=f"Thread reopened by {user.get_full_name() or user.username}.",
             is_system_message=True,
             tenant=getattr(user, 'tenant', None),
+        )
+        return Response(ThreadSerializer(thread, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def lock(self, request, pk=None):
+        """Director-only escape hatch for a thread that must actually stay
+        closed — see Thread.lock and the auto-reopen-on-reply behavior in
+        ThreadMessageViewSet.perform_create that this is meant to override."""
+        thread = self.get_object()
+        user = request.user
+
+        if not _is_director(user):
+            return Response({'detail': 'Only Directors can lock threads.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            thread.lock(user)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        ThreadMessage.objects.create(
+            thread=thread,
+            body=f"Thread locked by {user.get_full_name() or user.username}.",
+            is_system_message=True,
+            tenant=getattr(user, 'tenant', None),
+        )
+        return Response(ThreadSerializer(thread, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def unlock(self, request, pk=None):
+        thread = self.get_object()
+        user = request.user
+
+        if not _is_director(user):
+            return Response({'detail': 'Only Directors can unlock threads.'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            thread.unlock(user)
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        ThreadMessage.objects.create(
+            thread=thread,
+            body=f"Thread unlocked by {user.get_full_name() or user.username}.",
+            is_system_message=True,
+            tenant=getattr(user, 'tenant', None),
+        )
+        return Response(ThreadSerializer(thread, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'])
+    def escalate(self, request, pk=None):
+        """Any participant can pull all tenant Directors into a thread —
+        the compensating oversight the Directors already get automatically
+        for every new thread (see threads/signals.py) doesn't help once a
+        thread is well underway and specifically needs their attention."""
+        thread = self.get_object()
+        user = request.user
+
+        if not thread.participants.filter(user=user, is_deleted=False).exists() and not _is_director(user):
+            raise PermissionDenied('Only a participant can escalate this thread.')
+
+        tenant = getattr(user, 'tenant', None)
+        directors = _directors_for_tenant(tenant).exclude(pk=user.pk)
+        added_any = False
+        for director in directors:
+            _, created = ThreadParticipant.objects.get_or_create(
+                thread=thread,
+                user=director,
+                defaults={'added_by': user, 'tenant': tenant},
+            )
+            added_any = added_any or created
+
+        ThreadMessage.objects.create(
+            thread=thread,
+            body=f"Escalated to Director(s) by {user.get_full_name() or user.username}.",
+            is_system_message=True,
+            tenant=tenant,
         )
         return Response(ThreadSerializer(thread, context={'request': request}).data)
 
@@ -607,8 +687,9 @@ class ThreadMessageViewSet(ScopedModelViewSet):
         qs = ThreadMessage.objects.filter(
             thread__tenant=tenant,
             is_deleted=False,
-        ).select_related('author').prefetch_related(
+        ).select_related('author', 'reply_to', 'reply_to__author').prefetch_related(
             'read_receipts__participant',
+            'attachments',
         )
 
         thread_id = self.request.query_params.get('thread')
@@ -644,20 +725,73 @@ class ThreadMessageViewSet(ScopedModelViewSet):
         if thread.tenant != tenant:
             raise PermissionDenied('Thread not found.')
 
-        if thread.status == Thread.STATUS_CLOSED:
-            raise ValidationError({'detail': 'Cannot post to a closed thread.'})
-
-        if not _is_director(user):
+        is_director = _is_director(user)
+        if not is_director:
             is_participant = thread.participants.filter(user=user, is_deleted=False).exists()
             if not is_participant:
                 raise PermissionDenied('You are not a participant in this thread.')
+
+        if thread.status == Thread.STATUS_CLOSED:
+            if thread.is_locked:
+                raise ValidationError({
+                    'detail': 'This thread is locked and cannot receive new messages. '
+                              'Ask a Director to unlock it first.',
+                })
+            # Closed-but-unlocked threads reopen automatically the moment a
+            # participant (or Director) replies, instead of hitting a dead
+            # end — Thread.lock/unlock (Director-only) is the explicit
+            # escape hatch for threads that must actually stay closed.
+            thread.reopen(user)
+            ThreadMessage.objects.create(
+                thread=thread,
+                body=f"Thread reopened automatically — new message posted by "
+                     f"{user.get_full_name() or user.username}.",
+                is_system_message=True,
+                tenant=tenant,
+            )
 
         attachment = self.request.FILES.get('attachment')
         if attachment:
             _validate_attachment(attachment)
 
-        serializer.save(author=user, tenant=tenant)
+        new_attachments = self.request.FILES.getlist('attachments')
+        for f in new_attachments:
+            _validate_attachment(f)
+
+        mentioned_ids = serializer.validated_data.pop('mentioned_user_ids', [])
+
+        message = serializer.save(author=user, tenant=tenant)
         Thread.objects.filter(pk=thread.pk).update(updated_at=timezone.now())
+
+        for f in new_attachments:
+            ThreadMessageAttachment.objects.create(
+                message=message,
+                file=f,
+                content_type=f.content_type or '',
+                size=f.size,
+                tenant=tenant,
+            )
+
+        self._auto_add_mentioned_participants(thread, mentioned_ids, user, tenant)
+
+    @staticmethod
+    def _auto_add_mentioned_participants(thread, mentioned_ids, user, tenant):
+        if not mentioned_ids:
+            return
+        from django.contrib.auth import get_user_model
+        UserModel = get_user_model()
+        for uid in mentioned_ids:
+            if uid == user.pk:
+                continue
+            try:
+                tagged = UserModel.objects.get(pk=uid, tenant=tenant)
+            except UserModel.DoesNotExist:
+                continue
+            ThreadParticipant.objects.get_or_create(
+                thread=thread,
+                user=tagged,
+                defaults={'added_by': user, 'tenant': tenant},
+            )
 
     def perform_update(self, serializer):
         instance = self.get_object()

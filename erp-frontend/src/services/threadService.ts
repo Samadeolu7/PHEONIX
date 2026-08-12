@@ -48,6 +48,18 @@ export const threadService = {
     return api.post(`${BASE}/${id}/request-join/`, {});
   },
 
+  escalate(id: number): Promise<Thread> {
+    return api.post(`${BASE}/${id}/escalate/`, {});
+  },
+
+  lock(id: number): Promise<Thread> {
+    return api.post(`${BASE}/${id}/lock/`, {});
+  },
+
+  unlock(id: number): Promise<Thread> {
+    return api.post(`${BASE}/${id}/unlock/`, {});
+  },
+
   markRead(id: number): Promise<{ status: string }> {
     return api.post(`${BASE}/${id}/read/`, {});
   },
@@ -70,16 +82,31 @@ export const threadService = {
     return unwrapList<ThreadMessageItem>(res);
   },
 
-  postMessage(threadId: number, body: string, attachment?: File): Promise<ThreadMessageItem> {
-    if (attachment) {
-      // Use FormData for file uploads
+  postMessage(
+    threadId: number,
+    body: string,
+    options?: {
+      attachments?: File[];
+      mentionedUserIds?: number[];
+      replyToId?: number;
+    }
+  ): Promise<ThreadMessageItem> {
+    const { attachments, mentionedUserIds, replyToId } = options ?? {};
+    if ((attachments && attachments.length > 0)) {
       const formData = new FormData();
       formData.append('thread', String(threadId));
       formData.append('body', body);
-      formData.append('attachment', attachment);
+      attachments.forEach(f => formData.append('attachments', f));
+      (mentionedUserIds ?? []).forEach(id => formData.append('mentioned_user_ids', String(id)));
+      if (replyToId) formData.append('reply_to', String(replyToId));
       return api.post(`${MSG_BASE}/`, formData);
     }
-    return api.post(`${MSG_BASE}/`, { thread: threadId, body });
+    return api.post(`${MSG_BASE}/`, {
+      thread: threadId,
+      body,
+      mentioned_user_ids: mentionedUserIds ?? [],
+      ...(replyToId ? { reply_to: replyToId } : {}),
+    });
   },
 
   // ── Participants ───────────────────────────────────────────────────────────
