@@ -13,7 +13,15 @@ import { useAuth } from '../../contexts/AuthContext';
 import { getRoleRank } from '../../types/roles';
 import { Users, X, ChevronRight, UserCog, Search, UserPlus } from 'lucide-react';
 
-const MEETING_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const MEETING_DAYS = [
+  { value: 'monday', label: 'Monday' },
+  { value: 'tuesday', label: 'Tuesday' },
+  { value: 'wednesday', label: 'Wednesday' },
+  { value: 'thursday', label: 'Thursday' },
+  { value: 'friday', label: 'Friday' },
+  { value: 'saturday', label: 'Saturday' },
+  { value: 'sunday', label: 'Sunday' },
+];
 
 const emptyForm = (): Partial<ClientGroupPayload> => ({
   name: '',
@@ -480,7 +488,7 @@ const ClientGroupsPage: React.FC = () => {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {group.code || '—'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 capitalize">
                         {group.meeting_day || '—'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -709,7 +717,7 @@ const ClientGroupsPage: React.FC = () => {
                   >
                     <option value="">— None —</option>
                     {MEETING_DAYS.map(d => (
-                      <option key={d} value={d}>{d}</option>
+                      <option key={d.value} value={d.value}>{d.label}</option>
                     ))}
                   </select>
                 </div>
