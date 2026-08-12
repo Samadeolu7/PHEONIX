@@ -369,9 +369,12 @@ export const ThreadPanel: React.FC = () => {
 
   return (
     <>
-      {/* Overlay dimmer for tablet */}
+      {/* Overlay dimmer below sm — panel is full-width there (matches the
+          panel's own w-full sm:w-[420px] below) so the page behind it needs
+          dimming; sm: and up it's a fixed-width side panel that leaves the
+          rest of the page visible, so no dimmer is shown. */}
       <div
-        className="fixed inset-0 bg-black/20 z-30 md:hidden lg:hidden xl:hidden"
+        className="fixed inset-0 bg-black/20 z-30 sm:hidden"
         onClick={minimisePanel}
       />
 

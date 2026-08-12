@@ -34,7 +34,13 @@ function timeAgo(dateStr: string): string {
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-const NotificationDropdown: React.FC = () => {
+interface NotificationDropdownProps {
+  // Used in the mobile hamburger menu (dark background) — the desktop
+  // navbar (light background) is the default and unaffected.
+  variant?: 'light' | 'dark';
+}
+
+const NotificationDropdown: React.FC<NotificationDropdownProps> = ({ variant = 'light' }) => {
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -105,7 +111,11 @@ const NotificationDropdown: React.FC = () => {
       {/* Bell trigger */}
       <button
         onClick={() => setOpen(prev => !prev)}
-        className="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+        className={
+          variant === 'dark'
+            ? 'relative p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors'
+            : 'relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors'
+        }
         aria-label={`Notifications${unreadTotal > 0 ? ` (${unreadTotal} unread)` : ''}`}
       >
         <Bell className="w-5 h-5" />
@@ -118,7 +128,7 @@ const NotificationDropdown: React.FC = () => {
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute right-0 mt-2 w-96 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
+        <div className="absolute right-0 mt-2 w-96 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
             <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>

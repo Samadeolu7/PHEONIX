@@ -15,12 +15,14 @@ import {
   Plus,
   Hash,
   ChevronRight,
+  ChevronLeft,
   UserPlus,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { threadService } from '../services/threadService';
 import { useAuth } from '../contexts/AuthContext';
 import { getRoleRank } from '../types/roles';
+import { useResponsive } from '../hooks/useResponsive';
 import type { Thread, ThreadMessageItem } from '../types/threads';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -272,6 +274,11 @@ interface ConversationPaneProps {
   currentUserName: string;
   isDirector: boolean;
   onStatusChange: (updated: Thread) => void;
+  // Set only on mobile (see the main page component) — renders a back
+  // button in the header so the conversation can hand the screen back to
+  // the sidebar list instead of the two ever sharing width on a narrow
+  // viewport.
+  onBack?: () => void;
 }
 
 function ConversationPane({
@@ -280,6 +287,7 @@ function ConversationPane({
   currentUserName,
   isDirector,
   onStatusChange,
+  onBack,
 }: ConversationPaneProps) {
   const [local, setLocal] = useState<Thread>(thread);
   const [messages, setMessages] = useState<ThreadMessageItem[]>([]);
@@ -393,8 +401,18 @@ function ConversationPane({
   return (
     <div className="flex flex-col h-full overflow-hidden bg-white">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3.5 border-b border-gray-100 bg-white flex-shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-gray-100 bg-white flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="p-1.5 -ml-1.5 rounded-lg hover:bg-gray-100 text-gray-500 flex-shrink-0"
+              aria-label="Back to discussions"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          )}
           <div className={cn(
             'w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0',
             isClosed ? 'bg-gray-100' : 'bg-[#0a1857]/8'
@@ -665,6 +683,7 @@ function ConversationPane({
 
 export default function DiscussionsWorkspacePage() {
   const { user } = useAuth();
+  const { isMobile } = useResponsive();
   const [openThreads, setOpenThreads] = useState<Thread[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
 
@@ -703,19 +722,33 @@ export default function DiscussionsWorkspacePage() {
     setOpenThreads(prev => prev.map(t => (t.id === updated.id ? updated : t)));
   };
 
+  // Below md, the sidebar and the conversation never share the screen —
+  // whichever one is relevant is shown full-width instead (list, then tap
+  // in; back button returns to the list). See ConversationPane's onBack.
+  const showSidebarOnMobile = isMobile && activeId === null;
+  const showWorkspaceOnMobile = isMobile && activeId !== null;
+
   return (
     <div className="flex overflow-hidden bg-gray-50" style={{ height: 'calc(100vh - 4rem)' }}>
       {/* Left sidebar */}
-      <div className="w-64 flex-shrink-0 flex flex-col overflow-hidden">
-        <Sidebar
-          openIds={openThreads.map(t => t.id)}
-          activeId={activeId}
-          onSelect={handleSelect}
-        />
-      </div>
+      {(!isMobile || showSidebarOnMobile) && (
+        <div className={cn(
+          'flex-shrink-0 flex flex-col overflow-hidden',
+          isMobile ? 'w-full' : 'w-64'
+        )}>
+          <Sidebar
+            openIds={openThreads.map(t => t.id)}
+            activeId={activeId}
+            onSelect={handleSelect}
+          />
+        </div>
+      )}
 
       {/* Main workspace */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className={cn(
+        'flex-1 flex flex-col overflow-hidden',
+        isMobile && !showWorkspaceOnMobile && 'hidden'
+      )}>
         {openThreads.length === 0 ? (
           /* Empty welcome state */
           <div className="flex-1 flex flex-col items-center justify-center gap-6 text-center p-12">
@@ -812,6 +845,7 @@ export default function DiscussionsWorkspacePage() {
                   currentUserName={currentUserName}
                   isDirector={isDirector}
                   onStatusChange={handleStatusChange}
+                  onBack={isMobile ? () => setActiveId(null) : undefined}
                 />
               </div>
             )}
