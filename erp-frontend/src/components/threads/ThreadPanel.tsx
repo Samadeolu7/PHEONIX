@@ -164,7 +164,14 @@ export const ThreadPanel: React.FC = () => {
         threadService
           .markRead(selectedThreadId!)
           .then(() => {
-            queryClient.invalidateQueries({ queryKey: ['threads', 'list'] });
+            // Whole 'threads' prefix, not just ['threads','list'] — the
+            // global nav/dashboard badge lives at ['threads','widgetSummary']
+            // (ThreadWidget.tsx), a sibling key that a narrower invalidation
+            // here doesn't touch. That badge polls independently every 120s
+            // now (see BADGE_POLL_MS-style comments), so a narrow
+            // invalidation left it showing stale "unread" for up to 2
+            // minutes after the thread was actually read.
+            queryClient.invalidateQueries({ queryKey: ['threads'] });
             queryClient.invalidateQueries({ queryKey: ['notifications'] });
           })
           .catch(() => {});

@@ -21,6 +21,7 @@ import {
   Paperclip,
   FileText,
 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '../lib/utils';
 import { threadService } from '../services/threadService';
 import { useAuth } from '../contexts/AuthContext';
@@ -95,9 +96,16 @@ interface SidebarProps {
   openIds: number[];
   activeId: number | null;
   onSelect: (t: Thread) => void;
+  // Bumped by the parent whenever the open conversation gets marked read —
+  // this list has its own unread badge/count (see totalUnread below), which
+  // otherwise wouldn't reflect that until the next LIST_POLL_MS tick. This
+  // page doesn't use React Query, so unlike ThreadPanel.tsx there's no
+  // query-invalidation path to piggyback on; a plain counter that the
+  // effect below also depends on is the equivalent for manual fetch state.
+  refreshSignal?: number;
 }
 
-function Sidebar({ openIds, activeId, onSelect }: SidebarProps) {
+function Sidebar({ openIds, activeId, onSelect, refreshSignal }: SidebarProps) {
   const [filterTab, setFilterTab] = useState<FilterTab>('mine');
   const [threads, setThreads] = useState<Thread[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,6 +134,14 @@ function Sidebar({ openIds, activeId, onSelect }: SidebarProps) {
     const t = setInterval(fetchThreads, LIST_POLL_MS);
     return () => clearInterval(t);
   }, [fetchThreads]);
+
+  // Refetch (without the loading spinner — this is a background correction,
+  // not a filter/search change) whenever the parent signals a read event.
+  useEffect(() => {
+    if (refreshSignal === undefined) return;
+    fetchThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshSignal]);
 
   const totalUnread = threads.reduce((s, t) => s + t.unread_count, 0);
 
@@ -286,6 +302,11 @@ interface ConversationPaneProps {
   // the sidebar list instead of the two ever sharing width on a narrow
   // viewport.
   onBack?: () => void;
+  // Called after a mark-read actually lands (i.e. new read receipts were
+  // created, not just a no-op re-read) — lets the parent nudge the
+  // sidebar's own unread count/badge and the app-wide notification bell,
+  // neither of which this pane's own React Query cache touches on its own.
+  onRead?: () => void;
 }
 
 function ConversationPane({
@@ -294,6 +315,7 @@ function ConversationPane({
   currentUserName,
   onStatusChange,
   onBack,
+  onRead,
 }: ConversationPaneProps) {
   const [local, setLocal] = useState<Thread>(thread);
   const [messages, setMessages] = useState<ThreadMessageItem[]>([]);
@@ -355,11 +377,11 @@ function ConversationPane({
       // to guard against. Re-marking read on every tick (not just mount)
       // keeps the sidebar's unread badge from re-lighting while the thread
       // is being actively viewed.
-      threadService.markRead(local.id).catch(() => {});
+      threadService.markRead(local.id).then(() => onRead?.()).catch(() => {});
     } catch { /* retain */ } finally {
       setLoadingMsgs(false);
     }
-  }, [local.id]);
+  }, [local.id, onRead]);
 
   // Live-pushed refetch — this pane only exists while its tab is active
   // (see the comment above), so joining unconditionally is fine.
@@ -973,8 +995,21 @@ function ConversationPane({
 export default function DiscussionsWorkspacePage() {
   const { user } = useAuth();
   const { isMobile } = useResponsive();
+  const queryClient = useQueryClient();
   const [openThreads, setOpenThreads] = useState<Thread[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  // Bumped whenever the open conversation is marked read — see Sidebar's
+  // refreshSignal prop and ConversationPane's onRead prop.
+  const [sidebarRefreshTick, setSidebarRefreshTick] = useState(0);
+
+  const handleConversationRead = useCallback(() => {
+    // This page doesn't use React Query for its own data, but the nav
+    // bell/dashboard widget elsewhere in the app do — nudge those too,
+    // otherwise they'd only catch up on their own ~120s fallback poll.
+    queryClient.invalidateQueries({ queryKey: ['threads'] });
+    queryClient.invalidateQueries({ queryKey: ['notifications'] });
+    setSidebarRefreshTick(t => t + 1);
+  }, [queryClient]);
 
   const roles: string[] = (user as any)?.roles ?? [];
   const maxRank = roles.length ? Math.max(0, ...roles.map(getRoleRank)) : 0;
@@ -1029,6 +1064,7 @@ export default function DiscussionsWorkspacePage() {
             openIds={openThreads.map(t => t.id)}
             activeId={activeId}
             onSelect={handleSelect}
+            refreshSignal={sidebarRefreshTick}
           />
         </div>
       )}
@@ -1134,6 +1170,7 @@ export default function DiscussionsWorkspacePage() {
                   currentUserName={currentUserName}
                   onStatusChange={handleStatusChange}
                   onBack={isMobile ? () => setActiveId(null) : undefined}
+                  onRead={handleConversationRead}
                 />
               </div>
             )}
