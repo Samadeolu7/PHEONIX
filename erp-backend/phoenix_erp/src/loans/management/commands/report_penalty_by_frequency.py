@@ -46,10 +46,17 @@ class Command(BaseCommand):
         frequency = options['frequency']
 
         self.stdout.write(self.style.MIGRATE_HEADING('--- LoanProduct penalty configuration ---'))
-        for product in LoanProduct.objects.all().order_by('repayment_frequency', 'name'):
+        self.stdout.write(
+            '(allowed_repayment_frequencies is a list — a product can allow more than '
+            'one frequency, and late_payment_penalty is a single rate shared across '
+            'every frequency that product allows; there is no per-frequency override.)\n'
+        )
+        for product in LoanProduct.objects.all().order_by('name'):
+            freqs = product.allowed_repayment_frequencies or []
+            multi_flag = '  *** MULTIPLE FREQUENCIES ON ONE PRODUCT ***' if len(freqs) > 1 else ''
             self.stdout.write(
-                f"  {product.name:30s} frequency={product.repayment_frequency:10s} "
-                f"penalty_type={product.late_payment_penalty_type:10s} "
+                f"  {product.name:30s} frequencies={freqs}{multi_flag}\n"
+                f"      penalty_type={product.late_payment_penalty_type:10s} "
                 f"penalty_rate={product.late_payment_penalty}  "
                 f"penalty_income_account={'set' if product.penalty_income_account else 'NOT SET'}"
             )
