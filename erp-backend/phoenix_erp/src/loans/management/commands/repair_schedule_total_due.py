@@ -160,7 +160,7 @@ class Command(BaseCommand):
             loan = sched.loan
             penalty_preview = ''
             if sched.status == 'overdue':
-                days_late = (today - sched.due_date).days
+                days_late = loan.product.effective_days_late(sched.due_date, today)
                 new_penalty = (
                     loan.product.calculate_late_penalty(expected - sched.total_paid, days_late, loan.repayment_frequency)
                     if days_late > 0 else Decimal('0.00')
@@ -205,7 +205,7 @@ class Command(BaseCommand):
 
                 new_penalty_due = None
                 if sched.status == 'overdue':
-                    days_late = (today - sched.due_date).days
+                    days_late = loan.product.effective_days_late(sched.due_date, today)
                     new_penalty_due = (
                         loan.product.calculate_late_penalty(
                             expected - sched.total_paid, days_late, loan.repayment_frequency,

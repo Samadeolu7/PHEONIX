@@ -96,11 +96,20 @@ class Command(BaseCommand):
                 if not sched.days_late:
                     needs_review.append(sched)
                     continue
-                days_late = sched.days_late
+                # sched.days_late was recorded at payment time from the raw
+                # (payment_date - due_date) gap — recompute through the
+                # cutover-aware helper instead of trusting the stored value,
+                # which predates the fix for legacy-imported rows.
+                days_late = loan.product.effective_days_late(
+                    sched.due_date, sched.payment_date or today,
+                )
+                if not days_late:
+                    needs_review.append(sched)
+                    continue
                 bucket = settled_flags
                 still_open = False
             elif sched.status in ('partial', 'overdue'):
-                days_late = (today - sched.due_date).days
+                days_late = loan.product.effective_days_late(sched.due_date, today)
                 if days_late <= 0:
                     needs_review.append(sched)
                     continue

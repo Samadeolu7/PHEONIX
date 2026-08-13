@@ -95,9 +95,17 @@ class Command(BaseCommand):
             if sched.status == 'paid':
                 if not sched.days_late:
                     continue
-                days_late = sched.days_late
+                # sched.days_late was recorded at payment time from the raw
+                # (payment_date - due_date) gap — recompute through the
+                # cutover-aware helper instead of trusting the stored value,
+                # which predates the fix for legacy-imported rows.
+                days_late = loan.product.effective_days_late(
+                    sched.due_date, sched.payment_date or today,
+                )
+                if not days_late:
+                    continue
             elif sched.status in ('partial', 'overdue'):
-                days_late = (today - sched.due_date).days
+                days_late = loan.product.effective_days_late(sched.due_date, today)
                 if days_late <= 0:
                     continue
             else:

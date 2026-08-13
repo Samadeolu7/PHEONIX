@@ -93,7 +93,7 @@ class Command(BaseCommand):
 
         for sched in schedules.iterator():
             loan = sched.loan
-            days_late = (today - sched.due_date).days
+            days_late = loan.product.effective_days_late(sched.due_date, today)
             if days_late <= 0:
                 corrected = Decimal('0.00')
             else:

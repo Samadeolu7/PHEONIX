@@ -121,7 +121,7 @@ class Command(BaseCommand):
                     penalty_account = loan.product.penalty_income_account
                     loan_had_accrual = False
                     for sched in overdue_schedules:
-                        days_late = (today - sched.due_date).days
+                        days_late = loan.product.effective_days_late(sched.due_date, today)
                         new_penalty = loan.product.calculate_late_penalty(
                             sched.total_due - sched.total_paid, days_late,
                             loan.repayment_frequency,

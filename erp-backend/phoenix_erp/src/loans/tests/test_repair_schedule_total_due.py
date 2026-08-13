@@ -118,8 +118,9 @@ class RepairScheduleTotalDueTestCase(TestCase):
         # Never touched:
         self.assertEqual(sched.total_paid, Decimal("0.00"))
 
+        expected_days_late = self.product.effective_days_late(due_date, timezone.localdate())
         expected_penalty = self.product.calculate_late_penalty(
-            sched.total_due - sched.total_paid, 278, "monthly",
+            sched.total_due - sched.total_paid, expected_days_late, "monthly",
         ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         self.assertEqual(sched.penalty_due, expected_penalty)
         self.assertGreater(sched.penalty_due, Decimal("0.00"))

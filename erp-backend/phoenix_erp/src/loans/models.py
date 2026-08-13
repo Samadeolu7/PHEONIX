@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models import Sum, Q
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import timedelta
+from datetime import date, timedelta
 
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
@@ -327,6 +327,30 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         'monthly': 30,
         'quarterly': 90,
     }
+
+    # This system went live for penalty purposes on 2026-06-30 (confirmed by
+    # ops, 2026-08-13). import_legacy_data.py seeds LoanRepaymentSchedule rows
+    # with their original (possibly years-old) due_date from the legacy
+    # system, and days-late-based penalty must never count lateness that
+    # occurred before this system existed to enforce it — otherwise every
+    # legacy-imported overdue installment gets charged penalty for its entire
+    # historical lateness, every day, indefinitely, on top of whatever the old
+    # system already did about it. Every caller computing days_late for
+    # calculate_late_penalty() must route it through effective_days_late()
+    # below instead of `(as_of - due_date).days` directly.
+    PENALTY_CUTOVER_DATE = date(2026, 6, 30)
+
+    @staticmethod
+    def effective_days_late(due_date, as_of=None) -> int:
+        """
+        Days late for PENALTY purposes only — lateness is never counted before
+        PENALTY_CUTOVER_DATE, regardless of how old due_date actually is.
+        `as_of` defaults to today; pass a specific date (e.g. payment_date) to
+        recompute what days_late should have been at some point in the past.
+        """
+        as_of = as_of or timezone.now().date()
+        effective_due_date = max(due_date, LoanProduct.PENALTY_CUTOVER_DATE)
+        return max(0, (as_of - effective_due_date).days)
 
     def calculate_late_penalty(
         self, outstanding_amount: Decimal, days_late: int, repayment_frequency: str = None
