@@ -81,7 +81,7 @@ class Command(BaseCommand):
                              help='Actually write the rebuilt schedule. Without this, only previews.')
 
     def handle(self, *args, **options):
-        from loans.models import LoanAccount, LoanRepaymentReversal
+        from loans.models import LoanAccount, LoanRepaymentReversal, LoanRestructure
         from common.models import FinancialAuditLog, log_financial_event
         from transactions.models import Transaction
         from django.utils import timezone
@@ -117,6 +117,7 @@ class Command(BaseCommand):
         self.stdout.write(f'{len(candidates)} loan(s) to check.\n')
 
         excluded_reversals = []
+        excluded_restructured = []
         excluded_no_logs = []
         verified_ok = []
         verified_failed = []
@@ -126,6 +127,23 @@ class Command(BaseCommand):
                 loan=loan, status=LoanRepaymentReversal.COMPLETED,
             ).exists():
                 excluded_reversals.append(loan.loan_number)
+                continue
+
+            # Restructuring never deletes the old schedule rows — it marks them
+            # status='restructured' and generates new ones alongside (see
+            # LoanAccount.restructure(), models.py ~1898). A chronological
+            # replay against "every row this loan has" would revive those
+            # retired rows back into pending/overdue and let the due-date-order
+            # waterfall consume payments against them before ever reaching the
+            # real current installments — exactly what caused this command's
+            # false verification failures on 2026-08-13. Correctly replaying a
+            # restructured loan means splitting at the restructure's
+            # effective_date (pre-restructure payments stay against the old,
+            # now-retired rows; only post-restructure payments apply to the
+            # new ones) — a different, more careful job this command doesn't
+            # attempt. Flag for manual review instead.
+            if LoanRestructure.objects.filter(loan=loan).exists():
+                excluded_restructured.append(loan.loan_number)
                 continue
 
             logs = list(
@@ -154,7 +172,15 @@ class Command(BaseCommand):
                 # command runs can't interleave with the reset/replay below.
                 loan = type(loan).objects.select_for_update().get(pk=loan.pk)
 
-                schedules = list(loan.repayment_schedule.select_for_update().order_by('due_date'))
+                # Only ever touch rows in the normal lifecycle. Belt-and-braces on
+                # top of the LoanRestructure exclusion above — any row sitting in
+                # some other, non-standard status (e.g. 'restructured') is retired
+                # and must never be revived back into the active pool.
+                schedules = list(
+                    loan.repayment_schedule.select_for_update()
+                    .filter(status__in=['pending', 'partial', 'overdue', 'paid'])
+                    .order_by('due_date')
+                )
                 for sched in schedules:
                     sched.principal_paid = Decimal('0.00')
                     sched.interest_paid = Decimal('0.00')
@@ -241,6 +267,12 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(
                 f'\nExcluded — has a completed reversal, needs manual handling ({len(excluded_reversals)}): '
                 + ', '.join(excluded_reversals)
+            ))
+
+        if excluded_restructured:
+            self.stdout.write(self.style.WARNING(
+                f'\nExcluded — has been restructured, needs manual handling ({len(excluded_restructured)}): '
+                + ', '.join(excluded_restructured)
             ))
 
         if excluded_no_logs:
