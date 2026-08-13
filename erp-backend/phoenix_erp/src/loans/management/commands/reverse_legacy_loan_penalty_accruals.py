@@ -70,6 +70,9 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--loan', dest='loan_number', default=None,
                              help='Only process a single loan by loan_number.')
+        parser.add_argument('--exclude', dest='exclude', default='',
+                             help='Comma-separated loan_numbers to hold back for individual review '
+                                  '(e.g. --exclude LN-659,LN-680).')
         parser.add_argument('--apply', action='store_true',
                              help='Actually post the corrections. Without this, only previews.')
 
@@ -79,6 +82,7 @@ class Command(BaseCommand):
         from common.models import FinancialAuditLog, log_financial_event
 
         loan_number = options['loan_number']
+        exclude = {ln.strip() for ln in options['exclude'].split(',') if ln.strip()}
         apply_changes = options['apply']
         today = timezone.localdate()
 
@@ -88,6 +92,9 @@ class Command(BaseCommand):
         ).select_related('product').order_by('loan_number')
         if loan_number:
             loans = loans.filter(loan_number=loan_number)
+        if exclude:
+            loans = loans.exclude(loan_number__in=exclude)
+            self.stdout.write(self.style.WARNING(f'Excluded (held back for review): {", ".join(sorted(exclude))}\n'))
 
         series = None
         if apply_changes:
