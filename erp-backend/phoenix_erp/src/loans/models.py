@@ -340,7 +340,15 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         else:  # percentage, charged once per missed repayment period
             period_days = self._PERIOD_DAYS.get(repayment_frequency or 'monthly', 30)
             periods_late = max(1, days_late // period_days)
-            return (outstanding_amount * self.late_payment_penalty * periods_late) / 100
+            # Quantized here so identical inputs (same periods_late, same
+            # outstanding_amount) always yield an identical, already-rounded
+            # result — otherwise comparing this fresh unrounded value against
+            # the previously-stored 2dp penalty_due produces a phantom ±0.01
+            # "delta" purely from rounding, on every day between period
+            # boundaries where nothing actually changed.
+            return (
+                (outstanding_amount * self.late_payment_penalty * periods_late) / 100
+            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
 class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
