@@ -56,10 +56,11 @@ interface FeeFormProps {
   onSaved: (fee: LoanProductFee) => void;
   onCancel: () => void;
   incomeAccounts: Account[];
+  liabilityAccounts: Account[];
   savingsProducts: { id: number; name: string }[];
 }
 
-function FeeLineForm({ productId, initial, onSaved, onCancel, incomeAccounts, savingsProducts }: FeeFormProps) {
+function FeeLineForm({ productId, initial, onSaved, onCancel, incomeAccounts, liabilityAccounts, savingsProducts }: FeeFormProps) {
   const isEdit = !!initial;
   const [name, setName] = useState(initial?.name ?? '');
   const [feeType, setFeeType] = useState<'fixed' | 'percentage'>(initial?.fee_type ?? 'fixed');
@@ -183,20 +184,31 @@ function FeeLineForm({ productId, initial, onSaved, onCancel, incomeAccounts, sa
             />
           </div>
         )}
-        {/* GL Income Account */}
+        {/* GL Account */}
         <div className="col-span-2 sm:col-span-1">
-          <label className="block text-xs font-medium text-gray-600 mb-1">GL Income Account *</label>
+          <label className="block text-xs font-medium text-gray-600 mb-1">GL Account *</label>
           <select
             value={glAccount}
             onChange={e => setGlAccount(e.target.value)}
-            aria-label="GL income account"
+            aria-label="GL account"
             className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           >
             <option value="">— Select account —</option>
-            {incomeAccounts.map(a => (
-              <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
-            ))}
+            <optgroup label="Income (recognized as revenue)">
+              {incomeAccounts.map(a => (
+                <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+              ))}
+            </optgroup>
+            <optgroup label="Liability (pass-through / held on behalf of others)">
+              {liabilityAccounts.map(a => (
+                <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+              ))}
+            </optgroup>
           </select>
+          <p className="text-xs text-gray-400 mt-1">
+            Use Liability for collections such as Union Purse that are held on behalf of a
+            third party rather than recognized as company income.
+          </p>
         </div>
         {/* Posting Trigger */}
         <div>
@@ -1032,6 +1044,7 @@ export default function LoanProductConfigPage() {
               <FeeLineForm
                 productId={productId}
                 incomeAccounts={incomeAccounts}
+                liabilityAccounts={liabilityAccounts}
                 savingsProducts={savingsProducts}
                 onSaved={handleFeeSaved}
                 onCancel={() => setShowFeeForm(false)}
@@ -1137,6 +1150,7 @@ export default function LoanProductConfigPage() {
                                 productId={productId}
                                 initial={editingFee}
                                 incomeAccounts={incomeAccounts}
+                                liabilityAccounts={liabilityAccounts}
                                 savingsProducts={savingsProducts}
                                 onSaved={handleFeeSaved}
                                 onCancel={() => setEditingFee(null)}

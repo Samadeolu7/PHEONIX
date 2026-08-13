@@ -2903,9 +2903,13 @@ class LoanProductFee(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     gl_income_account = models.ForeignKey(
         Account,
         on_delete=models.PROTECT,
-        limit_choices_to={'account_type': Account.INCOME},
+        limit_choices_to={'account_type__in': [Account.INCOME, Account.LIABILITY]},
         related_name='loan_product_fee_lines',
-        help_text="Income GL account where this fee is posted.",
+        help_text=(
+            "GL account where this fee is posted. Use an Income account for fees "
+            "recognized as revenue, or a Liability account for pass-through "
+            "collections held on behalf of a third party (e.g. Union Purse)."
+        ),
     )
     posting_trigger = models.CharField(
         max_length=20,
