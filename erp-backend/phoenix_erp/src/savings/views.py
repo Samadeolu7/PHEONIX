@@ -414,7 +414,7 @@ class SavingsAccountViewSet(ScopedModelViewSet):
             TransactionEntry.objects
             .filter(account=gl_account, transaction__approved=True)
             .select_related('transaction')
-            .order_by('-transaction__date', '-id')
+            .order_by('transaction__date', 'id')
         )
 
         try:
@@ -425,11 +425,21 @@ class SavingsAccountViewSet(ScopedModelViewSet):
 
         total = qs.count()
         offset = (page - 1) * page_size
-        entries = qs[offset: offset + page_size]
+        entries = list(qs[offset: offset + page_size])
 
-        running_balance = Decimal('0.00')
+        # Compute opening balance = sum of all entries before this page
+        opening = Decimal('0.00')
+        if offset > 0:
+            prior = qs[:offset]
+            for e in prior:
+                if e.side == TransactionEntry.DEBIT:
+                    opening -= e.amount
+                else:
+                    opening += e.amount
+
+        running_balance = opening
         rows = []
-        for entry in reversed(list(entries)):
+        for entry in entries:
             if entry.side == TransactionEntry.DEBIT:
                 running_balance -= entry.amount
             else:
@@ -443,7 +453,6 @@ class SavingsAccountViewSet(ScopedModelViewSet):
                 'credit': str(entry.amount) if entry.side == TransactionEntry.CREDIT else None,
                 'balance': str(running_balance),
             })
-        rows.reverse()
 
         return Response({
             'count': total,
