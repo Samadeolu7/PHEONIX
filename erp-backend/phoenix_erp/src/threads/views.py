@@ -157,13 +157,32 @@ class ThreadViewSet(ScopedModelViewSet):
                     thread=OuterRef('pk'), is_system_message=False, is_deleted=False,
                 ).exclude(author=user).order_by('-created_at').values('created_at')[:1]
             )
-            from django.db.models import F
+            from django.db.models import F, Exists
+            # Directors/Branch Managers can see a thread via oversight
+            # without ever being a tagged ThreadParticipant (see the
+            # get_queryset branch above) — for them _my_last_read is always
+            # NULL (there's no row to hold a read timestamp on), which used
+            # to make _my_last_read__isnull=True match unconditionally and
+            # every oversight thread show as permanently unread no matter
+            # how many times it was actually opened and read. Only apply
+            # unread semantics to threads the user is genuinely a
+            # participant of; there's no per-user read-state to track for a
+            # non-participant (matches ThreadSerializer.get_unread_count's
+            # ThreadParticipant.DoesNotExist -> 0 behavior for the same case).
+            is_participant = Exists(
+                ThreadParticipant.objects.filter(
+                    thread=OuterRef('pk'), user=user, is_deleted=False,
+                )
+            )
             qs = qs.annotate(
                 _my_last_read=my_last_read,
                 _latest_msg=latest_non_sys_msg,
+                _is_participant=is_participant,
             ).filter(
-                Q(_my_last_read__isnull=True, _latest_msg__isnull=False) |
-                Q(_latest_msg__isnull=False, _latest_msg__gt=F('_my_last_read'))
+                Q(_is_participant=True) & (
+                    Q(_my_last_read__isnull=True, _latest_msg__isnull=False) |
+                    Q(_latest_msg__isnull=False, _latest_msg__gt=F('_my_last_read'))
+                )
             )
 
         return qs.order_by('-updated_at').distinct()
@@ -589,7 +608,18 @@ class ThreadViewSet(ScopedModelViewSet):
         # We compute per-thread unread in one pass using participant_map
         unread_counts = {}
         for tid in thread_ids:
-            last_read = participant_map.get(tid)
+            if tid not in participant_map:
+                # Oversight-only thread (Director/Branch Manager sees it via
+                # the branch/tenant-wide base_qs above without being a
+                # tagged ThreadParticipant) — there's no per-user
+                # last_read_at to track for a non-participant, so
+                # participant_map.get(tid) was always None here and every
+                # such thread counted as fully unread forever, no matter how
+                # many times it was actually opened. Matches
+                # ThreadSerializer.get_unread_count's DoesNotExist -> 0.
+                unread_counts[tid] = 0
+                continue
+            last_read = participant_map[tid]
             # A message the current user wrote themselves never counts as
             # unread for them — see ThreadParticipant.has_unread.
             q = ThreadMessage.objects.filter(

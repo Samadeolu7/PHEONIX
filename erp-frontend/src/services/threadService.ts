@@ -99,7 +99,15 @@ export const threadService = {
       attachments.forEach(f => formData.append('attachments', f));
       (mentionedUserIds ?? []).forEach(id => formData.append('mentioned_user_ids', String(id)));
       if (replyToId) formData.append('reply_to', String(replyToId));
-      return api.post(`${MSG_BASE}/`, formData);
+      // api.post() unconditionally JSON.stringifies its payload — passing a
+      // FormData instance through it serializes to the literal string "{}"
+      // (FormData has no enumerable own properties), silently dropping the
+      // thread id, body, and every file. postFormData() is the client's
+      // actual FormData-aware path (see services/api.ts): no Content-Type
+      // override, body passed through as-is so the browser sets the
+      // multipart boundary itself. This exact mistake was already present
+      // in the pre-existing single-attachment code this replaced.
+      return api.postFormData(`${MSG_BASE}/`, formData);
     }
     return api.post(`${MSG_BASE}/`, {
       thread: threadId,
