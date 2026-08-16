@@ -90,12 +90,19 @@ export const ThreadPanel: React.FC = () => {
   const [participantSuggestions, setParticipantSuggestions] = useState<
     { id: number; username: string; full_name: string }[]
   >([]);
+  // A blank query still returns a "browse all staff" list (see
+  // threadService.searchUsers), so gating the dropdown purely on
+  // results.length left it stuck open after clearing the input on
+  // selection — it just redisplayed the browse-all list instead of
+  // closing. Explicit focus-driven visibility fixes that.
+  const [showParticipantSuggestions, setShowParticipantSuggestions] = useState(false);
   const [participantError, setParticipantError] = useState('');
   const [createTitle, setCreateTitle] = useState('');
   const [createReason, setCreateReason] = useState<ThreadReason | ''>('');
   const [reasonManuallySet, setReasonManuallySet] = useState(false);
   const [createParticipants, setCreateParticipants] = useState<{ id: number; full_name: string }[]>([]);
   const [createSearch, setCreateSearch] = useState('');
+  const [showCreateSuggestions, setShowCreateSuggestions] = useState(false);
   const [createError, setCreateError] = useState('');
   const { draft, setDraft, clearDraft } = useThreadDraft(selectedThreadId);
   const [actionError, setActionError] = useState('');
@@ -666,9 +673,11 @@ export const ThreadPanel: React.FC = () => {
                 placeholder="Search by name or username…"
                 value={participantSearch}
                 onChange={e => setParticipantSearch(e.target.value)}
+                onFocus={() => setShowParticipantSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowParticipantSuggestions(false), 150)}
                 className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
               />
-              {participantSearchResults.length > 0 && (
+              {showParticipantSuggestions && participantSearchResults.length > 0 && (
                 <ul className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto">
                   {participantSearchResults.map(u => (
                     <li key={u.id}>
@@ -678,6 +687,7 @@ export const ThreadPanel: React.FC = () => {
                           if (!selectedThread) return;
                           setParticipantError('');
                           addParticipantMutation.mutate({ threadId: selectedThread.id, userId: u.id });
+                          setShowParticipantSuggestions(false);
                         }}
                         className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
                       >
@@ -830,9 +840,11 @@ export const ThreadPanel: React.FC = () => {
                     placeholder="Search by name or username…"
                     value={createSearch}
                     onChange={e => setCreateSearch(e.target.value)}
+                    onFocus={() => setShowCreateSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowCreateSuggestions(false), 150)}
                     className="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]"
                   />
-                  {createSearchData.length > 0 && (
+                  {showCreateSuggestions && createSearchData.length > 0 && (
                     <ul className="absolute top-full left-0 right-0 z-50 bg-white border border-gray-200 rounded shadow-lg max-h-40 overflow-y-auto">
                       {createSearchData.map(u => (
                         <li key={u.id}>
@@ -846,6 +858,7 @@ export const ThreadPanel: React.FC = () => {
                                 ]);
                               }
                               setCreateSearch('');
+                              setShowCreateSuggestions(false);
                             }}
                             className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50"
                           >
