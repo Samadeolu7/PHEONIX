@@ -12,23 +12,44 @@ import { useToast } from '../../hooks/useToast';
 
 interface EntryRow {
   rowId: string;
-  account: Account | null;
-  accountSearch: string;
-  accountResults: Account[];
-  showDropdown: boolean;
+  // Stage 1: a GL ledger account — either directly postable, or a
+  // parent/category account (e.g. "Savings", "Loans") that requires
+  // drilling into stage 2 to reach an actual postable sub-ledger.
+  ledgerAccount: Account | null;
+  ledgerSearch: string;
+  ledgerResults: Account[];
+  showLedgerDropdown: boolean;
+  // Stage 2: only used when ledgerAccount is a category account — the
+  // specific sub-ledger (e.g. one client's savings/loan account) to post to.
+  subledgerAccount: Account | null;
+  subledgerSearch: string;
+  subledgerResults: Account[];
+  showSubledgerDropdown: boolean;
   side: 'DR' | 'CR';
   amount: string;
 }
 
 const emptyRow = (rowId: string): EntryRow => ({
   rowId,
-  account: null,
-  accountSearch: '',
-  accountResults: [],
-  showDropdown: false,
+  ledgerAccount: null,
+  ledgerSearch: '',
+  ledgerResults: [],
+  showLedgerDropdown: false,
+  subledgerAccount: null,
+  subledgerSearch: '',
+  subledgerResults: [],
+  showSubledgerDropdown: false,
   side: 'DR',
   amount: '',
 });
+
+// The account transactions actually post to: the ledger account itself,
+// unless it's a category/parent (no direct postings allowed), in which case
+// it's whichever sub-ledger was picked under it.
+const resolvedAccount = (row: EntryRow): Account | null =>
+  row.ledgerAccount && !row.ledgerAccount.is_category_account
+    ? row.ledgerAccount
+    : row.subledgerAccount;
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -72,22 +93,57 @@ const JournalVoucherFormPage: React.FC = () => {
     setEntries(rows => rows.map(r => (r.rowId === rowId ? { ...r, ...changes } : r)));
   };
 
-  const searchAccounts = async (rowId: string, q: string) => {
-    updateRow(rowId, { accountSearch: q, account: null });
+  const searchLedger = async (rowId: string, q: string) => {
+    updateRow(rowId, {
+      ledgerSearch: q,
+      ledgerAccount: null,
+      subledgerAccount: null,
+      subledgerSearch: '',
+      subledgerResults: [],
+      showSubledgerDropdown: false,
+    });
     if (q.length < 2) {
-      updateRow(rowId, { accountResults: [], showDropdown: false });
+      updateRow(rowId, { ledgerResults: [], showLedgerDropdown: false });
       return;
     }
     const results = await accountService.getAccounts({ search: q, is_active: true });
-    updateRow(rowId, { accountResults: results.slice(0, 8), showDropdown: true });
+    updateRow(rowId, { ledgerResults: results.slice(0, 8), showLedgerDropdown: true });
   };
 
-  const selectAccount = (rowId: string, account: Account) => {
+  const selectLedger = (rowId: string, account: Account) => {
     updateRow(rowId, {
-      account,
-      accountSearch: `${account.code} – ${account.name}`,
-      showDropdown: false,
-      accountResults: [],
+      ledgerAccount: account,
+      ledgerSearch: `${account.code} – ${account.name}`,
+      showLedgerDropdown: false,
+      ledgerResults: [],
+      subledgerAccount: null,
+      subledgerSearch: '',
+      subledgerResults: [],
+      showSubledgerDropdown: false,
+    });
+  };
+
+  const searchSubledger = async (rowId: string, parentId: string, q: string) => {
+    updateRow(rowId, { subledgerSearch: q, subledgerAccount: null });
+    if (q.length < 2) {
+      updateRow(rowId, { subledgerResults: [], showSubledgerDropdown: false });
+      return;
+    }
+    const results = await accountService.getAccounts({
+      search: q,
+      is_active: true,
+      parent: parentId,
+      include_subledgers: true,
+    });
+    updateRow(rowId, { subledgerResults: results.slice(0, 8), showSubledgerDropdown: true });
+  };
+
+  const selectSubledger = (rowId: string, account: Account) => {
+    updateRow(rowId, {
+      subledgerAccount: account,
+      subledgerSearch: `${account.code} – ${account.name}`,
+      showSubledgerDropdown: false,
+      subledgerResults: [],
     });
   };
 
@@ -116,7 +172,7 @@ const JournalVoucherFormPage: React.FC = () => {
       return;
     }
 
-    const validEntries = entries.filter(r => r.account && r.amount);
+    const validEntries = entries.filter(r => resolvedAccount(r) && r.amount);
     if (validEntries.length < 2) {
       showError('At least 2 entries (debit and credit) are required');
       return;
@@ -127,7 +183,7 @@ const JournalVoucherFormPage: React.FC = () => {
     }
 
     const payload: CreateJournalVoucherEntry[] = validEntries.map(r => ({
-      account_id: r.account!.id as unknown as number,
+      account_id: resolvedAccount(r)!.id as unknown as number,
       side: r.side,
       amount: (parseFloat(r.amount) || 0).toFixed(2),
     }));
@@ -168,7 +224,7 @@ const JournalVoucherFormPage: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {isBalanced && entries.filter(r => r.account && r.amount).length >= 2 && (
+            {isBalanced && entries.filter(r => resolvedAccount(r) && r.amount).length >= 2 && (
               <span className="flex items-center gap-1 text-green-600 text-sm">
                 <CheckCircle size={15} /> Balanced
               </span>
@@ -276,8 +332,9 @@ const JournalVoucherFormPage: React.FC = () => {
           <div className="divide-y divide-gray-50">
             {entries.map((row, idx) => (
               <div key={row.rowId} className="grid grid-cols-12 gap-2 px-4 py-2 items-start">
-                {/* Account search */}
-                <div className="col-span-5 relative">
+                {/* Account search: stage 1 (ledger) + stage 2 (sub-ledger) */}
+                <div className="col-span-5 relative space-y-1">
+                  {/* Stage 1: Ledger */}
                   <div className="relative">
                     <Search
                       size={13}
@@ -285,33 +342,84 @@ const JournalVoucherFormPage: React.FC = () => {
                     />
                     <input
                       type="text"
-                      placeholder="Search account…"
-                      value={row.accountSearch}
-                      onChange={e => searchAccounts(row.rowId, e.target.value)}
+                      placeholder="Search ledger account…"
+                      value={row.ledgerSearch}
+                      onChange={e => searchLedger(row.rowId, e.target.value)}
                       onBlur={() =>
-                        setTimeout(() => updateRow(row.rowId, { showDropdown: false }), 200)
+                        setTimeout(() => updateRow(row.rowId, { showLedgerDropdown: false }), 200)
                       }
                       className="w-full pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
+                    {row.showLedgerDropdown && row.ledgerResults.length > 0 && (
+                      <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {row.ledgerResults.map(acc => (
+                          <button
+                            key={acc.id}
+                            type="button"
+                            onMouseDown={() => selectLedger(row.rowId, acc)}
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors flex items-center gap-2"
+                          >
+                            <span className="font-mono text-gray-500">{acc.code}</span>
+                            <span className="text-gray-700">{acc.name}</span>
+                            {acc.is_category_account && (
+                              <span className="ml-auto text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded flex-shrink-0">
+                                Ledger
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {row.showDropdown && row.accountResults.length > 0 && (
-                    <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                      {row.accountResults.map(acc => (
-                        <button
-                          key={acc.id}
-                          type="button"
-                          onMouseDown={() => selectAccount(row.rowId, acc)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors flex items-center gap-2"
-                        >
-                          <span className="font-mono text-gray-500">{acc.code}</span>
-                          <span className="text-gray-700">{acc.name}</span>
-                        </button>
-                      ))}
+
+                  {/* Stage 2: Sub-ledger — only when the ledger picked is a category (e.g. Savings, Loans) */}
+                  {row.ledgerAccount?.is_category_account && (
+                    <div className="relative pl-3 border-l-2 border-blue-100">
+                      <Search
+                        size={13}
+                        className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400"
+                      />
+                      <input
+                        type="text"
+                        placeholder={`Search ${row.ledgerAccount.name} sub-ledger…`}
+                        value={row.subledgerSearch}
+                        onChange={e =>
+                          searchSubledger(row.rowId, row.ledgerAccount!.id, e.target.value)
+                        }
+                        onBlur={() =>
+                          setTimeout(
+                            () => updateRow(row.rowId, { showSubledgerDropdown: false }),
+                            200
+                          )
+                        }
+                        className="w-full pl-7 pr-3 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      {row.showSubledgerDropdown && row.subledgerResults.length > 0 && (
+                        <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                          {row.subledgerResults.map(acc => (
+                            <button
+                              key={acc.id}
+                              type="button"
+                              onMouseDown={() => selectSubledger(row.rowId, acc)}
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors flex items-center gap-2"
+                            >
+                              <span className="font-mono text-gray-500">{acc.code}</span>
+                              <span className="text-gray-700">{acc.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
-                  {row.account && (
-                    <span className="block text-xs text-green-600 mt-0.5 pl-1">
-                      ✓ {row.account.code} – {row.account.name}
+
+                  {resolvedAccount(row) && (
+                    <span className="block text-xs text-green-600 pl-1">
+                      ✓ {resolvedAccount(row)!.code} – {resolvedAccount(row)!.name}
+                    </span>
+                  )}
+                  {row.ledgerAccount?.is_category_account && !row.subledgerAccount && (
+                    <span className="block text-xs text-amber-600 pl-1">
+                      Select a sub-ledger account to continue
                     </span>
                   )}
                 </div>
@@ -428,7 +536,9 @@ const JournalVoucherFormPage: React.FC = () => {
           <button
             type="submit"
             disabled={
-              createMutation.isPending || !isBalanced || entries.filter(r => r.account && r.amount).length < 2
+              createMutation.isPending ||
+              !isBalanced ||
+              entries.filter(r => resolvedAccount(r) && r.amount).length < 2
             }
             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >

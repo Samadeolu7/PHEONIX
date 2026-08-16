@@ -7,6 +7,9 @@ export const accountService = {
     search?: string;
     is_active?: boolean;
     branch?: number;
+    // Scope results to the children of a specific parent/ledger account —
+    // used for the JV form's sub-ledger drill-down step.
+    parent?: number | string;
     // Per-entity sub-ledger accounts (one row per loan/savings account/
     // cashier till) are excluded by default — only pass true for pages that
     // need to pick an *existing* cashier/loan/savings sub-account directly

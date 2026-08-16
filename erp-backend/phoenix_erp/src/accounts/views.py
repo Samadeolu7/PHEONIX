@@ -100,7 +100,7 @@ class AccountViewSet(ScopedModelViewSet):
                 qs = Account.exclude_entity_subledgers(qs)
         return qs
 
-    filterset_fields = ['account_type', 'account_level', 'branch']
+    filterset_fields = ['account_type', 'account_level', 'branch', 'parent']
     search_fields = ['name', 'code']
     ordering_fields = ['code', 'name', 'balance', 'created_at']
     ordering = ['code']  # Default ordering by account code
