@@ -8,8 +8,9 @@ carrying ~58 stale unpaid/overdue installments (~57,800.00) left over from
 before whatever happened in the legacy system (most likely a rollover/top-up/
 consolidation that zeroed the old system's own `balance` field without ever
 marking the corresponding installment rows paid there). See
-audit_outstanding_principal_vs_schedule for the full mechanism and the list
-of other loans showing the same kind of disagreement.
+audit_outstanding_principal_vs_schedule for the full mechanism, the
+schedule_matches_terms integrity check, and the --summary / --list-understated
+options that identify the batch-apply cohort used here (--batch).
 
 This command does NOT touch outstanding_principal/interest/fees/penalties —
 those stay exactly as imported, already correct. It only retires the portion
@@ -39,22 +40,34 @@ risk_classification / provision_pct / provision_amount (LoanAccount.
 update_risk_classification()) from the now-correct schedule, and logs one
 FinancialAuditLog(LOAN_BALANCE_CORRECTION) entry per loan for traceability.
 
+Only handles the UNDERSTATED direction (outstanding_principal < schedule
+remaining) — the shape validated on LN-858. OVERSTATED loans (outstanding_
+principal > schedule remaining) are a different, unvalidated problem: there's
+nothing to retire, the schedule would need debt added back, not removed.
+--batch mode filters those out entirely; a single --loan run refuses an
+OVERSTATED loan outright.
+
 SAFETY:
-  - Requires --loan (no batch/auto-detect mode) — this is a per-loan,
-    ops-confirmed correction, not something to run blind across the book.
+  - Two modes: --loan <number> for one loan, or --batch to process every
+    legacy_import + UNDERSTATED + schedule_matches_terms=True loan in one
+    run (same cohort definition as audit_outstanding_principal_vs_schedule
+    --list-understated). Exactly one of the two is required.
   - Refuses to run on a loan unless origin=legacy_import, unless --force is
-    passed — this mechanism assumes the specific legacy rollover/consolidation
-    cause; a non-legacy loan with the same numeric symptom needs a different
-    diagnosis first.
+    passed (single-loan mode only — --force + --batch is rejected, since
+    --batch's whole filter already assumes the confirmed legacy cause).
   - Dry-run by default. Nothing is written until --apply.
-  - Verifies after retiring that the schedule's new remaining (principal +
-    interest + fees only — penalty is tracked and retired separately) matches
-    outstanding_principal + outstanding_interest + outstanding_fees within
-    tolerance before committing; rolls back and reports failure otherwise.
+  - Each loan is processed in its own atomic block with a savepoint —
+    verifies the schedule's new remaining (principal + interest + fees;
+    penalty tracked and retired separately) reconciles to outstanding_
+    principal + outstanding_interest + outstanding_fees within tolerance
+    before committing; rolls back and reports failure otherwise. In --batch
+    mode, one loan failing verification does not stop the rest.
 
 Usage:
     python manage.py retire_stale_legacy_schedule_rows --loan LN-858            # dry-run
     python manage.py retire_stale_legacy_schedule_rows --loan LN-858 --apply
+    python manage.py retire_stale_legacy_schedule_rows --batch                  # dry-run, all
+    python manage.py retire_stale_legacy_schedule_rows --batch --apply
 """
 from decimal import Decimal
 
@@ -74,45 +87,123 @@ _COMPONENTS = [
 
 class Command(BaseCommand):
     help = (
-        'Retire stale phantom schedule installments on a legacy-imported loan down to '
+        'Retire stale phantom schedule installments on legacy-imported loan(s) down to '
         'exactly what outstanding_principal/interest/fees/penalties says is really owed. '
-        'Per-loan only, dry-run by default.'
+        'Single loan (--loan) or the full validated cohort (--batch), dry-run by default.'
     )
 
     def add_arguments(self, parser):
-        parser.add_argument('--loan', dest='loan_number', required=True,
+        parser.add_argument('--loan', dest='loan_number', default=None,
                              help='Loan number to correct.')
+        parser.add_argument('--batch', action='store_true',
+                             help='Process every legacy_import + UNDERSTATED + '
+                                  'schedule_matches_terms=True loan in one run.')
         parser.add_argument('--apply', action='store_true',
                              help='Actually write the correction. Without this, only previews.')
         parser.add_argument('--force', action='store_true',
-                             help='Allow running on a loan that is not origin=legacy_import.')
+                             help='Allow running on a loan that is not origin=legacy_import. '
+                                  'Only valid with --loan.')
+        parser.add_argument('--tolerance', type=str, default='1.00',
+                             help='Naira drift below which a loan is not part of the --batch '
+                                  'cohort (default 1.00, matches the audit command default).')
 
     def handle(self, *args, **options):
         from loans.models import LoanAccount
-        from common.models import FinancialAuditLog, log_financial_event
 
         loan_number = options['loan_number']
+        batch = options['batch']
         apply_changes = options['apply']
         force = options['force']
 
-        try:
-            loan = LoanAccount.all_objects.select_related('client').get(
-                loan_number=loan_number, is_deleted=False,
-            )
-        except LoanAccount.DoesNotExist:
-            raise CommandError(f'Loan {loan_number} not found.')
-
-        if loan.origin != LoanAccount.ORIGIN_LEGACY_IMPORT and not force:
+        if bool(loan_number) == bool(batch):
+            raise CommandError('Pass exactly one of --loan <number> or --batch.')
+        if batch and force:
             raise CommandError(
-                f'{loan_number} has origin={loan.origin!r}, not legacy_import. This command '
-                'assumes the legacy rollover/consolidation cause confirmed on LN-858 — pass '
-                '--force if you have independently confirmed the same cause applies here.'
+                '--force is not valid with --batch — --batch already restricts itself to '
+                'origin=legacy_import loans matching the confirmed pattern.'
             )
+
+        if loan_number:
+            try:
+                loan = LoanAccount.all_objects.select_related('client').get(
+                    loan_number=loan_number, is_deleted=False,
+                )
+            except LoanAccount.DoesNotExist:
+                raise CommandError(f'Loan {loan_number} not found.')
+
+            if loan.origin != LoanAccount.ORIGIN_LEGACY_IMPORT and not force:
+                raise CommandError(
+                    f'{loan_number} has origin={loan.origin!r}, not legacy_import. This command '
+                    'assumes the legacy rollover/consolidation cause confirmed on LN-858 — pass '
+                    '--force if you have independently confirmed the same cause applies here.'
+                )
+            loans = [loan]
+        else:
+            loans = self._understated_cohort(LoanAccount, Decimal(options['tolerance']))
+            self.stdout.write(f'{len(loans)} loan(s) in the batch cohort.\n')
+
+        applied, dry_ran, failed = 0, 0, 0
+        for loan in loans:
+            result = self._process_loan(loan, apply_changes)
+            if result == 'applied':
+                applied += 1
+            elif result == 'dry_run_ok':
+                dry_ran += 1
+            else:
+                failed += 1
+
+        if len(loans) > 1:
+            self.stdout.write('')
+            if apply_changes:
+                self.stdout.write(self.style.SUCCESS(
+                    f'Batch done. applied={applied} failed_verification={failed}'
+                ))
+            else:
+                self.stdout.write(self.style.WARNING(
+                    f'DRY-RUN done. would_apply={dry_ran} failed_verification={failed} '
+                    '— re-run with --apply to write.'
+                ))
+
+    @staticmethod
+    def _understated_cohort(LoanAccount, tolerance):
+        """Same cohort definition as audit_outstanding_principal_vs_schedule --list-understated."""
+        from django.db.models import Sum
+
+        loans = LoanAccount.all_objects.filter(
+            is_deleted=False, origin=LoanAccount.ORIGIN_LEGACY_IMPORT,
+        ).exclude(
+            status__in=['written_off', 'paid_off', 'closed'],
+        ).select_related('client').order_by('loan_number')
+
+        cohort = []
+        for loan in loans.iterator():
+            agg = loan.repayment_schedule.exclude(status='restructured').aggregate(
+                principal_due=Sum('principal_due'), principal_paid=Sum('principal_paid'),
+                total_due=Sum('total_due'),
+            )
+            principal_due = agg['principal_due'] or Decimal('0.00')
+            principal_paid = agg['principal_paid'] or Decimal('0.00')
+            total_due = agg['total_due'] or Decimal('0.00')
+            schedule_remaining = principal_due - principal_paid
+            drift = loan.outstanding_principal - schedule_remaining
+            disbursed = loan.disbursed_amount or Decimal('0.00')
+            schedule_matches_terms = disbursed > 0 and total_due <= disbursed * Decimal('3')
+
+            if drift < -tolerance and schedule_matches_terms:
+                cohort.append(loan)
+        return cohort
+
+    def _process_loan(self, loan, apply_changes):
+        """Returns 'applied', 'dry_run_ok', or 'failed'."""
+        from common.models import FinancialAuditLog, log_financial_event
+
+        loan_number = loan.loan_number
+        outcome = 'failed'
 
         with db_transaction.atomic():
             sid = db_transaction.savepoint()
 
-            loan = LoanAccount.all_objects.select_for_update().get(pk=loan.pk)
+            loan = type(loan).all_objects.select_for_update().get(pk=loan.pk)
             rows = list(
                 loan.repayment_schedule.select_for_update()
                 .filter(status__in=['pending', 'partial', 'overdue'])
@@ -202,17 +293,17 @@ class Command(BaseCommand):
             if not ok:
                 db_transaction.savepoint_rollback(sid)
                 self.stderr.write(self.style.ERROR(
-                    f'\n[{loan_number}] FAILED verification after retiring — NOT written. '
+                    f'[{loan_number}] FAILED verification after retiring — NOT written. '
                     'Schedule remaining does not reconcile to outstanding_* within tolerance.'
                 ))
-                return
+                return 'failed'
 
             if not apply_changes:
                 db_transaction.savepoint_rollback(sid)
                 self.stdout.write(self.style.WARNING(
-                    '\nDRY-RUN — verified clean, nothing written. Re-run with --apply.'
+                    f'[{loan_number}] DRY-RUN — verified clean, nothing written.\n'
                 ))
-                return
+                return 'dry_run_ok'
 
             for row in touched_rows:
                 row.save(update_fields=[
@@ -247,10 +338,13 @@ class Command(BaseCommand):
             )
 
             db_transaction.savepoint_commit(sid)
+            outcome = 'applied'
 
             self.stdout.write(self.style.SUCCESS(
-                f'\nApplied. arrears_amount {before_arrears:,.2f} -> {loan.arrears_amount:,.2f}  '
-                f'days_in_arrears {before_dpd} -> {loan.days_in_arrears}  '
+                f'[{loan_number}] Applied. arrears_amount {before_arrears:,.2f} -> '
+                f'{loan.arrears_amount:,.2f}  days_in_arrears {before_dpd} -> {loan.days_in_arrears}  '
                 f'risk_classification {before_risk} -> {loan.risk_classification}  '
-                f'provision_amount {before_provision:,.2f} -> {loan.provision_amount:,.2f}'
+                f'provision_amount {before_provision:,.2f} -> {loan.provision_amount:,.2f}\n'
             ))
+
+        return outcome

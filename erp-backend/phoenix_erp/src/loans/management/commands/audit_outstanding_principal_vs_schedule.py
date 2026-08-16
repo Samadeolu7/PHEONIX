@@ -96,6 +96,13 @@ class Command(BaseCommand):
                              help='Naira drift below which a loan is not flagged (default 1.00).')
         parser.add_argument('--legacy-only', action='store_true',
                              help='Only check loans with origin=legacy_import.')
+        parser.add_argument('--summary', action='store_true',
+                             help='Print only the direction/schedule_matches_terms breakdown counts, '
+                                  'not the full per-loan detail.')
+        parser.add_argument('--list-understated', action='store_true',
+                             help='Print just a space-separated list of loan_numbers for the '
+                                  'legacy_import + UNDERSTATED + schedule_matches_terms=True cohort '
+                                  '(the LN-858 pattern) — for piping into a batch-apply loop.')
 
     def handle(self, *args, **options):
         from loans.models import LoanAccount
@@ -103,6 +110,8 @@ class Command(BaseCommand):
         tolerance = Decimal(options['tolerance'])
         loan_number = options['loan_number']
         legacy_only = options['legacy_only']
+        summary_only = options['summary']
+        list_understated = options['list_understated']
 
         loans = LoanAccount.all_objects.filter(
             is_deleted=False,
@@ -148,16 +157,54 @@ class Command(BaseCommand):
             ))
             return
 
+        # The batch-apply candidate cohort for retire_stale_legacy_schedule_rows: same
+        # shape as LN-858 (legacy_import, UNDERSTATED, schedule structurally intact).
+        # OVERSTATED loans are a different, unvalidated problem — deliberately excluded.
+        understated_cohort = [
+            loan for loan, _, drift, schedule_matches_terms in flagged
+            if drift < 0
+            and schedule_matches_terms
+            and loan.origin == LoanAccount.ORIGIN_LEGACY_IMPORT
+        ]
+
+        if list_understated:
+            self.stdout.write(' '.join(loan.loan_number for loan in understated_cohort))
+            return
+
+        legacy_count = sum(
+            1 for loan, *_ in flagged if loan.origin == LoanAccount.ORIGIN_LEGACY_IMPORT
+        )
+        understated_count = sum(1 for _, _, drift, _ in flagged if drift < 0)
+        overstated_count = len(flagged) - understated_count
+        matches_terms_count = sum(1 for *_, m in flagged if m)
+
+        if summary_only:
+            self.stdout.write(self.style.ERROR(
+                f'{len(flagged)} loan(s) have outstanding_principal out of sync with their schedule:'
+            ))
+            self.stdout.write(f'  legacy_import origin       : {legacy_count}/{len(flagged)}')
+            self.stdout.write(f'  UNDERSTATED (schedule > OP) : {understated_count}')
+            self.stdout.write(f'  OVERSTATED  (OP > schedule) : {overstated_count}')
+            self.stdout.write(f'  schedule_matches_terms=True : {matches_terms_count}/{len(flagged)}')
+            self.stdout.write(self.style.SUCCESS(
+                f'\nBatch-apply candidates (legacy_import + UNDERSTATED + schedule_matches_terms=True, '
+                f'the validated LN-858 pattern): {len(understated_cohort)}\n'
+                f'  Re-run with --list-understated to get their loan_numbers.\n'
+            ))
+            self.stdout.write(self.style.WARNING(
+                f'{overstated_count} OVERSTATED loan(s) are a different, unvalidated problem — '
+                'the schedule shows LESS owed than outstanding_principal, so there is nothing to '
+                'retire; retire_stale_legacy_schedule_rows does not apply to them. Needs separate '
+                'diagnosis before any correction.'
+            ))
+            return
+
         self.stdout.write(self.style.ERROR(
             f'{len(flagged)} loan(s) have outstanding_principal out of sync with their schedule:\n'
         ))
 
-        legacy_count = 0
         for loan, schedule_remaining, drift, schedule_matches_terms in flagged:
             direction = 'UNDERSTATED' if drift < 0 else 'OVERSTATED'
-            is_legacy = loan.origin == LoanAccount.ORIGIN_LEGACY_IMPORT
-            if is_legacy:
-                legacy_count += 1
             self.stdout.write(
                 f'  [{loan.loan_number}] pk={loan.pk}  client={loan.client_id}  status={loan.status}  '
                 f'origin={loan.origin}  days_in_arrears={loan.days_in_arrears}\n'
@@ -170,12 +217,14 @@ class Command(BaseCommand):
             )
 
         self.stdout.write(self.style.WARNING(
-            f'\n{legacy_count}/{len(flagged)} flagged loans are origin=legacy_import. For those, '
-            'outstanding_principal came from the old system\'s `balance` field and the schedule\'s '
-            'paid/unpaid flags came from a separate export — nothing cross-checks them at import '
-            '(see import_legacy_data.py:_import_loans). schedule_matches_terms=True means the '
-            'schedule itself is structurally intact (not duplicated/corrupted) — the disagreement '
+            f'\n{legacy_count}/{len(flagged)} flagged loans are origin=legacy_import '
+            f'({understated_count} UNDERSTATED, {overstated_count} OVERSTATED). For legacy_import '
+            'loans, outstanding_principal came from the old system\'s `balance` field and the '
+            'schedule\'s paid/unpaid flags came from a separate export — nothing cross-checks them '
+            'at import (see import_legacy_data.py:_import_loans). schedule_matches_terms=True means '
+            'the schedule itself is structurally intact (not duplicated/corrupted) — the disagreement '
             'is an origin-data conflict between two legacy fields, not a schedule-generation bug. '
             'Confirm against the legacy source or ops before trusting either figure over the other; '
-            'this command applies no correction.'
+            'this command applies no correction. Use --summary for just the counts, or '
+            '--list-understated for the retire_stale_legacy_schedule_rows batch-apply candidate list.'
         ))
