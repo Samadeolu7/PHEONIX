@@ -179,13 +179,26 @@ class Command(BaseCommand):
         for loan in loans.iterator():
             agg = loan.repayment_schedule.exclude(status='restructured').aggregate(
                 principal_due=Sum('principal_due'), principal_paid=Sum('principal_paid'),
+                interest_due=Sum('interest_due'), interest_paid=Sum('interest_paid'),
+                fees_due=Sum('fees_due'), fees_paid=Sum('fees_paid'),
+                penalty_due=Sum('penalty_due'), penalty_paid=Sum('penalty_paid'),
                 total_due=Sum('total_due'),
             )
-            principal_due = agg['principal_due'] or Decimal('0.00')
-            principal_paid = agg['principal_paid'] or Decimal('0.00')
+            # Full picture across all four components — not principal alone. A loan can
+            # look principal-understated while actually being penalty-overstated (see
+            # LN-342: principal/interest matched, but a real 22,994.99 penalty accrual
+            # meant total_outstanding was correct at 93,561.65, not "overstated" the way
+            # a principal-only comparison suggested). Comparing the full totals is what
+            # audit_outstanding_principal_vs_schedule --list-understated now does too —
+            # this must stay in sync with that definition.
+            schedule_owed = (
+                (agg['principal_due'] or Decimal('0.00')) - (agg['principal_paid'] or Decimal('0.00'))
+                + (agg['interest_due'] or Decimal('0.00')) - (agg['interest_paid'] or Decimal('0.00'))
+                + (agg['fees_due'] or Decimal('0.00')) - (agg['fees_paid'] or Decimal('0.00'))
+                + (agg['penalty_due'] or Decimal('0.00')) - (agg['penalty_paid'] or Decimal('0.00'))
+            )
             total_due = agg['total_due'] or Decimal('0.00')
-            schedule_remaining = principal_due - principal_paid
-            drift = loan.outstanding_principal - schedule_remaining
+            drift = loan.total_outstanding - schedule_owed
             disbursed = loan.disbursed_amount or Decimal('0.00')
             schedule_matches_terms = disbursed > 0 and total_due <= disbursed * Decimal('3')
 
