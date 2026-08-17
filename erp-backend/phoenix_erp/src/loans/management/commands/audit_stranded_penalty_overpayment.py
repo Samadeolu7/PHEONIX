@@ -96,10 +96,16 @@ class Command(BaseCommand):
             f'total stranded {total_real:,.2f} (genuine payments, backed by LoanRepaymentAllocation):\n'
         ))
         for loan, sched, overpaid, alloc_total in real_findings:
+            partial_flag = (
+                f'  *** PARTIAL: only {alloc_total:,.2f} of {overpaid:,.2f} overpaid is allocation-backed — '
+                f'remainder {overpaid - alloc_total:,.2f} is unconfirmed, do not reallocate as real ***'
+                if alloc_total < overpaid else ''
+            )
             self.stdout.write(
                 f'  [{loan.loan_number}] due={sched.due_date}  status={sched.status:10s}  '
                 f'penalty_due={sched.penalty_due:>10,.2f}  penalty_paid={sched.penalty_paid:>10,.2f}  '
                 f'overpaid={overpaid:>10,.2f}  (allocation confirms {alloc_total:,.2f} real penalty applied here)'
+                f'{partial_flag}'
             )
 
         self.stdout.write(self.style.WARNING(

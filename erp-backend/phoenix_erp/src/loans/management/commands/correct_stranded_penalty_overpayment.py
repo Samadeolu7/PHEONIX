@@ -56,6 +56,7 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as db_transaction
+from django.db.models import Sum
 
 TOLERANCE = Decimal('0.01')
 
@@ -137,12 +138,21 @@ class Command(BaseCommand):
                 if overpaid <= TOLERANCE:
                     continue
 
-                is_real = LoanRepaymentAllocation.objects.filter(
+                # Cap what's treated as "real" at the amount an allocation actually
+                # confirms — a row can be part genuine payment, part stale corruption
+                # stacked on top (LN-907: penalty_paid=831.44, allocation only backs
+                # 200.29). Moving the unconfirmed remainder to principal would launder
+                # unbacked figures as real money, so only the confirmed slice moves;
+                # any excess above it gets the STALE row's treatment (discarded, not
+                # redistributed).
+                alloc_total = LoanRepaymentAllocation.objects.filter(
                     schedule=sched, penalty_applied__gt=0,
-                ).exists()
+                ).aggregate(total=Sum('penalty_applied'))['total'] or Decimal('0.00')
+                is_real = alloc_total > 0
+                real_amount = min(overpaid, alloc_total)
                 row_updates.append((sched, sched.penalty_due, is_real, overpaid))
                 if is_real:
-                    real_total += overpaid
+                    real_total += real_amount
 
             if not row_updates:
                 db_transaction.savepoint_rollback(sid)
