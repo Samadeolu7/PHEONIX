@@ -4,10 +4,12 @@ Management command: correct_penalty_not_capped_at_payoff
 Corrects the bug found via audit_penalty_not_capped_at_payoff and traced in
 full on LN-571: a loan paid off in full on 16 Jul 2026 (verified real
 repayment, LNPMT-20260716-1046) had penalty piled back onto it afterward —
-first via a "penalty income reclass" misfire, then a "backlog catch-up", then
-finally a "cutover-corrected" accrual (13 Aug 2026) that posted 69,416.43
-more on an already-closed debt. Total confirmed: 124 legacy-import loans,
-1,828,451.01 in phantom penalty across the book (audit run 2026-08-16).
+first via a "penalty income reclass" misfire (separate bug, see
+audit_penalty_income_reclass_legitimacy / reverse_penalty_income_reclass_batch),
+then a "backlog catch-up", then finally a "cutover-corrected" accrual
+(13 Aug 2026) that posted 69,416.43 more on an already-closed debt. Total
+confirmed: 124 legacy-import loans, 1,828,451.01 in phantom penalty across
+the book (audit run 2026-08-16).
 
 Root cause (see audit_penalty_not_capped_at_payoff's docstring for the full
 trace): LoanRepaymentSchedule.penalty_due gets set by several different
@@ -21,39 +23,41 @@ built to support exactly this (`as_of` defaults to today; "pass a specific
 date (e.g. payment_date) to recompute what days_late should have been at
 some point in the past") — no caller ever does.
 
-This command does NOT attempt to individually re-reverse every historical
-LNPEN/PENRC entry per loan (LN-571 alone has three overlapping correction
-attempts already layered on top of each other — re-litigating that history
-entry-by-entry is fragile). Instead, matching the same philosophy already
-proven safe in this codebase by correct_frontloaded_interest_allocation.py:
-recompute what outstanding_penalties SHOULD be right now (sum of every
-schedule row's penalty_due, each capped at its own real resolution date —
-payment_date if status='paid', today otherwise), diff that against the
-current outstanding_penalties, and post ONE clean net correction for the
-difference. Whatever tangled history produced today's wrong number, this
-corrects the end state directly and auditably.
+For each affected loan, this ACTUALLY REVERSES every currently-standing
+LNPEN-series (Loan Penalty Accrual) transaction — found via
+FinancialAuditLog(LOAN_PENALTY_ACCRUAL), the same lookup reverse_legacy_
+loan_penalty_accruals already uses — via Transaction.reverse(), the proper
+audited mechanism (linked opposite entry, original marked is_reversed, not a
+raw delete or a separate offsetting "adjustment" line). It does not matter
+which of the several posting paths produced any given entry; every one still
+standing against this loan gets reversed. Only after every prior entry is
+reversed does it repost ONE fresh entry for the correctly recomputed total
+(if anything is genuinely still owed) — so the ledger reads as "here's
+everything that was wrong, undone; here's what's actually true," the same
+pattern already used successfully by reverse_legacy_loan_penalty_accruals
+and reverse_penalty_income_reclass_batch elsewhere in this codebase.
 
 For each affected loan:
-  1. Recomputes every non-restructured schedule row's correct penalty_due.
+  1. Recomputes every non-restructured schedule row's correct penalty_due,
+     using each row's own real resolution date (payment_date if status=
+     'paid', today otherwise) — this is the actual fix; everything else is
+     just correctly reflecting it in the schedule and GL.
   2. Sums to `correct_total`; diff against loan.outstanding_penalties
      (`overcharge = current - correct_total`). Only loans overcharged
      (overcharge > tolerance) are touched — a loan where recompute finds
      MORE owed than currently recorded is flagged for manual review instead
      (unexpected direction; not what this bug produces).
-  3. Writes each row's corrected penalty_due (only rows that actually
-     change).
-  4. Sets loan.outstanding_penalties = correct_total.
-  5. If product.penalty_income_account is configured, posts one correcting
-     journal (series LNADJ, matching the existing "Loan Correcting
-     Adjustments" series used for the same class of fix):
-         Dr. Penalty Income (product.penalty_income_account)
-         Cr. Loan Receivable (loan.account)
-     for `overcharge` — reversing the fictitious income and receivable in
-     one auditable entry. If no penalty_income_account is configured, no GL
-     entry is posted (nothing was ever recognized on the books for this
-     loan's penalty in the first place — cash-basis loans), only the
-     schedule/aggregate fields are corrected.
-  6. Logs one FinancialAuditLog(LOAN_BALANCE_CORRECTION) per loan.
+  3. Reverses every currently-standing LNPEN transaction for the loan.
+  4. Writes each schedule row's corrected penalty_due (only rows that
+     actually change).
+  5. Sets loan.outstanding_penalties = correct_total.
+  6. If correct_total > 0 and product.penalty_income_account is configured,
+     posts ONE fresh LNPEN entry (Dr Loan Receivable / Cr Penalty Income)
+     for correct_total — the true, cutover-and-payoff-aware amount. If
+     correct_total is 0, nothing is reposted — the loan simply owes no
+     penalty.
+  7. Logs one FinancialAuditLog(LOAN_BALANCE_CORRECTION) per loan recording
+     what was reversed and what (if anything) was reposted.
 
 SAFETY:
   - Dry-run by default. Nothing is written until --apply.
@@ -74,14 +78,18 @@ from django.db import transaction as db_transaction
 from django.utils import timezone
 
 TOLERANCE = Decimal('0.01')
+REVERSAL_REASON = (
+    'Penalty not capped at its real resolution date — recomputed using the row\'s own '
+    'payment_date (if settled) or today (if still open) instead of blindly using today for '
+    'every row. See audit_penalty_not_capped_at_payoff for the full trace.'
+)
 
 
 class Command(BaseCommand):
     help = (
         'Correct legacy-import loans carrying penalty_due that was never capped at its real '
-        'resolution date (paid rows keep accruing as if still open). Resyncs schedule rows and '
-        'outstanding_penalties to the correctly recomputed total; posts one net correcting '
-        'journal per loan where a penalty_income_account is configured.'
+        'resolution date (paid rows keep accruing as if still open). Reverses every standing '
+        'LNPEN transaction for the loan and reposts one fresh, correctly-computed entry.'
     )
 
     def add_arguments(self, parser):
@@ -181,15 +189,40 @@ class Command(BaseCommand):
                     return 'needs_review'
                 return 'unaffected'
 
+            # Every LNPEN transaction currently standing against this loan — regardless of
+            # which script posted it (daily cron, backlog catch-up, cutover-aware recompute)
+            # — gets reversed. Same lookup reverse_legacy_loan_penalty_accruals already uses.
+            journal_ids = list(
+                FinancialAuditLog.objects.filter(
+                    event_type=FinancialAuditLog.LOAN_PENALTY_ACCRUAL,
+                    extra__loan_number=loan_number,
+                ).values_list('extra__journal_entry_id', flat=True)
+            )
+            existing_txns = list(
+                Transaction.all_objects.filter(
+                    pk__in=[j for j in journal_ids if j],
+                    series__code='LNPEN',
+                    is_reversed=False,
+                    is_reversal=False,
+                ).order_by('date', 'id')
+            ) if journal_ids else []
+            reversed_total = sum(
+                (t.get_total_amount() for t in existing_txns), Decimal('0.00')
+            )
+
             self.stdout.write(
                 f'[{loan_number}] pk={loan.pk}  outstanding_penalties '
                 f'{loan.outstanding_penalties:,.2f} -> {correct_total:,.2f}  '
-                f'(overcharge removed: {overcharge:,.2f})  {len(row_updates)} row(s) updated'
+                f'(reverse {len(existing_txns)} txn(s) totalling {reversed_total:,.2f}; '
+                f'repost {correct_total:,.2f})  {len(row_updates)} row(s) updated'
             )
 
             if not apply_changes:
                 db_transaction.savepoint_rollback(sid)
                 return 'dry_run_ok'
+
+            for txn in existing_txns:
+                txn.reverse(user=None, reason=REVERSAL_REASON)
 
             for sched, correct_penalty in row_updates:
                 sched.penalty_due = correct_penalty
@@ -200,31 +233,33 @@ class Command(BaseCommand):
 
             penalty_account = loan.product.penalty_income_account
             journal_ref = None
-            if penalty_account:
+            if correct_total > 0 and penalty_account:
                 series, _ = TransactionSeries.objects.get_or_create(
-                    code='LNADJ',
-                    defaults={'description': 'Loan Correcting Adjustments'},
+                    code='LNPEN',
+                    defaults={'description': 'Loan Penalty Accrual'},
                 )
                 journal = Transaction.objects.create(
                     series=series,
                     date=today,
                     description=(
-                        f'Penalty not capped at payoff — correction – {loan_number}'
+                        f'Loan penalty accrual (payoff-capped, corrected) — {loan_number}'
                     )[:255],
                     owner=loan.owner,
                     branch=loan.branch,
                     tenant=loan.tenant,
                 )
                 TransactionEntry.objects.create(
-                    transaction=journal, account=penalty_account,
-                    side=TransactionEntry.DEBIT, amount=overcharge,
+                    transaction=journal, account=loan.account,
+                    side=TransactionEntry.DEBIT, amount=correct_total,
                 )
                 TransactionEntry.objects.create(
-                    transaction=journal, account=loan.account,
-                    side=TransactionEntry.CREDIT, amount=overcharge,
+                    transaction=journal, account=penalty_account,
+                    side=TransactionEntry.CREDIT, amount=correct_total,
                 )
                 journal.post()
                 journal_ref = journal.reference_number
+                loan.penalty_accrual_active = True
+                loan.save(update_fields=['penalty_accrual_active', 'updated_at'])
 
             log_financial_event(
                 FinancialAuditLog.LOAN_BALANCE_CORRECTION,
@@ -233,14 +268,16 @@ class Command(BaseCommand):
                 record_id=str(loan.pk),
                 amount=-overcharge,
                 description=(
-                    f'Corrected penalty not capped at payoff — {loan_number} '
-                    f'(overcharge {overcharge:,.2f} removed, {len(row_updates)} schedule row(s) '
-                    'recomputed at their real resolution date)'
+                    f'Corrected penalty not capped at payoff — {loan_number}: reversed '
+                    f'{len(existing_txns)} transaction(s) totalling {reversed_total:,.2f}, '
+                    f'reposted {correct_total:,.2f} ({len(row_updates)} schedule row(s) recomputed '
+                    'at their real resolution date)'
                 ),
                 extra={
                     'loan_number': loan_number,
-                    'overcharge_removed': str(overcharge),
-                    'corrected_outstanding_penalties': str(correct_total),
+                    'reversed_count': len(existing_txns),
+                    'reversed_total': str(reversed_total),
+                    'reposted_total': str(correct_total),
                     'rows_updated': len(row_updates),
                     'journal_entry_ref': journal_ref,
                     'source_command': 'correct_penalty_not_capped_at_payoff',
