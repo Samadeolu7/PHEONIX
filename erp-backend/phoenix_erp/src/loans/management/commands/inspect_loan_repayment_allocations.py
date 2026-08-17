@@ -42,6 +42,18 @@ class Command(BaseCommand):
             f'total_paid={loan.total_paid:,.2f}\n'
         )
 
+        self.stdout.write('Schedule rows:')
+        for sched in loan.repayment_schedule.order_by('due_date'):
+            self.stdout.write(
+                f'  #{sched.installment_number:<3d} due={sched.due_date}  status={sched.status:12s}  '
+                f'payment_date={sched.payment_date}\n'
+                f'      due:  principal={sched.principal_due:>10,.2f}  interest={sched.interest_due:>10,.2f}  '
+                f'fees={sched.fees_due:>10,.2f}  penalty={sched.penalty_due:>10,.2f}  total_due={sched.total_due:>10,.2f}\n'
+                f'      paid: principal={sched.principal_paid:>10,.2f}  interest={sched.interest_paid:>10,.2f}  '
+                f'fees={sched.fees_paid:>10,.2f}  penalty={sched.penalty_paid:>10,.2f}  total_paid={sched.total_paid:>10,.2f}'
+            )
+        self.stdout.write('')
+
         allocations = loan.repayment_allocations.select_related(
             'journal_entry', 'schedule'
         ).order_by('journal_entry__date', 'id')
