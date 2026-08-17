@@ -159,6 +159,20 @@ class Command(BaseCommand):
 
             loan = type(loan).all_objects.select_for_update().get(pk=loan.pk)
 
+            # Guard against a second false-positive class found on LN-479: some
+            # legacy rows carry payment_date == the migration cutover date itself
+            # (2026-06-30) as a PLACEHOLDER stamped where the old export had no
+            # real historical date — not evidence of a live Phoenix payment. A
+            # naive `payment_date >= cutover` filter treats that placeholder as
+            # real. LN-479 has principal_paid=penalties_paid=total_paid=0.00 —
+            # literally no Phoenix payment has ever touched this loan — yet the
+            # date filter alone found a "misallocation" matching an entire
+            # installment. The robust check: if the loan has never recorded any
+            # real payment at all, there is nothing to reallocate, full stop.
+            if loan.total_paid <= 0:
+                db_transaction.savepoint_rollback(sid)
+                return 'unaffected'
+
             # Only rows touched by a REAL, LIVE, post-migration payment — see the
             # module docstring's "IMPORTANT — scope of the schedule sum" note.
             # Legacy pre-migration 'paid' rows (import-seeded, old system's own
