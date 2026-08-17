@@ -346,6 +346,8 @@ class ClientStatementViewSet(ScopedModelViewSet):
                     if invoice.journal_entry else None
                 ),
                 'status': invoice.status,
+                'is_reversed': False,
+                'is_reversal': False,
                 'details': {
                     'created_by': invoice.created_by.get_full_name() if invoice.created_by else None,
                     'created_at': invoice.created_at.isoformat() if invoice.created_at else None,
@@ -388,6 +390,8 @@ class ClientStatementViewSet(ScopedModelViewSet):
                 'invoice_id': invoice.id,
                 'journal_entry_reference': None,
                 'status': invoice.status,
+                'is_reversed': False,
+                'is_reversal': False,
                 'details': {
                     'created_by': invoice.created_by.get_full_name() if invoice.created_by else None,
                     'created_at': invoice.created_at.isoformat() if invoice.created_at else None,
@@ -468,6 +472,11 @@ class ClientStatementViewSet(ScopedModelViewSet):
                     'journal_entry_id': payment.id,
                     'journal_entry_reference': payment.reference_number,
                     'related_invoice': invoice_num,
+                    # Top-level (not just nested in `details`) so the ledger UI's
+                    # hide/unhide toggle can filter uniformly across all entry
+                    # types, matching the Loan/Savings ledger row shape.
+                    'is_reversed': payment.is_reversed,
+                    'is_reversal': is_reversal,
                     'details': {
                         'created_by': payment.created_by.get_full_name() if payment.created_by else None,
                         'created_at': payment.created_at.isoformat() if payment.created_at else None,

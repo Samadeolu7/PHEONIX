@@ -452,6 +452,11 @@ class SavingsAccountViewSet(ScopedModelViewSet):
                 'debit': str(entry.amount) if entry.side == TransactionEntry.DEBIT else None,
                 'credit': str(entry.amount) if entry.side == TransactionEntry.CREDIT else None,
                 'balance': str(running_balance),
+                # A reversed entry + its reversal always net to zero, so the UI can
+                # hide both by default without disturbing the visible running balance
+                # sequence — see SavingsAccountDetailPage's ledger hide/unhide toggle.
+                'is_reversed': entry.transaction.is_reversed,
+                'is_reversal': entry.transaction.is_reversal,
             })
 
         return Response({

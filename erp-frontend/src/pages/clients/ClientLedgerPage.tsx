@@ -10,6 +10,8 @@ import {
   ChevronDown,
   ChevronRight,
   RotateCcw,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useClientLedger } from '../../hooks/useLedger';
@@ -26,6 +28,7 @@ const ClientLedgerPage: React.FC = () => {
   }>({});
 
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [showReversedEntries, setShowReversedEntries] = useState(false);
 
   const { data: ledger, isLoading } = useClientLedger(
     parseInt(clientId || '0'),
@@ -115,6 +118,16 @@ const ClientLedgerPage: React.FC = () => {
       </div>
     );
   }
+
+  // A reversed payment and its reversal always net to zero, so hiding both from
+  // view (default) never disturbs the totals/balance shown — those are computed
+  // server-side across the true, unfiltered history.
+  const reversedCount = ledger.ledger_entries.filter(
+    (entry) => entry.is_reversed || entry.is_reversal
+  ).length;
+  const visibleEntries = showReversedEntries
+    ? ledger.ledger_entries
+    : ledger.ledger_entries.filter((entry) => !entry.is_reversed && !entry.is_reversal);
 
   return (
     <div className="container mx-auto px-4 py-6">
@@ -247,9 +260,40 @@ const ClientLedgerPage: React.FC = () => {
         <div className="p-6 print:p-0">
           <h2 className="text-xl font-semibold mb-4 print:text-center">Account Ledger</h2>
 
+          {reversedCount > 0 && (
+            <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 mb-4 print:hidden">
+              <span className="text-xs text-gray-500">
+                {showReversedEntries
+                  ? `Showing all entries, including ${reversedCount} reversed`
+                  : `${reversedCount} reversed entr${reversedCount === 1 ? 'y' : 'ies'} hidden — nets to zero, doesn't affect the totals shown`}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowReversedEntries((v) => !v)}
+                className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+              >
+                {showReversedEntries ? <EyeOff size={12} /> : <Eye size={12} />}
+                {showReversedEntries ? 'Hide reversed' : 'Show reversed'}
+              </button>
+            </div>
+          )}
+
           {ledger.ledger_entries.length === 0 ? (
             <div className="text-center py-12">
               <p className="text-gray-500">No transactions found for the selected period</p>
+            </div>
+          ) : visibleEntries.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500">
+                All entries in this period are reversed.{' '}
+                <button
+                  type="button"
+                  onClick={() => setShowReversedEntries(true)}
+                  className="font-medium text-blue-600 hover:underline"
+                >
+                  Show them
+                </button>
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -283,11 +327,11 @@ const ClientLedgerPage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {ledger.ledger_entries.map((entry, index) => {
+                  {visibleEntries.map((entry, index) => {
                     const isExpanded = expandedRows.has(entry.reference);
                     return (
                       <React.Fragment key={`${entry.reference}-${index}`}>
-                        <tr className="hover:bg-gray-50">
+                        <tr className={`hover:bg-gray-50 ${entry.is_reversed || entry.is_reversal ? 'opacity-50' : ''}`}>
                           <td className="px-3 py-4 whitespace-nowrap">
                             {entry.details && (
                               <button

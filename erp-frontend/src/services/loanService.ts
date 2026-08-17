@@ -413,6 +413,8 @@ export interface LoanTransactionRow {
   debit: string | null;
   credit: string | null;
   balance: string;
+  is_reversed: boolean;
+  is_reversal: boolean;
 }
 
 export interface LoanTransactionPage {

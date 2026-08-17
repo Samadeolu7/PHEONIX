@@ -32,6 +32,8 @@ import {
   Ban,
   ChevronDown,
   ChevronUp,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   loanService,
@@ -1231,6 +1233,7 @@ export default function LoanAccountDetailPage() {
   const LEDGER_PAGE_SIZE = 25;
   const [ledgerPage, setLedgerPage] = useState(1);
   const [ledgerExpanded, setLedgerExpanded] = useState(false);
+  const [showReversedEntries, setShowReversedEntries] = useState(false);
   const [showRepayModal, setShowRepayModal] = useState(false);
   const [showRestructureModal, setShowRestructureModal] = useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
@@ -1250,6 +1253,11 @@ export default function LoanAccountDetailPage() {
   const { data: ledgerData, isLoading: ledgerLoading } = useLoanTransactions(loanId, ledgerPage, LEDGER_PAGE_SIZE);
   const ledger = ledgerData?.results ?? [];
   const ledgerTotal = ledgerData?.count ?? 0;
+  // A reversed entry and its reversal always net to zero, so hiding both from
+  // view (default) never disturbs the visible running balance sequence — the
+  // server already computes `balance` across the true, unfiltered history.
+  const reversedCount = ledger.filter((tx) => tx.is_reversed || tx.is_reversal).length;
+  const visibleLedger = showReversedEntries ? ledger : ledger.filter((tx) => !tx.is_reversed && !tx.is_reversal);
   const { data: paymentHistoryData, isLoading: paymentHistoryLoading } = useLoanPaymentHistory(loanId);
   const paymentHistory = paymentHistoryData?.results ?? [];
   const { data: pendingRestructures = [] } = useLoanRestructureApprovals({ status: 'pending' });
@@ -2159,6 +2167,35 @@ export default function LoanAccountDetailPage() {
             </div>
           ) : (
             <>
+              {reversedCount > 0 && (
+                <div className="flex items-center justify-between border-b bg-gray-50 px-4 py-2">
+                  <span className="text-xs text-gray-500">
+                    {showReversedEntries
+                      ? `Showing all entries, including ${reversedCount} reversed`
+                      : `${reversedCount} reversed entr${reversedCount === 1 ? 'y' : 'ies'} hidden — nets to zero, doesn't affect the balance shown`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowReversedEntries((v) => !v)}
+                    className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100"
+                  >
+                    {showReversedEntries ? <EyeOff size={12} /> : <Eye size={12} />}
+                    {showReversedEntries ? 'Hide reversed' : 'Show reversed'}
+                  </button>
+                </div>
+              )}
+              {visibleLedger.length === 0 ? (
+                <div className="py-12 text-center text-sm text-gray-400">
+                  All entries on this page are reversed.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setShowReversedEntries(true)}
+                    className="font-medium text-indigo-600 hover:underline"
+                  >
+                    Show them
+                  </button>
+                </div>
+              ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -2172,10 +2209,18 @@ export default function LoanAccountDetailPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {ledger.map((tx) => (
-                      <tr key={tx.id} className="hover:bg-gray-50">
+                    {visibleLedger.map((tx) => (
+                      <tr key={tx.id} className={`hover:bg-gray-50 ${tx.is_reversed || tx.is_reversal ? 'opacity-50' : ''}`}>
                         <td className="px-4 py-2.5 text-gray-600">{fmtDate(tx.date)}</td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-gray-500">{tx.reference}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs text-gray-500">
+                          {tx.reference}
+                          {tx.is_reversed && (
+                            <span className="ml-1.5 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-sans font-medium text-red-600">Reversed</span>
+                          )}
+                          {tx.is_reversal && (
+                            <span className="ml-1.5 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-sans font-medium text-gray-500">Reversal</span>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-gray-700">{tx.description}</td>
                         <td className="px-4 py-2.5 text-right text-blue-700 font-mono">
                           {tx.debit ? `₦${fmt(tx.debit)}` : ''}
@@ -2191,6 +2236,7 @@ export default function LoanAccountDetailPage() {
                   </tbody>
                 </table>
               </div>
+              )}
               {Math.ceil(ledgerTotal / LEDGER_PAGE_SIZE) > 1 && (
                 <div className="flex items-center justify-between border-t px-4 py-3">
                   <p className="text-xs text-gray-500">

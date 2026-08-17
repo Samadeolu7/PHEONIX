@@ -552,7 +552,7 @@ export interface OutstandingInvoices {
 // Client Account Ledger Types
 export interface ClientLedgerEntry {
   date: string;
-  transaction_type: 'invoice' | 'payment';
+  transaction_type: 'invoice' | 'payment' | 'payment_reversal';
   invoice_type?: 'service' | 'inventory';
   reference: string;
   description: string;
@@ -564,6 +564,8 @@ export interface ClientLedgerEntry {
   journal_entry_reference?: string;
   status?: string;
   related_invoice?: string;
+  is_reversed: boolean;
+  is_reversal: boolean;
   details?: {
     // Invoice details
     created_by?: string | null;
