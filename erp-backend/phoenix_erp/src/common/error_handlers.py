@@ -9,6 +9,7 @@ from rest_framework.exceptions import ValidationError, APIException
 from rest_framework.response import Response
 from rest_framework import status
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,44 @@ def custom_exception_handler(exc, context):
                     'non_field_errors': ['An invoice with this reference number already exists. Please check your invoice list.'],
                     'detail': error_message[:400],
                     'action': 'check_existing'
+                }, status=status.HTTP_409_CONFLICT)
+            elif re.search(r'\bnin\b', error_message.lower()) or re.search(r'\bbvn\b', error_message.lower()):
+                field_match = re.search(r'Key \((nin|bvn)\)=\(([^)]+)\)', error_message)
+                field_name = field_match.group(1) if field_match else ('nin' if 'nin' in error_message.lower() else 'bvn')
+                conflict_value = field_match.group(2) if field_match else 'unknown'
+                field_label = 'NIN' if field_name == 'nin' else 'BVN'
+
+                existing_client = None
+                try:
+                    from clients.models import Client
+                    existing_client = Client.objects.filter(**{field_name: conflict_value}).select_related('branch').first()
+                except Exception:
+                    existing_client = None
+
+                if existing_client:
+                    branch_name = getattr(existing_client.branch, 'name', None) or 'another branch'
+                    return Response({
+                        'error': f'{field_label} already registered.',
+                        field_name: [
+                            f'This {field_label} ({conflict_value}) is already registered to '
+                            f'"{existing_client.full_name}" (Client ID: {existing_client.client_id}) '
+                            f'at the "{branch_name}" branch. {field_label}s must be unique across all branches. '
+                            f'If this is the same person, do not create a new record — contact that branch or '
+                            f'search for the existing client instead.'
+                        ],
+                        'detail': f'Duplicate {field_label} across branches.',
+                        'existing_client': {
+                            'id': existing_client.id,
+                            'client_id': existing_client.client_id,
+                            'name': existing_client.full_name,
+                            'branch': branch_name,
+                        }
+                    }, status=status.HTTP_409_CONFLICT)
+
+                return Response({
+                    'error': f'{field_label} already registered.',
+                    field_name: [f'This {field_label} ({conflict_value}) is already registered to another client.'],
+                    'detail': f'{field_label}s must be unique across all branches.'
                 }, status=status.HTTP_409_CONFLICT)
             elif 'code' in error_message:
                 return Response({
