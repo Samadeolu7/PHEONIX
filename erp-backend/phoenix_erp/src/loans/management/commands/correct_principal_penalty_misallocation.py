@@ -30,9 +30,28 @@ to the loan's GL account at payment time (a real LNPMT transaction) — this
 only corrects internal business-field bookkeeping about how that already-
 posted cash is categorized, not the money itself.
 
+IMPORTANT — scope of the schedule sum: a legacy loan's schedule mixes two
+very different kinds of "paid" row. import_legacy_data.py marks installments
+'paid' at import time straight from the old system's own is_paid flag, with
+that system's own historical payment_date — genuine pre-migration payments
+that were never meant to touch Phoenix's post-migration aggregate fields at
+all (those start fresh from the migrated `balance`, not a running sum of
+pre-migration history). Only installments settled by a REAL, LIVE, post-
+migration Phoenix payment should ever be compared against loan.principal_paid
+/interest_paid/fees_paid. First version of this command summed every
+non-restructured row indiscriminately and produced nonsense (262,919.97
+"more paid" on LN-571, against a single real 30,604.44 payment) by conflating
+five legacy pre-migration payment dates (Jan-May 2026) with the one real
+post-migration one (16 Jul 2026). Fixed: only counts 'partial' rows (only
+ever reachable via a live payment — legacy import never seeds partial rows,
+see import_legacy_data.py's binary is_paid handling) and 'paid' rows whose
+payment_date is on/after LoanProduct.PENALTY_CUTOVER_DATE (2026-06-30, the
+same migration-cutover constant already used throughout this investigation).
+
 For each affected loan:
-  1. Sums each non-restructured schedule row's principal_paid/interest_paid/
-     fees_paid — the schedule's own trusted, verified figures.
+  1. Sums each in-scope schedule row's principal_paid/interest_paid/
+     fees_paid — the schedule's own trusted, verified figures for real
+     post-migration payment activity only (see scope note above).
   2. Compares to loan.principal_paid/interest_paid/fees_paid. Only loans
      where the schedule shows MORE paid than the loan aggregate credits are
      touched (understated direction — money parked in the wrong bucket).
@@ -61,7 +80,7 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction as db_transaction
-from django.db.models import Sum
+from django.db.models import Sum, Q
 
 TOLERANCE = Decimal('0.01')
 
@@ -125,6 +144,7 @@ class Command(BaseCommand):
 
     def _process_loan(self, loan, apply_changes):
         from common.models import FinancialAuditLog, log_financial_event
+        from loans.models import LoanProduct
 
         loan_number = loan.loan_number
 
@@ -133,7 +153,15 @@ class Command(BaseCommand):
 
             loan = type(loan).all_objects.select_for_update().get(pk=loan.pk)
 
-            agg = loan.repayment_schedule.exclude(status='restructured').aggregate(
+            # Only rows touched by a REAL, LIVE, post-migration payment — see the
+            # module docstring's "IMPORTANT — scope of the schedule sum" note.
+            # Legacy pre-migration 'paid' rows (import-seeded, old system's own
+            # payment_date) must never be counted here.
+            in_scope_rows = loan.repayment_schedule.filter(
+                Q(status='partial')
+                | Q(status='paid', payment_date__gte=LoanProduct.PENALTY_CUTOVER_DATE)
+            )
+            agg = in_scope_rows.aggregate(
                 principal_paid=Sum('principal_paid'),
                 interest_paid=Sum('interest_paid'),
                 fees_paid=Sum('fees_paid'),
