@@ -92,9 +92,6 @@ class Command(BaseCommand):
         for loan in loans:
             try:
                 with db_transaction.atomic():
-                    if dry_run:
-                        db_transaction.set_rollback(True)
-
                     # 1. Recalculate arrears
                     loan._calculate_arrears()
                     loan.refresh_from_db()
@@ -222,6 +219,17 @@ class Command(BaseCommand):
                         'risk_classification', 'provision_pct', 'provision_amount',
                         'outstanding_penalties', 'penalty_accrual_active', 'status', 'updated_at',
                     ])
+
+                    # Marked last, not first: Django refuses any further ORM queries
+                    # inside an atomic() block once set_rollback(True) has been called
+                    # (TransactionManagementError) — calling it at the top of the block
+                    # broke every dry-run invocation of this command (every query after
+                    # it, starting with _calculate_arrears(), failed). All the work
+                    # above still runs and is visible within this transaction; marking
+                    # rollback last just discards it when the block exits instead of
+                    # committing it.
+                    if dry_run:
+                        db_transaction.set_rollback(True)
                     stats['updated'] += 1
 
             except Exception as exc:
