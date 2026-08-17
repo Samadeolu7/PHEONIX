@@ -467,10 +467,13 @@ class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 }
                 prefix = _CONTEXT_PREFIX_MAP.get(self.usage_context, 'CLI')
 
-            # Find the highest existing number for this prefix + branch
-            last_client = Client.objects.filter(
+            # Find the highest existing number for this prefix.
+            # client_id is globally unique (not branch-scoped, like nin/bvn),
+            # so the counter must span all branches or new branches collide
+            # with numbers already used elsewhere. Include soft-deleted rows
+            # too since their client_id still occupies the unique slot.
+            last_client = Client.all_objects.filter(
                 client_id__startswith=prefix + '-',
-                branch=self.branch
             ).order_by('-client_id').first()
 
             if last_client and last_client.client_id:

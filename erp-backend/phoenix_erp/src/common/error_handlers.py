@@ -42,7 +42,6 @@ def custom_exception_handler(exc, context):
         if 'unique constraint' in error_message.lower() or 'duplicate key' in error_message.lower():
             if 'invoice_number' in error_message.lower():
                 # Extract the conflicting value when postgres includes it in the detail
-                import re
                 match = re.search(r'Key \(invoice_number\)=\(([^)]+)\)', error_message)
                 conflict_value = match.group(1) if match else 'unknown'
                 return Response({
@@ -56,7 +55,6 @@ def custom_exception_handler(exc, context):
                     'action': 'retry'
                 }, status=status.HTTP_409_CONFLICT)
             elif 'voucher_number' in error_message.lower():
-                import re
                 match = re.search(r'Key \(voucher_number\)=\(([^)]+)\)', error_message)
                 conflict_value = match.group(1) if match else 'unknown'
                 return Response({
