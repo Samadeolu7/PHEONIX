@@ -43,7 +43,6 @@ Usage:
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
-from django.db.models import Sum
 
 
 class Command(BaseCommand):
@@ -74,10 +73,17 @@ class Command(BaseCommand):
 
         flagged = []
         for loan in loans.iterator():
-            sched = loan.repayment_schedule.exclude(status='restructured').aggregate(
-                due=Sum('penalty_due'), paid=Sum('penalty_paid'),
+            # Floor each ROW's own remaining at 0 before summing — a corrupted
+            # penalty_paid left over from the pre-2026-08-05 "broken proportional
+            # split" bug (penalty_paid > penalty_due on one row, e.g. LN-571's
+            # row #9) must never be allowed to net negative against genuine
+            # remaining penalty on other rows. A single installment's leftover
+            # penalty is never negative in reality, so neither is this sum.
+            sched_remaining = sum(
+                (max(Decimal('0.00'), row.penalty_due - row.penalty_paid)
+                 for row in loan.repayment_schedule.exclude(status='restructured')),
+                Decimal('0.00'),
             )
-            sched_remaining = (sched['due'] or Decimal('0.00')) - (sched['paid'] or Decimal('0.00'))
             drift = loan.outstanding_penalties - sched_remaining
 
             if abs(drift) > tolerance:
