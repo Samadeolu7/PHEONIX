@@ -50,17 +50,23 @@ same migration-cutover constant already used throughout this investigation).
 
 For each affected loan:
   1. Sums each in-scope schedule row's principal_paid/interest_paid/
-     fees_paid — the schedule's own trusted, verified figures for real
-     post-migration payment activity only (see scope note above).
-  2. Compares to loan.principal_paid/interest_paid/fees_paid. Only loans
-     where the schedule shows MORE paid than the loan aggregate credits are
-     touched (understated direction — money parked in the wrong bucket).
-  3. Sets loan.principal_paid/interest_paid/fees_paid to the schedule sums;
-     reduces outstanding_principal/_interest/_fees by the same deltas.
-  4. Reduces loan.penalties_paid by the total moved, to keep total_paid
+     fees_paid — real post-migration payment activity only (see scope note
+     above) — and diffs the total against loan.principal_paid+interest_paid
+     +fees_paid to get the TOTAL amount misallocated into penalty. Only
+     loans where the schedule shows MORE paid than the loan aggregate
+     credits are touched (understated direction — money parked in the
+     wrong bucket).
+  2. Redistributes that total via a priority waterfall — interest first
+     (capped at whatever outstanding_interest can currently absorb), then
+     fees, then principal for the remainder — NOT a literal copy of the
+     schedule's raw component split (see "IMPORTANT" note above for why).
+     Updates loan.principal_paid/interest_paid/fees_paid and reduces
+     outstanding_principal/_interest/_fees by the same amounts (never
+     negative).
+  3. Reduces loan.penalties_paid by the total moved, to keep total_paid
      conserved. Verifies principal_paid + interest_paid + fees_paid +
      penalties_paid == total_paid (tolerance 0.01) before committing.
-  5. Logs one FinancialAuditLog(LOAN_BALANCE_CORRECTION) per loan.
+  4. Logs one FinancialAuditLog(LOAN_BALANCE_CORRECTION) per loan.
 
 SAFETY:
   - Dry-run by default. Nothing is written until --apply.
@@ -170,10 +176,21 @@ class Command(BaseCommand):
             sched_interest = agg['interest_paid'] or Decimal('0.00')
             sched_fees = agg['fees_paid'] or Decimal('0.00')
 
-            delta_principal = sched_principal - loan.principal_paid
-            delta_interest = sched_interest - loan.interest_paid
-            delta_fees = sched_fees - loan.fees_paid
-            total_delta = delta_principal + delta_interest + delta_fees
+            # The TOTAL amount to move out of penalties_paid is trustworthy (the schedule's
+            # in-scope rows are real post-migration payment activity). How it's redistributed
+            # among principal/interest/fees is NOT simply the schedule's raw component split,
+            # though — a legacy row's interest_due is seeded from the OLD SYSTEM'S OWN PENALTY
+            # amount at import (see import_legacy_data.py: `interest_due = penalty`), not real
+            # interest, and outstanding_interest on loans using this "bundle everything into
+            # principal" migration convention starts at 0 with no capacity to absorb a
+            # reduction. Copying the schedule split directly would push outstanding_interest/
+            # _fees negative — manufacturing the exact negative-outstanding_* bug this whole
+            # investigation keeps finding elsewhere (see LN-714's pre-existing case). Instead,
+            # apply the same priority waterfall record_payment() itself uses: interest first,
+            # capped at whatever outstanding_interest can actually absorb, then fees, with
+            # everything left over going to principal — never negative, always conservative.
+            total_delta = (sched_principal - loan.principal_paid) + \
+                (sched_interest - loan.interest_paid) + (sched_fees - loan.fees_paid)
 
             if total_delta <= TOLERANCE:
                 db_transaction.savepoint_rollback(sid)
@@ -193,6 +210,13 @@ class Command(BaseCommand):
                 f'principal_paid={loan.principal_paid:,.2f} interest_paid={loan.interest_paid:,.2f} '
                 f'fees_paid={loan.fees_paid:,.2f} penalties_paid={loan.penalties_paid:,.2f}'
             )
+
+            remaining = total_delta
+            delta_interest = min(remaining, max(loan.outstanding_interest, Decimal('0.00')))
+            remaining -= delta_interest
+            delta_fees = min(remaining, max(loan.outstanding_fees, Decimal('0.00')))
+            remaining -= delta_fees
+            delta_principal = remaining
 
             new_principal_paid = loan.principal_paid + delta_principal
             new_interest_paid = loan.interest_paid + delta_interest
