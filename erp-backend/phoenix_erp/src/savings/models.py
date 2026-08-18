@@ -36,7 +36,15 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     )
     
     # Account Details
-    account_number = models.CharField(max_length=50, unique=True)
+    # unique=True removed — see Meta.constraints. account_number is copied
+    # from the linked GL child account's code (PPPP-NNNNN), and that
+    # sub-ledger numbering is scoped per (tenant, branch) — every branch
+    # restarts its own '2140' child sequence at -00001 by design (same
+    # reasoning as Account.code's own scoped constraint, accounts/
+    # migrations/0010_fix_account_unique_constraint.py). A global unique=True
+    # here made every branch's very first savings account collide with
+    # whichever other branch had already claimed "2140-00001".
+    account_number = models.CharField(max_length=50)
     nickname = models.CharField(max_length=100, blank=True)
     
     # Status and Terms
@@ -328,6 +336,11 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 fields=['client', 'product'],
                 condition=models.Q(is_deleted=False) & ~models.Q(status='closed'),
                 name='unique_active_savings_per_client_product',
+            ),
+            models.UniqueConstraint(
+                fields=['account_number', 'tenant', 'branch'],
+                condition=models.Q(is_deleted=False),
+                name='unique_account_number_per_tenant_branch_when_not_deleted',
             ),
         ]
 
