@@ -317,6 +317,7 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/loans/disbursements': { module: 'loans', page: 'loan-disbursements', action: 'view' },
   '/loans/disbursements/:loanId': { module: 'loans', page: 'loan-disbursements', action: 'create' },
   '/loans/products': { module: 'loans', page: 'loan-products', action: 'view' },
+  '/loans/products/create': { module: 'loans', page: 'loan-products', action: 'create' },
   '/loans/products/:id/config': { module: 'loans', page: 'loan-products', action: 'edit' },
   '/loans/repayment-approvals': { module: 'loans', page: 'loan-repayment-approvals', action: 'approve' },
   '/loans/verification': { module: 'loans', page: 'loan-verification', action: 'view' },

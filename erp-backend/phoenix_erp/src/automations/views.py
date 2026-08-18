@@ -21,7 +21,7 @@ from .serializers import (
     WorkflowTemplateSerializer, WorkflowRunSerializer,
     WorkflowApprovalSerializer
 )
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 from common.serializers import IsTenantUser
 
 logger = logging.getLogger(__name__)
@@ -373,11 +373,14 @@ class WorkflowTemplateViewSet(ScopedModelViewSet):
     @action(detail=False, methods=['get'], url_path='master-templates')
     def master_templates(self, request):
         """Get master templates - FIXED"""
-        templates = WorkflowTemplate.objects.filter(
+        templates_filters = dict(
             workflow_type='master_template',
             is_active=True,
-            branch=request.user.branch
-        ).annotate(
+        )
+        branch = resolve_effective_branch(request)
+        if branch:
+            templates_filters['branch'] = branch
+        templates = WorkflowTemplate.objects.filter(**templates_filters).annotate(
             binding_count=Count('bindings'),
             execution_count=Count('runs')
         ).order_by('run_sequence')  # FIXED: Use run_sequence instead of 'code'
@@ -657,12 +660,15 @@ class WorkflowTemplateViewSet(ScopedModelViewSet):
         """
         try:
             # Filter workflows that are marked as callable/reusable
-            workflows = WorkflowTemplate.objects.filter(
-                branch=request.user.branch,
+            workflows_filters = dict(
                 is_active=True,
                 access_level__in=['internal', 'public'],  # Exclude private workflows
                 workflow_type__in=['template', 'reusable']  # Only callable types
-            ).order_by('name')
+            )
+            branch = resolve_effective_branch(request)
+            if branch:
+                workflows_filters['branch'] = branch
+            workflows = WorkflowTemplate.objects.filter(**workflows_filters).order_by('name')
             
             callable_list = []
             for wf in workflows:

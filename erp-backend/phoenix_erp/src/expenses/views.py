@@ -16,7 +16,7 @@ from .models import (
     Expense, ExpenseCategory, Resource, 
     PrepaidVoucher, ResourceConsumption
 )
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 from common.approval_permissions import IsApprover
 from common.services.reference_service import ReferenceService
 from common.models import ReferenceTracking
@@ -32,9 +32,11 @@ class ExpenseViewSet(ScopedModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Expense.objects.filter(
-            branch=self.request.user.branch
-        )
+        qs = Expense.objects.all()
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
     
     def get_serializer_class(self):
         # You should create ExpenseSerializer
@@ -339,9 +341,7 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        queryset = ResourceConsumption.objects.filter(
-            branch=self.request.user.branch
-        ).select_related(
+        queryset = ResourceConsumption.objects.select_related(
             'prepaid_voucher',
             'supplier',
             'asset',
@@ -350,7 +350,10 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
             'posted_by',
             'resource'
         )
-        
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
+
         # Filter parameters
         payment_flow = self.request.query_params.get('payment_flow')
         resource_type = self.request.query_params.get('resource_type')
@@ -589,7 +592,11 @@ class ResourceConsumptionViewSet(ScopedModelViewSet):
         from assets.models import FixedAsset
         
         try:
-            asset = FixedAsset.objects.get(id=asset_id, branch=request.user.branch)
+            asset_qs = FixedAsset.objects.all()
+            branch = resolve_effective_branch(request)
+            if branch:
+                asset_qs = asset_qs.filter(branch=branch)
+            asset = asset_qs.get(id=asset_id)
         except FixedAsset.DoesNotExist:
             return Response(
                 {'error': 'Asset not found'},
@@ -1030,14 +1037,15 @@ class ResourceViewSet(ScopedModelViewSet):
     ordering = ['resource_type', 'name']
     
     def get_queryset(self):
-        queryset = Resource.objects.filter(
-            branch=self.request.user.branch
-        ).select_related(
+        queryset = Resource.objects.select_related(
             'expense_category',
             'expense_category__expense_account',
             'default_supplier'
         )
-        
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
+
         return queryset
     
     def get_serializer_class(self):
@@ -1120,10 +1128,11 @@ class ResourceViewSet(ScopedModelViewSet):
         """
         from django.db.models import Count, Sum
         
-        resources = Resource.objects.filter(
-            branch=request.user.branch,
-            is_active=True
-        ).values('resource_type').annotate(
+        resources_qs = Resource.objects.filter(is_active=True)
+        branch = resolve_effective_branch(request)
+        if branch:
+            resources_qs = resources_qs.filter(branch=branch)
+        resources = resources_qs.values('resource_type').annotate(
             count=Count('id'),
             total_consumptions=Count('consumptions')
         ).order_by('resource_type')
@@ -1155,10 +1164,11 @@ class PrepaidVoucherViewSet(ScopedModelViewSet):
     ordering = ['-issue_date']
     
     def get_queryset(self):
-        queryset = PrepaidVoucher.objects.filter(
-            branch=self.request.user.branch
-        ).select_related('prepaid_expense')
-        
+        queryset = PrepaidVoucher.objects.select_related('prepaid_expense')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
+
         # Filter by expiry status
         show_expired = self.request.query_params.get('show_expired', 'false').lower() == 'true'
         if not show_expired:
@@ -1301,12 +1311,15 @@ class PrepaidVoucherViewSet(ScopedModelViewSet):
         days = int(request.query_params.get('days', 7))
         cutoff_date = timezone.now().date() + timedelta(days=days)
         
-        vouchers = PrepaidVoucher.objects.filter(
-            branch=request.user.branch,
+        vouchers_qs = PrepaidVoucher.objects.filter(
             status__in=['active', 'partially_used'],
             expiry_date__lte=cutoff_date,
             expiry_date__gte=timezone.now().date()
-        ).order_by('expiry_date')
+        )
+        branch = resolve_effective_branch(request)
+        if branch:
+            vouchers_qs = vouchers_qs.filter(branch=branch)
+        vouchers = vouchers_qs.order_by('expiry_date')
         
         from .serializers import PrepaidVoucherListSerializer
         serializer = PrepaidVoucherListSerializer(vouchers, many=True)

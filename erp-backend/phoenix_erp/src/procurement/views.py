@@ -63,7 +63,7 @@ from .serializers import (
     ConvertToPOSerializer
 )
 from inventory.stock_service import InventoryService, ProcurementService
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 from common.approval_permissions import IsApprover
 from common.services.reference_service import ReferenceService
 from common.models import ReferenceTracking
@@ -99,10 +99,12 @@ class SupplierViewSet(ScopedModelViewSet):
         # Protect against schema generation with AnonymousUser
         if getattr(self, 'swagger_fake_view', False):
             return Supplier.objects.none()
-        
-        return Supplier.objects.filter(
-            branch=self.request.user.branch
-        )
+
+        qs = Supplier.objects.all()
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
     
     def perform_create(self, serializer):
         """Create supplier with auto-generated code"""
@@ -179,9 +181,10 @@ class SupplierDocumentViewSet(ScopedModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return SupplierDocument.objects.none()
 
-        qs = SupplierDocument.objects.filter(
-            branch=self.request.user.branch
-        ).select_related('supplier', 'uploaded_by')
+        qs = SupplierDocument.objects.select_related('supplier', 'uploaded_by')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
 
         supplier_id = self.request.query_params.get('supplier')
         if supplier_id:
@@ -226,11 +229,13 @@ class PurchaseRequisitionViewSet(ScopedModelViewSet):
         
         # Filter by branch (which inherently filters by tenant through branch.owner)
         # This works even when requested_by is None
-        return PurchaseRequisition.objects.filter(
-            branch=self.request.user.branch
-        ).select_related(
+        qs = PurchaseRequisition.objects.select_related(
             'requested_by', 'approved_by', 'branch'
         ).prefetch_related('items', 'items__item')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
     
     def perform_create(self, serializer):
         """Create PR with auto-generated number"""
@@ -855,9 +860,10 @@ class PurchaseOrderViewSet(ScopedModelViewSet):
             return PurchaseOrder.objects.none()
         
         # Filter by branch (which inherently filters by tenant through branch.owner)
-        queryset = PurchaseOrder.objects.filter(
-            branch=self.request.user.branch
-        ).select_related('supplier', 'delivery_location', 'branch').prefetch_related('items', 'items__item')
+        queryset = PurchaseOrder.objects.select_related('supplier', 'delivery_location', 'branch').prefetch_related('items', 'items__item')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
         
         # Filter by status
         status_filter = self.request.query_params.get('status')
@@ -1083,9 +1089,11 @@ class GoodsReceivedNoteViewSet(ScopedModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return GoodsReceivedNote.objects.none()
         
-        return GoodsReceivedNote.objects.filter(
-            branch=self.request.user.branch
-        ).select_related('supplier', 'received_location', 'purchase_order', 'branch').prefetch_related('items', 'items__item')
+        qs = GoodsReceivedNote.objects.select_related('supplier', 'received_location', 'purchase_order', 'branch').prefetch_related('items', 'items__item')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
     
     @transaction.atomic
     def perform_create(self, serializer):
@@ -1264,9 +1272,11 @@ class PurchaseReturnViewSet(ScopedModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return PurchaseReturn.objects.none()
         
-        return PurchaseReturn.objects.filter(
-            branch=self.request.user.branch
-        ).select_related('branch')
+        qs = PurchaseReturn.objects.select_related('branch')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
     
     @transaction.atomic
     def perform_create(self, serializer):
@@ -1446,9 +1456,11 @@ class SupplierQuoteViewSet(ScopedModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return SupplierQuote.objects.none()
         
-        return SupplierQuote.objects.filter(
-            branch=self.request.user.branch
-        ).select_related('branch', 'requisition', 'supplier').prefetch_related('items', 'items__item')
+        qs = SupplierQuote.objects.select_related('branch', 'requisition', 'supplier').prefetch_related('items', 'items__item')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
     
     def perform_create(self, serializer):
         """Create quote with auto-generated number"""
@@ -1634,9 +1646,11 @@ class ProcurementConfigViewSet(ScopedModelViewSet):
     
     def get_queryset(self):
         """Filter by user's branches"""
-        return ProcurementConfig.objects.filter(
-            Q(branch=self.request.user.branch) | Q(owner=self.request.user)
-        )
+        q = Q(owner=self.request.user)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            q |= Q(branch=branch)
+        return ProcurementConfig.objects.filter(q)
     
     def perform_create(self, serializer):
         """Set owner on create"""
@@ -1674,8 +1688,11 @@ class ProcurementConfigViewSet(ScopedModelViewSet):
         workflows = WorkflowTemplate.objects.filter(
             is_active=True,
             category=category,
-            branch=request.user.branch
-        ).order_by('name')
+        )
+        branch = resolve_effective_branch(request)
+        if branch:
+            workflows = workflows.filter(branch=branch)
+        workflows = workflows.order_by('name')
         
         serializer = WorkflowTemplateListSerializer(workflows, many=True)
         return Response(serializer.data)

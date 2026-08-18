@@ -34,7 +34,7 @@ from expenses.services.expense_accounting import (
     ExpenseAccountingService,
     PrepaidExpenseAccountingService
 )
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 
 
 class ExpenseCategoryViewSet(ScopedModelViewSet):
@@ -84,12 +84,15 @@ class ExpenseCategoryViewSet(ScopedModelViewSet):
         else:  # yearly
             period_start = now.replace(month=1, day=1).date()
 
-        total_spent = Expense.objects.filter(
+        spent_filters = dict(
             category=category,
-            branch=request.user.branch,
             date__gte=period_start,
             status__in=['approved', 'posted'],
-        ).aggregate(total=Sum('amount'))['total'] or 0
+        )
+        branch = resolve_effective_branch(request)
+        if branch:
+            spent_filters['branch'] = branch
+        total_spent = Expense.objects.filter(**spent_filters).aggregate(total=Sum('amount'))['total'] or 0
 
         from decimal import Decimal
         budget = Decimal(str(category.budget_amount))
@@ -342,7 +345,7 @@ class ExpenseViewSet(ScopedModelViewSet):
         - start_date: Filter from date
         - end_date: Filter to date
         """
-        branch = request.user.branch
+        branch = resolve_effective_branch(request)
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         

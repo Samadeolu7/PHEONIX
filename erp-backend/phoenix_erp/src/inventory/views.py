@@ -48,7 +48,7 @@ import logging
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse
 from drf_spectacular.types import OpenApiTypes
 
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch, is_elevated_user
 from common.approval_permissions import IsApprover
 from .models import (
     InventoryItem, InventoryCategory, Location, InventoryStock, StockMovement,
@@ -96,17 +96,23 @@ class PendingApprovalsViewSet(viewsets.ViewSet):
         user = request.user
         filter_type = request.query_params.get('type')
         sort_by = request.query_params.get('sort', 'date')
-        
+
+        # Honor the branch-switcher's X-Branch-ID header for elevated users;
+        # None means tenant-wide (all branches), not "fall back to my branch".
+        effective_branch = resolve_effective_branch(request)
+
         # Initialize results
         items = []
-        
+
         # 1. Stock Adjustment Requests
         if not filter_type or filter_type == 'adjustment':
             adjustments = StockAdjustmentRequest.objects.filter(
                 status='pending',
                 owner=user,
-                branch=user.branch
-            ).select_related('item', 'location', 'requested_by')
+            )
+            if effective_branch:
+                adjustments = adjustments.filter(branch=effective_branch)
+            adjustments = adjustments.select_related('item', 'location', 'requested_by')
             
             for adj in adjustments:
                 items.append({
@@ -134,8 +140,10 @@ class PendingApprovalsViewSet(viewsets.ViewSet):
             transfers = StockTransferRequest.objects.filter(
                 status='pending',
                 owner=user,
-                branch=user.branch
-            ).select_related('item', 'from_location', 'to_location', 'requested_by')
+            )
+            if effective_branch:
+                transfers = transfers.filter(branch=effective_branch)
+            transfers = transfers.select_related('item', 'from_location', 'to_location', 'requested_by')
             
             for tfr in transfers:
                 items.append({
@@ -163,8 +171,10 @@ class PendingApprovalsViewSet(viewsets.ViewSet):
             writeoffs = WriteOffRequest.objects.filter(
                 status='pending',
                 owner=user,
-                branch=user.branch
-            ).select_related('item', 'location', 'requested_by')
+            )
+            if effective_branch:
+                writeoffs = writeoffs.filter(branch=effective_branch)
+            writeoffs = writeoffs.select_related('item', 'location', 'requested_by')
             
             for wo in writeoffs:
                 items.append({
@@ -191,8 +201,10 @@ class PendingApprovalsViewSet(viewsets.ViewSet):
             sales_orders = SalesOrder.objects.filter(
                 status='pending_approval',
                 owner=user,
-                branch=user.branch
-            ).select_related('client', 'created_by')
+            )
+            if effective_branch:
+                sales_orders = sales_orders.filter(branch=effective_branch)
+            sales_orders = sales_orders.select_related('client', 'created_by')
             
             for so in sales_orders:
                 items.append({
@@ -660,10 +672,13 @@ class StockAdjustmentViewSet(ScopedModelViewSet):
     def get_queryset(self):
         """Show adjustment requests"""
         from inventory.models import StockAdjustmentRequest
-        return StockAdjustmentRequest.objects.filter(
+        qs = StockAdjustmentRequest.objects.filter(
             owner__tenant=self.request.user.tenant,
-            branch=self.request.user.branch
-        ).select_related(
+        )
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs.select_related(
             'item', 'location', 'requested_by', 'approved_by'
         ).order_by('-created_at')
     
@@ -1009,8 +1024,14 @@ class StockTransferViewSet(ScopedModelViewSet):
                 qs = qs.filter(Q(from_branch=effective_branch) | Q(to_branch=effective_branch))
             # else: elevated user, no X-Branch-ID header -> all branches.
         else:
+            # resolve_effective_branch() already accounts for an active
+            # temporary branch grant (UserPermissionOverride.target_branch)
+            # selected via X-Branch-ID, falling back to the user's own
+            # branch otherwise — use it instead of user.branch directly so
+            # a temp-granted branch's transfers are visible too.
+            narrow_branch = resolve_effective_branch(self.request) or self.request.user.branch
             qs = qs.filter(
-                Q(from_branch=self.request.user.branch) | Q(to_branch=self.request.user.branch)
+                Q(from_branch=narrow_branch) | Q(to_branch=narrow_branch)
             )
 
         return qs
@@ -2205,10 +2226,13 @@ class WriteOffRequestViewSet(ScopedModelViewSet):
     def get_queryset(self):
         """Show write-off requests"""
         from inventory.models import WriteOffRequest
-        return WriteOffRequest.objects.filter(
+        qs = WriteOffRequest.objects.filter(
             owner__tenant=self.request.user.tenant,
-            branch=self.request.user.branch
-        ).select_related(
+        )
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs.select_related(
             'item', 'location', 'requested_by', 'approved_by'
         ).order_by('-created_at')
     
@@ -2470,10 +2494,13 @@ class SalesOrderViewSet(ScopedModelViewSet):
     
     def get_queryset(self):
         from inventory.models import SalesOrder
-        return SalesOrder.objects.filter(
+        qs = SalesOrder.objects.filter(
             owner__tenant=self.request.user.tenant,
-            branch=self.request.user.branch
-        ).select_related('client', 'approved_by').prefetch_related('items').order_by('-created_at')
+        )
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs.select_related('client', 'approved_by').prefetch_related('items').order_by('-created_at')
     
     @action(detail=True, methods=['post'])
     def submit(self, request, pk=None):

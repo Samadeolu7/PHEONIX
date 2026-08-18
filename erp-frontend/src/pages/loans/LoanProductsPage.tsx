@@ -6,7 +6,7 @@
 
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, Loader2, RefreshCw, Landmark, Settings2 } from 'lucide-react';
+import { AlertCircle, Loader2, Plus, RefreshCw, Landmark, Settings2 } from 'lucide-react';
 import { LoanProduct } from '../../services/loanService';
 import { useLoanProducts } from '../../hooks/useLoans';
 
@@ -48,14 +48,23 @@ export default function LoanProductsPage() {
               <p className="text-xs text-gray-500">Configure interest rates, terms, and fee structures</p>
             </div>
           </div>
-          <button
-            onClick={() => refetch()}
-            disabled={loading}
-            className="flex items-center gap-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => refetch()}
+              disabled={loading}
+              className="flex items-center gap-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            <Link
+              to="/loans/products/create"
+              className="flex items-center gap-1.5 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add Product
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -95,7 +104,13 @@ export default function LoanProductsPage() {
               <Landmark className="w-6 h-6 text-blue-400" />
             </div>
             <p className="text-sm font-medium text-gray-700">No loan products found</p>
-            <p className="text-xs text-gray-400 mt-1">Loan products are created by administrators.</p>
+            <Link
+              to="/loans/products/create"
+              className="inline-flex items-center gap-1.5 mt-3 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg px-3 py-1.5 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add your first product
+            </Link>
           </div>
         )}
 
@@ -164,7 +179,7 @@ export default function LoanProductsPage() {
         )}
 
         <p className="text-xs text-gray-400 mt-4">
-          Loan products are managed by administrators. Contact your system admin to add or modify products.
+          Loan products define interest rates, terms, fees, and GL account mappings for a class of loans.
         </p>
       </div>
     </div>

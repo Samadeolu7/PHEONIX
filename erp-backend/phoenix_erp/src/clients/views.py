@@ -16,7 +16,7 @@ import csv
 import io
 
 from common.serializers import IsTenantUser
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 
 from .models import (
     Client, ClientClassification, ClientDocument, 
@@ -205,7 +205,8 @@ class ClientViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        config = get_active_registration_config(owner=request.user, branch=request.user.branch)
+        branch = resolve_effective_branch(request)
+        config = get_active_registration_config(owner=request.user, branch=branch)
         if not config:
             return Response(
                 {'detail': 'No active registration config found for your branch.'},
@@ -215,8 +216,11 @@ class ClientViewSet(ScopedModelViewSet):
         registration_fee, id_fee = config.get_fees_for_client_type(client_type)
 
         from savings.models import CompulsorySavingsPolicy
+        policy_filters = {'enabled': True}
+        if branch:
+            policy_filters['branch'] = branch
         policy = CompulsorySavingsPolicy.objects.filter(
-            branch=request.user.branch, enabled=True,
+            **policy_filters,
         ).order_by('-updated_at').first()
         compulsory_savings = policy.amount if policy else Decimal('0.00')
 

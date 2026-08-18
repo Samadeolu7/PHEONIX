@@ -580,6 +580,7 @@ const LoanRepaymentReversalsPage = lazy(() => import('./pages/loans/LoanRepaymen
 // Loan new application form & products
 const LoanAccountFormPage = lazy(() => import('./pages/loans/LoanAccountFormPage'));
 const LoanProductsPage = lazy(() => import('./pages/loans/LoanProductsPage'));
+const LoanProductCreatePage = lazy(() => import('./pages/loans/LoanProductCreatePage'));
 const LoanProductConfigPage = lazy(() => import('./pages/loans/LoanProductConfigPage'));
 
 // Client management additions
@@ -4200,6 +4201,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-products">
                                       <LoanProductsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Loans — Create product */}
+                                <Route
+                                  path="/loans/products/create"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-products" action="create">
+                                      <LoanProductCreatePage />
                                     </ProtectedRoute>
                                   }
                                 />

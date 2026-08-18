@@ -60,7 +60,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
       { code: 'loan-verification', title: 'Loan Verification', description: 'Verify loan applications before disbursement', paths: ['/loans/verification', '/loans/verification/:loanId'] },
       { code: 'loan-collection', title: 'Loan Collection', description: 'Field loan repayment collection', path: '/loans/collection' },
       { code: 'loan-repayment-approvals', title: 'Repayment Approvals', description: 'Approve savings-debit repayment requests', path: '/loans/repayment-approvals' },
-      { code: 'loan-products', title: 'Loan Products', description: 'Configure loan product types', paths: ['/loans/products', '/loans/products/:id/config'] },
+      { code: 'loan-products', title: 'Loan Products', description: 'Configure loan product types', paths: ['/loans/products', '/loans/products/create', '/loans/products/:id/config'] },
       { code: 'loan-disbursements', title: 'Disbursements', description: 'Disburse approved loans', paths: ['/loans/disbursements', '/loans/disbursements/:loanId'] },
       { code: 'loan-disbursement-corrections', title: 'Disbursement Corrections', description: 'Fix loans disbursed to the wrong customer (always dual director approval)', path: '/loans/disbursement-corrections' },
       { code: 'loan-repayment-reversals', title: 'Repayment Reversals', description: 'Undo a specific, already-posted loan payment (always dual approval)', path: '/loans/repayment-reversals' },

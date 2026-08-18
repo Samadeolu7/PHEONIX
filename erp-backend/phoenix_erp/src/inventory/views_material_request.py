@@ -11,7 +11,7 @@ from django.db.models import Q, Count
 from django.utils import timezone
 import logging
 
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 from common.approval_permissions import IsApprover
 from .models_material_request import MaterialRequest, MaterialRequestItem
 from .serializers_material_request import (
@@ -415,10 +415,15 @@ class MaterialRequestViewSet(ScopedModelViewSet):
         from .models import InventoryItem
         qs = InventoryItem.objects.select_related('category').filter(is_active=True)
 
-        # Scope to the requesting user's branch / tenant to prevent cross-tenant leakage
+        # Scope to the requesting user's effective branch / tenant to prevent
+        # cross-tenant (and cross-branch) leakage. resolve_effective_branch()
+        # honors the topbar branch-switcher's X-Branch-ID header for elevated
+        # users; None means tenant-wide (all branches) rather than "fall back
+        # to my own branch".
         user = request.user
-        if hasattr(user, 'branch') and user.branch_id:
-            qs = qs.filter(branch=user.branch)
+        effective_branch = resolve_effective_branch(request)
+        if effective_branch:
+            qs = qs.filter(branch=effective_branch)
         elif hasattr(user, 'tenant') and user.tenant_id:
             qs = qs.filter(tenant=user.tenant)
 

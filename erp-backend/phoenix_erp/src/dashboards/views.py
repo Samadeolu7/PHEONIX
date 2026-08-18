@@ -883,7 +883,7 @@ def _fetch_live_widget_data(widget, request):
                 now = timezone.now()
                 thirty_days_ago = (now - timedelta(days=30)).date()
                 qs = ResourceConsumption.objects.filter(
-                    branch=request.user.branch,
+                    branch=branch,
                     resource__resource_type='fuel',
                     consumption_date__gte=thirty_days_ago,
                     status__in=['approved', 'posted'],

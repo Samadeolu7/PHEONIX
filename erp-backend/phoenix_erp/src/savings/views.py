@@ -9,7 +9,7 @@ from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch, is_elevated_user
 from common.serializers import IsTenantUser
 
 from .models import (
@@ -731,6 +731,44 @@ class WithdrawalApprovalTierViewSet(ScopedModelViewSet):
         serializer.save(owner=self.request.user)
 
 
+def _resolve_withdrawal_request_branch(request):
+    """
+    Branch to scope SavingsWithdrawalRequest queries to.
+
+    Extends resolve_effective_branch() to also treat a non-elevated user who
+    holds the 'savings.view_all_branches' Django permission as an elevated
+    user for this purpose: historically such a user saw every branch
+    unconditionally and the topbar branch-switcher had no effect on them at
+    all. That "sees everything" capability is preserved here, but now the
+    X-Branch-ID header (when set) narrows it down to one branch — same as
+    it does for directors/owners/global-scope roles — instead of being
+    ignored outright.
+
+    Everyone else (no view_all_branches permission, not otherwise elevated)
+    is scoped exactly like resolve_effective_branch() scopes them everywhere
+    else in the app (own branch, honoring an active temporary branch grant).
+    """
+    user = getattr(request, 'user', None)
+    if not user or not getattr(user, 'is_authenticated', False):
+        return None
+
+    if is_elevated_user(user) or user.has_perm('savings.view_all_branches'):
+        header_val = request.META.get('HTTP_X_BRANCH_ID', '').strip()
+        if not header_val:
+            return None  # tenant-wide / all branches
+        try:
+            from branches.models import Branch
+            tenant = getattr(user, 'tenant', None)
+            qs = Branch.objects.filter(pk=int(header_val), is_deleted=False)
+            if tenant:
+                qs = qs.filter(tenant=tenant)
+            return qs.get()
+        except Exception:
+            return None
+
+    return resolve_effective_branch(request)
+
+
 class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
     """
     Withdrawal request management.
@@ -761,12 +799,32 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
-        qs = super().get_queryset()
         user = self.request.user
 
-        # Directors (cross-branch permission) see all; others see their branch only
-        if not user.has_perm('savings.view_all_branches'):
-            qs = qs.filter(branch=user.branch)
+        if not is_elevated_user(user) and user.has_perm('savings.view_all_branches'):
+            # ScopedModelViewSet.get_queryset() (super()) would narrow this
+            # user to their own branch, since they aren't elevated by role —
+            # that drops the "sees every branch" capability this specific
+            # Django permission is meant to grant. Rebuild the branch
+            # scoping ourselves: the same X-Branch-ID-driven narrowing
+            # elevated users get via _resolve_withdrawal_request_branch,
+            # tenant-wide when no header is set (preserving this
+            # population's existing all-branches capability), narrowed to
+            # one branch when the topbar branch-switcher sets a header.
+            qs = self.__class__.queryset.all()
+            if getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=user.tenant)
+            branch = _resolve_withdrawal_request_branch(self.request)
+            if branch:
+                qs = qs.filter(branch=branch)
+            qs = self._apply_officer_scope(qs)
+        else:
+            # Elevated users (director/owner/global-scope role) and
+            # everyone else are already scoped correctly by
+            # ScopedModelViewSet: X-Branch-ID-driven for elevated users
+            # (tenant-wide with no header), own branch + active temporary
+            # branch grant for everyone else.
+            qs = super().get_queryset()
 
         # Optional filters
         params = self.request.query_params
@@ -854,10 +912,13 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
         if getattr(user, 'tenant', None):
             qs = qs.filter(tenant=user.tenant)
 
-        # Apply branch scope (directors with view_all_branches bypass this)
-        if not user.has_perm('savings.view_all_branches'):
-            if getattr(user, 'branch', None):
-                qs = qs.filter(branch=user.branch)
+        # Apply branch scope — honors the topbar branch-switcher's
+        # X-Branch-ID header for elevated users and savings.view_all_branches
+        # permission holders alike; None means tenant-wide / all branches
+        # (see _resolve_withdrawal_request_branch's docstring).
+        branch = _resolve_withdrawal_request_branch(request)
+        if branch:
+            qs = qs.filter(branch=branch)
 
         # Exclude requests created by this user (maker-checker: creator ≠ approver)
         qs = qs.exclude(requested_by=user)

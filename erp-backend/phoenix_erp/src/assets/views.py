@@ -9,7 +9,7 @@ from django.utils import timezone
 from django.db import transaction
 from django.db.models import Q
 
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 
 from .models import AssetCategory, FixedAsset, AssetDepreciation, AssetMaintenance, AssetAcquisition, AssetAcquisitionLine, AssetRequisition, AssetRequisitionLine, AssetTransfer, AssetAssignment
 from .serializers import (
@@ -36,10 +36,11 @@ class AssetCategoryViewSet(ScopedModelViewSet):
     ordering = ['name']
     
     def get_queryset(self):
-        return AssetCategory.objects.filter(
-            owner=self.request.user,
-            branch=self.request.user.branch
-        )
+        qs = AssetCategory.objects.filter(owner=self.request.user)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
 
 
 class FixedAssetViewSet(ScopedModelViewSet):
@@ -54,10 +55,13 @@ class FixedAssetViewSet(ScopedModelViewSet):
     ordering = ['asset_number']
 
     def get_queryset(self):
-        return FixedAsset.objects.filter(
+        qs = FixedAsset.objects.filter(
             owner=self.request.user,
-            branch=self.request.user.branch
         ).select_related('supplier', 'purchase_order', 'accounts_payable', 'category')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
 
     def perform_create(self, serializer):
         """
@@ -812,8 +816,11 @@ class FixedAssetViewSet(ScopedModelViewSet):
         assignments = AssetAssignment.objects.filter(
             asset=asset,
             owner=request.user,
-            branch=request.user.branch,
-        ).order_by('-assigned_date', '-created_at')
+        )
+        branch = resolve_effective_branch(request)
+        if branch:
+            assignments = assignments.filter(branch=branch)
+        assignments = assignments.order_by('-assigned_date', '-created_at')
         serializer = AssetAssignmentSerializer(assignments, many=True)
         return Response({'results': serializer.data, 'count': assignments.count()})
 
@@ -828,8 +835,11 @@ class FixedAssetViewSet(ScopedModelViewSet):
         transfers = AssetTransfer.objects.filter(
             asset=asset,
             owner=request.user,
-            branch=request.user.branch,
-        ).order_by('-transfer_date', '-created_at')
+        )
+        branch = resolve_effective_branch(request)
+        if branch:
+            transfers = transfers.filter(branch=branch)
+        transfers = transfers.order_by('-transfer_date', '-created_at')
         serializer = AssetTransferSerializer(transfers, many=True)
         return Response({'results': serializer.data, 'count': transfers.count()})
 
@@ -920,10 +930,11 @@ class AssetDepreciationViewSet(ScopedModelViewSet):
     ordering = ['-period_start']
     
     def get_queryset(self):
-        return AssetDepreciation.objects.filter(
-            owner=self.request.user,
-            branch=self.request.user.branch
-        )
+        qs = AssetDepreciation.objects.filter(owner=self.request.user)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
     
     @action(detail=True, methods=['post'])
     @transaction.atomic
@@ -1016,10 +1027,11 @@ class AssetMaintenanceViewSet(ScopedModelViewSet):
     ordering = ['-maintenance_date']
     
     def get_queryset(self):
-        return AssetMaintenance.objects.filter(
-            owner=self.request.user,
-            branch=self.request.user.branch
-        )
+        qs = AssetMaintenance.objects.filter(owner=self.request.user)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
     
     @action(detail=True, methods=['post'])
     @transaction.atomic
@@ -1149,9 +1161,7 @@ class AssetAcquisitionViewSet(ScopedModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        return AssetAcquisition.objects.filter(
-            branch=user.branch,
-        ).filter(
+        qs = AssetAcquisition.objects.filter(
             Q(owner=user)
             | Q(status__in=[
                 AssetAcquisition.STATUS_SUBMITTED,
@@ -1161,6 +1171,10 @@ class AssetAcquisitionViewSet(ScopedModelViewSet):
         ).select_related(
             'supplier', 'purchase_order', 'accounts_payable', 'posted_by'
         ).prefetch_related('lines__asset_category', 'lines__fixed_assets')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
 
     def perform_create(self, serializer):
         import random
@@ -1630,11 +1644,13 @@ class AssetRequisitionViewSet(ScopedModelViewSet):
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return AssetRequisition.objects.none()
-        return AssetRequisition.objects.filter(
-            branch=self.request.user.branch
-        ).select_related(
+        qs = AssetRequisition.objects.select_related(
             'requested_by', 'approved_by', 'acquisition'
         ).prefetch_related('items', 'items__asset_category')
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
 
     def perform_create(self, serializer):
         import random

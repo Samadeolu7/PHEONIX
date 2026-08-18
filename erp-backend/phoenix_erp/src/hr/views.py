@@ -16,7 +16,7 @@ import logging
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 from common.approval_permissions import IsApprover
 from automations.models import WorkflowTemplate, WorkflowRun
 from .models import (
@@ -61,25 +61,28 @@ class HRConfigViewSet(viewsets.ModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return HRConfig.objects.none()
         
-        return HRConfig.objects.filter(
-            owner=self.request.user,
-            branch=self.request.user.branch
-        )
-    
+        qs = HRConfig.objects.filter(owner=self.request.user)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs
+
     @action(detail=False, methods=['get'])
     def for_branch(self, request):
         """Get config for current branch"""
         config = HRConfig.get_for_branch(request.user.branch)
         return Response(self.get_serializer(config).data)
-    
+
     @action(detail=False, methods=['get'])
     def available_workflows(self, request):
         """Get available workflow templates"""
         workflows = WorkflowTemplate.objects.filter(
             owner=request.user,
-            branch=request.user.branch,
             is_active=True
         )
+        branch = resolve_effective_branch(request)
+        if branch:
+            workflows = workflows.filter(branch=branch)
         return Response({
             'workflows': [
                 {
@@ -666,11 +669,13 @@ class LeaveBalanceViewSet(ScopedModelViewSet):
         """Audit leave balance data integrity - find orphaned leave requests"""
         from collections import defaultdict
         
-        # Get all leave requests for this branch
-        leave_requests = LeaveRequest.objects.filter(
-            branch=request.user.branch,
-            is_deleted=False
-        ).select_related('staff', 'leave_type')
+        # Get all leave requests for the effective branch (honors the
+        # topbar branch-switcher's X-Branch-ID header for elevated users)
+        leave_requests = LeaveRequest.objects.filter(is_deleted=False)
+        branch = resolve_effective_branch(request)
+        if branch:
+            leave_requests = leave_requests.filter(branch=branch)
+        leave_requests = leave_requests.select_related('staff', 'leave_type')
         
         orphaned_requests = []
         insufficient_balance = []
@@ -1747,48 +1752,59 @@ class PayrollViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        branch = request.user.branch
-        
+        # Honor the topbar branch-switcher's X-Branch-ID header for elevated
+        # users instead of always pinning the report to the viewer's own
+        # branch. None means tenant-wide (all branches).
+        branch = resolve_effective_branch(request)
+
         # New hires - staff created during period
         new_hires = Staff.objects.filter(
-            branch=branch,
             created_at__gte=period_start_date,
             created_at__lte=period_end_date,
             is_deleted=False
-        ).values(
-            'id', 'first_name', 'last_name', 'position', 
+        )
+        if branch:
+            new_hires = new_hires.filter(branch=branch)
+        new_hires = new_hires.values(
+            'id', 'first_name', 'last_name', 'position',
             'department', 'created_at'
         )
-        
+
         # Terminations - staff soft-deleted during period
         terminations = Staff.objects.filter(
-            branch=branch,
             is_deleted=True,
             updated_at__gte=period_start_date,
             updated_at__lte=period_end_date
-        ).values(
-            'id', 'first_name', 'last_name', 'position', 
+        )
+        if branch:
+            terminations = terminations.filter(branch=branch)
+        terminations = terminations.values(
+            'id', 'first_name', 'last_name', 'position',
             'department', 'updated_at'
         )
-        
+
         # Leave taken - approved leave requests during period
         leave_requests = LeaveRequest.objects.filter(
-            branch=branch,
             status='approved',
             start_date__lte=period_end_date,
             end_date__gte=period_start_date
-        ).select_related('staff', 'leave_type').values(
+        )
+        if branch:
+            leave_requests = leave_requests.filter(branch=branch)
+        leave_requests = leave_requests.select_related('staff', 'leave_type').values(
             'id', 'staff__first_name', 'staff__last_name',
             'leave_type__name', 'start_date', 'end_date', 'num_days'
         )
-        
+
         # Overtime - attendance with overtime hours during period
         overtime_records = Attendance.objects.filter(
-            branch=branch,
             date__gte=period_start_date,
             date__lte=period_end_date,
             overtime_hours__gt=0
-        ).select_related('staff').values(
+        )
+        if branch:
+            overtime_records = overtime_records.filter(branch=branch)
+        overtime_records = overtime_records.select_related('staff').values(
             'staff__id', 'staff__first_name', 'staff__last_name'
         ).annotate(
             total_overtime_hours=Sum('overtime_hours')

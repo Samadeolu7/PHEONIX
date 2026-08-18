@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db.models import Q, Count
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 
 from notifications.models import (
     Notification, NotificationTemplate, NotificationPreference
@@ -213,11 +213,11 @@ class NotificationTemplateViewSet(viewsets.ReadOnlyModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return NotificationTemplate.objects.none()
         
-        user = self.request.user
-        return NotificationTemplate.objects.filter(
-            branch=user.branch,
-            is_active=True
-        ).select_related('branch').prefetch_related('channel_configs__channel')
+        qs = NotificationTemplate.objects.filter(is_active=True)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            qs = qs.filter(branch=branch)
+        return qs.select_related('branch').prefetch_related('channel_configs__channel')
     
     @action(detail=True, methods=['post'], serializer_class=SendNotificationSerializer)
     def send(self, request, pk=None):

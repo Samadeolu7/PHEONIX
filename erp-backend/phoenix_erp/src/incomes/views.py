@@ -13,7 +13,7 @@ from django.utils import timezone
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 import logging
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, resolve_effective_branch
 from .models import (
     IncomeCategory, Income, FeeStructure, ServiceItem, Invoice,
     FeeEntitlement, EntitlementPaymentLog, EntitlementUsageLog,
@@ -2072,9 +2072,9 @@ class InvoiceViewSet(ScopedModelViewSet):
         try:
             summary = BulkInvoiceService.get_batch_summary(
                 batch_id=batch_id,
-                branch=request.user.branch
+                branch=resolve_effective_branch(request)
             )
-            
+
             serializer = BatchSummarySerializer(summary)
             return Response(serializer.data)
             
@@ -2123,7 +2123,7 @@ class InvoiceViewSet(ScopedModelViewSet):
         try:
             sample = BulkInvoiceService.get_batch_sample(
                 batch_id=batch_id,
-                branch=request.user.branch,
+                branch=resolve_effective_branch(request),
                 sample_size=sample_size,
                 sample_pct=sample_pct
             )
@@ -2163,16 +2163,17 @@ class InvoiceViewSet(ScopedModelViewSet):
             )
         
         try:
+            effective_branch = resolve_effective_branch(request)
             # Get batch summary
             summary = BulkInvoiceService.get_batch_summary(
                 batch_id=batch_id,
-                branch=request.user.branch
+                branch=effective_branch
             )
-            
+
             # Generate PDF report
             pdf_content = BulkInvoiceService.generate_approval_report(
                 batch_id=batch_id,
-                branch=request.user.branch,
+                branch=effective_branch,
                 approver=request.user,
                 summary=summary
             )
@@ -2305,7 +2306,7 @@ class InvoiceViewSet(ScopedModelViewSet):
         
         try:
             batches = BulkInvoiceService.list_batches(
-                branch=request.user.branch,
+                branch=resolve_effective_branch(request),
                 status=status_filter
             )
             
@@ -2337,10 +2338,16 @@ class InvoiceViewSet(ScopedModelViewSet):
             )
         
         try:
-            # Get all invoices in batch
+            # Get all invoices in batch. Matches the branch semantics used by
+            # the other batch-* endpoints (get_batch_summary/list_batches):
+            # an elevated user with no X-Branch-ID header selected gets no
+            # invoices back rather than every branch's, consistent with the
+            # rest of the app requiring an explicit branch selection before
+            # working with branch-scoped batch data.
+            effective_branch = resolve_effective_branch(request)
             invoices = Invoice.objects.filter(
                 metadata__batch_id=batch_id,
-                branch=request.user.branch
+                branch=effective_branch
             ).select_related('client', 'fee_structure')
             
             if not invoices.exists():
@@ -2818,8 +2825,10 @@ class FeeEntitlementViewSet(ScopedModelViewSet):
             entitlements = FeeEntitlement.objects.filter(
                 client=client,
                 owner=request.user,
-                branch=request.user.branch
             )
+            effective_branch = resolve_effective_branch(request)
+            if effective_branch:
+                entitlements = entitlements.filter(branch=effective_branch)
             
             # Calculate totals
             totals = entitlements.aggregate(
@@ -3024,8 +3033,14 @@ class PaymentReversalRequestListView(APIView):
         if not getattr(user, 'is_system_admin', False):
             if hasattr(user, 'tenant') and user.tenant:
                 qs = qs.filter(tenant=user.tenant)
-            elif hasattr(user, 'branch') and user.branch:
-                qs = qs.filter(Q(branch=user.branch) | Q(branch__isnull=True))
+            # resolve_effective_branch() honors the topbar branch-switcher's
+            # X-Branch-ID header for elevated users (director/owner/global
+            # scope) and any active temporary branch grant for everyone
+            # else; None means tenant-wide (elevated, no header selected) —
+            # not "fall back to the viewer's own branch".
+            effective_branch = resolve_effective_branch(request)
+            if effective_branch:
+                qs = qs.filter(Q(branch=effective_branch) | Q(branch__isnull=True))
 
         if status_filter in ('pending', 'approved', 'rejected'):
             qs = qs.filter(status=status_filter)
