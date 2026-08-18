@@ -93,6 +93,16 @@ class IsTenantUser(permissions.BasePermission):
             # of those same records 403'd here instead, because this check
             # only ever compared against the user's own home branch — list
             # worked, clicking into a single record didn't.
+            #
+            # The same gap applies to a non-elevated user with an active
+            # temporary branch grant (UserPermissionOverride.target_branch):
+            # the queryset already includes the granted branch's records and
+            # the switcher lets them select it via X-Branch-ID, so this check
+            # must honor that too instead of only ever comparing against
+            # their home branch. resolve_effective_branch() already covers
+            # both cases (elevated → any tenant branch or "all"; non-elevated
+            # with a grant → their selected {home, granted} branch; everyone
+            # else → their home branch), so use it uniformly.
             from common.views import is_elevated_user, resolve_effective_branch
             if is_elevated_user(request.user):
                 effective_branch = resolve_effective_branch(request)
@@ -102,6 +112,9 @@ class IsTenantUser(permissions.BasePermission):
                     return True
                 return obj.branch_id == effective_branch.id
 
+            effective_branch = resolve_effective_branch(request)
+            if effective_branch is not None:
+                return obj.branch_id == effective_branch.id
             return obj.branch == request.user.branch
 
         # If no branch on either, allow (shouldn't happen for BranchScopedModel)
