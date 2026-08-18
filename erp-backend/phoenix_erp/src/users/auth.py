@@ -120,6 +120,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'has_global_scope': _has_global_scope(self.user),
             'temp_branch_access': _temp_branch_access(self.user),
             'branch_id': self.user.branch.id if self.user.branch else None,
+            'branch_name': self.user.branch.name if self.user.branch else None,
             'assigned_dashboard_id': self.user.assigned_dashboard.id if hasattr(self.user, 'assigned_dashboard') and self.user.assigned_dashboard else None,
             'assigned_dashboard_slug': self.user.assigned_dashboard.slug if hasattr(self.user, 'assigned_dashboard') and self.user.assigned_dashboard else None,
             'role_dashboard_id': None,

@@ -66,8 +66,8 @@ function BranchSwitcher() {
   // and the branch(es) they were explicitly granted — never every tenant
   // branch, and no tenant-wide "All Branches" mode (the backend has no such
   // concept for them; an absent header simply resolves to their own branch).
-  const homeBranch = !isDirectorPlus && user?.branch_id && user?.branch_name
-    ? { id: user.branch_id, name: user.branch_name }
+  const homeBranch = !isDirectorPlus && user?.branch_id
+    ? { id: user.branch_id, name: user.branch_name ?? 'My Branch' }
     : null;
   const selectableBranches = isDirectorPlus
     ? branches
