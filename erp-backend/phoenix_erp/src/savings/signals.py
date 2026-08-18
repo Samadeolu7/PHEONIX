@@ -8,8 +8,11 @@ Handlers:
         When a new Client is created, automatically open a Regular Savings
         account (product code SAV-REG) for that client.  A child GL account
         is created under parent 2140 (Customer Savings Deposits) and a
-        SavingsAccount record is linked to it.  Failures are logged but never
-        propagate — client creation is never blocked.
+        SavingsAccount record is linked to it, with a compulsory minimum
+        balance of at least ₦1000 (see _COMPULSORY_MINIMUM_BALANCE) — this
+        is a balance requirement only, no cash is collected at registration.
+        Failures are logged but never propagate — client creation is never
+        blocked.
 
     _apply_compulsory_savings_on_disbursement
         When a LoanAccount transitions to 'disbursed', check whether the branch
@@ -36,6 +39,12 @@ logger = logging.getLogger(__name__)
 
 _SAVINGS_PARENT_CODE = '2140'
 _DEFAULT_SAVINGS_PRODUCT_CODE = 'SAV-REG'
+# Every client's default savings account is compulsorily required to carry at
+# least this minimum balance, regardless of what the SAV-REG product happens
+# to have configured (branch-to-branch product config has drifted before —
+# see fix_missing_savings_product_config.py). The product's own
+# minimum_amount can only raise this floor, never lower it.
+_COMPULSORY_MINIMUM_BALANCE = Decimal('1000.00')
 
 
 @receiver(post_save, sender='clients.Client')
@@ -105,7 +114,7 @@ def _create_default_savings_account(sender, instance, created, **kwargs):
                 opened_on=timezone.now().date(),
                 interest_rate=product.interest_rate or Decimal('0.00'),
                 interest_calculation_method='monthly',
-                minimum_balance=product.minimum_amount or Decimal('0.00'),
+                minimum_balance=max(product.minimum_amount or Decimal('0.00'), _COMPULSORY_MINIMUM_BALANCE),
                 owner=instance.owner,
                 branch=instance.branch,
                 tenant=instance.tenant,

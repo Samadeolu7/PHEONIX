@@ -16,6 +16,9 @@ savings account creation for every client created afterward across the
 whole tenant (not just one branch). This command backfills anyone who fell
 through that gap.
 
+Opened accounts carry the same compulsory ₦1000 minimum balance as the
+_create_default_savings_account signal (savings/signals.py).
+
 Run in dry-run mode first to see who would be affected:
     python manage.py backfill_missing_default_savings --dry-run
 
@@ -32,6 +35,8 @@ from django.utils import timezone
 
 _SAVINGS_PARENT_CODE = '2140'
 _DEFAULT_SAVINGS_PRODUCT_CODE = 'SAV-REG'
+# Kept in sync with savings/signals.py's _COMPULSORY_MINIMUM_BALANCE.
+_COMPULSORY_MINIMUM_BALANCE = Decimal('1000.00')
 
 
 class Command(BaseCommand):
@@ -121,7 +126,7 @@ class Command(BaseCommand):
                         opened_on=timezone.now().date(),
                         interest_rate=product.interest_rate or Decimal('0.00'),
                         interest_calculation_method='monthly',
-                        minimum_balance=product.minimum_amount or Decimal('0.00'),
+                        minimum_balance=max(product.minimum_amount or Decimal('0.00'), _COMPULSORY_MINIMUM_BALANCE),
                         owner=client.owner,
                         branch=client.branch,
                         tenant=client.tenant,
