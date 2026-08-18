@@ -45,33 +45,42 @@ class PaymentRoutingService:
             return False
     
     @staticmethod
-    def get_or_create_cashier_account(user: User) -> CashierAccount:
+    def get_or_create_cashier_account(user: User, branch=None) -> CashierAccount:
         """
-        Get existing cashier account for user or auto-create one.
-        
-        This ensures every user recording a cash payment has a cashier account
-        to hold the payment.
-        
+        Get existing cashier account for user in `branch`, or auto-create one.
+
+        A cashier's GL cash account is branch-scoped (CashierAccount.unique_together
+        includes branch) — a staff member who records cash transactions for more
+        than one branch needs a distinct cashier account per branch. Reusing one
+        account across branches means the resulting journal entry's branch (taken
+        from the transaction being posted) won't match the account's own branch,
+        which TransactionEntry.clean() rejects.
+
         Args:
             user: User who needs a cashier account
-            
+            branch: Branch the transaction is being posted for. Defaults to the
+                user's home branch when not supplied.
+
         Returns:
-            CashierAccount instance for the user
+            CashierAccount instance for the user, scoped to `branch`.
         """
-        # Try to find existing active cashier account for this user
+        if branch is None:
+            branch = user.branch if hasattr(user, 'branch') else None
+
+        # Try to find existing active cashier account for this user in this branch
         cashier_account = CashierAccount.objects.filter(
             cashier=user,
+            branch=branch,
             is_active=True,
             is_suspended=False
         ).first()
-        
+
         if cashier_account:
             return cashier_account
-        
+
         # Auto-create cashier account for this user
         from accounts.models import Account
-        
-        branch = user.branch if hasattr(user, 'branch') else None
+
         tenant = getattr(user, 'tenant', None)
 
         # Generate unique account number
@@ -191,7 +200,7 @@ class PaymentRoutingService:
 
             return explicit_account
 
-        cashier = PaymentRoutingService.get_or_create_cashier_account(user)
+        cashier = PaymentRoutingService.get_or_create_cashier_account(user, branch=branch)
         if cashier and cashier.account:
             return cashier.account
 
