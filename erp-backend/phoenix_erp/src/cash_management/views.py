@@ -63,10 +63,11 @@ class CashierAccountViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        if hasattr(self.request.user, 'branch') and self.request.user.branch:
-            queryset = queryset.filter(branch=self.request.user.branch)
-        
+
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
+
         is_active = self.request.query_params.get('is_active')
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active.lower() == 'true')
@@ -153,7 +154,7 @@ class CashierAccountViewSet(viewsets.ModelViewSet):
         date_str = request.query_params.get('date')
         date = timezone.datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else timezone.now().date()
         
-        branch = request.user.branch if hasattr(request.user, 'branch') else None
+        branch = resolve_effective_branch(request)
         pending = CashReconciliationService.get_pending_reconciliations(branch, date)
         
         serializer = self.get_serializer(pending, many=True)
@@ -535,46 +536,46 @@ class BankReconciliationViewSet(ScopedModelViewSet):
         date_str = request.query_params.get('date')
         date = timezone.datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else timezone.now().date()
         
-        branch = request.user.branch if hasattr(request.user, 'branch') else None
-        
+        branch = resolve_effective_branch(request)
+
         collections = CashCollection.objects.filter(
             collection_date=date,
             is_posted=True
         )
         if branch:
             collections = collections.filter(branch=branch)
-        
+
         total_collections = collections.aggregate(Sum('amount_collected'))['amount_collected__sum'] or Decimal('0.00')
         collection_count = collections.count()
-        
+
         deposits = CashTransfer.objects.filter(
             transfer_date=date,
             status='posted'
         )
         if branch:
             deposits = deposits.filter(branch=branch)
-        
+
         total_deposits = deposits.aggregate(Sum('amount'))['amount__sum'] or Decimal('0.00')
         deposit_count = deposits.count()
-        
+
         reconciliations = CashReconciliation.objects.filter(
             reconciliation_date=date
         )
         if branch:
             reconciliations = reconciliations.filter(branch=branch)
-        
+
         pending_reconciliations = reconciliations.filter(reconciled_by__isnull=True).count()
         completed_reconciliations = reconciliations.filter(reconciled_by__isnull=False).count()
-        
+
         cashiers_needing = CashReconciliationService.get_pending_reconciliations(branch, date)
         cashiers_need_reconciliation = [c.name for c in cashiers_needing]
-        
+
         unsigned_reconciliations = reconciliations.filter(
             reconciled_by__isnull=False,
             finance_officer_signoff__isnull=True
         )
         cashiers_without_signoff = [r.cashier_account.name for r in unsigned_reconciliations]
-        
+
         all_reconciled = pending_reconciliations == 0
         all_signed_off = len(cashiers_without_signoff) == 0
         all_deposited = total_collections <= total_deposits
@@ -734,9 +735,10 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by branch
-        if hasattr(self.request.user, 'branch') and self.request.user.branch:
-            queryset = queryset.filter(branch=self.request.user.branch)
+        # Filter by branch (honors the topbar branch-switcher for elevated users)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
         
         # Filter by status
         status = self.request.query_params.get('status')
@@ -1055,9 +1057,10 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by branch
-        if hasattr(self.request.user, 'branch') and self.request.user.branch:
-            queryset = queryset.filter(branch=self.request.user.branch)
+        # Filter by branch (honors the topbar branch-switcher for elevated users)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
         
         # Filter by fund
         fund_id = self.request.query_params.get('fund')
@@ -1504,9 +1507,10 @@ class PettyCashReplenishmentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         
-        # Filter by branch
-        if hasattr(self.request.user, 'branch') and self.request.user.branch:
-            queryset = queryset.filter(branch=self.request.user.branch)
+        # Filter by branch (honors the topbar branch-switcher for elevated users)
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
         
         # Filter by fund
         fund_id = self.request.query_params.get('fund')

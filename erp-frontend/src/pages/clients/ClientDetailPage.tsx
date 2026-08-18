@@ -539,6 +539,7 @@ const ClientDetailPage: React.FC = () => {
             <InfoItem label="Admission Number" value={client.admission_number || 'Not assigned'} />
             <InfoItem label="Admission Date" value={formatDate(client.admission_date)} />
             <InfoItem label="Classification" value={client.classification_name || 'Not assigned'} />
+            <InfoItem label="NIN" value={client.nin || 'Not provided'} />
             <InfoItem label="BVN" value={(client as any).bank_verification_number ? `****${((client as any).bank_verification_number as string).slice(-4)}` : 'Not provided'} />
             <InfoItem label="Bank Name" value={(client as any).bank_name || 'Not provided'} />
             <InfoItem label="Account Number" value={(client as any).bank_account_number ? `****${((client as any).bank_account_number as string).slice(-4)}` : 'Not provided'} />
@@ -666,6 +667,7 @@ const ClientDetailPage: React.FC = () => {
                 value={client.bank_account_number || 'Not provided'}
               />
               <InfoItem label="BVN" value={client.bank_verification_number || 'Not provided'} />
+              <InfoItem label="NIN" value={client.nin || 'Not provided'} />
             </InfoGrid>
           </SectionCard>
         )}
