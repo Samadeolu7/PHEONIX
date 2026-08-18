@@ -116,22 +116,28 @@ def flat_schedule(
     total_interest = (disbursed_amount * rate).quantize(
         Decimal('0.01'), rounding=ROUND_HALF_UP
     )
-    total_repayable = disbursed_amount + total_interest
 
     n = Decimal(str(num_installments))
     base_principal = (disbursed_amount  / n).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     base_interest  = (total_interest    / n).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-    base_total     = (total_repayable   / n).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+    # total_due is derived from the rounded components, never rounded on its
+    # own — three independent quantize() calls (principal, interest, total)
+    # can each round in a different direction and leave total_due a cent off
+    # from principal_due + interest_due, which later shows up as an
+    # unbalanced GL posting when a payment closes out that installment.
+    base_total = base_principal + base_interest
 
     rows = [
         {'principal_due': base_principal, 'interest_due': base_interest, 'total_due': base_total}
         for _ in range(num_installments - 1)
     ]
     # Last installment absorbs rounding differences
+    last_principal = disbursed_amount - base_principal * (num_installments - 1)
+    last_interest  = total_interest   - base_interest  * (num_installments - 1)
     rows.append({
-        'principal_due': disbursed_amount - base_principal * (num_installments - 1),
-        'interest_due':  total_interest   - base_interest  * (num_installments - 1),
-        'total_due':     total_repayable  - base_total     * (num_installments - 1),
+        'principal_due': last_principal,
+        'interest_due':  last_interest,
+        'total_due':     last_principal + last_interest,
     })
     return rows
 
@@ -170,11 +176,14 @@ def reducing_balance_schedule(
         if i == n - 1:
             # Final installment: clear any residual rounding
             principal = balance
-            total = (balance + interest).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         else:
             principal = (emi - interest).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            # Clamping principal to the remaining balance (payoff lands early)
+            # must not leave total_due pinned to the un-clamped emi — total_due
+            # is always derived from the actual principal+interest below, same
+            # reasoning as flat_schedule().
             principal = max(Decimal('0'), min(principal, balance))
-            total = emi
+        total = principal + interest
         rows.append({'principal_due': principal, 'interest_due': interest, 'total_due': total})
         balance = (balance - principal).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 

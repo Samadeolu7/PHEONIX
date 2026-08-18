@@ -72,7 +72,8 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(f'Voucher {voucher_number} not found.'))
                 return
 
-            self.stdout.write(f'\nLines for {voucher_number}:')
+            self.stdout.write(f'\nVoucher status: {voucher.status}')
+            self.stdout.write(f'Lines for {voucher_number} (source-of-truth categories):')
             lines = list(voucher.lines.all())
             if not lines:
                 self.stdout.write('  (no PettyCashVoucherLine rows -- legacy single-category voucher)')
@@ -82,4 +83,19 @@ class Command(BaseCommand):
                 acct_desc = f'{acct.code} - {acct.name}' if acct else '(none)'
                 self.stdout.write(
                     f'  N{line.amount}  {cat.name if cat else "?"}  -> {acct_desc}'
+                )
+
+            if voucher.journal_entry_id:
+                self.stdout.write(
+                    f'\nActual posted GL entries (Transaction #{voucher.journal_entry_id}):'
+                )
+                for entry in voucher.journal_entry.entries.select_related('account').order_by('side', 'account__code'):
+                    self.stdout.write(
+                        f'  {entry.side:6}  {entry.account.code} - {entry.account.name}  N{entry.amount}'
+                    )
+            else:
+                self.stdout.write(
+                    '\n(Voucher has not been disbursed yet -- no journal_entry, so nothing has '
+                    'actually posted to the GL. Any "same account" observation must be coming '
+                    'from somewhere other than the ledger, e.g. a report or the detail page.)'
                 )

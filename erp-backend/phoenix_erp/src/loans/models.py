@@ -1186,6 +1186,19 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 f = min(to_apply - i, installment.fees_due - installment.fees_paid)
                 p = min(to_apply - i - f, installment.principal_due - installment.principal_paid)
 
+            # A row's total_due can be a cent off from the sum of its own
+            # principal_due/interest_due/fees_due (schedule-generation
+            # rounding drift on older rows — see flat_schedule()). When that
+            # happens, i+f+p comes up short of to_apply even though to_apply
+            # is fully deducted from `remaining` below, so the shortfall
+            # would otherwise vanish from every *_payment aggregate and post
+            # an unbalanced GL journal (debit = amount, credit short by the
+            # drift). Route any shortfall to principal, same as the
+            # end-of-loop fallback a few lines down.
+            shortfall = to_apply - (i + f + p)
+            if shortfall > 0:
+                p += shortfall
+
             interest_payment += i
             fee_payment += f
             principal_payment += p
