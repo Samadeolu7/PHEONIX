@@ -10,6 +10,7 @@ import {
 import {
   UserPermissionOverride,
 } from '../../services/rolePermissionService';
+import { branchService, Branch } from '../../services/branchService';
 
 const SCOPE_LABELS: Record<string, string> = {
   global:           'Global',
@@ -102,11 +103,18 @@ function GrantModal({ userId, onClose, onSaved }: GrantModalProps) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [branches, setBranches] = useState<Branch[]>([]);
 
   const createOverride = useCreateUserOverride();
 
+  useEffect(() => {
+    branchService.listBranches().then(setBranches).catch(() => {/* ignore */});
+  }, []);
+
   const set = (key: string, val: unknown) =>
     setForm(f => ({ ...f, [key]: val }));
+
+  const grantingBranchAccess = !!form.target_branch;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -155,6 +163,31 @@ function GrantModal({ userId, onClose, onSaved }: GrantModalProps) {
                 </label>
               ))}
             </div>
+          </fieldset>
+
+          {/* Temporary branch access */}
+          <fieldset className="border rounded p-3 space-y-2">
+            <legend className="text-sm font-medium text-gray-600 px-1">Temporary Branch Access</legend>
+            <p className="text-xs text-gray-400">
+              Grants access to one additional branch (on top of the user's own), for the
+              duration of this override. Leave unset for a permission-only grant.
+            </p>
+            <select
+              value={form.target_branch ?? ''}
+              onChange={e => set('target_branch', e.target.value ? Number(e.target.value) : null)}
+              className="w-full border rounded px-3 py-2 text-sm"
+              title="Additional Branch"
+            >
+              <option value="">— None —</option>
+              {branches.map(b => (
+                <option key={b.id} value={b.id}>{b.name}</option>
+              ))}
+            </select>
+            {grantingBranchAccess && form.expiry_type === 'permanent' && (
+              <p className="text-xs text-amber-600">
+                Branch access is usually time-boxed — consider setting an expiry below.
+              </p>
+            )}
           </fieldset>
 
           {/* Scope */}
@@ -421,6 +454,13 @@ export default function UserPermissionOverridePage() {
                         </div>
                         {o.action_code && (
                           <div className="text-xs text-gray-400 font-mono">{o.action_code}</div>
+                        )}
+                        {o.target_branch_name && (
+                          <div className="text-xs mt-1">
+                            <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                              + {o.target_branch_name}
+                            </span>
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-3">

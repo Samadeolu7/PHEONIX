@@ -46,6 +46,10 @@ interface AuthContextType {
   activeBranch: ActiveBranch | null;
   setActiveBranch: (branch: ActiveBranch | null) => void;
   isDirectorPlus: boolean;
+  // True when the user holds an active temporary cross-branch grant
+  // (UserPermissionOverride.target_branch) — narrower than isDirectorPlus:
+  // lets the branch switcher offer just {home branch, granted branch(es)}.
+  hasTempBranchAccess: boolean;
   // testing helpers (only present at runtime; safe to ignore in types)
   __setMockRole?: (role: MockUser['role']) => void;
   __seedMockUser?: (user: Partial<MockUser>) => void;
@@ -358,6 +362,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // "MD / CEO" or "Auditor" is global-scope on the backend regardless of
   // what it's literally named, so this can't drift out of sync with it.
   const isDirectorPlus = user?.has_global_scope ?? false;
+  const hasTempBranchAccess = (user?.temp_branch_access?.length ?? 0) > 0;
 
   const hasRole = (role: UserRole) => {
     return selectedRole === role;
@@ -472,6 +477,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     activeBranch,
     setActiveBranch,
     isDirectorPlus,
+    hasTempBranchAccess,
     ...(USE_MOCK ? { __setMockRole: setMockRole, __seedMockUser: seedMockUser } : {}),
   };
 

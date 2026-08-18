@@ -40,6 +40,19 @@ def is_elevated_user(user):
         return False
 
 
+def _get_temp_branch_ids(user):
+    """
+    Branch PKs `user` has active *temporary* access to via a
+    UserPermissionOverride.target_branch grant — separate from, and much
+    narrower than, is_elevated_user()'s "sees every branch" bypass.
+    """
+    try:
+        from permissions.services import get_temp_branch_ids
+        return get_temp_branch_ids(user)
+    except Exception:
+        return set()
+
+
 def resolve_effective_branch(request):
     """
     Return the Branch this request should be scoped to, for views that don't
@@ -53,6 +66,9 @@ def resolve_effective_branch(request):
         tenant-wide / "All Branches" mode — NOT silently narrowed to their
         own branch, matching for_user()'s branch-bypass for global-scope
         roles.
+      - Non-elevated user with an active temporary branch grant and a valid
+        X-Branch-ID header naming their home branch or the granted branch →
+        that branch. Any other header value is ignored.
       - Everyone else → their own assigned branch.
 
     Without this, a director switching branches in the topbar has no effect
@@ -64,8 +80,9 @@ def resolve_effective_branch(request):
     if not user or not getattr(user, 'is_authenticated', False):
         return None
 
+    header_val = request.META.get('HTTP_X_BRANCH_ID', '').strip()
+
     if is_elevated_user(user):
-        header_val = request.META.get('HTTP_X_BRANCH_ID', '').strip()
         if header_val:
             try:
                 from branches.models import Branch
@@ -77,6 +94,18 @@ def resolve_effective_branch(request):
             except Exception:
                 pass
         return None
+
+    if header_val:
+        try:
+            branch_id = int(header_val)
+            allowed_ids = _get_temp_branch_ids(user)
+            if getattr(user, 'branch_id', None):
+                allowed_ids = allowed_ids | {user.branch_id}
+            if branch_id in allowed_ids:
+                from branches.models import Branch
+                return Branch.objects.get(pk=branch_id)
+        except Exception:
+            pass
 
     return getattr(user, 'branch', None)
 
@@ -299,8 +328,13 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     def _get_director_branch_override(self):
         """
         When a global-scope user (director/admin/owner) sends X-Branch-ID in
-        the request header, return that Branch for further filtering.
-        Non-elevated users cannot use this header (returns None = no change).
+        the request header, return that Branch for further filtering — any
+        branch in the tenant.
+
+        A non-elevated user with an active temporary branch grant
+        (UserPermissionOverride.target_branch) may also use this header, but
+        only to pick between their home branch and the one they were granted
+        — any other value is ignored (returns None = no change).
         """
         if getattr(self, 'swagger_fake_view', False):
             return None
@@ -313,16 +347,30 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         if not user or not getattr(user, 'is_authenticated', False):
             return None
 
-        if not self._is_elevated_user(user):
+        try:
+            branch_pk = int(header_val)
+        except (TypeError, ValueError):
             return None
 
+        if self._is_elevated_user(user):
+            try:
+                from branches.models import Branch
+                tenant = getattr(user, 'tenant', None)
+                qs = Branch.objects.filter(pk=branch_pk, is_deleted=False)
+                if tenant:
+                    qs = qs.filter(tenant=tenant)
+                return qs.get()
+            except Exception:
+                return None
+
+        allowed_ids = self._get_temp_branch_ids(user)
+        if getattr(user, 'branch_id', None):
+            allowed_ids = allowed_ids | {user.branch_id}
+        if branch_pk not in allowed_ids:
+            return None
         try:
             from branches.models import Branch
-            tenant = getattr(user, 'tenant', None)
-            qs = Branch.objects.filter(pk=int(header_val), is_deleted=False)
-            if tenant:
-                qs = qs.filter(tenant=tenant)
-            return qs.get()
+            return Branch.objects.get(pk=branch_pk)
         except Exception:
             return None
 
@@ -331,6 +379,12 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         if user is None:
             user = getattr(self.request, 'user', None)
         return is_elevated_user(user)
+
+    def _get_temp_branch_ids(self, user=None):
+        """Branch PKs `user` has active temporary access to via a target_branch grant."""
+        if user is None:
+            user = getattr(self.request, 'user', None)
+        return _get_temp_branch_ids(user)
 
     def _apply_director_branch_override(self, qs):
         """Apply the X-Branch-ID branch override if one is in effect."""
@@ -398,10 +452,16 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
                 # without a custom manager (e.g. User) scope consistently
                 # with everything else.
                 if not self._is_elevated_user(user):
-                    # Filter by the user's branch, always including NULL-branch records
+                    # Filter by the user's branch (plus any active temporary
+                    # cross-branch grant), always including NULL-branch records
                     # (tenant-wide config like fee structures, loan products, etc.).
-                    if hasattr(user, 'branch') and user.branch and 'branch' in field_names:
-                        qs = qs.filter(Q(branch=user.branch) | Q(branch__isnull=True))
+                    if 'branch' in field_names:
+                        branch_ids = set()
+                        if hasattr(user, 'branch') and user.branch:
+                            branch_ids.add(user.branch_id)
+                        branch_ids |= self._get_temp_branch_ids(user)
+                        if branch_ids:
+                            qs = qs.filter(Q(branch__in=branch_ids) | Q(branch__isnull=True))
 
                 return self._apply_officer_scope(qs)
             except Exception:
@@ -418,7 +478,10 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         - User must be authenticated with an ``owner`` attribute
         - Elevated users (director/admin/owner) must have selected a branch via
           the ``X-Branch-ID`` request header before writing branch-scoped records
-        - Regular users use their assigned branch
+        - Regular users use their assigned branch, unless they hold an active
+          temporary branch grant and have selected the granted branch via the
+          same ``X-Branch-ID`` header — in which case new records are created
+          there instead
 
         Subclasses that override ``perform_create`` should call this instead of
         duplicating the elevated-user logic.  ``model`` is optional; pass it to
@@ -457,7 +520,12 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
                     })
             branch = branch_override
         else:
-            branch = getattr(user, 'branch', None)
+            # A non-elevated user with an active temporary branch grant may
+            # explicitly select the granted branch via X-Branch-ID; absent
+            # that (or if the header names anything else), fall back to
+            # their own assigned branch — no header is required for the
+            # common case of creating records in their home branch.
+            branch = self._get_director_branch_override() or getattr(user, 'branch', None)
 
         if branch is None:
             logger.warning(f"User {user.id} missing branch attribute")

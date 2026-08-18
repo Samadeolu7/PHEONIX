@@ -403,6 +403,13 @@ class PermissionResolver:
             action=override.action,
         )
 
+        # A branch-access grant is always elevation — it widens which
+        # branch's data the user can see/act on, independent of the
+        # flag/scope/limit checks below (which only compare the same
+        # module/page/action target the role already covers).
+        if override.target_branch_id:
+            return True
+
         # Check permission flags
         for flag in FLAG_NAMES:
             override_val = getattr(override, flag)
@@ -784,3 +791,34 @@ def scope_queryset_to_user(
         q |= _Q(**{officer_group_members_lookup: staff})
         return qs.filter(q).distinct()
     return qs.filter(q)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Temporary cross-branch access
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_temp_branch_overrides(user):
+    """
+    Return the active, non-expired UserPermissionOverride rows granting this
+    user temporary access to an additional branch. Wrapped in a savepoint the
+    same way PermissionResolver._active_overrides is — a DB error here (e.g.
+    during early migrations) must only roll back this lookup, not the caller's
+    whole request transaction.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return []
+    try:
+        with db_tx.atomic():
+            overrides = (
+                UserPermissionOverride.objects
+                .filter(user=user, is_active=True, is_suspended=False, target_branch__isnull=False)
+                .select_related('target_branch')
+            )
+            return [o for o in overrides if not o.is_expired]
+    except Exception:
+        return []
+
+
+def get_temp_branch_ids(user) -> set:
+    """Branch PKs the user has active temporary access to, via target_branch grants."""
+    return {o.target_branch_id for o in get_temp_branch_overrides(user)}

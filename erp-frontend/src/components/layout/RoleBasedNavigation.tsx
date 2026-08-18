@@ -30,10 +30,13 @@ import { getRoleRank } from '../../types/roles';
 import { useThreadContext } from '../../contexts/ThreadContext';
 
 // ---------------------------------------------------------------------------
-// BranchSwitcher — only visible to director / admin / operations / owner
+// BranchSwitcher — visible to director/admin/operations/owner (any tenant
+// branch, plus an "All Branches" tenant-wide option), and to a regular
+// staff member holding an active temporary cross-branch grant (their own
+// branch plus just the branch(es) they were granted — no "All Branches").
 // ---------------------------------------------------------------------------
 function BranchSwitcher() {
-  const { activeBranch, setActiveBranch, isDirectorPlus } = useAuth();
+  const { user, activeBranch, setActiveBranch, isDirectorPlus, hasTempBranchAccess } = useAuth();
   const [open, setOpen] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(false);
@@ -49,15 +52,26 @@ function BranchSwitcher() {
   }, [open]);
 
   useEffect(() => {
-    if (!open || branches.length > 0) return;
+    if (!open || !isDirectorPlus || branches.length > 0) return;
     setLoading(true);
     branchService.listBranches()
       .then(setBranches)
       .catch(() => setBranches([]))
       .finally(() => setLoading(false));
-  }, [open, branches.length]);
+  }, [open, isDirectorPlus, branches.length]);
 
-  if (!isDirectorPlus) return null;
+  if (!isDirectorPlus && !hasTempBranchAccess) return null;
+
+  // Non-elevated temp-grant users only get to pick between their own branch
+  // and the branch(es) they were explicitly granted — never every tenant
+  // branch, and no tenant-wide "All Branches" mode (the backend has no such
+  // concept for them; an absent header simply resolves to their own branch).
+  const homeBranch = !isDirectorPlus && user?.branch_id && user?.branch_name
+    ? { id: user.branch_id, name: user.branch_name }
+    : null;
+  const selectableBranches = isDirectorPlus
+    ? branches
+    : (user?.temp_branch_access ?? []).map(g => ({ id: g.id, name: g.name }));
 
   return (
     <div ref={ref} className="relative">
@@ -68,26 +82,39 @@ function BranchSwitcher() {
         title="Switch branch"
       >
         <GitBranch size={13} />
-        <span className="hidden md:inline">{activeBranch ? activeBranch.name : 'All Branches'}</span>
+        <span className="hidden md:inline">
+          {activeBranch ? activeBranch.name : (isDirectorPlus ? 'All Branches' : homeBranch?.name ?? 'My Branch')}
+        </span>
         <ChevronDown size={11} />
       </button>
 
       {open && (
         <div className="absolute right-0 top-full z-[9999] mt-1.5 min-w-[200px] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
-          <button
-            type="button"
-            onClick={() => { setActiveBranch(null); setOpen(false); }}
-            className={`flex w-full items-center justify-between border-b border-gray-100 px-3.5 py-2.5 text-left text-sm text-gray-900 transition-colors hover:bg-gray-50 ${!activeBranch ? 'bg-blue-50 font-medium' : ''}`}
-          >
-            All Branches
-            {!activeBranch && <Check size={13} className="text-blue-600" />}
-          </button>
+          {isDirectorPlus ? (
+            <button
+              type="button"
+              onClick={() => { setActiveBranch(null); setOpen(false); }}
+              className={`flex w-full items-center justify-between border-b border-gray-100 px-3.5 py-2.5 text-left text-sm text-gray-900 transition-colors hover:bg-gray-50 ${!activeBranch ? 'bg-blue-50 font-medium' : ''}`}
+            >
+              All Branches
+              {!activeBranch && <Check size={13} className="text-blue-600" />}
+            </button>
+          ) : homeBranch && (
+            <button
+              type="button"
+              onClick={() => { setActiveBranch(null); setOpen(false); }}
+              className={`flex w-full items-center justify-between border-b border-gray-100 px-3.5 py-2.5 text-left text-sm text-gray-900 transition-colors hover:bg-gray-50 ${!activeBranch ? 'bg-blue-50 font-medium' : ''}`}
+            >
+              {homeBranch.name}
+              {!activeBranch && <Check size={13} className="text-blue-600" />}
+            </button>
+          )}
 
           {loading && (
             <p className="px-3.5 py-2 text-xs text-gray-500">Loading…</p>
           )}
 
-          {branches.map(b => (
+          {selectableBranches.map(b => (
             <button
               key={b.id}
               type="button"

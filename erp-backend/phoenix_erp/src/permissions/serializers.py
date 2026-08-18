@@ -51,6 +51,7 @@ class UserPermissionOverrideSerializer(serializers.ModelSerializer):
     action_name  = serializers.CharField(source='action.name',  read_only=True, allow_null=True)
     action_code  = serializers.CharField(source='action.code',  read_only=True, allow_null=True)
     ajo_group_name = serializers.CharField(source='scope_ajo_group.name', read_only=True, allow_null=True)
+    target_branch_name = serializers.CharField(source='target_branch.name', read_only=True, allow_null=True)
 
     class Meta:
         model  = UserPermissionOverride
@@ -62,6 +63,7 @@ class UserPermissionOverrideSerializer(serializers.ModelSerializer):
             'can_view', 'can_create', 'can_edit',
             'can_delete', 'can_approve', 'can_export',
             'scope', 'scope_ajo_group', 'ajo_group_name',
+            'target_branch', 'target_branch_name',
             'approval_limit',
             'expiry_type', 'expires_at', 'expire_after_hours', 'expiry_behavior',
             'is_active', 'is_suspended', 'is_elevated',
@@ -81,6 +83,18 @@ class UserPermissionOverrideSerializer(serializers.ModelSerializer):
 
     def get_granted_by_display(self, obj):
         return str(obj.granted_by) if obj.granted_by else None
+
+    def validate(self, attrs):
+        target_branch = attrs.get('target_branch', getattr(self.instance, 'target_branch', None))
+        module = attrs.get('module', getattr(self.instance, 'module', None))
+        page = attrs.get('page', getattr(self.instance, 'page', None))
+        action = attrs.get('action', getattr(self.instance, 'action', None))
+        if target_branch and (module or page or action):
+            raise serializers.ValidationError(
+                'A branch-access override (target_branch set) must not also '
+                'target a specific module/page/action — it applies tenant-page-wide.'
+            )
+        return attrs
 
 
 # ── PermissionElevationLog ────────────────────────────────────────────────────

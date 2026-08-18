@@ -24,6 +24,27 @@ def _has_global_scope(user):
         return False
 
 
+def _temp_branch_access(user):
+    """
+    Active temporary cross-branch grants for `user`, as
+    [{id, name, expires_at}, ...] — lets the frontend branch switcher offer
+    a non-elevated user their granted branch(es) alongside their own.
+    Isolated try/except: must never break login/me.
+    """
+    try:
+        from permissions.services import get_temp_branch_overrides
+        return [
+            {
+                'id': o.target_branch_id,
+                'name': o.target_branch.name,
+                'expires_at': o.effective_expires_at,
+            }
+            for o in get_temp_branch_overrides(user)
+        ]
+    except Exception:
+        return []
+
+
 class LoginRateThrottle(AnonRateThrottle):
     scope = 'login'
 
@@ -97,6 +118,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'is_staff': self.user.is_staff,
             'is_system_admin': self.user.is_system_admin,
             'has_global_scope': _has_global_scope(self.user),
+            'temp_branch_access': _temp_branch_access(self.user),
             'branch_id': self.user.branch.id if self.user.branch else None,
             'assigned_dashboard_id': self.user.assigned_dashboard.id if hasattr(self.user, 'assigned_dashboard') and self.user.assigned_dashboard else None,
             'assigned_dashboard_slug': self.user.assigned_dashboard.slug if hasattr(self.user, 'assigned_dashboard') and self.user.assigned_dashboard else None,
@@ -183,6 +205,7 @@ def get_current_user(request):
         'is_staff': user.is_staff,
         'is_system_admin': user.is_system_admin,
         'has_global_scope': _has_global_scope(user),
+        'temp_branch_access': _temp_branch_access(user),
         'branch_id': user.branch.id if user.branch else None,
         'branch_name': user.branch.name if user.branch else None,
         'assigned_dashboard_id': user.assigned_dashboard.id if hasattr(user, 'assigned_dashboard') and user.assigned_dashboard else None,

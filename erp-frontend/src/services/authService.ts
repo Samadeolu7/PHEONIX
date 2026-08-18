@@ -37,6 +37,10 @@ export interface User {
   is_active_user: boolean; // New field from migration
   branch_id: number | null;
   branch_name?: string | null;
+  // Active temporary cross-branch grants (UserPermissionOverride.target_branch)
+  // — lets a non-elevated user's branch switcher offer their granted branch(es)
+  // alongside their own, without becoming fully has_global_scope.
+  temp_branch_access?: { id: number; name: string; expires_at: string | null }[];
   assigned_dashboard?: number | null; // Updated field name from migration
   assigned_dashboard_id?: number | null; // Keep for backward compatibility
   assigned_dashboard_slug?: string | null;

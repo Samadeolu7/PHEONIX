@@ -13,13 +13,14 @@ class RolePermissionPolicyAdmin(admin.ModelAdmin):
 
 @admin.register(UserPermissionOverride)
 class UserPermissionOverrideAdmin(admin.ModelAdmin):
-    list_display  = ('user', 'module', 'page', 'action', 'scope', 'is_elevated',
-                     'is_active', 'is_suspended', 'expiry_type', 'effective_expires_at',
-                     'granted_by', 'granted_at')
+    list_display  = ('user', 'module', 'page', 'action', 'scope', 'target_branch',
+                     'is_elevated', 'is_active', 'is_suspended', 'expiry_type',
+                     'effective_expires_at', 'granted_by', 'granted_at')
     list_filter   = ('is_elevated', 'is_active', 'is_suspended', 'expiry_type', 'expiry_behavior')
     search_fields = ('user__email', 'user__first_name', 'user__last_name',
                      'module__name', 'page__title', 'action__name')
-    raw_id_fields = ('user', 'module', 'page', 'action', 'scope_ajo_group', 'granted_by', 'revoked_by')
+    raw_id_fields = ('user', 'module', 'page', 'action', 'scope_ajo_group',
+                     'target_branch', 'granted_by', 'revoked_by')
     readonly_fields = ('is_elevated', 'granted_at', 'revoked_at', 'effective_expires_at', 'hours_until_expiry')
 
     def effective_expires_at(self, obj):

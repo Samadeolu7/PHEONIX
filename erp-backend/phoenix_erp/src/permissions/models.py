@@ -260,6 +260,20 @@ class UserPermissionOverride(models.Model):
         help_text='The Ajo group this override scopes to (only used when scope=ajo_group).',
     )
 
+    # ── Temporary cross-branch access ──────────────────────────────────────────
+    target_branch = models.ForeignKey(
+        'branches.Branch',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='temp_branch_grants',
+        help_text=(
+            "Grants access to this ADDITIONAL branch (on top of the user's home "
+            'branch) for the duration of this override. Must be used with no '
+            'module/page/action set — a branch grant applies tenant-page-wide, '
+            'not to one specific page.'
+        ),
+    )
+
     # ── Monetary approval ceiling (None = inherit from role) ──────────────────
     approval_limit = models.DecimalField(
         max_digits=18, decimal_places=2,
@@ -385,6 +399,14 @@ class UserPermissionOverride(models.Model):
         """
         from permissions.services import PermissionResolver
         return PermissionResolver.override_exceeds_role(self)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.target_branch_id and (self.module_id or self.page_id or self.action_id):
+            raise ValidationError(
+                'A branch-access override (target_branch set) must not also '
+                'target a specific module/page/action — it applies tenant-page-wide.'
+            )
 
     def save(self, *args, **kwargs):
         # Keep is_elevated up to date whenever the override is saved

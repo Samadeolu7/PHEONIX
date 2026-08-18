@@ -113,6 +113,8 @@ export interface UserPermissionOverride {
   scope?: string | null;
   scope_ajo_group?: number | null;
   ajo_group_name?: string | null;
+  target_branch?: number | null;
+  target_branch_name?: string | null;
   approval_limit?: string | null;
   expiry_type: string;
   expires_at?: string | null;

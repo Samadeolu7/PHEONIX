@@ -87,9 +87,18 @@ def log_elevation(
         if not ep.is_elevated:
             return
 
-        # Resolve branch from request user or kwarg
+        # Resolve branch from the request's *effective* branch (honors the
+        # X-Branch-ID switcher — including a non-elevated user acting in a
+        # temporarily-granted branch) rather than always the user's home
+        # branch, so the log records where the action actually happened.
         if branch is None and request is not None:
-            branch = getattr(request.user, 'branch', None)
+            try:
+                from common.views import resolve_effective_branch
+                branch = resolve_effective_branch(request)
+            except Exception:
+                branch = None
+            if branch is None:
+                branch = getattr(request.user, 'branch', None)
         if branch is None:
             branch = getattr(user, 'branch', None)
 

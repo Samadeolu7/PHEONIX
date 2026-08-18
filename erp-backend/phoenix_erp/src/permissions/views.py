@@ -216,6 +216,28 @@ class UserPermissionOverrideViewSet(TenantScopedMixin, viewsets.ModelViewSet):
                     f'Your own limit is {granter_eff.approval_limit}.'
                 )
 
+        # Check target_branch — a granter may only hand out access to a
+        # branch they can themselves reach: their own home branch, any
+        # branch (they're already elevated, handled by the wildcard/
+        # global-scope checks above returning early), or one of their own
+        # active temporary branch grants.
+        requested_branch_id = data.get('target_branch')
+        if requested_branch_id:
+            from common.views import is_elevated_user
+            from permissions.services import get_temp_branch_ids
+            try:
+                requested_branch_id = int(requested_branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({'target_branch': 'Invalid branch id.'})
+            if not is_elevated_user(granter):
+                reachable_ids = get_temp_branch_ids(granter)
+                if getattr(granter, 'branch_id', None):
+                    reachable_ids = reachable_ids | {granter.branch_id}
+                if requested_branch_id not in reachable_ids:
+                    raise PermissionDenied(
+                        'You cannot grant access to a branch you cannot yourself reach.'
+                    )
+
     @action(detail=True, methods=['post'], url_path='revoke')
     def revoke(self, request, pk=None):
         """Revoke an override — sets is_active=False and records who/why."""

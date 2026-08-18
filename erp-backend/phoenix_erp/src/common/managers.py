@@ -152,14 +152,25 @@ class OwnerBranchManager(SoftDeleteManager):
         # Regular data records must have a branch assigned; if not they are visible
         # only to directors/owners (handled above) to avoid accidental cross-branch exposure.
         branch = getattr(user, 'branch', None)
+        branch_ids = set()
         if branch:
+            branch_ids.add(branch.pk)
+        try:
+            from permissions.services import get_temp_branch_ids
+            branch_ids |= get_temp_branch_ids(user)
+        except Exception:
+            pass
+        if branch_ids:
             from django.db.models import Q as _Q
             # NULL-branch records are tenant-wide config (e.g. fee structures, loan
             # products imported without a branch). Always include them so every user
             # in the branch can see shared configuration. This matches the behaviour
-            # of _build_scoped_qs in loans/views.py.
-            qs = qs.filter(_Q(branch=branch) | _Q(branch__isnull=True))
-        # No branch assigned → no additional restriction beyond tenant scope.
+            # of _build_scoped_qs in loans/views.py. branch_ids also folds in any
+            # active temporary cross-branch grant (UserPermissionOverride.target_branch),
+            # so a staff member with a time-boxed grant sees their home branch plus
+            # the one they were given temporary access to.
+            qs = qs.filter(_Q(branch__in=branch_ids) | _Q(branch__isnull=True))
+        # No branch assigned and no temp grant → no additional restriction beyond tenant scope.
 
         # NOTE: We do NOT filter by owner here.
         # The 'owner' field is for audit purposes only.
