@@ -660,8 +660,16 @@ class TransactionEntry(models.Model):
             if self.account and self.transaction and \
                hasattr(self.account, 'branch_id') and hasattr(self.transaction, 'branch_id'):
                 if self.account.branch_id != self.transaction.branch_id:
+                    account_branch = getattr(self.account.branch, 'name', None) or 'no branch (shared/unassigned)'
+                    txn_branch = getattr(self.transaction.branch, 'name', None) or 'no branch (shared/unassigned)'
                     raise ValidationError(
-                        f"Account must belong to the same branch as the transaction"
+                        f"Account \"{self.account.name}\" ({self.account.code}) belongs to "
+                        f"branch \"{account_branch}\", but this transaction "
+                        f"(\"{self.transaction.description}\") is for branch \"{txn_branch}\". "
+                        f"An account can only receive postings from transactions in its own branch. "
+                        f"Check the GL account configuration for this transaction type (e.g. in "
+                        f"Administration) and point it to an account that belongs to branch \"{txn_branch}\", "
+                        f"or create one if none exists."
                     )
         
         # Parent accounts never receive direct entries — absolute, no
