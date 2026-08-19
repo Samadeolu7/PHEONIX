@@ -5,7 +5,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   Loader2,
@@ -74,12 +74,24 @@ const RISK_LEVELS = [
 
 export default function LoanAccountsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '');
   const [riskFilter, setRiskFilter] = useState('');
   const [page, setPage] = useState(1);
 
-  const PAGE_SIZE = 25;
+  // Keep the URL's ?status= in sync so links like the Loan Pipeline tiles
+  // pre-filter this list, and manual dropdown changes update the URL too.
+  useEffect(() => {
+    const urlStatus = searchParams.get('status') ?? '';
+    if (urlStatus !== statusFilter) setStatusFilter(urlStatus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  useEffect(() => {
+    setSearchParams(statusFilter ? { status: statusFilter } : {}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
 
   const { data: res, isLoading: loading, error, refetch } = useLoanAccounts({
     search: search || undefined,
@@ -90,7 +102,9 @@ export default function LoanAccountsPage() {
 
   const loans: LoanAccountList[] = Array.isArray(res) ? res : (res?.results ?? []);
   const totalCount = Array.isArray(res) ? res.length : (res?.count ?? 0);
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const hasNext = !Array.isArray(res) && !!res?.next;
+  const hasPrev = !Array.isArray(res) && !!res?.previous;
+  const showPagination = hasNext || hasPrev || page > 1;
 
   useEffect(() => {
     setPage(1);
@@ -259,22 +273,22 @@ export default function LoanAccountsPage() {
         )}
 
         {/* Pagination */}
-        {!loading && totalPages > 1 && (
+        {!loading && showPagination && (
           <div className="flex items-center justify-between border-t px-4 py-3">
             <p className="text-xs text-gray-500">
-              Showing page {page} of {totalPages} ({totalCount} total)
+              Page {page} ({totalCount} total)
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
+                disabled={!hasPrev}
                 className="flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
               >
                 <ChevronLeft size={12} /> Prev
               </button>
               <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
+                onClick={() => setPage((p) => p + 1)}
+                disabled={!hasNext}
                 className="flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
               >
                 Next <ChevronRight size={12} />
