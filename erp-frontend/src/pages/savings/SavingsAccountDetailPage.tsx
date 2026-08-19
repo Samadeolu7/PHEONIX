@@ -408,13 +408,23 @@ export default function SavingsAccountDetailPage() {
 
   const transactions = txData?.results ?? [];
   const txTotal = txData?.count ?? 0;
-  // A reversed entry and its reversal always net to zero, so hiding both from
-  // view (default) never disturbs the visible running balance sequence — the
-  // server already computes `balance` across the true, unfiltered history.
   const reversedCount = transactions.filter((tx) => tx.is_reversed || tx.is_reversal).length;
-  const visibleTransactions = showReversedEntries
+  const visibleTransactionsRaw = showReversedEntries
     ? transactions
     : transactions.filter((tx) => !tx.is_reversed && !tx.is_reversal);
+  // The server's per-entry `balance` reflects the true chronological history, so a
+  // reversed entry's effect is still baked into every row between it and its later
+  // reversal counter-entry. Recompute a running balance over just the visible rows
+  // so hiding reversed entries doesn't leave a temporarily wrong balance in between.
+  // (Savings is credit-normal: balance = opening + credit - debit.)
+  const txOpeningBalance = transactions.length > 0
+    ? parseFloat(transactions[0].balance) - parseFloat(transactions[0].credit ?? '0') + parseFloat(transactions[0].debit ?? '0')
+    : 0;
+  let runningTxBalance = txOpeningBalance;
+  const visibleTransactions = visibleTransactionsRaw.map((tx) => {
+    runningTxBalance += parseFloat(tx.credit ?? '0') - parseFloat(tx.debit ?? '0');
+    return { ...tx, displayBalance: runningTxBalance };
+  });
   const schedule = Array.isArray(scheduleData) ? scheduleData : [];
 
   const txTotalPages = Math.max(1, Math.ceil(txTotal / TX_PAGE_SIZE));
@@ -642,7 +652,7 @@ export default function SavingsAccountDetailPage() {
                   <span className="text-xs text-gray-500">
                     {showReversedEntries
                       ? `Showing all entries, including ${reversedCount} reversed`
-                      : `${reversedCount} reversed entr${reversedCount === 1 ? 'y' : 'ies'} hidden — nets to zero, doesn't affect the balance shown`}
+                      : `${reversedCount} reversed entr${reversedCount === 1 ? 'y' : 'ies'} hidden — balances recalculated for the entries shown`}
                   </span>
                   <button
                     type="button"
@@ -699,7 +709,7 @@ export default function SavingsAccountDetailPage() {
                           {tx.credit ? `₦${fmt(tx.credit)}` : ''}
                         </td>
                         <td className="px-4 py-2.5 text-right font-medium text-gray-900">
-                          ₦{fmt(tx.balance)}
+                          ₦{fmt(tx.displayBalance)}
                         </td>
                       </tr>
                     ))}

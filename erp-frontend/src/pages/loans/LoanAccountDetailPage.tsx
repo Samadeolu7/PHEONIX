@@ -1253,11 +1253,20 @@ export default function LoanAccountDetailPage() {
   const { data: ledgerData, isLoading: ledgerLoading } = useLoanTransactions(loanId, ledgerPage, LEDGER_PAGE_SIZE);
   const ledger = ledgerData?.results ?? [];
   const ledgerTotal = ledgerData?.count ?? 0;
-  // A reversed entry and its reversal always net to zero, so hiding both from
-  // view (default) never disturbs the visible running balance sequence — the
-  // server already computes `balance` across the true, unfiltered history.
   const reversedCount = ledger.filter((tx) => tx.is_reversed || tx.is_reversal).length;
   const visibleLedger = showReversedEntries ? ledger : ledger.filter((tx) => !tx.is_reversed && !tx.is_reversal);
+  // The server's per-entry `balance` reflects the true chronological history, so a
+  // reversed entry's effect is still baked into every row between it and its later
+  // reversal counter-entry. Recompute a running balance over just the visible rows
+  // so hiding reversed entries doesn't leave a temporarily wrong balance in between.
+  const ledgerOpeningBalance = ledger.length > 0
+    ? parseFloat(ledger[0].balance) - parseFloat(ledger[0].debit ?? '0') + parseFloat(ledger[0].credit ?? '0')
+    : 0;
+  let runningLedgerBalance = ledgerOpeningBalance;
+  const visibleLedgerRows = visibleLedger.map((tx) => {
+    runningLedgerBalance += parseFloat(tx.debit ?? '0') - parseFloat(tx.credit ?? '0');
+    return { ...tx, displayBalance: runningLedgerBalance };
+  });
   const { data: paymentHistoryData, isLoading: paymentHistoryLoading } = useLoanPaymentHistory(loanId);
   const paymentHistory = paymentHistoryData?.results ?? [];
   const { data: pendingRestructures = [] } = useLoanRestructureApprovals({ status: 'pending' });
@@ -2172,7 +2181,7 @@ export default function LoanAccountDetailPage() {
                   <span className="text-xs text-gray-500">
                     {showReversedEntries
                       ? `Showing all entries, including ${reversedCount} reversed`
-                      : `${reversedCount} reversed entr${reversedCount === 1 ? 'y' : 'ies'} hidden — nets to zero, doesn't affect the balance shown`}
+                      : `${reversedCount} reversed entr${reversedCount === 1 ? 'y' : 'ies'} hidden — balances recalculated for the entries shown`}
                   </span>
                   <button
                     type="button"
@@ -2184,7 +2193,7 @@ export default function LoanAccountDetailPage() {
                   </button>
                 </div>
               )}
-              {visibleLedger.length === 0 ? (
+              {visibleLedgerRows.length === 0 ? (
                 <div className="py-12 text-center text-sm text-gray-400">
                   All entries on this page are reversed.{' '}
                   <button
@@ -2209,7 +2218,7 @@ export default function LoanAccountDetailPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {visibleLedger.map((tx) => (
+                    {visibleLedgerRows.map((tx) => (
                       <tr key={tx.id} className={`hover:bg-gray-50 ${tx.is_reversed || tx.is_reversal ? 'opacity-50' : ''}`}>
                         <td className="px-4 py-2.5 text-gray-600">{fmtDate(tx.date)}</td>
                         <td className="px-4 py-2.5 font-mono text-xs text-gray-500">
@@ -2229,7 +2238,7 @@ export default function LoanAccountDetailPage() {
                           {tx.credit ? `₦${fmt(tx.credit)}` : ''}
                         </td>
                         <td className="px-4 py-2.5 text-right font-medium text-gray-900 font-mono">
-                          ₦{fmt(tx.balance)}
+                          ₦{fmt(tx.displayBalance)}
                         </td>
                       </tr>
                     ))}

@@ -119,15 +119,24 @@ const ClientLedgerPage: React.FC = () => {
     );
   }
 
-  // A reversed payment and its reversal always net to zero, so hiding both from
-  // view (default) never disturbs the totals/balance shown — those are computed
-  // server-side across the true, unfiltered history.
   const reversedCount = ledger.ledger_entries.filter(
     (entry) => entry.is_reversed || entry.is_reversal
   ).length;
-  const visibleEntries = showReversedEntries
+  const visibleEntriesRaw = showReversedEntries
     ? ledger.ledger_entries
     : ledger.ledger_entries.filter((entry) => !entry.is_reversed && !entry.is_reversal);
+  // The server's per-entry `balance` reflects the true chronological history, so a
+  // reversed entry's effect is still baked into every row between it and its later
+  // reversal counter-entry. Recompute a running balance over just the visible rows
+  // so hiding reversed entries doesn't leave a temporarily wrong balance in between.
+  const ledgerOpeningBalance = ledger.ledger_entries.length > 0
+    ? ledger.ledger_entries[0].balance - ledger.ledger_entries[0].debit + ledger.ledger_entries[0].credit
+    : 0;
+  let runningLedgerBalance = ledgerOpeningBalance;
+  const visibleEntries = visibleEntriesRaw.map((entry) => {
+    runningLedgerBalance += entry.debit - entry.credit;
+    return { ...entry, balance: runningLedgerBalance };
+  });
 
   return (
     <div className="container mx-auto px-4 py-6">
@@ -265,7 +274,7 @@ const ClientLedgerPage: React.FC = () => {
               <span className="text-xs text-gray-500">
                 {showReversedEntries
                   ? `Showing all entries, including ${reversedCount} reversed`
-                  : `${reversedCount} reversed entr${reversedCount === 1 ? 'y' : 'ies'} hidden — nets to zero, doesn't affect the totals shown`}
+                  : `${reversedCount} reversed entr${reversedCount === 1 ? 'y' : 'ies'} hidden — balances recalculated for the entries shown`}
               </span>
               <button
                 type="button"
