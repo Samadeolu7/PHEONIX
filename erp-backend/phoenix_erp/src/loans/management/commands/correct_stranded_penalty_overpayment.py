@@ -138,21 +138,32 @@ class Command(BaseCommand):
                 if overpaid <= TOLERANCE:
                     continue
 
-                # Cap what's treated as "real" at the amount an allocation actually
-                # confirms — a row can be part genuine payment, part stale corruption
-                # stacked on top (LN-907: penalty_paid=831.44, allocation only backs
-                # 200.29). Moving the unconfirmed remainder to principal would launder
-                # unbacked figures as real money, so only the confirmed slice moves;
-                # any excess above it gets the STALE row's treatment (discarded, not
-                # redistributed).
+                # A row can be part genuine payment, part stale corruption stacked on
+                # top (LN-907: penalty_paid=831.44, allocation only backs 200.29). The
+                # row's own penalty_paid can only move one way as a whole — down to
+                # penalty_due — so a PARTIAL match (0 < alloc_total < overpaid) can't be
+                # auto-resolved: capping the row loses the unconfirmed remainder from
+                # the schedule, but moving only the confirmed slice to principal means
+                # that remainder never lands anywhere either way — it just vanishes
+                # from tracking. Flag the whole loan for manual review instead of
+                # guessing which of the two the unconfirmed slice actually is.
                 alloc_total = LoanRepaymentAllocation.objects.filter(
                     schedule=sched, penalty_applied__gt=0,
                 ).aggregate(total=Sum('penalty_applied'))['total'] or Decimal('0.00')
+                if 0 < alloc_total < overpaid - TOLERANCE:
+                    db_transaction.savepoint_rollback(sid)
+                    self.stdout.write(self.style.WARNING(
+                        f'[{loan_number}] needs manual review — schedule row due={sched.due_date} '
+                        f'has penalty_paid={sched.penalty_paid:,.2f} but only {alloc_total:,.2f} of the '
+                        f'{overpaid:,.2f} overpaid is allocation-confirmed. Cannot safely auto-resolve '
+                        f'whether the unconfirmed {overpaid - alloc_total:,.2f} is real or stale.'
+                    ))
+                    return 'needs_review'
+
                 is_real = alloc_total > 0
-                real_amount = min(overpaid, alloc_total)
                 row_updates.append((sched, sched.penalty_due, is_real, overpaid))
                 if is_real:
-                    real_total += real_amount
+                    real_total += overpaid
 
             if not row_updates:
                 db_transaction.savepoint_rollback(sid)
