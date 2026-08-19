@@ -179,6 +179,18 @@ class Command(BaseCommand):
                 ))
                 return 'needs_review'
 
+            new_penalties_paid = loan.penalties_paid - real_total
+            if real_total > 0 and new_penalties_paid < -TOLERANCE:
+                db_transaction.savepoint_rollback(sid)
+                self.stdout.write(self.style.WARNING(
+                    f'[{loan_number}] needs manual review — reallocating {real_total:,.2f} real '
+                    f'stranded penalty away from penalties_paid would push it negative '
+                    f'({loan.penalties_paid:,.2f} -> {new_penalties_paid:,.2f}). loan.penalties_paid is '
+                    f'already smaller than what the schedule row(s) alone record — a separate, '
+                    f'pre-existing mismatch this tool should not paper over with an impossible value.'
+                ))
+                return 'needs_review'
+
             real_count = sum(1 for *_, is_real, _ in row_updates if is_real)
             stale_count = len(row_updates) - real_count
             self.stdout.write(
