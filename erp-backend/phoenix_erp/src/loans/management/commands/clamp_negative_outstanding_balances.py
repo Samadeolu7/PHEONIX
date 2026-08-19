@@ -25,11 +25,22 @@ separate legacy-import-seeding investigation) — it only removes the
 impossible negative value so downstream tools (retire_stale_legacy_schedule_
 rows, provisioning, PAR reporting) stop tripping on it.
 
+--legacy-only restricts --batch to origin=legacy_import loans, where the
+negative-balance mechanism is understood (the one-time migration script
+seeded these fields without cross-checking real schedule/payment data —
+see the LN-714 investigation). Loans created after the import (e.g. the
+LN-YYYYMMDD-xxxxxx numbering) reaching this state is a DIFFERENT, live,
+unexplained problem — clamping those without knowing why would erase the
+only evidence of what may be an ongoing bug, and would silently discard
+what could be a client's genuine overpayment instead of crediting it
+somewhere. Use --legacy-only until non-legacy negatives are diagnosed.
+
 Usage:
     python manage.py clamp_negative_outstanding_balances --loan LN-722     # dry-run
     python manage.py clamp_negative_outstanding_balances --loan LN-722 --apply
     python manage.py clamp_negative_outstanding_balances --batch           # dry-run, all
     python manage.py clamp_negative_outstanding_balances --batch --apply
+    python manage.py clamp_negative_outstanding_balances --batch --legacy-only --apply
 """
 from decimal import Decimal
 
@@ -52,6 +63,9 @@ class Command(BaseCommand):
                              help='Only correct a single loan by loan_number.')
         parser.add_argument('--batch', action='store_true',
                              help='Correct every loan with any negative outstanding_* field.')
+        parser.add_argument('--legacy-only', action='store_true',
+                             help='With --batch, restrict to origin=legacy_import loans only '
+                                  '(the understood-cause group — see module docstring).')
         parser.add_argument('--apply', action='store_true',
                              help='Actually write the correction. Without this, only previews.')
 
@@ -60,15 +74,20 @@ class Command(BaseCommand):
 
         loan_number = options['loan_number']
         batch = options['batch']
+        legacy_only = options['legacy_only']
         apply_changes = options['apply']
 
         if bool(loan_number) == bool(batch):
             raise CommandError('Pass exactly one of --loan <number> or --batch.')
+        if legacy_only and not batch:
+            raise CommandError('--legacy-only only applies with --batch.')
 
         loans_qs = LoanAccount.all_objects.filter(is_deleted=False).filter(
             Q(outstanding_principal__lt=0) | Q(outstanding_interest__lt=0)
             | Q(outstanding_fees__lt=0) | Q(outstanding_penalties__lt=0)
         ).order_by('loan_number')
+        if legacy_only:
+            loans_qs = loans_qs.filter(origin=LoanAccount.ORIGIN_LEGACY_IMPORT)
         if loan_number:
             loans_qs = LoanAccount.all_objects.filter(
                 is_deleted=False, loan_number=loan_number,
