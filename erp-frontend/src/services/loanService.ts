@@ -18,6 +18,8 @@ export interface LoanProduct {
   name: string;             // from product.name
   code: string;             // from product.code
   description: string;      // from product.description
+  parent_account: number | null;
+  parent_account_name: string | null;
   min_loan_amount: string;
   max_loan_amount: string;
   term_unit: TermUnit;

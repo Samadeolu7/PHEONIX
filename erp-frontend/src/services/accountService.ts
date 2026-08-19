@@ -3,7 +3,8 @@ import { api } from './api';
 
 export const accountService = {
   async getAccounts(params?: {
-    account_type?: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
+    account_type?: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE' | 'LOAN' | 'SAVINGS';
+    account_level?: 'PARENT' | 'CHILD';
     search?: string;
     is_active?: boolean;
     branch?: number;

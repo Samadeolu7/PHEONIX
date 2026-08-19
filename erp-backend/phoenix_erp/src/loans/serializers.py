@@ -19,6 +19,9 @@ class LoanProductSerializer(TenantModelSerializer):
     description = serializers.CharField(source='product.description', read_only=True, default='')
     is_active = serializers.BooleanField(source='product.is_active', read_only=True)
 
+    parent_account_name = serializers.CharField(
+        source='parent_account.name', read_only=True, default=None
+    )
     disbursement_account_name = serializers.CharField(
         source='disbursement_account.name', read_only=True, default=None
     )
@@ -49,6 +52,7 @@ class LoanProductSerializer(TenantModelSerializer):
         fields = [
             'id', 'product',
             'name', 'code', 'description',
+            'parent_account', 'parent_account_name',
             'min_loan_amount', 'max_loan_amount',
             'term_unit', 'min_term_months', 'max_term_months',
             'first_repayment_buffer_days',

@@ -101,6 +101,7 @@ export default function LoanProductCreatePage() {
     requires_guarantor: false,
     min_guarantors: 1,
     requires_approval: true,
+    parent_account: null,
     disbursement_account: null,
     interest_income_account: null,
     fee_income_account: null,
@@ -113,6 +114,7 @@ export default function LoanProductCreatePage() {
 
   // Support data
   const [branches, setBranches] = useState<Branch[]>([]);
+  const [parentLoanAccounts, setParentLoanAccounts] = useState<Account[]>([]);
   const [incomeAccounts, setIncomeAccounts] = useState<Account[]>([]);
   const [assetAccounts, setAssetAccounts] = useState<Account[]>([]);
   const [liabilityAccounts, setLiabilityAccounts] = useState<Account[]>([]);
@@ -129,6 +131,7 @@ export default function LoanProductCreatePage() {
       const list = Array.isArray(data) ? data : (data?.results ?? []);
       setBranches(list);
     }).catch(() => {});
+    accountService.getAccounts({ account_type: 'LOAN', account_level: 'PARENT' }).then(setParentLoanAccounts).catch(() => {});
     accountService.getAccounts({ account_type: 'INCOME' }).then(setIncomeAccounts).catch(() => {});
     accountService.getAccounts({ account_type: 'ASSET' }).then(setAssetAccounts).catch(() => {});
     accountService.getAccounts({ account_type: 'LIABILITY' }).then(setLiabilityAccounts).catch(() => {});
@@ -162,7 +165,12 @@ export default function LoanProductCreatePage() {
 
     if (!name.trim()) { setError('Product name is required.'); return; }
     if (!code.trim()) { setError('Product code is required.'); return; }
+    if (!code.includes('-')) {
+      setError('Product code must follow the format TYPE-NAME, e.g. LOAN-BGL.');
+      return;
+    }
     if (!branch) { setError('Branch is required.'); return; }
+    if (!form.parent_account) { setError('Parent GL account is required.'); return; }
     if (!(form.allowed_repayment_frequencies ?? []).length) {
       setError('Select at least one allowed repayment frequency.'); return;
     }
@@ -255,9 +263,10 @@ export default function LoanProductCreatePage() {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Product Code *</label>
                 <input
                   type="text" value={code} onChange={e => setCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. BGL"
+                  placeholder="e.g. LOAN-BGL"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-gray-400"
                 />
+                <p className="text-xs text-gray-400 mt-1">Format: TYPE-NAME, e.g. LOAN-BGL. Must be unique within the branch.</p>
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
@@ -289,6 +298,15 @@ export default function LoanProductCreatePage() {
                     checked={isActive} onChange={e => setIsActive(e.target.checked)} />
                   Active immediately
                 </label>
+              </div>
+              <div className="col-span-2">
+                <AccountSelect
+                  label="Parent GL Account" required
+                  accounts={parentLoanAccounts}
+                  value={form.parent_account ?? null}
+                  onChange={v => setForm(p => ({ ...p, parent_account: v }))}
+                  description="The parent ledger account (chart of accounts, type Loan) under which all loans issued from this product are booked."
+                />
               </div>
             </div>
           </div>
