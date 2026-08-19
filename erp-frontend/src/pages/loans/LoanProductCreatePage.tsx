@@ -179,6 +179,11 @@ export default function LoanProductCreatePage() {
           product_type: 'LOAN',
           is_active: isActive,
           branch,
+          // Required by ProductSerializer.validate() for LOAN/SAVINGS product
+          // types — the LoanProduct-level default_interest_rate below is the
+          // one actually used for loan calculations; this just satisfies the
+          // base Product record's own validation.
+          interest_rate: form.default_interest_rate || '0',
         });
         productId = product.id;
         setCreatedProductId(productId);
