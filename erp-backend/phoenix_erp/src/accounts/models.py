@@ -569,7 +569,19 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     def is_category_account(self):
         """Check if this is a category/parent account (no direct transactions)."""
         return self.account_level == self.LEVEL_PARENT
-    
+
+    @property
+    def is_entity_subledger(self):
+        """
+        True for a per-entity sub-ledger account (one loan, savings account,
+        cashier till, fixed asset, or supplier) — the same accounts
+        entity_subledger_q() excludes from generic account lists by default.
+        Lets a picker that searched with include_subledgers=true tell these
+        apart from an ordinary child account, so it knows to also surface
+        the parent category for context.
+        """
+        return Account.objects.filter(pk=self.pk).filter(self.entity_subledger_q()).exists()
+
     @classmethod
     @transaction.atomic
     def create_with_parent(cls, parent_code: str, child_data: dict):

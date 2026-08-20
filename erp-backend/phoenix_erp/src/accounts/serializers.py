@@ -252,13 +252,14 @@ class AccountReadSerializer(TenantModelSerializer):
     which trigger additional DB queries and slow down GET requests.
     """
     parent_name = serializers.SerializerMethodField()
+    is_entity_subledger = serializers.ReadOnlyField()
 
     class Meta:
         model = Account
         fields = [
             'id', 'code', 'name', 'account_type', 'account_level',
             'parent', 'parent_name', 'balance', 'balance_bf', 'category',
-            'can_post_transactions', 'is_category_account',
+            'can_post_transactions', 'is_category_account', 'is_entity_subledger',
             'allow_manual_entries', 'is_system_account',
             'created_at', 'updated_at'
         ]

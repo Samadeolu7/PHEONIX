@@ -7,9 +7,12 @@ export interface Account {
   balance: number;
   isActive: boolean;
   parentId?: string;
+  parent?: number | string | null;
+  parent_name?: string | null;
   account_level?: 'parent' | 'child';
   can_post_transactions?: boolean;
   is_category_account?: boolean;
+  is_entity_subledger?: boolean;
   children_count?: number;
   total_children_balance?: number;
   createdAt: string;

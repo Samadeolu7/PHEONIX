@@ -106,11 +106,52 @@ const JournalVoucherFormPage: React.FC = () => {
       updateRow(rowId, { ledgerResults: [], showLedgerDropdown: false });
       return;
     }
-    const results = await accountService.getAccounts({ search: q, is_active: true });
+    // include_subledgers: true so a specific loan/savings/cashier account
+    // can be found by name directly here too, not only by first picking its
+    // parent category — selectLedger below fills in the parent for it.
+    const results = await accountService.getAccounts({
+      search: q,
+      is_active: true,
+      include_subledgers: true,
+    });
     updateRow(rowId, { ledgerResults: results.slice(0, 8), showLedgerDropdown: true });
   };
 
-  const selectLedger = (rowId: string, account: Account) => {
+  const selectLedger = async (rowId: string, account: Account) => {
+    // A sub-ledger (e.g. one cashier's till) was found directly by name in
+    // stage 1 — resolve and fill in its parent category too, so the row
+    // ends up looking exactly like it would if the parent had been picked
+    // first and then drilled into via stage 2.
+    if (account.is_entity_subledger && account.parent != null) {
+      updateRow(rowId, {
+        ledgerSearch: `${account.code} – ${account.name}`,
+        showLedgerDropdown: false,
+        ledgerResults: [],
+      });
+      try {
+        const parent = await accountService.getAccount(String(account.parent));
+        updateRow(rowId, {
+          ledgerAccount: parent,
+          ledgerSearch: `${parent.code} – ${parent.name}`,
+          subledgerAccount: account,
+          subledgerSearch: `${account.code} – ${account.name}`,
+          subledgerResults: [],
+          showSubledgerDropdown: false,
+        });
+      } catch {
+        // Parent lookup failed — fall back to selecting the sub-ledger
+        // account directly; it's still a valid, directly-postable account.
+        updateRow(rowId, {
+          ledgerAccount: account,
+          subledgerAccount: null,
+          subledgerSearch: '',
+          subledgerResults: [],
+          showSubledgerDropdown: false,
+        });
+      }
+      return;
+    }
+
     updateRow(rowId, {
       ledgerAccount: account,
       ledgerSearch: `${account.code} – ${account.name}`,
@@ -364,6 +405,11 @@ const JournalVoucherFormPage: React.FC = () => {
                             {acc.is_category_account && (
                               <span className="ml-auto text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded flex-shrink-0">
                                 Ledger
+                              </span>
+                            )}
+                            {acc.is_entity_subledger && (
+                              <span className="ml-auto text-[10px] uppercase tracking-wide text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded flex-shrink-0">
+                                Sub-ledger
                               </span>
                             )}
                           </button>
