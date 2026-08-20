@@ -297,10 +297,17 @@ class MicrofinanceDashboardStatsView(APIView):
             ).aggregate(total=Sum('disbursed_amount'))['total'] or Decimal('0.00')
             data['total_disbursed_this_month'] = str(disbursed_this_month)
 
-            data['overdue_loans'] = loan_qs.filter(
-                days_in_arrears__gt=0,
-                status__in=['active', 'disbursed'],
-            ).count()
+            # Count live from the repayment schedule, not the cached
+            # LoanAccount.days_in_arrears field — that field is dual-written
+            # by update_loan_status_task and the external BulkLoanAccrualView
+            # batch and can go stale, which is why this KPI (247) used to
+            # disagree with the Defaulters Report (131), which already
+            # computes arrears the same live way. See defaulted_loans_as_of.
+            from loans.views import defaulted_loans_as_of
+            overdue_qs = loan_qs.filter(status__in=['active', 'disbursed'])
+            data['overdue_loans'] = sum(
+                1 for _ in defaulted_loans_as_of(overdue_qs, today)
+            )
 
             # Repayment rate = (total_paid / (total_paid + total_outstanding)) * 100
             agg = loan_qs.filter(status__in=['active', 'disbursed', 'paid_off']).aggregate(
