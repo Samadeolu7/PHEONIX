@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Upload, X } from 'lucide-react';
 import bankService from '../../services/bankService';
 import { useBankAccounts, bankKeys } from '../../hooks/useBanks';
-import { useActiveCashierAccounts } from '../../hooks/useTreasury';
+import { useActiveCashierAccounts, useEnsureMyCashierAccount } from '../../hooks/useTreasury';
 import { useAuth } from '../../contexts/AuthContext';
 import type { CreateBankTransferRequest } from '../../types/banks';
 
@@ -33,6 +33,7 @@ const BankTransferFormPage: React.FC = () => {
   // React Query hooks
   const { data: bankAccounts = [] } = useBankAccounts({ is_active: true });
   const { data: cashierAccounts = [] } = useActiveCashierAccounts();
+  const ensureMyCashierAccount = useEnsureMyCashierAccount();
 
   const [destinationAccounts, setDestinationAccounts] = useState<typeof bankAccounts>([]);
 
@@ -253,10 +254,35 @@ const BankTransferFormPage: React.FC = () => {
               </select>
             )}
             {sourceType === 'cashier' && myCashierAccounts.length === 0 && (
-              <p className="text-sm text-amber-600 mt-1">
-                You don&apos;t have an active cashier account. You can only transfer from your own
-                float.
-              </p>
+              <div className="mt-1">
+                <p className="text-sm text-amber-600">
+                  You don&apos;t have a cashier account in this branch yet. You can only transfer
+                  from your own float.
+                </p>
+                <button
+                  type="button"
+                  disabled={ensureMyCashierAccount.isPending}
+                  onClick={async () => {
+                    try {
+                      const account = await ensureMyCashierAccount.mutateAsync();
+                      setFormData(prev => ({ ...prev, source_cashier_account: account.id }));
+                    } catch {
+                      // error surfaced via ensureMyCashierAccount.isError below
+                    }
+                  }}
+                  className="mt-1 text-sm font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
+                >
+                  {ensureMyCashierAccount.isPending
+                    ? 'Setting up...'
+                    : 'Set up my cashier account for this branch'}
+                </button>
+                {ensureMyCashierAccount.isError && (
+                  <p className="text-sm text-red-600 mt-1">
+                    Could not set up a cashier account. Make sure a branch is selected in the
+                    branch switcher.
+                  </p>
+                )}
+              </div>
             )}
           </div>
 

@@ -153,11 +153,41 @@ class CashierAccountViewSet(viewsets.ModelViewSet):
     def pending_reconciliations(self, request):
         date_str = request.query_params.get('date')
         date = timezone.datetime.strptime(date_str, '%Y-%m-%d').date() if date_str else timezone.now().date()
-        
+
         branch = resolve_effective_branch(request)
         pending = CashReconciliationService.get_pending_reconciliations(branch, date)
-        
+
         serializer = self.get_serializer(pending, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], url_path='ensure-mine')
+    def ensure_mine(self, request):
+        """
+        Return the caller's cashier account for their currently active branch
+        (the branch switcher's X-Branch-ID for elevated users, else their own
+        assigned branch), auto-creating it if they don't have one there yet.
+
+        A staff member's cashier float is branch-scoped — a director who
+        moves between branches, or a user with a temporary cross-branch
+        grant, needs a distinct account per branch (see
+        PaymentRoutingService.get_or_create_cashier_account). Without this
+        endpoint, switching to a branch where they have no float yet leaves
+        forms like Bank Transfer with nothing selectable and no way to fix it
+        short of an admin manually creating one.
+        """
+        branch = resolve_effective_branch(request)
+        if branch is None:
+            return Response(
+                {'detail': 'Select a branch from the branch switcher first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from cash_management.services.payment_routing import PaymentRoutingService
+
+        cashier_account = PaymentRoutingService.get_or_create_cashier_account(
+            request.user, branch=branch
+        )
+        serializer = self.get_serializer(cashier_account)
         return Response(serializer.data)
 
 

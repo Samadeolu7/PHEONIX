@@ -91,6 +91,23 @@ export const useCashiersNeedingReconciliation = () => {
 };
 
 /**
+ * Get-or-create the caller's cashier account for their currently active
+ * branch (the branch switcher selection). Invalidates the cashier account
+ * lists on success so a form that was showing "no cashier account" picks up
+ * the newly created one immediately.
+ */
+export const useEnsureMyCashierAccount = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: treasuryService.cashierAccount.ensureMine,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: treasuryKeys.cashierAccounts() });
+    },
+  });
+};
+
+/**
  * Cash Collection Hooks
  */
 export const useCashCollections = (filters?: CashCollectionFilters) => {

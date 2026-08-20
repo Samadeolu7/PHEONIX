@@ -91,6 +91,18 @@ export const cashierAccountService = {
     );
     return response;
   },
+
+  /**
+   * Get the caller's cashier account for their currently active branch
+   * (the branch switcher selection), auto-creating it if they don't have
+   * one there yet.
+   */
+  ensureMine: async (): Promise<CashierAccount> => {
+    const response = await api.post<CashierAccount>(
+      `${BASE_URL}/cashier-accounts/ensure-mine/`
+    );
+    return response;
+  },
 };
 
 /**
