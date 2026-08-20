@@ -80,6 +80,7 @@ import {
   Droplets,
   Banknote,
   ArrowRightLeft,
+  GitBranch,
 } from 'lucide-react';
 import { getRoleRank } from '../types/roles';
 import { ROUTE_TO_PAGE } from './routeToPageMap';
@@ -486,6 +487,30 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     path: '/accounting/journal-vouchers/create',
     icon: Plus,
     requiredPermission: 'chart-of-accounts-view',
+    moduleId: 'financial',
+    category: 'Accounting',
+    isNew: true,
+  },
+  {
+    id: 'interbranch-transfers',
+    title: '🔀 Inter-Branch Transfers',
+    description:
+      'View, create, and reverse funds transfers between branches — posts a balanced JV in each branch\'s own books via linked Due-from/Due-to clearing accounts',
+    path: '/accounting/interbranch-transfers',
+    icon: GitBranch,
+    requiredPermission: 'transfers-view',
+    moduleId: 'financial',
+    category: 'Accounting',
+    isNew: true,
+  },
+  {
+    id: 'create-interbranch-transfer',
+    title: '➕ New Inter-Branch Transfer',
+    description:
+      'Move funds from one branch to another by selecting the source/destination branch and account — the reciprocal clearing entries are posted automatically',
+    path: '/accounting/interbranch-transfers/new',
+    icon: Plus,
+    requiredPermission: 'transfers-create',
     moduleId: 'financial',
     category: 'Accounting',
     isNew: true,
