@@ -95,8 +95,18 @@ class AccountViewSet(ScopedModelViewSet):
         # there would either break a page that already knows the specific
         # id, or defeat the point of that action.
         if self.action == 'list':
-            include_subledgers = self.request.query_params.get('include_subledgers', '').lower() == 'true'
-            if not include_subledgers:
+            raw = self.request.query_params.get('include_subledgers', '').strip().lower()
+            if raw == 'true':
+                # Include every sub-ledger kind — no exclusion at all.
+                pass
+            elif raw:
+                # Comma-separated sub-ledger kinds to keep visible (e.g.
+                # "cashier" so Ledger Search can find a staff member's cash
+                # till) while still hiding the much noisier per-loan/
+                # per-savings/per-asset/per-supplier rows.
+                keep_kinds = {k.strip() for k in raw.split(',') if k.strip()}
+                qs = Account.exclude_entity_subledgers(qs, keep_kinds=keep_kinds)
+            else:
                 qs = Account.exclude_entity_subledgers(qs)
         return qs
 

@@ -61,7 +61,13 @@ const LedgerSearchPage: React.FC = () => {
       try {
         setLoading(true);
         setError(null);
-        const data = await api.get('/accounts/');
+        // Cashier tills are per-staff sub-ledger accounts, normally hidden
+        // from account pickers to avoid clutter — but Ledger Search is
+        // exactly where someone needs to find and open a specific cashier's
+        // cash ledger, so ask for that one sub-ledger kind back (loan/
+        // savings/asset/supplier sub-ledgers stay hidden — there can be
+        // thousands of those).
+        const data = await api.get('/accounts/?include_subledgers=cashier');
         const list: Account[] = Array.isArray(data) ? data : data.results || [];
         list.sort((a, b) => a.code.localeCompare(b.code));
         setAccounts(list);

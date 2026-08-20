@@ -631,8 +631,21 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         return cls.objects.create(**child_data)
 
+    # Maps a short kind name (used by the `include_subledgers` API param) to
+    # the Q clause that matches that kind's per-entity sub-ledger accounts.
+    _SUBLEDGER_KIND_Q = {
+        'loan': lambda: Q(loan_account_detail__isnull=False),
+        'savings': lambda: Q(savings_account_detail__isnull=False),
+        'cashier': lambda: Q(cashier_accounts__isnull=False),
+        'asset': lambda: (
+            Q(fixed_asset_detail__isnull=False)
+            | Q(fixed_asset_accumulated_depreciation_detail__isnull=False)
+        ),
+        'supplier': lambda: Q(supplier_detail__isnull=False),
+    }
+
     @classmethod
-    def entity_subledger_q(cls):
+    def entity_subledger_q(cls, kinds=None):
         """
         Matches Account rows that exist purely to track one specific entity's
         balance (a loan, a savings account, a cashier till, a fixed asset, a
@@ -647,20 +660,30 @@ class Account(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         etc.), and cashier/asset/supplier sub-ledgers are plain
         ASSET/LIABILITY accounts indistinguishable by type or code format
         from a normal Cash or Trade Creditors account.
+
+        `kinds`: optional iterable restricting the match to specific
+        sub-ledger kinds ('loan', 'savings', 'cashier', 'asset', 'supplier').
+        Defaults to all of them (the original, full exclusion set).
         """
-        return (
-            Q(loan_account_detail__isnull=False)
-            | Q(savings_account_detail__isnull=False)
-            | Q(cashier_accounts__isnull=False)
-            | Q(fixed_asset_detail__isnull=False)
-            | Q(fixed_asset_accumulated_depreciation_detail__isnull=False)
-            | Q(supplier_detail__isnull=False)
-        )
+        selected = kinds if kinds is not None else cls._SUBLEDGER_KIND_Q.keys()
+        q = Q(pk__in=[])  # always-false base so an empty `kinds` matches nothing
+        for kind in selected:
+            q |= cls._SUBLEDGER_KIND_Q[kind]()
+        return q
 
     @classmethod
-    def exclude_entity_subledgers(cls, queryset):
-        """Drop per-entity sub-ledger accounts (see entity_subledger_q) from a queryset."""
-        return queryset.exclude(cls.entity_subledger_q())
+    def exclude_entity_subledgers(cls, queryset, keep_kinds=None):
+        """Drop per-entity sub-ledger accounts (see entity_subledger_q) from a queryset.
+
+        `keep_kinds`: optional iterable of sub-ledger kinds to leave in the
+        queryset instead of excluding (e.g. {'cashier'} to hide loan/savings/
+        asset/supplier sub-ledgers but keep cashier tills visible).
+        """
+        if keep_kinds:
+            kinds = [k for k in cls._SUBLEDGER_KIND_Q if k not in set(keep_kinds)]
+        else:
+            kinds = None
+        return queryset.exclude(cls.entity_subledger_q(kinds=kinds))
 
     def __str__(self):
         level_indicator = "📁" if self.account_level == self.LEVEL_PARENT else "📄"

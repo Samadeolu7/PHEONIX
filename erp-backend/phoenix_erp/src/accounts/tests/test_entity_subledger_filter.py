@@ -157,3 +157,16 @@ class AccountAPISubledgerFilterTests(EntitySubledgerFilterTestBase):
         response = self.client_api.get(f'/api/accounts/{self.loan_account_gl.id}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['code'], self.loan_account_gl.code)
+
+    def test_list_can_keep_just_cashier_subledgers(self):
+        """Ledger Search asks for `include_subledgers=cashier` so a staff
+        member's till is findable without flooding results with every
+        loan/savings sub-ledger row."""
+        response = self.client_api.get('/api/accounts/', {'include_subledgers': 'cashier'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        codes = {row['code'] for row in response.data}
+
+        self.assertIn(self.cashier_account_gl.code, codes)
+        self.assertNotIn(self.loan_account_gl.code, codes)
+        self.assertNotIn(self.savings_account_gl.code, codes)
+        self.assertIn(self.cash.code, codes)
