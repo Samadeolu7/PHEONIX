@@ -894,17 +894,6 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             defaults={'description': 'Bank Transfers'}
         )
         
-        # Create journal entry
-        journal_entry = JournalEntry.objects.create(
-            series=series,
-            date=self.transfer_date,
-            description=f"Transfer: {self.description}",
-            workflow_reference=self.transfer_number,
-            branch=self.branch,
-            owner=self.owner,
-            created_by=user,
-        )
-        
         # Determine source account
         if self.source_type == 'cashier':
             source_gl_account = self.source_cashier_account.account
@@ -916,6 +905,31 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             destination_gl_account = self.destination_cashier_account.account
         else:
             destination_gl_account = self.destination_bank_account.gl_account
+
+        # self.branch reflects whichever branch the initiating user had
+        # selected (via the branch switcher, for elevated users) when the
+        # transfer was created — not necessarily the branch either account
+        # actually lives in. A director's own cashier float, or the
+        # destination they're sending to, can sit in a branch other than the
+        # one they had selected while creating the transfer. Every posted
+        # line must match the journal's branch (TransactionEntry.clean()), so
+        # when both accounts agree on a branch, post there instead of
+        # self.branch to avoid a spurious cross-branch rejection.
+        journal_branch = self.branch
+        if source_gl_account.branch_id and \
+           source_gl_account.branch_id == destination_gl_account.branch_id:
+            journal_branch = source_gl_account.branch
+
+        # Create journal entry
+        journal_entry = JournalEntry.objects.create(
+            series=series,
+            date=self.transfer_date,
+            description=f"Transfer: {self.description}",
+            workflow_reference=self.transfer_number,
+            branch=journal_branch,
+            owner=self.owner,
+            created_by=user,
+        )
 
         # Dr: Destination Account (increase asset)
         JournalEntryLine.objects.create(
