@@ -12,12 +12,10 @@ export const accountService = {
     // used for the JV form's sub-ledger drill-down step.
     parent?: number | string;
     // Per-entity sub-ledger accounts (one row per loan/savings account/
-    // cashier till) are excluded by default. Pass `true` to include every
-    // kind, or a comma-separated list of kinds ('loan' | 'savings' |
-    // 'cashier' | 'asset' | 'supplier') to keep only those visible — only do
-    // this for pages that need to pick an *existing* sub-account directly
+    // cashier till) are excluded by default — only pass true for pages that
+    // need to pick an *existing* cashier/loan/savings sub-account directly
     // (e.g. "which cashier collected this cash"), not generic GL pickers.
-    include_subledgers?: boolean | string;
+    include_subledgers?: boolean;
   }): Promise<Account[]> {
     const response = await api.get('/accounts/', { params });
     return response.results || response.data || response;
