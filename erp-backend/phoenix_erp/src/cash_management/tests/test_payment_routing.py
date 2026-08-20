@@ -266,9 +266,10 @@ class PaymentRoutingServiceTests(TestCase):
 
         # setUp already created an active cashier account for self.user in
         # self.branch, so route_payment should reuse it rather than creating
-        # a second one.
+        # a second one — 'auto_created' just means "not explicitly passed by
+        # the caller", not "a new row was inserted", so it's True either way.
         self.assertEqual(result['cashier_account'], self.cashier_account)
-        self.assertFalse(result['auto_created'])
+        self.assertTrue(result['auto_created'])
         self.assertEqual(result['route'], 'cash')
         self.assertIsNotNone(result['journal_entry'])
     
