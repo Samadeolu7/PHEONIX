@@ -106,7 +106,16 @@ const JournalVoucherFormPage: React.FC = () => {
       updateRow(rowId, { ledgerResults: [], showLedgerDropdown: false });
       return;
     }
-    const results = await accountService.getAccounts({ search: q, is_active: true });
+    // Cashier tills are per-staff sub-ledger accounts, normally hidden from
+    // this search to avoid clutter — but a JV legitimately needs to post
+    // straight to one (e.g. correcting a till balance), so ask for that one
+    // sub-ledger kind back (loan/savings/asset/supplier sub-ledgers stay
+    // hidden — there can be thousands of those).
+    const results = await accountService.getAccounts({
+      search: q,
+      is_active: true,
+      include_subledgers: 'cashier',
+    });
     updateRow(rowId, { ledgerResults: results.slice(0, 8), showLedgerDropdown: true });
   };
 
