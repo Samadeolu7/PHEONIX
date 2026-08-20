@@ -31,19 +31,30 @@ class PettyCashVoucherLineDisbursementTests(TestCase):
         self.user.branch = self.branch
         self.user.save()
 
+        self.cash_parent = Account.objects.create(
+            code='1100', name='Cash and Cash Equivalents', account_type='ASSET',
+            account_level='PARENT', allow_manual_entries=False,
+            owner=self.user, branch=self.branch,
+        )
+        self.expense_parent = Account.objects.create(
+            code='6000', name='Operating Expenses', account_type='EXPENSE',
+            account_level='PARENT', allow_manual_entries=False,
+            owner=self.user, branch=self.branch,
+        )
+
         self.petty_cash_account = Account.objects.create(
             code='1102', name='Petty Cash', account_type='ASSET',
-            account_level='CHILD', allow_manual_entries=True,
+            account_level='CHILD', parent=self.cash_parent, allow_manual_entries=True,
             owner=self.user, branch=self.branch,
         )
         self.transport_account = Account.objects.create(
             code='6001', name='Transportation Expense', account_type='EXPENSE',
-            account_level='CHILD', allow_manual_entries=True,
+            account_level='CHILD', parent=self.expense_parent, allow_manual_entries=True,
             owner=self.user, branch=self.branch,
         )
         self.water_account = Account.objects.create(
             code='6002', name='Water Expense', account_type='EXPENSE',
-            account_level='CHILD', allow_manual_entries=True,
+            account_level='CHILD', parent=self.expense_parent, allow_manual_entries=True,
             owner=self.user, branch=self.branch,
         )
 
