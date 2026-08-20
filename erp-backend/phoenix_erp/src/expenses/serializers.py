@@ -19,6 +19,7 @@ from expenses.models import (
 )
 from accounts.models import Account
 from users.models import User
+from common.image_processing import compress_image
 
 
 class ExpenseCategorySerializer(serializers.ModelSerializer):
@@ -570,6 +571,16 @@ class ResourceConsumptionSerializer(serializers.ModelSerializer):
                 'amount': obj.prepaid_voucher.remaining_amount
             }
         return None
+
+    def validate_operator_signature(self, value):
+        if value and value.content_type.startswith('image/'):
+            value = compress_image(value, max_dimension=1000, quality=85)
+        return value
+
+    def validate_receipt_photo(self, value):
+        if value and value.content_type.startswith('image/'):
+            value = compress_image(value, max_dimension=1600, quality=82)
+        return value
 
     def get_operator_display(self, obj):
         """Return a display string for the linked operator staff member."""

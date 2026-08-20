@@ -196,6 +196,10 @@ class ThreadMessage(TimeStampedModel, SoftDeleteModel):
 class ThreadMessageAttachment(TimeStampedModel, SoftDeleteModel):
     message = models.ForeignKey(ThreadMessage, on_delete=models.CASCADE, related_name='attachments')
     file = models.FileField(upload_to='threads/attachments/')
+    # Only set for image attachments — a small bounded-box JPEG for chat
+    # previews, so the UI isn't pulling the full (already-compressed) image
+    # just to render a thumbnail.
+    thumbnail = models.ImageField(upload_to='threads/attachments/thumbnails/', null=True, blank=True)
     content_type = models.CharField(max_length=100, blank=True)
     size = models.PositiveIntegerField(default=0)
 

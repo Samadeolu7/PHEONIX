@@ -206,7 +206,7 @@ export const ThreadMessageBubble: React.FC<Props> = ({ message, isOwn, onUpdated
                     return (
                       <a key={att.id} href={att.url} target="_blank" rel="noreferrer">
                         <img
-                          src={att.url}
+                          src={att.thumbnail_url ?? att.url}
                           alt={att.filename}
                           className="max-w-[220px] max-h-[220px] rounded-lg border border-black/10 object-cover"
                         />

@@ -17,6 +17,7 @@ from .models import (
 from .config_models import HRConfig
 from automations.models import WorkflowTemplate, WorkflowRun
 from common.serializers import TenantModelSerializer
+from common.image_processing import compress_image
 
 User = get_user_model()
 
@@ -87,7 +88,13 @@ class StaffSerializer(TenantModelSerializer):
             'owner', 'branch', 'created_at', 'updated_at'
         ]
         read_only_fields = ['staff_id', 'created_at', 'updated_at']
-    
+
+    def validate_photo(self, value):
+        if value:
+            if value.content_type.startswith('image/'):
+                value = compress_image(value, max_dimension=1200, quality=82)
+        return value
+
     def get_full_name(self, obj):
         if obj.user:
             return obj.user.get_full_name()

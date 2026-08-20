@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from common.serializers import TenantModelSerializer
+from common.image_processing import compress_image
 from clients.models import (
     Client,
     ClientClassification,
@@ -353,8 +354,9 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
             # Check file type
             if not value.content_type.startswith('image/'):
                 raise serializers.ValidationError('Only image files are allowed')
+            value = compress_image(value, max_dimension=1600, quality=82)
         return value
-    
+
     def validate_signature(self, value):
         """Validate signature file"""
         if value:
@@ -364,6 +366,7 @@ class ClientCreateUpdateSerializer(TenantModelSerializer):
             # Check file type
             if not value.content_type.startswith('image/'):
                 raise serializers.ValidationError('Only image files are allowed for signature')
+            value = compress_image(value, max_dimension=1000, quality=85)
         return value
 
     def validate_client_type(self, value):
@@ -545,6 +548,8 @@ class GuarantorSerializer(TenantModelSerializer):
             raise serializers.ValidationError('Image size must be less than 5MB')
         if value and not value.content_type.startswith('image/'):
             raise serializers.ValidationError('Only image files are allowed')
+        if value:
+            value = compress_image(value, max_dimension=1600, quality=82)
         return value
 
 
@@ -566,6 +571,11 @@ class GuarantorCreateSerializer(TenantModelSerializer):
             'nin': {'required': False},
             'image': {'required': False, 'allow_null': True},
         }
+
+    def validate_image(self, value):
+        if value:
+            value = compress_image(value, max_dimension=1600, quality=82)
+        return value
 
 
 class GuarantorConversionSerializer(serializers.Serializer):

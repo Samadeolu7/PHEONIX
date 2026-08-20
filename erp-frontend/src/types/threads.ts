@@ -19,6 +19,7 @@ export interface MessageReadReceiptItem {
 export interface MessageAttachmentItem {
   id: number;
   url: string | null;
+  thumbnail_url: string | null;
   filename: string;
   content_type: string;
   size: number;

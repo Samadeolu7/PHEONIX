@@ -6,6 +6,7 @@ from .models import (
     AssetRequisition, AssetRequisitionLine,
     AssetTransfer, AssetAssignment,
 )
+from common.image_processing import compress_image
 
 
 class AssetCategorySerializer(serializers.ModelSerializer):
@@ -111,6 +112,12 @@ class FixedAssetSerializer(serializers.ModelSerializer):
             'accumulated_depreciation_account_name',
         ]
     
+    def validate_photo(self, value):
+        if value:
+            if value.content_type.startswith('image/'):
+                value = compress_image(value, max_dimension=1600, quality=82)
+        return value
+
     def get_current_meter_reading(self, obj):
         reading = obj.current_meter_reading
         return reading if reading is not None else None

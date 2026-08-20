@@ -9,6 +9,7 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Q, OuterRef, Subquery, IntegerField
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from common.views import ScopedModelViewSet
+from common.image_processing import compress_and_thumbnail
 from .models import Thread, ThreadParticipant, ThreadMessage, MessageReadReceipt, ThreadMessageAttachment
 from .serializers import (
     ThreadSerializer, ThreadCreateSerializer, ThreadUpdateSerializer,
@@ -805,9 +806,13 @@ class ThreadMessageViewSet(ScopedModelViewSet):
         Thread.objects.filter(pk=thread.pk).update(updated_at=timezone.now())
 
         for f in new_attachments:
+            thumbnail = None
+            if (f.content_type or '').startswith('image/'):
+                f, thumbnail = compress_and_thumbnail(f, max_dimension=1920, quality=82)
             ThreadMessageAttachment.objects.create(
                 message=message,
                 file=f,
+                thumbnail=thumbnail,
                 content_type=f.content_type or '',
                 size=f.size,
                 tenant=tenant,

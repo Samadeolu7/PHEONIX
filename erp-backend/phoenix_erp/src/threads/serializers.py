@@ -32,16 +32,23 @@ class MessageReadReceiptSerializer(serializers.ModelSerializer):
 
 class ThreadMessageAttachmentSerializer(serializers.ModelSerializer):
     url = serializers.SerializerMethodField()
+    thumbnail_url = serializers.SerializerMethodField()
     filename = serializers.SerializerMethodField()
 
     class Meta:
         model = ThreadMessageAttachment
-        fields = ['id', 'url', 'filename', 'content_type', 'size']
+        fields = ['id', 'url', 'thumbnail_url', 'filename', 'content_type', 'size']
 
     def get_url(self, obj):
         request = self.context.get('request')
         if request and obj.file:
             return request.build_absolute_uri(obj.file.url)
+        return None
+
+    def get_thumbnail_url(self, obj):
+        request = self.context.get('request')
+        if request and obj.thumbnail:
+            return request.build_absolute_uri(obj.thumbnail.url)
         return None
 
     def get_filename(self, obj):
