@@ -357,13 +357,35 @@ class BankTransferSerializer(TenantModelSerializer):
                 fields['source_bank_account'].queryset = bank_qs
 
             # destination_cashier_account: same-branch active cashier accounts
-            # (cashier-to-cashier transfers are branch-restricted — see
-            # BankTransfer.clean()). Not narrowed to "own account" — the whole
-            # point is sending to someone else's float.
-            if 'destination_cashier_account' in fields and branch:
-                fields['destination_cashier_account'].queryset = CashierAccount.objects.filter(
-                    is_active=True, is_suspended=False, branch=branch
-                )
+            # (cashier-to-cashier transfers are branch-restricted — see the
+            # same-branch check in validate() below). "Same branch" means the
+            # branch of the SOURCE account being used for this transfer, not
+            # the initiating user's own profile branch — a director's profile
+            # branch can differ from the branch of the specific float they're
+            # transferring out of, and scoping by user.branch let the dropdown
+            # offer choices validate() would then reject as "Invalid pk".
+            if 'destination_cashier_account' in fields:
+                source_branch_id = None
+                initial_data = getattr(self, 'initial_data', None)
+                if initial_data:
+                    source_cashier_id = initial_data.get('source_cashier_account')
+                    if source_cashier_id:
+                        source_branch_id = CashierAccount.objects.filter(
+                            id=source_cashier_id
+                        ).values_list('branch_id', flat=True).first()
+                    if not source_branch_id:
+                        source_bank_id = initial_data.get('source_bank_account')
+                        if source_bank_id:
+                            source_branch_id = BankAccount.objects.filter(
+                                id=source_bank_id
+                            ).values_list('branch_id', flat=True).first()
+                if not source_branch_id:
+                    source_branch_id = branch.id if branch else None
+
+                if source_branch_id:
+                    fields['destination_cashier_account'].queryset = CashierAccount.objects.filter(
+                        is_active=True, is_suspended=False, branch_id=source_branch_id
+                    )
 
         return fields
 

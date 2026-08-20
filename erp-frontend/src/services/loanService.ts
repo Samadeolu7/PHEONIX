@@ -82,6 +82,10 @@ export interface LoanAccountList {
   requested_amount: string;
   disbursed_amount: string;
   outstanding_principal: string;
+  outstanding_interest: string;
+  outstanding_fees: string;
+  outstanding_penalties: string;
+  total_outstanding: string;
   processing_fee: string;
   insurance_amount: string;
   repayment_frequency: 'daily' | 'weekly' | 'monthly';
@@ -118,10 +122,6 @@ export interface LoanAccount extends LoanAccountList {
   term_unit: TermUnit;
   requested_amount: string;
   approved_amount: string;
-  outstanding_interest: string;
-  outstanding_fees: string;
-  outstanding_penalties: string;
-  total_outstanding: string;
   total_paid: string;
   total_repaid: string;  // alias for total_paid
   principal_paid: string;

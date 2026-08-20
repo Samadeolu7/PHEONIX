@@ -72,7 +72,7 @@ function exportCSV(loans: LoanAccountList[]) {
     l.loan_number,
     l.product_name,
     parseFloat(l.disbursed_amount || '0').toFixed(2),
-    parseFloat(l.outstanding_principal || '0').toFixed(2),
+    parseFloat(l.total_outstanding || l.outstanding_principal || '0').toFixed(2),
     parseFloat((l as unknown as { total_paid?: string }).total_paid || '0').toFixed(2),
     (l as unknown as { next_due_date?: string }).next_due_date || '',
     l.days_in_arrears,
@@ -160,8 +160,9 @@ export default function DebtorsReportPage() {
   useAutoRefresh(() => loadLoans(true), AUTO_REFRESH_MS);
 
   // Summary stats
+  // Outstanding = principal + interest (recognized at disbursement) + fees + penalties.
   const totalOutstanding = loans.reduce(
-    (s, l) => s + parseFloat(l.outstanding_principal || '0'),
+    (s, l) => s + parseFloat(l.total_outstanding || l.outstanding_principal || '0'),
     0
   );
   const avgArrears =
@@ -324,7 +325,7 @@ export default function DebtorsReportPage() {
                         {fmt(loan.disbursed_amount)}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">
-                        {fmt(loan.outstanding_principal)}
+                        {fmt(loan.total_outstanding ?? loan.outstanding_principal)}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-gray-600">
                         {fmt(loanAny.total_paid)}

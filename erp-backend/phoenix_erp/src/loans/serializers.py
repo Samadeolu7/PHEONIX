@@ -226,6 +226,9 @@ class LoanAccountListSerializer(TenantModelSerializer):
     group_name = serializers.CharField(source='client.group.name', read_only=True, default='')
     product_name = serializers.CharField(source='product.name', read_only=True)
     assigned_officer_name = serializers.SerializerMethodField()
+    total_outstanding = serializers.DecimalField(
+        max_digits=18, decimal_places=2, read_only=True
+    )
 
     def get_assigned_officer_name(self, obj):
         # client.assigned_officer is an hr.Staff record, not a Django User —
@@ -242,6 +245,8 @@ class LoanAccountListSerializer(TenantModelSerializer):
             'client_phone', 'group_name',
             'product', 'product_name',
             'requested_amount', 'disbursed_amount', 'outstanding_principal',
+            'outstanding_interest', 'outstanding_fees', 'outstanding_penalties',
+            'total_outstanding',
             'processing_fee', 'insurance_amount',
             'term_months', 'term_unit',
             'repayment_frequency', 'status', 'risk_classification',
