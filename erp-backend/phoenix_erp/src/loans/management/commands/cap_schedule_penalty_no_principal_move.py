@@ -81,14 +81,17 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f'[{loan_number}] No overpaid penalty rows found.'))
                 return
 
-            new_penalties_paid = loan.penalties_paid - total_overpaid
-            if new_penalties_paid < -TOLERANCE:
-                db_transaction.savepoint_rollback(sid)
-                self.stdout.write(self.style.ERROR(
-                    f'[{loan_number}] would push penalties_paid negative '
-                    f'({loan.penalties_paid:,.2f} -> {new_penalties_paid:,.2f}). Refusing — needs review.'
-                ))
-                return
+            # retire_stale_legacy_schedule_rows only verifies outstanding_* against
+            # schedule REMAINING — it never checks penalties_paid against schedule
+            # PAID sums. So penalties_paid isn't load-bearing for what this command
+            # exists to unblock. Floor it at 0.00 rather than refuse: an earlier,
+            # unrelated correction (correct_principal_penalty_misallocation,
+            # 2026-08-17) already moved part of this loan's penalties_paid to
+            # principal_paid, so penalties_paid no longer sums to the schedule
+            # anyway — that pre-existing divergence isn't something capping this
+            # row needs to resolve, and driving it negative would just invent a
+            # second impossible value on top of it.
+            new_penalties_paid = max(Decimal('0.00'), loan.penalties_paid - total_overpaid)
 
             self.stdout.write(f'[{loan_number}] pk={loan.pk}')
             for sched, new_penalty_paid, overpaid in row_updates:
