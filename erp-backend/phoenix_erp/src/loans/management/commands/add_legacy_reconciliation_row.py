@@ -84,8 +84,18 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(f'[{loan_number}] no schedule rows found.'))
                 return
 
+            # Match retire_stale_legacy_schedule_rows's own definition of "schedule
+            # remaining" exactly (status__in=['pending','partial','overdue'] only) —
+            # that's the number retire will actually verify the new row against. A
+            # 'paid' row can still carry a real per-component shortfall (LN-629 row
+            # #4: principal_paid=25,648 vs principal_due=58,400, masked because its
+            # TOTAL happens to equal total_due) that retire's own filter never sees;
+            # using a broader "every non-restructured row" definition here would size
+            # the new row against a number retire doesn't agree with, and leave its
+            # own verification still failing.
+            open_rows = [r for r in rows if r.status in ('pending', 'partial', 'overdue')]
             schedule_remaining = sum(
-                (r.principal_due - r.principal_paid) for r in rows
+                (r.principal_due - r.principal_paid) for r in open_rows
             ) or Decimal('0.00')
             shortfall = loan.outstanding_principal - schedule_remaining
 
