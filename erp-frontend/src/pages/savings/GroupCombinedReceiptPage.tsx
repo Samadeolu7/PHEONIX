@@ -245,8 +245,8 @@ export default function GroupCombinedReceiptPage() {
                   );
                 }
               } catch {
-                // schedule fetch failed — use outstanding principal as fallback
-                loanDue = parseFloat(loan.outstanding_principal ?? '0');
+                // schedule fetch failed — use total outstanding (principal+interest) as fallback
+                loanDue = parseFloat(loan.total_outstanding ?? loan.outstanding_principal ?? '0');
               }
             }
           }

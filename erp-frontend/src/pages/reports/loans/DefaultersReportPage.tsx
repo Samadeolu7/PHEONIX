@@ -84,7 +84,7 @@ function exportCSV(loans: LoanAccountList[], asOf: string) {
     l.loan_number,
     l.product_name,
     parseFloat(l.arrears_amount || '0').toFixed(2),
-    parseFloat(l.outstanding_principal || '0').toFixed(2),
+    parseFloat(l.total_outstanding || l.outstanding_principal || '0').toFixed(2),
     l.days_in_arrears,
     l.status,
     l.assigned_officer_name || '',
@@ -193,7 +193,10 @@ export default function DefaultersReportPage() {
       if (sortKey === 'days_in_arrears') {
         aVal = a.days_in_arrears ?? 0;
         bVal = b.days_in_arrears ?? 0;
-      } else if (sortKey === 'outstanding_principal' || sortKey === 'arrears_amount') {
+      } else if (sortKey === 'outstanding_principal') {
+        aVal = parseFloat(la.total_outstanding || a[sortKey] || '0');
+        bVal = parseFloat(lb.total_outstanding || b[sortKey] || '0');
+      } else if (sortKey === 'arrears_amount') {
         aVal = parseFloat(a[sortKey] || '0');
         bVal = parseFloat(b[sortKey] || '0');
       } else {
@@ -210,7 +213,7 @@ export default function DefaultersReportPage() {
 
   // Summary stats
   const totalOutstanding = loans.reduce(
-    (s, l) => s + parseFloat(l.outstanding_principal || '0'),
+    (s, l) => s + parseFloat(l.total_outstanding || l.outstanding_principal || '0'),
     0
   );
   const avgArrears =
@@ -421,7 +424,7 @@ export default function DefaultersReportPage() {
                         {fmt(loan.arrears_amount)}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums text-gray-700">
-                        {fmt(loan.outstanding_principal)}
+                        {fmt(loan.total_outstanding ?? loan.outstanding_principal)}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span

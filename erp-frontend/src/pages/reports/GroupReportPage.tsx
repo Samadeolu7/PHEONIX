@@ -129,7 +129,7 @@ export default function GroupReportPage() {
             const lr = loanRes.value as any;
             const loans: LoanAccountList[] = Array.isArray(lr) ? lr : (lr?.results ?? []);
             if (loans.length > 0) {
-              outstandingLoan = parseFloat(loans[0].outstanding_principal ?? '0');
+              outstandingLoan = parseFloat(loans[0].total_outstanding ?? loans[0].outstanding_principal ?? '0');
               daysInArrears = loans[0].days_in_arrears ?? 0;
               loanStatus = loans[0].status;
             }

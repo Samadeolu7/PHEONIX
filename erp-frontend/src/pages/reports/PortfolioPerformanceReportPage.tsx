@@ -154,7 +154,7 @@ export default function PortfolioPerformanceReportPage() {
   const primaryDim = groupBy[0];
   const breakdownChartData = breakdown.map((row) => ({
     name: rowLabel(row, groupBy),
-    Outstanding: parseFloat(row.outstanding_principal),
+    'Outstanding Principal': parseFloat(row.outstanding_principal),
   }));
 
   const totalOutstanding = breakdown.reduce((sum, r) => sum + parseFloat(r.outstanding_principal), 0);
@@ -227,7 +227,7 @@ export default function PortfolioPerformanceReportPage() {
                       <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-15} textAnchor="end" height={60} />
                       <YAxis tick={{ fontSize: 11 }} />
                       <Tooltip formatter={(v: number) => formatNaira(v)} />
-                      <Bar dataKey="Outstanding" fill="#4f46e5" />
+                      <Bar dataKey="Outstanding Principal" fill="#4f46e5" />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -237,7 +237,7 @@ export default function PortfolioPerformanceReportPage() {
                       <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                         <th className="px-3 py-2">Segment</th>
                         <th className="px-3 py-2 text-right">Loans</th>
-                        <th className="px-3 py-2 text-right">Outstanding</th>
+                        <th className="px-3 py-2 text-right">Outstanding Principal</th>
                         <th className="px-3 py-2 text-right">Disbursed</th>
                         <th className="px-3 py-2 text-right">Total Paid</th>
                         <th className="px-3 py-2 text-right">Provision</th>

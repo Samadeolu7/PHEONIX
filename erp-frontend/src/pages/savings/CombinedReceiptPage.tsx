@@ -558,7 +558,7 @@ export default function CombinedReceiptPage() {
                         <span className="ml-2 font-mono text-xs text-gray-500">{loan.loan_number}</span>
                       </div>
                       <div className="text-right text-xs text-gray-500">
-                        <div>Outstanding: ₦{fmt(loan.outstanding_principal)}</div>
+                        <div>Outstanding: ₦{fmt(loan.total_outstanding ?? loan.outstanding_principal)}</div>
                         {loan.days_in_arrears > 0 && (
                           <div className="text-red-600">{loan.days_in_arrears}d overdue</div>
                         )}
@@ -591,7 +591,7 @@ export default function CombinedReceiptPage() {
                         <p className="text-xs uppercase tracking-wide text-gray-400">Loan Account</p>
                         <p className="font-mono text-xs text-gray-700">{selectedLoan.loan_number}</p>
                         <p className="text-xs text-gray-500 mt-0.5">
-                          Outstanding: ₦{fmt(selectedLoan.outstanding_principal)}
+                          Outstanding: ₦{fmt(selectedLoan.total_outstanding ?? selectedLoan.outstanding_principal)}
                         </p>
                       </div>
                       <div>

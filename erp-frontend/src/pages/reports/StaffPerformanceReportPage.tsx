@@ -92,7 +92,7 @@ function OfficerDrillDown({ officerId, filters }: { officerId: number; filters: 
                 <tr className="text-left text-gray-400">
                   <th className="py-1 pr-3">Product</th>
                   <th className="py-1 pr-3 text-right">Loans</th>
-                  <th className="py-1 pr-3 text-right">Outstanding</th>
+                  <th className="py-1 pr-3 text-right">Outstanding Principal</th>
                   <th className="py-1 text-right">Collection Rate (cumulative)</th>
                 </tr>
               </thead>

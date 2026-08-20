@@ -271,7 +271,7 @@ function NormalCollectionPanel() {
                   <span className="ml-2 text-gray-500">{loan.client_name}</span>
                 </div>
                 <div className="text-right text-xs text-gray-500">
-                  <div>Outstanding: ₦{fmt(loan.outstanding_principal)}</div>
+                  <div>Outstanding: ₦{fmt(loan.total_outstanding ?? loan.outstanding_principal)}</div>
                   {loan.days_in_arrears > 0 && (
                     <div className="text-red-600">{loan.days_in_arrears}d overdue</div>
                   )}
@@ -994,7 +994,7 @@ function SavingsDebitPanel() {
                 <p className="font-medium text-blue-900">{selectedLoan.client_name}</p>
                 <p className="text-xs text-blue-700">{selectedLoan.loan_number}</p>
                 <p className="mt-1 text-xs text-gray-600">
-                  Outstanding: ₦{fmt(selectedLoan.outstanding_principal)}
+                  Outstanding: ₦{fmt(selectedLoan.total_outstanding ?? selectedLoan.outstanding_principal)}
                 </p>
               </div>
             </div>
@@ -1033,7 +1033,7 @@ function SavingsDebitPanel() {
                       <span className="font-medium text-gray-900">{loan.client_name}</span>
                       <span className="ml-2 text-gray-500">{loan.loan_number}</span>
                       <span className="ml-2 text-xs text-gray-400">
-                        Outstanding: ₦{fmt(loan.outstanding_principal)}
+                        Outstanding: ₦{fmt(loan.total_outstanding ?? loan.outstanding_principal)}
                       </span>
                     </button>
                   </li>
@@ -1477,7 +1477,7 @@ function OfflineCollectionPanel() {
               <div>
                 <p className="font-medium text-blue-900">{selectedLoan.client_name}</p>
                 <p className="text-xs text-blue-700">{selectedLoan.loan_number}</p>
-                <p className="mt-1 text-xs text-gray-600">Outstanding: ₦{fmt(selectedLoan.outstanding_principal)}</p>
+                <p className="mt-1 text-xs text-gray-600">Outstanding: ₦{fmt(selectedLoan.total_outstanding ?? selectedLoan.outstanding_principal)}</p>
               </div>
             </div>
             <button type="button" aria-label="Clear" onClick={resetForm} className="text-blue-400 hover:text-blue-600">
@@ -1522,7 +1522,7 @@ function OfflineCollectionPanel() {
                       <span className="ml-2 text-gray-500">{loan.client_name}</span>
                     </div>
                     <div className="text-right text-xs text-gray-500">
-                      Outstanding: ₦{fmt(loan.outstanding_principal)}
+                      Outstanding: ₦{fmt(loan.total_outstanding ?? loan.outstanding_principal)}
                       {loan.days_in_arrears > 0 && <div className="text-red-600">{loan.days_in_arrears}d overdue</div>}
                     </div>
                   </button>

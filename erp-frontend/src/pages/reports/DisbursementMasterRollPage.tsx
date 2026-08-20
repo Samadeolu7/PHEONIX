@@ -131,7 +131,7 @@ function DisbursementRowDetail({ loanId }: { loanId: number }) {
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs sm:grid-cols-4">
           <div><span className="text-gray-400">Product:</span> <span className="text-gray-700">{loan.product_name ?? '—'}</span></div>
           <div><span className="text-gray-400">Disbursed:</span> <span className="text-gray-700">₦{fmt(loan.disbursed_amount)}</span></div>
-          <div><span className="text-gray-400">Outstanding:</span> <span className="text-gray-700">₦{fmt(loan.outstanding_principal)}</span></div>
+          <div><span className="text-gray-400">Outstanding:</span> <span className="text-gray-700">₦{fmt(loan.total_outstanding ?? loan.outstanding_principal)}</span></div>
           <div><span className="text-gray-400">Status:</span> <span className="text-gray-700">{loan.status}</span></div>
           <div><span className="text-gray-400">Frequency:</span> <span className="text-gray-700">{loan.repayment_frequency ?? '—'}</span></div>
           <div><span className="text-gray-400">Interest Rate:</span> <span className="text-gray-700">{loan.interest_rate ?? '—'}%</span></div>

@@ -773,9 +773,9 @@ const ClientDetailPage: React.FC = () => {
                         <td style={{ padding: '0.875rem 1rem', color: '#374151' }}>{loan.product_name || loan.product || '—'}</td>
                         <td style={{ padding: '0.875rem 1rem', textAlign: 'right', color: '#374151' }}>{loan.requested_amount ? `₦${Number(loan.requested_amount).toLocaleString()}` : '—'}</td>
                         <td style={{ padding: '0.875rem 1rem', textAlign: 'right', color: '#374151' }}>{loan.approved_amount ? `₦${Number(loan.approved_amount).toLocaleString()}` : '—'}</td>
-                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: 600, color: Number(loan.outstanding_principal || loan.outstanding_balance || 0) > 0 ? '#dc2626' : '#10b981' }}>
-                          {loan.outstanding_principal != null || loan.outstanding_balance != null
-                            ? `₦${Number(loan.outstanding_principal ?? loan.outstanding_balance).toLocaleString()}`
+                        <td style={{ padding: '0.875rem 1rem', textAlign: 'right', fontWeight: 600, color: Number(loan.total_outstanding ?? loan.outstanding_principal ?? loan.outstanding_balance ?? 0) > 0 ? '#dc2626' : '#10b981' }}>
+                          {loan.total_outstanding != null || loan.outstanding_principal != null || loan.outstanding_balance != null
+                            ? `₦${Number(loan.total_outstanding ?? loan.outstanding_principal ?? loan.outstanding_balance).toLocaleString()}`
                             : '—'}
                         </td>
                         <td style={{ padding: '0.875rem 1rem' }}>
