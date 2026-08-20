@@ -303,8 +303,11 @@ class MicrofinanceDashboardStatsView(APIView):
             # batch and can go stale, which is why this KPI (247) used to
             # disagree with the Defaulters Report (131), which already
             # computes arrears the same live way. See defaulted_loans_as_of.
+            # Include 'defaulted' status too — those loans are by definition
+            # overdue, and the Defaulters Report (loans_active_as_of_qs)
+            # already counts them; excluding them here was under-counting.
             from loans.views import defaulted_loans_as_of
-            overdue_qs = loan_qs.filter(status__in=['active', 'disbursed'])
+            overdue_qs = loan_qs.filter(status__in=['active', 'disbursed', 'defaulted'])
             data['overdue_loans'] = sum(
                 1 for _ in defaulted_loans_as_of(overdue_qs, today)
             )
