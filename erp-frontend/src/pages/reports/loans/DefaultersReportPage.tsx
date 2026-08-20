@@ -224,6 +224,18 @@ export default function DefaultersReportPage() {
   const over30 = loans.filter((l) => l.days_in_arrears > 30 && l.days_in_arrears <= 90).length;
   const under30 = loans.filter((l) => l.days_in_arrears > 0 && l.days_in_arrears <= 30).length;
 
+  // This report pools 'defaulted' (90+ DPD, never cured) together with
+  // 'active' loans that are merely overdue — record_payment() flips a loan
+  // back from defaulted to active on any payment at all, however small, so
+  // an 'active' row here can still be badly overdue. Pooling them is correct
+  // for a single "who's overdue" list, but the two mean different things —
+  // surface the split so "Total ... Outstanding" isn't mistaken for
+  // defaulted-only, which is what caused a real client-facing confusion.
+  const defaultedLoans = loans.filter((l) => l.status === 'defaulted');
+  const activeOverdueLoans = loans.filter((l) => l.status !== 'defaulted');
+  const sumOutstanding = (arr: LoanAccountList[]) =>
+    arr.reduce((s, l) => s + parseFloat(l.total_outstanding || l.outstanding_principal || '0'), 0);
+
   return (
     <div className="min-h-screen bg-gray-50 p-6 print:bg-white print:p-0">
       {/* Header */}
@@ -287,11 +299,21 @@ export default function DefaultersReportPage() {
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
         <div className="col-span-2 rounded-xl bg-white p-5 shadow-sm">
           <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-            Total Defaulted Outstanding
+            Total At-Risk Outstanding
           </p>
           <p className="mt-1 text-2xl font-bold tabular-nums text-red-600">
             ₦{fmt(totalOutstanding)}
           </p>
+          <div className="mt-2 space-y-0.5 border-t border-gray-100 pt-2 text-[11px] text-gray-500">
+            <p>
+              <span className="font-semibold text-red-700">{fmtInt(defaultedLoans.length)} defaulted</span>
+              {' '}(90+ DPD, never cured) · ₦{fmt(sumOutstanding(defaultedLoans))}
+            </p>
+            <p>
+              <span className="font-semibold text-orange-600">{fmtInt(activeOverdueLoans.length)} active-overdue</span>
+              {' '}(may have paid recently, still overdue) · ₦{fmt(sumOutstanding(activeOverdueLoans))}
+            </p>
+          </div>
         </div>
         <div className="rounded-xl bg-white p-5 shadow-sm">
           <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Total Accounts</p>
@@ -403,6 +425,7 @@ export default function DefaultersReportPage() {
                   >
                     Days Arrears <SortIcon col="days_in_arrears" sortKey={sortKey} sortDir={sortDir} />
                   </th>
+                  <th className="px-4 py-3">Status</th>
                   <th
                     className="cursor-pointer select-none px-4 py-3 hover:bg-white/10"
                     onClick={() => toggleSort('assigned_officer_name')}
@@ -435,6 +458,22 @@ export default function DefaultersReportPage() {
                           {loan.days_in_arrears}d
                         </span>
                       </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                            loan.status === 'defaulted'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-orange-100 text-orange-700'
+                          }`}
+                          title={
+                            loan.status === 'defaulted'
+                              ? '90+ days in arrears, never cured'
+                              : 'Overdue but may have paid something recently'
+                          }
+                        >
+                          {loan.status === 'defaulted' ? 'defaulted' : 'active-overdue'}
+                        </span>
+                      </td>
                       <td className="px-4 py-3 text-xs text-gray-600">
                         {loan.assigned_officer_name || '—'}
                       </td>
@@ -453,7 +492,7 @@ export default function DefaultersReportPage() {
                     {fmt(sorted.reduce((s, l) => s + parseFloat(l.arrears_amount || '0'), 0))}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">{fmt(totalOutstanding)}</td>
-                  <td colSpan={2} />
+                  <td colSpan={3} />
                 </tr>
               </tfoot>
             </table>

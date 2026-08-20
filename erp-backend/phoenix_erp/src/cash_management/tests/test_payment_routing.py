@@ -247,22 +247,30 @@ class PaymentRoutingServiceTests(TestCase):
         self.assertEqual(credit_line.account, self.ar_account)
         self.assertEqual(credit_line.amount, Decimal('100000.00'))
     
-    def test_route_payment_cash_without_cashier_account_raises_error(self):
-        """Test that cash payment without cashier account raises error"""
-        with self.assertRaises(ValueError) as context:
-            PaymentRoutingService.route_payment(
-                amount=Decimal('50000.00'),
-                payment_date=date.today(),
-                payment_method='cash',
-                client=self.client,
-                reference_number='PMT-003',
-                description='Test',
-                user=self.user,
-                ar_account=self.ar_account,
-                cashier_account=None  # Missing!
-            )
-        
-        self.assertIn('Cashier account required', str(context.exception))
+    def test_route_payment_cash_without_cashier_account_auto_creates(self):
+        """Cash payment with no cashier_account reuses/auto-creates the user's
+        own cashier account instead of raising (see route_payment's
+        docstring: "Auto-creates cashier accounts for cash payments if not
+        provided")."""
+        result = PaymentRoutingService.route_payment(
+            amount=Decimal('50000.00'),
+            payment_date=date.today(),
+            payment_method='cash',
+            client=self.client,
+            reference_number='PMT-003',
+            description='Test',
+            user=self.user,
+            ar_account=self.ar_account,
+            cashier_account=None  # Not provided — should resolve automatically
+        )
+
+        # setUp already created an active cashier account for self.user in
+        # self.branch, so route_payment should reuse it rather than creating
+        # a second one.
+        self.assertEqual(result['cashier_account'], self.cashier_account)
+        self.assertFalse(result['auto_created'])
+        self.assertEqual(result['route'], 'cash')
+        self.assertIsNotNone(result['journal_entry'])
     
     def test_route_payment_bank_without_bank_account_raises_error(self):
         """Test that bank payment without bank account raises error"""

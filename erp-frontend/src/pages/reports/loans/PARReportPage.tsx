@@ -61,12 +61,19 @@ interface PARBand {
   pctOfPortfolio: number;
 }
 
+interface StatusSplit {
+  count: number;
+  outstanding: number;
+}
+
 function computePAR(allLoans: LoanAccountList[]): {
   totalPortfolio: number;
   par1: PARBand;
   par30: PARBand;
   par90: PARBand;
   bands: PARBand[];
+  par1Defaulted: StatusSplit;
+  par1ActiveOverdue: StatusSplit;
 } {
   const totalPortfolio = allLoans.reduce(
     (s, l) => s + parseFloat(l.outstanding_principal || '0'),
@@ -111,7 +118,25 @@ function computePAR(allLoans: LoanAccountList[]): {
     return { ...b, outstanding, pctOfPortfolio };
   });
 
-  return { totalPortfolio, par1, par30, par90, bands: discrete };
+  // PAR 1 ("all at-risk") deliberately pools defaulted loans together with
+  // active loans that are merely overdue — that pooling is correct (a loan
+  // in arrears is a loan in arrears regardless of status), but the two mean
+  // different things: 'defaulted' means 90+ DPD and never cured, while an
+  // 'active' loan can be just as overdue and still carry that label if the
+  // client made any payment at all recently (record_payment() flips
+  // defaulted -> active on any partial payment, regardless of how much is
+  // still owed). Surfacing the split prevents reading "active" as "healthy".
+  const splitOf = (loans: LoanAccountList[], statuses: string[]): StatusSplit => {
+    const matched = loans.filter((l) => statuses.includes(l.status));
+    return {
+      count: matched.length,
+      outstanding: matched.reduce((s, l) => s + parseFloat(l.outstanding_principal || '0'), 0),
+    };
+  };
+  const par1Defaulted = splitOf(par1.loans, ['defaulted']);
+  const par1ActiveOverdue = splitOf(par1.loans, ['active', 'disbursed']);
+
+  return { totalPortfolio, par1, par30, par90, bands: discrete, par1Defaulted, par1ActiveOverdue };
 }
 
 // ── CSV export ─────────────────────────────────────────────────────────────────
@@ -216,7 +241,7 @@ export default function PARReportPage() {
 
   useAutoRefresh(() => loadLoans(true), AUTO_REFRESH_MS);
 
-  const { totalPortfolio, par1, par30, par90, bands } = computePAR(allLoans);
+  const { totalPortfolio, par1, par30, par90, bands, par1Defaulted, par1ActiveOverdue } = computePAR(allLoans);
   const atRiskAmount = par1.outstanding; // widest definition
 
   const par1Color  = par1.pctOfPortfolio  > 10 ? 'text-red-600'    : par1.pctOfPortfolio  > 5  ? 'text-orange-500' : 'text-green-600';
@@ -324,6 +349,16 @@ export default function PARReportPage() {
                 ₦{fmt(atRiskAmount)}
               </p>
               <p className="mt-2 text-xs text-gray-500">All loans with ≥1 day arrears</p>
+              <div className="mt-2 space-y-0.5 border-t border-gray-100 pt-2 text-[11px] text-gray-500">
+                <p>
+                  <span className="font-semibold text-red-700">{fmtInt(par1Defaulted.count)} defaulted</span>
+                  {' '}(90+ DPD, never cured) · ₦{fmt(par1Defaulted.outstanding)}
+                </p>
+                <p>
+                  <span className="font-semibold text-orange-600">{fmtInt(par1ActiveOverdue.count)} active-overdue</span>
+                  {' '}(still marked active, may have paid recently) · ₦{fmt(par1ActiveOverdue.outstanding)}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -402,6 +437,22 @@ export default function PARReportPage() {
                     <td className="px-5 py-3 text-right">{fmtInt(par1.loans.length)}</td>
                     <td className="px-5 py-3 text-right">{fmt(par1.outstanding)}</td>
                     <td className="px-5 py-3 text-right">{fmtPct(par1.pctOfPortfolio)}</td>
+                    <td />
+                  </tr>
+                  <tr className="bg-gray-50 text-xs text-gray-600">
+                    <td className="px-5 py-2 pl-8" colSpan={2}>
+                      of which <span className="font-semibold text-red-700">defaulted</span> (90+ DPD, never cured)
+                    </td>
+                    <td className="px-5 py-2 text-right font-medium">{fmt(par1Defaulted.outstanding)}</td>
+                    <td className="px-5 py-2 text-right">{fmtInt(par1Defaulted.count)} loans</td>
+                    <td />
+                  </tr>
+                  <tr className="bg-gray-50 text-xs text-gray-600">
+                    <td className="px-5 py-2 pl-8" colSpan={2}>
+                      of which <span className="font-semibold text-orange-600">active-overdue</span> (recently paid something, still overdue)
+                    </td>
+                    <td className="px-5 py-2 text-right font-medium">{fmt(par1ActiveOverdue.outstanding)}</td>
+                    <td className="px-5 py-2 text-right">{fmtInt(par1ActiveOverdue.count)} loans</td>
                     <td />
                   </tr>
                 </tfoot>
