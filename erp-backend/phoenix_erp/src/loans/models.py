@@ -1601,8 +1601,16 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         )
 
         if overdue.exists():
+            # Floor each row at 0 before summing — a row can show total_paid >
+            # total_due (e.g. after retire_stale_legacy_schedule_rows caps a row's
+            # due amount down below what was already historically recorded as paid
+            # on it), and an unfloored sum lets that row's negative contribution
+            # silently net against — or invert the sign of — genuinely overdue
+            # amounts on other rows. Same fix as audit_penalty_ledger_schedule_
+            # sync's Sum() bug (LN-571-style corruption), applied here since this
+            # is the method that actually produces arrears_amount for every loan.
             self.arrears_amount = sum(
-                s.total_due - s.total_paid for s in overdue
+                max(Decimal('0.00'), s.total_due - s.total_paid) for s in overdue
             )
             earliest_overdue = overdue.order_by('due_date').first()
             self.days_in_arrears = (today - earliest_overdue.due_date).days

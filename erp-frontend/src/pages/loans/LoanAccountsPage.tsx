@@ -233,7 +233,7 @@ export default function LoanAccountsPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
-                    ₦{fmt(loan.outstanding_principal)}
+                    ₦{fmt(loan.total_outstanding ?? loan.outstanding_principal)}
                   </td>
                   <td className="px-4 py-3 capitalize text-gray-600">
                     {loan.repayment_frequency}
