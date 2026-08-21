@@ -60,21 +60,29 @@ class Command(BaseCommand):
                              help='Comma-separated list of loan numbers.')
         parser.add_argument('--apply', action='store_true',
                              help='Actually write the correction. Without this, only previews.')
+        parser.add_argument('--force', action='store_true',
+                             help='Bypass the below-flat mismatch guard for a single --loan, after manual '
+                                  'confirmation the mismatch is the known retire_stale_legacy_schedule_rows '
+                                  'capped-row artifact and not a genuine data problem. Only valid with --loan '
+                                  '(a single loan) — refused with --loans.')
 
     def handle(self, *args, **options):
         loan_number = options['loan_number']
         loan_list = options['loan_list']
         apply_changes = options['apply']
+        force = options['force']
 
         if bool(loan_number) == bool(loan_list):
             raise CommandError('Pass exactly one of --loan <number> or --loans "A,B,C".')
+        if force and not loan_number:
+            raise CommandError('--force is only valid with a single --loan, not --loans.')
 
         loan_numbers = [loan_number] if loan_number else [s.strip() for s in loan_list.split(',') if s.strip()]
         today = timezone.localdate()
 
         applied, dry_ran, needs_review = 0, 0, 0
         for ln in loan_numbers:
-            result = self._process_loan(ln, apply_changes, today)
+            result = self._process_loan(ln, apply_changes, today, force)
             if result == 'applied':
                 applied += 1
             elif result == 'dry_run_ok':
@@ -90,7 +98,7 @@ class Command(BaseCommand):
                 f'DRY-RUN done. would_apply={dry_ran} needs_review={needs_review}'
             ))
 
-    def _process_loan(self, loan_number, apply_changes, today):
+    def _process_loan(self, loan_number, apply_changes, today, force=False):
         from loans.models import LoanAccount
         from common.models import FinancialAuditLog, log_financial_event
 
@@ -128,15 +136,23 @@ class Command(BaseCommand):
             intact = [r for r in rows if r.status != 'restructured' and r.total_due > 1]
             mismatches = [r for r in intact if abs(r.total_due - flat_amount) > TOLERANCE]
             below_flat = [r for r in mismatches if r.total_due < flat_amount - TOLERANCE]
-            if below_flat:
+            if below_flat and not force:
                 db_transaction.savepoint_rollback(sid)
                 example = below_flat[0]
                 self.stdout.write(self.style.WARNING(
                     f'[{loan_number}] needs manual review — formula gives {flat_amount:,.2f} but row '
                     f'due={example.due_date} shows {example.total_due:,.2f} (below the formula, not '
-                    f'explainable as an add-on). Formula doesn\'t match this loan\'s real data.'
+                    f'explainable as an add-on). Formula doesn\'t match this loan\'s real data. '
+                    f'Re-run with --force if this is confirmed to be a retire_stale_legacy_schedule_rows '
+                    f'capped-row artifact.'
                 ))
                 return 'needs_review'
+            if below_flat and force:
+                self.stdout.write(self.style.WARNING(
+                    f'[{loan_number}] --force: overriding below-flat mismatch on {len(below_flat)} row(s) '
+                    f'(e.g. due={below_flat[0].due_date} shows {below_flat[0].total_due:,.2f} vs formula '
+                    f'{flat_amount:,.2f}) — proceeding on the assumption this is a known capped-row artifact.'
+                ))
 
             for r in rows:
                 r._new_due = flat_amount
@@ -251,12 +267,16 @@ class Command(BaseCommand):
                     f'then the unchanged GL-verified outstanding_principal ({loan.outstanding_principal:,.2f}) '
                     f'redistributed by counting backward from the newest row.{penalty_note} No GL entry, '
                     f'outstanding_principal/outstanding_penalties unchanged.'
+                    + (f' Applied with --force: {len(below_flat)} row(s) below the formula amount were '
+                       f'manually confirmed as the known retire_stale_legacy_schedule_rows capped-row '
+                       f'artifact rather than genuine data mismatches.' if below_flat else '')
                 ),
                 extra={
                     'loan_number': loan_number,
                     'flat_installment': str(flat_amount),
                     'intact_rows_checked': len(intact),
                     'penalty_shortfall': str(penalty_shortfall),
+                    'forced': bool(below_flat),
                     'source_command': 'restore_flat_schedule_backward_v4',
                 },
             )
