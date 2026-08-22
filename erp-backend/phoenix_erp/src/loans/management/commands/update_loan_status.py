@@ -131,9 +131,15 @@ class Command(BaseCommand):
                             (sched.principal_due + sched.interest_due + sched.fees_due)
                             - (sched.principal_paid + sched.interest_paid + sched.fees_paid)
                         )
+                        # periods_late derived from this loan's own real schedule
+                        # cadence (see periods_late_for_installment) instead of the
+                        # flat 30-day-per-month approximation — a real calendar
+                        # month is 28-31 days, so the flat guess can drift a period
+                        # at boundaries relative to the loan's actual due dates.
+                        periods_late = loan.periods_late_for_installment(sched, today)
                         new_penalty = loan.product.calculate_late_penalty(
                             non_penalty_remaining, days_late,
-                            loan.repayment_frequency,
+                            loan.repayment_frequency, periods_late=periods_late,
                         )
                         delta = new_penalty - sched.penalty_due
                         if delta == 0:

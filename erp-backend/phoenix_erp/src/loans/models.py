@@ -353,17 +353,30 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         return max(0, (as_of - effective_due_date).days)
 
     def calculate_late_penalty(
-        self, outstanding_amount: Decimal, days_late: int, repayment_frequency: str = None
+        self, outstanding_amount: Decimal, days_late: int, repayment_frequency: str = None,
+        periods_late: int = None,
     ) -> Decimal:
-        """Calculate late payment penalty"""
+        """
+        Calculate late payment penalty.
+
+        periods_late: optional override. When omitted (every existing
+        caller), periods_late is approximated as days_late // a flat
+        days-per-period constant (_PERIOD_DAYS) — fine for daily/weekly/
+        biweekly, which really are fixed-day cycles, but a real calendar
+        month is 28-31 days, so 'monthly'/'quarterly' can drift a period at
+        boundaries. Pass an explicit periods_late (see LoanAccount.
+        periods_late_for_installment, which derives it from the loan's own
+        real schedule cadence) to bypass the approximation entirely.
+        """
         if days_late <= self.grace_period_days:
             return Decimal('0.00')
 
         if self.late_payment_penalty_type == 'fixed':
             return self.late_payment_penalty
         else:  # percentage, charged once per missed repayment period
-            period_days = self._PERIOD_DAYS.get(repayment_frequency or 'monthly', 30)
-            periods_late = max(1, days_late // period_days)
+            if periods_late is None:
+                period_days = self._PERIOD_DAYS.get(repayment_frequency or 'monthly', 30)
+                periods_late = max(1, days_late // period_days)
             # Quantized here so identical inputs (same periods_late, same
             # outstanding_amount) always yield an identical, already-rounded
             # result — otherwise comparing this fresh unrounded value against
@@ -1022,7 +1035,57 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """Delegate schedule generation to RepaymentScheduleService."""
         from .schedule_service import RepaymentScheduleService
         RepaymentScheduleService.generate(self, principal_override=principal_override)
-    
+
+    def periods_late_for_installment(self, sched, as_of=None):
+        """
+        True count of elapsed repayment periods for `sched`, derived from
+        this loan's own real schedule cadence instead of the flat
+        days-per-period approximation in LoanProduct._PERIOD_DAYS (which
+        assumes every 'monthly' period is exactly 30 days — real calendar
+        months are 28-31, so that guess can drift a period at boundaries).
+        Cutover-aware, matching effective_days_late: lateness before
+        PENALTY_CUTOVER_DATE never counts.
+
+        Counts how many of this loan's OTHER schedule rows have a due_date
+        strictly after `sched`'s own (cutover-clamped) due date and on or
+        before `as_of` — each one crossed marks one more full period
+        elapsed, using the loan's actual due-date pattern rather than a
+        guess. Beyond the loan's own last known row, extrapolates using the
+        average spacing between this loan's own rows (its real cadence)
+        instead of a generic assumption; only falls back to the product's
+        period_days if there's no other row to measure a real cadence from
+        at all.
+        """
+        as_of = as_of or timezone.now().date()
+        effective_due = max(sched.due_date, self.product.PENALTY_CUTOVER_DATE)
+        if as_of <= effective_due:
+            return 0
+
+        all_dates = list(
+            self.repayment_schedule.exclude(status='restructured')
+            .order_by('due_date').values_list('due_date', flat=True)
+        )
+        later_dates = [d for d in all_dates if d > effective_due]
+        within_schedule = [d for d in later_dates if d <= as_of]
+        periods = len(within_schedule) + 1  # +1 for sched's own period
+
+        last_known = later_dates[-1] if later_dates else effective_due
+        if as_of > last_known:
+            # Past the loan's own known schedule — extrapolate using its
+            # real average cadence rather than a generic assumption.
+            anchor_dates = [effective_due] + later_dates
+            avg_period = None
+            if len(anchor_dates) >= 2:
+                span_days = (anchor_dates[-1] - anchor_dates[0]).days
+                avg_period = span_days / (len(anchor_dates) - 1)
+            period_days = avg_period or self.product._PERIOD_DAYS.get(
+                self.repayment_frequency or 'monthly', 30
+            )
+            extra_days = (as_of - last_known).days
+            periods += int(extra_days // period_days)
+
+        return max(1, periods)
+
     @transaction.atomic
     def record_payment(self, amount: Decimal, payment_date=None,
                        payment_account=None, received_by=None,
