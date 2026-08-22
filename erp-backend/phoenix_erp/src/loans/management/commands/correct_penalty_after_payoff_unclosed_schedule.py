@@ -134,20 +134,22 @@ class Command(BaseCommand):
                 .order_by('due_date')
             )
 
-            journal_ids = list(
-                FinancialAuditLog.objects.filter(
-                    event_type=FinancialAuditLog.LOAN_PENALTY_ACCRUAL,
-                    extra__loan_number=loan_number,
-                ).values_list('extra__journal_entry_id', flat=True)
-            )
+            # Found directly from the GL, not just the FinancialAuditLog trail —
+            # LN-1072 showed a prior correction (correct_penalty_not_capped_at_payoff)
+            # reposted a fresh LNPEN entry logged only as LOAN_BALANCE_CORRECTION,
+            # not LOAN_PENALTY_ACCRUAL, so an audit-log-only lookup would miss it
+            # and leave a real GL amount unreversed while still zeroing the
+            # business-field aggregate — exactly the GL/business mismatch this
+            # command exists to close. Querying every standing LNPEN transaction
+            # against this loan's own account is the ground-truth lookup.
             existing_txns = list(
                 Transaction.all_objects.filter(
-                    pk__in=[j for j in journal_ids if j],
+                    entries__account=loan.account,
                     series__code='LNPEN',
                     is_reversed=False,
                     is_reversal=False,
-                ).order_by('date', 'id')
-            ) if journal_ids else []
+                ).distinct().order_by('date', 'id')
+            )
             reversed_total = sum((t.get_total_amount() for t in existing_txns), Decimal('0.00'))
 
             if not rows and not existing_txns and abs(loan.outstanding_penalties) <= TOLERANCE:
