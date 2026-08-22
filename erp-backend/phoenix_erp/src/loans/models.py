@@ -1083,14 +1083,16 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             # Remaining time past the last real boundary (or past
             # effective_due, if no real boundary has been crossed at all)
             # — estimate additional whole periods using this loan's own
-            # average cadence where there's enough real data to measure
-            # one, falling back to the product's flat period_days only
-            # when there isn't.
-            anchor_dates = [effective_due] + later_dates
+            # average cadence, measured from its OWN real due dates only
+            # (never effective_due — that's an artificial cutover clamp
+            # that can sit awkwardly between two real dates and understate
+            # a typical period if used as a measuring point). Falls back
+            # to the product's flat period_days only when there aren't
+            # enough real dates to measure an average from at all.
             avg_period = None
-            if len(anchor_dates) >= 2:
-                span_days = (anchor_dates[-1] - anchor_dates[0]).days
-                avg_period = span_days / (len(anchor_dates) - 1)
+            if len(all_dates) >= 2:
+                span_days = (all_dates[-1] - all_dates[0]).days
+                avg_period = span_days / (len(all_dates) - 1)
             period_days = avg_period or self.product._PERIOD_DAYS.get(
                 self.repayment_frequency or 'monthly', 30
             )
