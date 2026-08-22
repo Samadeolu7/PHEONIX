@@ -1066,13 +1066,26 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             .order_by('due_date').values_list('due_date', flat=True)
         )
         later_dates = [d for d in all_dates if d > effective_due]
-        within_schedule = [d for d in later_dates if d <= as_of]
-        periods = len(within_schedule) + 1  # +1 for sched's own period
 
-        last_known = later_dates[-1] if later_dates else effective_due
-        if as_of > last_known:
-            # Past the loan's own known schedule — extrapolate using its
-            # real average cadence rather than a generic assumption.
+        # Walk the loan's own real due dates forward from effective_due,
+        # counting one elapsed period per boundary actually crossed by
+        # as_of. cursor ends up at the last real due date crossed, or at
+        # effective_due itself if none have been crossed yet.
+        periods = 0
+        cursor = effective_due
+        for d in later_dates:
+            if d > as_of:
+                break
+            periods += 1
+            cursor = d
+
+        if as_of > cursor:
+            # Remaining time past the last real boundary (or past
+            # effective_due, if no real boundary has been crossed at all)
+            # — estimate additional whole periods using this loan's own
+            # average cadence where there's enough real data to measure
+            # one, falling back to the product's flat period_days only
+            # when there isn't.
             anchor_dates = [effective_due] + later_dates
             avg_period = None
             if len(anchor_dates) >= 2:
@@ -1081,8 +1094,8 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             period_days = avg_period or self.product._PERIOD_DAYS.get(
                 self.repayment_frequency or 'monthly', 30
             )
-            extra_days = (as_of - last_known).days
-            periods += int(extra_days // period_days)
+            remaining_days = (as_of - cursor).days
+            periods += int(remaining_days // period_days)
 
         return max(1, periods)
 
