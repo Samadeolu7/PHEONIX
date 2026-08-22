@@ -304,7 +304,42 @@ class LoanProduct(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     def __str__(self):
         return f"{self.product.name}"
-    
+
+    def clean(self):
+        """
+        Guard against activating a loan product that's missing GL accounts
+        it will actually need. interest_income_account is required in every
+        valid recognition mode (upfront default, deferred/unearned, and the
+        cash-basis fallback all use it — see disburse()/record_payment()),
+        so there is no configuration where it can legitimately be left
+        unset. penalty_income_account is only required when the product
+        actually charges a late payment penalty.
+
+        This is a defense-in-depth check for anything that calls
+        full_clean() (admin, DRF serializers) — the authoritative,
+        always-enforced guard is the equivalent check in
+        LoanAccount.disburse() itself, which runs regardless of how the
+        loan was created and rolls back the whole disbursement
+        (@transaction.atomic) if it fails. Found 2026-08-22: a product
+        saved with no interest_income_account produced a real loan
+        (LN-20260820-5E84B0) where collected interest silently vanished —
+        record_payment()'s "no dedicated income account" fallback folded it
+        into the Loan Receivable credit instead of ever booking it as
+        income.
+        """
+        if not self.interest_income_account:
+            raise ValidationError(
+                {'interest_income_account': 'Required — every recognition mode needs this account, '
+                 'including the cash-basis fallback used when interest is not recognized at '
+                 'disbursement. Without it, collected interest has nowhere to be recognized as income.'}
+            )
+        if self.late_payment_penalty and self.late_payment_penalty > 0 and not self.penalty_income_account:
+            raise ValidationError(
+                {'penalty_income_account': f'Required — this product charges a late payment penalty '
+                 f'({self.late_payment_penalty}). Without it, collected penalty has nowhere to be '
+                 'recognized as income.'}
+            )
+
     def calculate_processing_fee(self, loan_amount: Decimal) -> Decimal:
         """Calculate processing fee for given loan amount"""
         if self.processing_fee_type == 'fixed':
@@ -901,6 +936,35 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if not cash_account:
             raise ValidationError(
                 "The selected bank account has no linked GL account."
+            )
+
+        # ── Required GL account guard ────────────────────────────────────
+        # interest_income_account is needed one way or another regardless of
+        # which recognition mode a product uses — either as the upfront
+        # target below, or as record_payment()'s cash-basis fallback target
+        # when this is None at disbursement time. Without it configured at
+        # all, there is no valid path for interest to ever be recognized as
+        # income: record_payment() silently folds it into the Loan
+        # Receivable credit instead (see its "no dedicated income account"
+        # fallback), which reduces the receivable as if it were a principal
+        # repayment and never books a cent of it as income anywhere. Found
+        # 2026-08-22 on LN-20260820-5E84B0 (product id=9, "Monthly(9)") —
+        # ₦4,500 in real collected interest sat unrecognized in the ledger
+        # until traced and corrected by hand. Failing loudly here, before
+        # any GL entry for this disbursement is written, means the whole
+        # disburse() call rolls back (already @transaction.atomic) instead
+        # of quietly creating another loan with the same defect.
+        if not self.product.interest_income_account:
+            raise ValidationError(
+                f"Cannot disburse: {self.product} has no interest_income_account configured. "
+                "Interest collected on this loan would have nowhere valid to be recognized as "
+                "income. Configure interest_income_account on the loan product before disbursing."
+            )
+        if self.product.late_payment_penalty and self.product.late_payment_penalty > 0 and not self.product.penalty_income_account:
+            raise ValidationError(
+                f"Cannot disburse: {self.product} charges a late payment penalty "
+                f"({self.product.late_payment_penalty}) but has no penalty_income_account "
+                "configured. Configure penalty_income_account on the loan product before disbursing."
             )
 
         self.status = 'disbursed'
