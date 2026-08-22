@@ -119,8 +119,20 @@ class Command(BaseCommand):
                     loan_had_accrual = False
                     for sched in overdue_schedules:
                         days_late = loan.product.effective_days_late(sched.due_date, today)
+                        # Base the penalty on principal+interest+fees remaining only —
+                        # NOT sched.total_due - sched.total_paid, which bakes the row's
+                        # own penalty_due into total_due (see flat_schedule() /
+                        # _update_schedule_with_payment, "sched.total_due += portion"
+                        # right after penalty_due is added). Using total_due here fed
+                        # yesterday's already-accrued penalty back in as part of
+                        # tomorrow's base, charging penalty on penalty every time this
+                        # job ran on a still-overdue installment.
+                        non_penalty_remaining = (
+                            (sched.principal_due + sched.interest_due + sched.fees_due)
+                            - (sched.principal_paid + sched.interest_paid + sched.fees_paid)
+                        )
                         new_penalty = loan.product.calculate_late_penalty(
-                            sched.total_due - sched.total_paid, days_late,
+                            non_penalty_remaining, days_late,
                             loan.repayment_frequency,
                         )
                         delta = new_penalty - sched.penalty_due
