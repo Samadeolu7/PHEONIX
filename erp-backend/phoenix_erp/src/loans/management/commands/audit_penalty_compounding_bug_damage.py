@@ -87,7 +87,7 @@ class Command(BaseCommand):
             timestamp__date__gte=since,
         ).order_by('timestamp')
 
-        by_schedule = defaultdict(lambda: {'deltas': [], 'loan_number': None})
+        by_schedule = defaultdict(lambda: {'deltas': [], 'loan_number': None, 'journal_ids': []})
         for log in logs.iterator():
             sched_id = (log.extra or {}).get('schedule_id')
             if not sched_id:
@@ -95,6 +95,9 @@ class Command(BaseCommand):
             entry = by_schedule[sched_id]
             entry['deltas'].append(log.amount)
             entry['loan_number'] = (log.extra or {}).get('loan_number', log.record_id)
+            jid = (log.extra or {}).get('journal_entry_id')
+            if jid:
+                entry['journal_ids'].append(jid)
 
         self.stdout.write(f'Window: {since} -> {today}  ({len(by_schedule)} schedule rows touched)\n')
 
@@ -116,13 +119,16 @@ class Command(BaseCommand):
             loan = sched.loan
             product = loan.product
 
-            # Independent cross-check: actual GL debit lines against this loan's
-            # account, posted under the LNPEN series, in the same window — must
-            # match net_posted (within tolerance) or something is inconsistent
-            # between the audit log and the real ledger.
+            # Independent cross-check: actual GL lines for the SPECIFIC journal
+            # entries this row's accrual log entries reference (via
+            # journal_entry_id) — must match net_posted (within tolerance) or
+            # something is inconsistent between the audit log and the real
+            # ledger. Scoped by transaction id, not just account+date+series,
+            # since a loan's account can carry several rows' worth of LNPEN
+            # postings in the same window — summing by account alone mixes
+            # rows together.
             gl_lines = JournalEntryLine.objects.filter(
-                transaction__series__code='LNPEN',
-                transaction__date__gte=since,
+                transaction_id__in=info['journal_ids'],
                 account=loan.account,
             )
             gl_debits = sum(l.amount for l in gl_lines.filter(side=JournalEntryLine.DEBIT)) or Decimal('0.00')
@@ -150,18 +156,21 @@ class Command(BaseCommand):
 
         rows_out.sort(key=lambda r: (r[5] if len(r) > 5 and r[5] is not None else Decimal('0')), reverse=True)
 
-        self.stdout.write('=== Per-row detail (sorted by currently-outstanding phantom excess) ===')
+        self.stdout.write('=== Per-row detail — only rows with |phantom_still_outstanding| > 1.00 (sorted, largest first) ===')
+        shown = 0
         for r in rows_out:
             if r[-1] == 'ROW DELETED':
-                loan_number, sched_id, net_posted, _, _, _ = r
-                self.stdout.write(f'[{loan_number}] sched={sched_id} net_posted_in_window={net_posted:,.2f}  ROW NO LONGER EXISTS')
                 continue
             loan_number, sched_id, net_posted, current_penalty_due, corrected_penalty, phantom = r
+            if abs(phantom) <= Decimal('1.00'):
+                continue
+            shown += 1
             self.stdout.write(
                 f'[{loan_number}] sched={sched_id}  net_GL_posted_in_window={net_posted:,.2f}  '
                 f'current_penalty_due={current_penalty_due:,.2f}  corrected_penalty_due={corrected_penalty:,.2f}  '
                 f'phantom_still_outstanding={phantom:,.2f}'
             )
+        self.stdout.write(f'({shown} of {len(rows_out)} rows shown — the rest are within 1.00 of the corrected figure)')
 
         if cross_check_mismatches:
             self.stdout.write(self.style.WARNING(f'\n=== {len(cross_check_mismatches)} cross-check mismatches (audit log vs actual GL) ==='))
