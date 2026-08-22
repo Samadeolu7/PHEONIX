@@ -174,7 +174,17 @@ class Command(BaseCommand):
                         non_penalty_remaining, days_late, loan.repayment_frequency,
                     ) if days_late > 0 else Decimal('0.00')
                 )
-                correct_total += correct_penalty
+                # correct_penalty is the GROSS freshly-assessed figure (same convention as
+                # penalty_due elsewhere — see update_loan_status.py "sched.penalty_due =
+                # new_penalty", never netted against penalty_paid). But
+                # loan.outstanding_penalties IS net of every payment ever applied against
+                # penalty (record_payment() does `outstanding_penalties -= penalty_payment`),
+                # so comparing gross correct_penalty against the net aggregate directly
+                # would flag every row with any real penalty payment as "more owed" purely
+                # from the payment, not from anything wrong with the recompute. Net off
+                # this row's own penalty_paid before summing into correct_total, floored at
+                # 0 (a row can't contribute negative "still owed").
+                correct_total += max(Decimal('0.00'), correct_penalty - sched.penalty_paid)
                 if abs(correct_penalty - sched.penalty_due) > TOLERANCE:
                     row_updates.append((sched, correct_penalty))
 
