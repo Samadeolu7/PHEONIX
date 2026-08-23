@@ -17,18 +17,23 @@ disbursement time (see loans/models.py disburse()). Loans disbursed while
 that was unconfigured (common before the 2026-08-22 hard-guard was added),
 and every deferred/unearned-interest loan (interest booked to a separate
 liability account, never to Loan Receivable), keep account.balance as
-PURE PRINCIPAL — structurally identical to how legacy-import loans work,
-regardless of origin. Only loans with interest_recognized_at_disbursement=True
-have interest folded into account.balance alongside principal.
+PURE PRINCIPAL.
 
-So this command branches on that stored flag rather than guessing from
-origin or assuming one behavior for all loans:
+Critically, interest_recognized_at_disbursement means something DIFFERENT
+for legacy-import loans: they never go through disburse() at all (imported
+directly, GL seeded by a single OBMIG lump sum) — audit_legacy_loan_interest.py
+--confirm bulk-sets this flag True on them purely as a FORWARD safeguard
+against record_payment() double-crediting Income if outstanding_interest
+ever becomes nonzero later, NOT because GL actually has interest baked in
+historically. So the flag is only trustworthy as a GL-history signal for
+origin=native loans; for legacy-import loans, GL is always pure principal
+regardless of the flag.
 
   correct_outstanding_interest  = Sum(schedule.interest_due) - Sum(schedule.interest_paid)
   correct_outstanding_fees      = Sum(schedule.fees_due)     - Sum(schedule.fees_paid)
-  correct_outstanding_principal = self.account.balance                      # flag is False
+  correct_outstanding_principal = self.account.balance                      # not (native AND flag)
                                    OR self.account.balance - correct_outstanding_interest
-                                      - correct_outstanding_fees             # flag is True
+                                      - correct_outstanding_fees             # native AND flag=True
 
 outstanding_penalties is left out of this comparison — it's already
 self-correcting via update_loan_status's daily cron (recomputed from
@@ -36,14 +41,17 @@ calculate_late_penalty() every run), not seeded once and drifted.
 
 (History: earlier versions of this command assumed account.balance was
 always pure principal — wrong for interest_recognized_at_disbursement=True
-loans, producing ~65 false-positive mismatches, each one's spurious delta
-exactly equal to that loan's own outstanding_interest. A next version then
+native loans, producing ~65 false-positive mismatches. A next version
 assumed account.balance was always principal+interest for native loans —
-wrong in the OPPOSITE direction for loans without the flag set: confirmed
-2026-08-23 via GL history hand-reconstruction on LN-20260701-6741E4 and 7
-siblings, where account.balance matched outstanding_principal exactly and
-outstanding_interest was a separate cash-basis figure never folded into
-GL. Fixed by keying off the actual per-loan flag instead of inferring it.)
+wrong in the OPPOSITE direction for native loans without the flag set
+(confirmed 2026-08-23 via GL history hand-reconstruction on
+LN-20260701-6741E4 and 7 siblings). A third version keyed off the flag
+alone, forgetting it has different semantics for legacy-import loans —
+wrong for LN-526/629/800 and others, whose outstanding_principal is
+already GL-verified correct by a separate investigation
+(project_legacy_schedule_obmig_hypothesis.md) independent of their
+outstanding_interest. Fixed by requiring origin=native in addition to
+the flag.)
 
 Makes no changes — report only. No --confirm/--fix flag on purpose: the
 principal-vs-GL-balance correction in particular should be eyeballed
@@ -119,18 +127,29 @@ class Command(BaseCommand):
             # while that was unconfigured (common before the 2026-08-22 guard), and
             # every deferred/unearned-interest loan (interest booked to a separate
             # liability account, never to Loan Receivable), keep account.balance as
-            # pure principal — same as legacy-import loans. Subtracting schedule-truth
-            # interest from account.balance in that case wrongly understates
-            # principal (confirmed 2026-08-23 on LN-20260701-6741E4 and 7 siblings:
-            # GL history hand-reconstruction showed account.balance == outstanding_
-            # principal exactly, with outstanding_interest a separate cash-basis
-            # figure never folded into GL — no bug, just this same wrong assumption
-            # in reverse). Branch on the loan's own flag instead of guessing from origin.
+            # pure principal (confirmed 2026-08-23 via GL history hand-reconstruction
+            # on LN-20260701-6741E4 and 7 siblings).
+            #
+            # Critically, the flag means something DIFFERENT for legacy-import loans:
+            # legacy loans never go through disburse() at all (imported directly, GL
+            # seeded by a single OBMIG lump sum) — audit_legacy_loan_interest.py's
+            # --confirm step bulk-sets this flag True on them purely as a FORWARD
+            # safeguard against record_payment() double-crediting Income if
+            # outstanding_interest ever becomes nonzero later, not because GL actually
+            # has interest baked in historically. So for legacy loans the flag must be
+            # ignored — GL is always pure principal there. (Confirmed via
+            # project_legacy_schedule_obmig_hypothesis.md: LN-526/800/722/754/1030/
+            # 553/855/907 all have outstanding_principal already GL-verified correct
+            # by a separate investigation, independent of their outstanding_interest.)
             correct_principal = None
             if loan.account:
+                interest_actually_in_gl = (
+                    loan.origin == loan.ORIGIN_NATIVE
+                    and loan.interest_recognized_at_disbursement
+                )
                 correct_principal = (
                     (loan.account.balance - correct_interest - correct_fees)
-                    if loan.interest_recognized_at_disbursement
+                    if interest_actually_in_gl
                     else loan.account.balance
                 )
 
