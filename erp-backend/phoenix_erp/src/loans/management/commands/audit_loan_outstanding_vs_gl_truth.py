@@ -10,42 +10,40 @@ and — critically — whether correcting outstanding_interest by simply
 shifting the difference into/out of outstanding_principal is even safe.
 
 It isn't, in general. self.account.balance (the real GL Loan Receivable
-balance) is NOT pure principal — for natively created loans,
-disburse() debits principal AND the full scheduled interest into the same
-Loan Receivable account together (interest_recognized_at_disbursement is
-the default), and record_payment() credits that same combined balance down
-by principal_payment + interest_payment whenever interest has no dedicated
-income account routing (see loans/models.py record_payment(), the
-`loan_account_credit` line — `if not interest_account: loan_account_credit
-+= interest_payment`). So account.balance tracks
-outstanding_principal + outstanding_interest + outstanding_fees combined,
-not outstanding_principal alone. (Earlier versions of this command treated
-account.balance as pure principal and added schedule-truth interest on top
-of it — a double-count that produced ~65 false-positive "principal"
-mismatches across native loans, each one's spurious delta exactly equal to
-its own outstanding_interest. Fixed 2026-08-23.)
+balance) only includes interest when disburse() actually booked it there —
+the interest_recognized_at_disbursement branch, which requires
+interest_income_account to have been configured on the product AT
+disbursement time (see loans/models.py disburse()). Loans disbursed while
+that was unconfigured (common before the 2026-08-22 hard-guard was added),
+and every deferred/unearned-interest loan (interest booked to a separate
+liability account, never to Loan Receivable), keep account.balance as
+PURE PRINCIPAL — structurally identical to how legacy-import loans work,
+regardless of origin. Only loans with interest_recognized_at_disbursement=True
+have interest folded into account.balance alongside principal.
 
-This command computes the interest/fees corrections from schedule truth,
-then derives principal as whatever's left of the GL balance:
+So this command branches on that stored flag rather than guessing from
+origin or assuming one behavior for all loans:
 
   correct_outstanding_interest  = Sum(schedule.interest_due) - Sum(schedule.interest_paid)
   correct_outstanding_fees      = Sum(schedule.fees_due)     - Sum(schedule.fees_paid)
-  correct_outstanding_principal = self.account.balance - correct_outstanding_interest
-                                   - correct_outstanding_fees
+  correct_outstanding_principal = self.account.balance                      # flag is False
+                                   OR self.account.balance - correct_outstanding_interest
+                                      - correct_outstanding_fees             # flag is True
 
 outstanding_penalties is left out of this comparison — it's already
 self-correcting via update_loan_status's daily cron (recomputed from
 calculate_late_penalty() every run), not seeded once and drifted.
 
-For legacy-imported loans (origin=LEGACY_IMPORT), import_legacy_data.py
-never set outstanding_interest at all (defaults to 0) and never posted a
-per-loan LNDIS disbursement entry — the GL Loan Receivable balance was
-seeded via a single OBMIG opening-balance debit instead, so for these
-loans correct_outstanding_principal reduces to (approximately) the old
-account.balance-only formula. For natively created loans, disburse() seeds
-outstanding_interest correctly, so a flagged mismatch there reflects a
-genuine drift in the combined GL total (or in the interest/principal
-split vs schedule truth) and deserves individual review before correcting.
+(History: earlier versions of this command assumed account.balance was
+always pure principal — wrong for interest_recognized_at_disbursement=True
+loans, producing ~65 false-positive mismatches, each one's spurious delta
+exactly equal to that loan's own outstanding_interest. A next version then
+assumed account.balance was always principal+interest for native loans —
+wrong in the OPPOSITE direction for loans without the flag set: confirmed
+2026-08-23 via GL history hand-reconstruction on LN-20260701-6741E4 and 7
+siblings, where account.balance matched outstanding_principal exactly and
+outstanding_interest was a separate cash-basis figure never folded into
+GL. Fixed by keying off the actual per-loan flag instead of inferring it.)
 
 Makes no changes — report only. No --confirm/--fix flag on purpose: the
 principal-vs-GL-balance correction in particular should be eyeballed
@@ -114,17 +112,27 @@ class Command(BaseCommand):
             )
             correct_interest = (agg['interest_due'] or Decimal('0.00')) - (agg['interest_paid'] or Decimal('0.00'))
             correct_fees = (agg['fees_due'] or Decimal('0.00')) - (agg['fees_paid'] or Decimal('0.00'))
-            # account.balance is the combined Loan Receivable balance — for native
-            # loans it already includes recognized interest (disburse() debits
-            # principal+interest together, see models.py). Treating it as pure
-            # principal (as legacy-import loans allow, since they were seeded via a
-            # principal-only OBMIG entry) double-counts interest for native loans.
-            # Derive principal as the GL remainder after schedule-truth interest/fees
-            # so the check degrades to the old legacy-only behavior when interest=0.
-            correct_principal = (
-                (loan.account.balance - correct_interest - correct_fees)
-                if loan.account else None
-            )
+            # account.balance only includes interest when disburse() actually booked
+            # it onto the Loan Receivable debit — the interest_recognized_at_disbursement
+            # branch (models.py disburse(), requires interest_income_account to have
+            # been configured on the product AT disbursement time). Loans disbursed
+            # while that was unconfigured (common before the 2026-08-22 guard), and
+            # every deferred/unearned-interest loan (interest booked to a separate
+            # liability account, never to Loan Receivable), keep account.balance as
+            # pure principal — same as legacy-import loans. Subtracting schedule-truth
+            # interest from account.balance in that case wrongly understates
+            # principal (confirmed 2026-08-23 on LN-20260701-6741E4 and 7 siblings:
+            # GL history hand-reconstruction showed account.balance == outstanding_
+            # principal exactly, with outstanding_interest a separate cash-basis
+            # figure never folded into GL — no bug, just this same wrong assumption
+            # in reverse). Branch on the loan's own flag instead of guessing from origin.
+            correct_principal = None
+            if loan.account:
+                correct_principal = (
+                    (loan.account.balance - correct_interest - correct_fees)
+                    if loan.interest_recognized_at_disbursement
+                    else loan.account.balance
+                )
 
             interest_delta = correct_interest - loan.outstanding_interest
             fees_delta = correct_fees - loan.outstanding_fees
@@ -141,7 +149,8 @@ class Command(BaseCommand):
             flagged += 1
             self.stdout.write(self.style.MIGRATE_HEADING(
                 f'[{loan.loan_number}] pk={loan.pk}  origin={loan.origin}  status={loan.status}  '
-                f'total_paid={loan.total_paid:,.2f}'
+                f'total_paid={loan.total_paid:,.2f}  interest_recognized_at_disbursement='
+                f'{loan.interest_recognized_at_disbursement}'
             ))
             if abs(interest_delta) > Decimal('0.01'):
                 self.stdout.write(
