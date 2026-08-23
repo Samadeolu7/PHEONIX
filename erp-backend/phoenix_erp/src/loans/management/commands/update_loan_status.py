@@ -32,6 +32,20 @@ instead collects straight against Loan Receivable — see record_payment()'s
 docstring. Loans on products without penalty_income_account configured keep the
 legacy cash-basis behavior (income recognized only when the penalty is paid).
 
+Each overdue installment's GL entry is posted individually and in full, inside
+the loop, using that row's own (possibly negative, self-correcting) delta —
+independent of what happens to outstanding_penalties afterward. Found
+2026-08-23: when the SUM of a run's deltas would push outstanding_penalties
+below zero, it used to be silently floored to 0.00 there while GL had already
+recorded the true (larger, negative) total — a live, daily-recurring desync
+between loan.account.balance and outstanding_principal + outstanding_interest
++ outstanding_fees + outstanding_penalties, discovered because loans manually
+resynced to GL that same day had already drifted again within the hour. Fixed
+by routing the clamped excess to outstanding_principal — the same "plug"
+bucket used by every other GL-anchored correction in this codebase
+(sync_outstanding_to_gl, correct_principal_penalty_misallocation, etc.) —
+instead of discarding it.
+
 Usage:
     python manage.py update_loan_status
     python manage.py update_loan_status --dry-run
@@ -213,9 +227,30 @@ class Command(BaseCommand):
                         loan_had_accrual = True
 
                     if penalty_delta_total != 0:
-                        loan.outstanding_penalties = max(
-                            Decimal('0.00'), loan.outstanding_penalties + penalty_delta_total,
-                        )
+                        new_outstanding_penalties = loan.outstanding_penalties + penalty_delta_total
+                        if new_outstanding_penalties < 0:
+                            # GL already received the full, unclamped per-row deltas
+                            # posted independently in the loop above — simply flooring
+                            # outstanding_penalties at 0 here would silently discard the
+                            # excess and desync outstanding_principal + outstanding_
+                            # interest + outstanding_fees + outstanding_penalties from
+                            # loan.account.balance. Route the excess to
+                            # outstanding_principal instead — the established "plug"
+                            # bucket for this kind of GL-anchored correction throughout
+                            # the 2026-08-23 investigation (sync_outstanding_to_gl,
+                            # correct_principal_penalty_misallocation, etc.). Found as
+                            # the live, currently-running cause of loans re-drifting
+                            # within an hour of being manually resynced to GL.
+                            if dry_run:
+                                self.stdout.write(
+                                    f'  [{loan.loan_number}] penalty self-correction would '
+                                    f'floor outstanding_penalties below zero '
+                                    f'({new_outstanding_penalties}) — {-new_outstanding_penalties} '
+                                    f'would move to outstanding_principal'
+                                )
+                            loan.outstanding_principal += new_outstanding_penalties
+                            new_outstanding_penalties = Decimal('0.00')
+                        loan.outstanding_penalties = new_outstanding_penalties
                         stats['penalised'] += 1
 
                     if loan_had_accrual:
@@ -235,7 +270,8 @@ class Command(BaseCommand):
 
                     loan.save(update_fields=[
                         'risk_classification', 'provision_pct', 'provision_amount',
-                        'outstanding_penalties', 'penalty_accrual_active', 'status', 'updated_at',
+                        'outstanding_principal', 'outstanding_penalties',
+                        'penalty_accrual_active', 'status', 'updated_at',
                     ])
 
                     # Marked last, not first: Django refuses any further ORM queries
