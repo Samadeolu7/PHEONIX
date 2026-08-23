@@ -66,6 +66,11 @@ class Command(BaseCommand):
         parser.add_argument('--min-total-paid', type=str, default='0.01',
                              help='Skip loans with total_paid below this (default 0.01 — '
                                   'excludes never-paid loans, a separate rounding-only bucket).')
+        parser.add_argument('--status', dest='statuses', default=None,
+                             help='Comma-separated status list to include (e.g. '
+                                  '"active,disbursed,defaulted"). Default: all statuses.')
+        parser.add_argument('--exclude-loans', dest='exclude_loans', default=None,
+                             help='Comma-separated loan numbers to skip (already triaged elsewhere).')
 
     def handle(self, *args, **options):
         from loans.models import LoanAccount
@@ -79,6 +84,14 @@ class Command(BaseCommand):
 
         if options['loan_number']:
             loans = loans.filter(loan_number=options['loan_number'])
+
+        if options['statuses']:
+            statuses = [s.strip() for s in options['statuses'].split(',') if s.strip()]
+            loans = loans.filter(status__in=statuses)
+
+        if options['exclude_loans']:
+            excluded = [ln.strip() for ln in options['exclude_loans'].split(',') if ln.strip()]
+            loans = loans.exclude(loan_number__in=excluded)
 
         checked = 0
         flagged = 0
