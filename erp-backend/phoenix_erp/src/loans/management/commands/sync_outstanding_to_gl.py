@@ -38,6 +38,8 @@ SAFETY:
 Usage:
     python manage.py sync_outstanding_to_gl --loan LN-526             # dry-run
     python manage.py sync_outstanding_to_gl --loan LN-526 --apply
+    python manage.py sync_outstanding_to_gl --loans LN-526,LN-553     # dry-run, a vetted list
+    python manage.py sync_outstanding_to_gl --loans LN-526,LN-553 --apply
     python manage.py sync_outstanding_to_gl --batch                   # dry-run, all loans
     python manage.py sync_outstanding_to_gl --batch --apply
 """
@@ -61,6 +63,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--loan', dest='loan_number', default=None,
                              help='Only check a single loan by loan_number.')
+        parser.add_argument('--loans', dest='loan_numbers', default=None,
+                             help='Comma-separated loan numbers — a vetted list, not a fresh scan.')
         parser.add_argument('--batch', action='store_true',
                              help='Scan every non-deleted loan for a material GL-vs-business gap.')
         parser.add_argument('--apply', action='store_true',
@@ -71,17 +75,26 @@ class Command(BaseCommand):
         from common.models import FinancialAuditLog, log_financial_event
 
         loan_number = options['loan_number']
+        loan_numbers = options['loan_numbers']
         batch = options['batch']
         apply_changes = options['apply']
 
-        if bool(loan_number) == bool(batch):
-            raise CommandError('Pass exactly one of --loan <number> or --batch.')
+        modes_given = sum(bool(x) for x in (loan_number, loan_numbers, batch))
+        if modes_given != 1:
+            raise CommandError('Pass exactly one of --loan <number>, --loans <comma-list>, or --batch.')
 
         loans_qs = LoanAccount.all_objects.filter(is_deleted=False).order_by('loan_number')
         if loan_number:
             loans_qs = loans_qs.filter(loan_number=loan_number)
             if not loans_qs.exists():
                 raise CommandError(f'Loan {loan_number} not found.')
+        elif loan_numbers:
+            wanted = [ln.strip() for ln in loan_numbers.split(',') if ln.strip()]
+            loans_qs = loans_qs.filter(loan_number__in=wanted)
+            found = set(loans_qs.values_list('loan_number', flat=True))
+            missing = set(wanted) - found
+            if missing:
+                raise CommandError(f'Loan(s) not found: {", ".join(sorted(missing))}')
 
         applied, dry_ran, skipped = 0, 0, 0
         for loan in loans_qs.iterator():
