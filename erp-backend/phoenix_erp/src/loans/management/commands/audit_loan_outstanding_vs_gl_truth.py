@@ -34,10 +34,27 @@ regardless of the flag.
   correct_outstanding_principal = self.account.balance                      # not (native AND flag)
                                    OR self.account.balance - correct_outstanding_interest
                                       - correct_outstanding_fees             # native AND flag=True
+                                   ...minus actual_gl_accrued_penalty, for any loan with
+                                      penalty_accrual_active=True (see below)
 
-outstanding_penalties is left out of this comparison — it's already
-self-correcting via update_loan_status's daily cron (recomputed from
-calculate_late_penalty() every run), not seeded once and drifted.
+outstanding_penalties the FIELD is left out of the interest/fees-style
+schedule-truth comparison above — it's already self-correcting via
+update_loan_status's daily cron (recomputed from calculate_late_penalty()
+every run), not seeded once and drifted. But that's a different question
+from whether account.balance INCLUDES a penalty component: for any loan
+with penalty_accrual_active=True, update_loan_status.py posts penalty
+accruals as Dr Loan Receivable / Cr Penalty Income (accrual basis, see
+project_penalty_accrual_basis) — so account.balance is NOT pure principal
+(+interest) there either. Confirmed 2026-08-23 via GL history
+hand-reconstruction on LN-1012: its surviving (non-reversed) LNPEN entries
+net to exactly outstanding_penalties, embedded inside account.balance —
+ignoring it flipped both the size AND direction of the reported principal
+delta for that loan. This command subtracts the ACTUAL net LNPEN-posted
+amount (Dr - Cr on loan.account, matching audit_loan_penalty_gl_vs_truth.py's
+own query) rather than the outstanding_penalties field, since the field
+being wrong is a separate bug that other command already owns — this one
+only needs to know what's really sitting in GL right now to isolate
+principal.
 
 (History: earlier versions of this command assumed account.balance was
 always pure principal — wrong for interest_recognized_at_disbursement=True
@@ -51,7 +68,11 @@ wrong for LN-526/629/800 and others, whose outstanding_principal is
 already GL-verified correct by a separate investigation
 (project_legacy_schedule_obmig_hypothesis.md) independent of their
 outstanding_interest. Fixed by requiring origin=native in addition to
-the flag.)
+the flag. A fourth version still ignored accrued-but-unpaid penalty sitting
+in account.balance for penalty_accrual_active=True loans — wrong for
+essentially every legacy loan with a nonzero penalty (confirmed on
+LN-1012), since penalty accruals hit Loan Receivable directly. Fixed by
+subtracting the actual net LNPEN GL amount too.)
 
 Makes no changes — report only. No --confirm/--fix flag on purpose: the
 principal-vs-GL-balance correction in particular should be eyeballed
@@ -90,6 +111,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from loans.models import LoanAccount
+        from transactions.models import TransactionEntry
 
         min_total_paid = Decimal(options['min_total_paid'])
 
@@ -141,17 +163,38 @@ class Command(BaseCommand):
             # project_legacy_schedule_obmig_hypothesis.md: LN-526/800/722/754/1030/
             # 553/855/907 all have outstanding_principal already GL-verified correct
             # by a separate investigation, independent of their outstanding_interest.)
+            #
+            # account.balance also includes any currently-accrued-but-unpaid penalty
+            # for loans on the accrual regime (penalty_accrual_active=True) — see
+            # update_loan_status.py, which posts Dr Loan Receivable / Cr Penalty
+            # Income at assessment time. Confirmed 2026-08-23 via GL history
+            # hand-reconstruction on LN-1012: its surviving (non-reversed) LNPEN
+            # entries net to exactly outstanding_penalties (973.33), embedded inside
+            # account.balance — ignoring it flipped both the size AND direction of
+            # the reported principal delta. Use the ACTUAL net LNPEN-posted amount
+            # (not the outstanding_penalties field) to isolate principal, matching
+            # audit_loan_penalty_gl_vs_truth.py's own "actual_accrued" query — the
+            # field itself can be independently wrong, which is a different bug that
+            # tool already owns; this command only needs to know what's really sitting
+            # in GL right now, correct or not, so it can subtract it back out.
             correct_principal = None
             if loan.account:
                 interest_actually_in_gl = (
                     loan.origin == loan.ORIGIN_NATIVE
                     and loan.interest_recognized_at_disbursement
                 )
-                correct_principal = (
-                    (loan.account.balance - correct_interest - correct_fees)
-                    if interest_actually_in_gl
-                    else loan.account.balance
-                )
+                correct_principal = loan.account.balance
+                if interest_actually_in_gl:
+                    correct_principal -= correct_interest
+                    correct_principal -= correct_fees
+                if loan.penalty_accrual_active:
+                    lnpen_lines = TransactionEntry.objects.filter(
+                        transaction__series__code='LNPEN',
+                        account=loan.account,
+                    ).values('side').annotate(total=Sum('amount'))
+                    debit = next((r['total'] for r in lnpen_lines if r['side'] == TransactionEntry.DEBIT), Decimal('0.00'))
+                    credit = next((r['total'] for r in lnpen_lines if r['side'] == TransactionEntry.CREDIT), Decimal('0.00'))
+                    correct_principal -= (debit - credit)
 
             interest_delta = correct_interest - loan.outstanding_interest
             fees_delta = correct_fees - loan.outstanding_fees
