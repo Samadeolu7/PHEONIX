@@ -241,12 +241,15 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                 )
 
                 # Dr. Interest Expense (EXPENSE account — balance increases on DEBIT)
+                # TransactionEntry has no `description` field (only Transaction does,
+                # set above) — found 2026-08-26 when this raised TypeError on the
+                # very first real GL posting attempt, the next blocker after fixing
+                # the select_related field name and owner-scoping bugs.
                 JournalEntryLine.objects.create(
                     transaction=journal,
                     account=expense_account,
                     side=JournalEntryLine.DEBIT,
                     amount=interest,
-                    description=f'6% Smart Savings interest – {savings.account_number}',
                 )
 
                 # Cr. Member Savings GL account (SAVINGS/LIABILITY — balance increases on CREDIT)
@@ -255,7 +258,6 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                     account=savings.account,
                     side=JournalEntryLine.CREDIT,
                     amount=interest,
-                    description=f'Interest credited to {savings.account_number}',
                 )
 
                 journal.post()
@@ -440,12 +442,13 @@ def post_monthly_savings_interest(self):  # noqa: ARG002
                     tenant=savings.tenant,
                 )
 
+                # TransactionEntry has no `description` field — same bug fixed in
+                # apply_smart_savings_interest above (2026-08-26).
                 JournalEntryLine.objects.create(
                     transaction=journal,
                     account=expense_account,
                     side=JournalEntryLine.DEBIT,
                     amount=interest,
-                    description=f'Interest expense — {savings.account_number} {period_start:%b %Y}',
                 )
 
                 JournalEntryLine.objects.create(
@@ -453,7 +456,6 @@ def post_monthly_savings_interest(self):  # noqa: ARG002
                     account=savings.account,
                     side=JournalEntryLine.CREDIT,
                     amount=interest,
-                    description=f'Monthly interest credited — {savings.account_number}',
                 )
 
                 journal.post()

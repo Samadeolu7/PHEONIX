@@ -3046,12 +3046,14 @@ class DailyCollectionSheet(TimeStampedModel, BranchScopedModel, SoftDeleteModel)
                     tenant=self.tenant,
                 )
                 # DR: Branch bank GL account (ASSET goes up — cash received in bank)
+                # TransactionEntry has no `description` field — see 2026-08-26 fix
+                # note in savings/tasks.py; this raised a hard TypeError on every
+                # real invocation, rolled back by the surrounding atomic block.
                 JournalEntryLine.objects.create(
                     transaction=journal_entry,
                     account=branch_bank_account.gl_account,
                     side=JournalEntryLine.DEBIT,
                     amount=cash_amount,
-                    description=f"Cash collected by {self.credit_officer} on {self.collection_date}",
                 )
                 # CR: Officer till GL account (ASSET goes down — cash leaves officer's hand)
                 JournalEntryLine.objects.create(
@@ -3059,7 +3061,6 @@ class DailyCollectionSheet(TimeStampedModel, BranchScopedModel, SoftDeleteModel)
                     account=cashier_acct.account,
                     side=JournalEntryLine.CREDIT,
                     amount=cash_amount,
-                    description=f"Cash handed over to branch — {self.collection_date}",
                 )
                 journal_entry.post()
 
@@ -3535,19 +3536,20 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             created_by=user,
             tenant=self.tenant,
         )
+        # TransactionEntry has no `description` field — see 2026-08-26 fix note in
+        # savings/tasks.py; this raised a hard TypeError on every real invocation,
+        # rolled back by the surrounding atomic block.
         JournalEntryLine.objects.create(
             transaction=je,
             account=payment_gl_account,
             side=JournalEntryLine.DEBIT,
             amount=self.amount_collected,
-            description='Processing fee received',
         )
         JournalEntryLine.objects.create(
             transaction=je,
             account=fee_account,
             side=JournalEntryLine.CREDIT,
             amount=self.amount_collected,
-            description=f"Fee income — {self.loan_account.loan_number}",
         )
         je.post()
         return je

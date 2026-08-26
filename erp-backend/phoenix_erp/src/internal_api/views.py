@@ -375,12 +375,15 @@ class BulkLoanAccrualView(APIView):
                         )
 
                         # Debit: Loan Receivable — interest earned, owed by borrower
+                        # TransactionEntry has no `description` field — see 2026-08-26
+                        # fix note in savings/tasks.py; this raised a hard TypeError on
+                        # every real invocation, rolled back by the surrounding atomic
+                        # block, so this accrual path has never posted successfully.
                         JournalEntryLine.objects.create(
                             transaction=journal_entry,
                             account=loan.account,
                             side=JournalEntryLine.DEBIT,
                             amount=accrual_amount,
-                            description=f"Accrued interest – {loan.loan_number}",
                         )
 
                         if interest_income_account:
@@ -390,7 +393,6 @@ class BulkLoanAccrualView(APIView):
                                 account=interest_income_account,
                                 side=JournalEntryLine.CREDIT,
                                 amount=accrual_amount,
-                                description=f"Interest income recognised – {loan.loan_number}",
                             )
                         else:
                             # Fallback: credit back to Loan Receivable (self-balancing).
@@ -407,7 +409,6 @@ class BulkLoanAccrualView(APIView):
                                 account=loan.account,
                                 side=JournalEntryLine.CREDIT,
                                 amount=accrual_amount,
-                                description=f"Accrued interest (no income account) – {loan.loan_number}",
                             )
 
                         journal_entry.post()

@@ -1015,21 +1015,26 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
             )
             
             # Debit: Petty Cash Account
+            # TransactionEntry has no `description` field (only Transaction does,
+            # set above) — this raised a hard TypeError on every real invocation,
+            # rolled back by the surrounding atomic block, so no petty cash fund
+            # has ever been successfully set up through this path. Same bug found
+            # and fixed across savings/tasks.py, cash_management/models.py, and
+            # internal_api/views.py on 2026-08-26 — see backfill_daily_contribution_
+            # income.py's docstring for the original discovery (savings/services.py).
             TransactionEntry.objects.create(
                 transaction=journal_entry,
                 account=fund.petty_cash_account,
                 side=TransactionEntry.DEBIT,
                 amount=fund.float_amount,
-                description=f"Initial float for {fund.fund_name}"
             )
-            
+
             # Credit: Source Account (Cash/Bank)
             TransactionEntry.objects.create(
                 transaction=journal_entry,
                 account=source_account,
                 side=TransactionEntry.CREDIT,
                 amount=fund.float_amount,
-                description=f"Fund {fund.fund_name} established"
             )
             
             # Update fund
