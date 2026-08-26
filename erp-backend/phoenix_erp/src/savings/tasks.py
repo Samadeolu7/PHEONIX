@@ -23,13 +23,32 @@ def _get_or_create_smart_savings_interest_expense_account(owner, branch):
     We look for an EXPENSE account whose name contains 'Smart Savings Interest'.
     If it does not exist we create one under the first EXPENSE parent account
     available on this branch (or create a standalone EXPENSE account).
+
+    Looked up by (tenant, branch) only — NOT owner. `owner` is a per-user
+    "who manages this record" field (see common/base.py's TimeStampedModel),
+    while Account's real uniqueness constraint is scoped by (code, tenant,
+    branch) with no owner involved (accounts/models.py). Filtering this
+    lookup by owner meant every Smart Savings account whose owner differed
+    from whichever one happened to be processed first in a branch would
+    never find the account that first run already created, fall through to
+    the fallback creation, and hit a real IntegrityError on the duplicate
+    hardcoded code='5900' for that (tenant, branch) — silently caught and
+    logged by the per-account try/except in apply_smart_savings_interest,
+    forever, for every affected account, with nothing visible in the UI.
+    Found 2026-08-26 tracing a client's Smart Savings interest that had
+    been overdue 15+ days with no explanation anywhere. Now uses
+    get_or_create on the actual unique key (code, tenant, branch) instead
+    of a separate filter-then-create, so a concurrent run can't hit the
+    same collision either.
     """
     from accounts.models import Account
+
+    tenant = getattr(branch, 'tenant', None)
 
     acct = (
         Account.objects
         .filter(
-            owner=owner,
+            tenant=tenant,
             branch=branch,
             account_type=Account.EXPENSE,
             name__icontains='Smart Savings Interest',
@@ -42,22 +61,24 @@ def _get_or_create_smart_savings_interest_expense_account(owner, branch):
     # Find a parent EXPENSE account to nest under
     parent = (
         Account.objects
-        .filter(owner=owner, branch=branch, account_type=Account.EXPENSE,
+        .filter(tenant=tenant, branch=branch, account_type=Account.EXPENSE,
                 account_level=Account.LEVEL_PARENT)
         .first()
     )
 
-    acct = Account.objects.create(
-        owner=owner,
-        branch=branch,
-        name='Smart Savings Interest Expense',
+    acct, _ = Account.objects.get_or_create(
         code='5900',          # Fallback; may collide — admin should rename/re-code
-        account_type=Account.EXPENSE,
-        account_level=Account.LEVEL_CHILD if parent else Account.LEVEL_PARENT,
-        parent=parent,
-        is_system_account=True,
-        allow_manual_entries=False,
-        tenant=getattr(branch, 'tenant', None),
+        tenant=tenant,
+        branch=branch,
+        defaults=dict(
+            owner=owner,
+            name='Smart Savings Interest Expense',
+            account_type=Account.EXPENSE,
+            account_level=Account.LEVEL_CHILD if parent else Account.LEVEL_PARENT,
+            parent=parent,
+            is_system_account=True,
+            allow_manual_entries=False,
+        ),
     )
     return acct
 
@@ -311,10 +332,16 @@ def post_monthly_savings_interest(self):  # noqa: ARG002
                     continue
 
                 # ── Resolve GL accounts ────────────────────────────────
+                # Scoped by branch only, NOT owner — see the identical fix and
+                # explanation in _get_or_create_smart_savings_interest_expense_
+                # account above. owner is a per-user field; an EXPENSE account
+                # is shared institutional infrastructure for the branch, so
+                # filtering by owner could miss an account that already exists
+                # under a colleague's owner value and wrongly report "no
+                # EXPENSE account" (denying real interest) even when one does.
                 expense_account = (
                     Account.objects
                     .filter(
-                        owner=savings.owner,
                         branch=savings.branch,
                         account_type=Account.EXPENSE,
                         name__icontains='Interest Expense on Savings',
@@ -326,7 +353,6 @@ def post_monthly_savings_interest(self):  # noqa: ARG002
                     expense_account = (
                         Account.objects
                         .filter(
-                            owner=savings.owner,
                             branch=savings.branch,
                             account_type=Account.EXPENSE,
                         )
