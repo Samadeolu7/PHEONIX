@@ -10,9 +10,17 @@ its 3-month interest credit. Checks, in order:
   2. If it does: is_active, start_date, computed maturity_date, whether
      apply_smart_savings_interest's own maturity filter would pick it up,
      last_interest_date, opening_balance vs current balance.
-  3. Is the 'apply-smart-savings-interest' PeriodicTask enabled, and when
+  3. Full chronological TransactionEntry history against the savings
+     account's own GL account — flags any 'JV' (manual Journal Voucher)
+     entries distinctly, since a staff member may have already worked
+     around the missing automation by hand (the established pattern the
+     last time this exact bug shipped — see project_smart_savers_cron
+     memory). Check this BEFORE assuming the backstop command is safe to
+     run: if interest was already credited manually, running the backstop
+     would double-credit the client.
+  4. Is the 'apply-smart-savings-interest' PeriodicTask enabled, and when
      did it last actually run (django_celery_beat tracks last_run_at)?
-  4. A portfolio-wide scan: every SmartSavingsAccount that's active and
+  5. A portfolio-wide scan: every SmartSavingsAccount that's active and
      matured right now, to tell whether this is a one-off or systemic gap.
 
 Usage:
@@ -80,6 +88,48 @@ class Command(BaseCommand):
                 self.stdout.write(f'    {e.created_at:%Y-%m-%d %H:%M}  {e.event_type:8}  ₦{e.amount:,.2f}  {e.details}')
             if not events:
                 self.stdout.write('    (none — this account has never had interest or a penalty applied)')
+
+        self.stdout.write('')
+        self.stdout.write(self.style.MIGRATE_HEADING(
+            'GL transaction history (account = savings.account) — check for a manual JV before applying anything'
+        ))
+        from transactions.models import TransactionEntry
+        entries = (
+            TransactionEntry.objects
+            .filter(account=savings.account)
+            .select_related('transaction', 'transaction__series')
+            .order_by('transaction__date', 'transaction__created_at', 'id')
+        )
+        running = None
+        jv_found = False
+        for e in entries:
+            txn = e.transaction
+            effect = e.get_balance_effect()
+            running = effect if running is None else running + effect
+            is_jv = getattr(txn.series, 'code', None) == 'JV'
+            marker = '  <-- MANUAL JV' if is_jv else ''
+            if is_jv:
+                jv_found = True
+            rev = ' [REVERSED]' if (e.is_reversed or txn.is_reversed) else ''
+            self.stdout.write(
+                f'    {txn.date}  {txn.reference_number:<24}  {e.side}  {e.amount:>14,.2f}  '
+                f'effect={effect:>+14,.2f}  running={running:>14,.2f}{rev}{marker}'
+            )
+            self.stdout.write(f'        {txn.description}')
+        if not entries:
+            self.stdout.write('    (no transaction history at all on this account\'s GL)')
+        self.stdout.write('')
+        if jv_found:
+            self.stdout.write(self.style.ERROR(
+                '  >>> At least one manual JV was found against this account. Check its amount/date '
+                'against the expected 6% interest BEFORE running the backstop command — if it already '
+                'covers this cycle, applying the fix would double-credit the client.'
+            ))
+        else:
+            self.stdout.write(self.style.SUCCESS(
+                '  No manual JV found on this account\'s GL history — no sign of a workaround already '
+                'having covered this cycle.'
+            ))
 
         self.stdout.write('')
         self.stdout.write(self.style.MIGRATE_HEADING('apply-smart-savings-interest PeriodicTask'))
