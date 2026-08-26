@@ -98,6 +98,23 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
         - ``last_interest_date`` = maturity_date
         - ``start_date`` = maturity_date  (next cycle begins from maturity, not today)
         - ``opening_balance`` = post-interest savings balance
+
+    Before posting, checks whether a manual Journal Voucher already covers
+    this cycle (dated on/after ``start_date`` against ``savings.account``)
+    — staff have worked around this task failing before by hand (see
+    project_smart_savers_cron memory), and OBMIG/SSI are the only series
+    that should legitimately ever touch this account's GL, so any JV entry
+    is the tell. If found, the cycle is reset WITHOUT a second interest
+    posting, to avoid double-crediting the client.
+
+    Found 2026-08-26: this whole task had never successfully processed a
+    single account in this codebase — ``select_related('savings_account',
+    ...)`` referenced a field that doesn't exist on SmartSavingsAccount
+    (the real field is ``savings``), raising a FieldError on every
+    candidate, every run, silently caught and logged by the per-account
+    try/except below. Fixed alongside the owner-scoping bug in
+    ``_get_or_create_smart_savings_interest_expense_account`` (see its
+    own docstring) — both needed fixing for this task to work at all.
     """
     from transactions.models import (
         Transaction as JournalEntry,
@@ -117,6 +134,7 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
 
     processed = 0
     skipped = 0
+    manual_jv_skipped = 0
 
     for acct_id in candidate_ids:
         try:
@@ -126,9 +144,9 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                     SmartSavingsAccount.objects
                     .select_for_update()
                     .select_related(
-                        'savings_account',
-                        'savings_account__account',
-                        'savings_account__client',
+                        'savings',
+                        'savings__account',
+                        'savings__client',
                     )
                     .get(pk=acct_id)
                 )
@@ -145,7 +163,7 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                     skipped += 1
                     continue
 
-                savings = acct.savings_account
+                savings = acct.savings
                 base_balance = (
                     acct.opening_balance
                     if acct.opening_balance is not None
@@ -159,6 +177,40 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                     acct.opening_balance = savings.current_balance
                     acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
                     skipped += 1
+                    continue
+
+                # A staff member may have already worked around a missed cycle by
+                # hand with a manual Journal Voucher (the established pattern when
+                # this task has failed before — see project_smart_savers_cron
+                # memory). OBMIG (opening) and SSI (this task's own series) are the
+                # only transactions that should legitimately ever touch a Smart
+                # Savings account's GL — any JV-series entry dated on/after this
+                # cycle's start_date is the tell that the cycle was already
+                # covered manually. Reset the cycle without posting a second
+                # interest entry so the client isn't double-credited.
+                manual_jv = JournalEntryLine.objects.filter(
+                    account=savings.account,
+                    transaction__series__code='JV',
+                    transaction__date__gte=acct.start_date,
+                    transaction__is_reversed=False,
+                ).select_related('transaction').first()
+                if manual_jv is not None:
+                    SmartSavingsEvent.objects.create(
+                        account=acct,
+                        event_type=SmartSavingsEvent.INTEREST,
+                        amount=Decimal('0.00'),
+                        details=(
+                            f'Cycle {acct.start_date:%Y-%m-%d}→{maturity_date:%Y-%m-%d} appears already '
+                            f'covered by a manual Journal Voucher ({manual_jv.transaction.reference_number}, '
+                            f'{manual_jv.transaction.date}) — skipped automatic interest posting to avoid '
+                            'double-crediting. Cycle reset; verify the JV amount matches 6% if in doubt.'
+                        ),
+                    )
+                    acct.last_interest_date = maturity_date
+                    acct.start_date = maturity_date
+                    acct.opening_balance = savings.current_balance
+                    acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
+                    manual_jv_skipped += 1
                     continue
 
                 interest = (base_balance * Decimal('0.06')).quantize(
@@ -240,7 +292,12 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                 exc,
             )
 
-    return {'processed': processed, 'skipped': skipped, 'total': len(candidate_ids)}
+    return {
+        'processed': processed,
+        'skipped': skipped,
+        'manual_jv_skipped': manual_jv_skipped,
+        'total': len(candidate_ids),
+    }
 
 
 # ─── Regular Savings Monthly Interest ────────────────────────────────────────

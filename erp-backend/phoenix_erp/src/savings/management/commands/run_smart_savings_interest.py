@@ -2,13 +2,17 @@
 Management command: run_smart_savings_interest
 
 Manual backstop for savings.tasks.apply_smart_savings_interest — for when
-a scheduled run was missed (or, as found 2026-08-26, silently failed every
-day for any account whose owner differed from whichever one first created
-the branch's "Smart Savings Interest Expense" GL account — see the fix in
-savings/tasks.py's _get_or_create_smart_savings_interest_expense_account).
+a scheduled run was missed (or, as found 2026-08-26, this task had NEVER
+successfully processed a single account in this codebase — a wrong
+select_related() field name raised a FieldError on every candidate, every
+run, plus a separate owner-scoping bug in GL account resolution that would
+have kept failing even once the field name was fixed — see both fixes in
+savings/tasks.py).
 
 --dry-run (default): read-only preview of every matured, active Smart
-Savings account and the interest that would be credited — no writes.
+Savings account, the interest that would be credited, and whether a
+manual Journal Voucher already appears to cover the cycle (in which case
+the real task would skip it rather than double-credit) — no writes.
 
 --apply: runs the real task function synchronously, in-process (not via
 Celery's async dispatch, so this works even if the beat/worker pipeline
@@ -36,6 +40,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from savings.models import SmartSavingsAccount
+        from transactions.models import TransactionEntry
 
         apply_changes = options['apply']
         today = timezone.localdate()
@@ -43,7 +48,7 @@ class Command(BaseCommand):
         candidates = (
             SmartSavingsAccount.objects
             .filter(is_active=True, start_date__lte=today - relativedelta(months=3))
-            .select_related('savings', 'savings__client')
+            .select_related('savings', 'savings__client', 'savings__account')
             .order_by('start_date')
         )
 
@@ -61,6 +66,21 @@ class Command(BaseCommand):
                     f'base_balance={base_balance}  -- would SKIP (no positive balance) and reset cycle'
                 )
                 continue
+
+            manual_jv = TransactionEntry.objects.filter(
+                account=acct.savings.account,
+                transaction__series__code='JV',
+                transaction__date__gte=acct.start_date,
+                transaction__is_reversed=False,
+            ).select_related('transaction').first()
+            if manual_jv is not None:
+                self.stdout.write(self.style.WARNING(
+                    f'  {acct.savings.account_number:20} {acct.savings.client.full_name:30} '
+                    f'-- would SKIP posting (manual JV {manual_jv.transaction.reference_number} on '
+                    f'{manual_jv.transaction.date} already appears to cover this cycle) and reset cycle only'
+                ))
+                continue
+
             interest = (base_balance * Decimal('0.06')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             self.stdout.write(
                 f'  {acct.savings.account_number:20} {acct.savings.client.full_name:30} '
