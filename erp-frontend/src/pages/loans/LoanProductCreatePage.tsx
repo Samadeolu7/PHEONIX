@@ -20,6 +20,28 @@ import { Account } from '../../types/accounts';
 import { branchService } from '../../services/branchService';
 import { useAuth } from '../../contexts/AuthContext';
 
+// ── Error extraction ─────────────────────────────────────────────────────────
+// LoanProduct create/update validation returns DRF's field-keyed
+// {"field": ["msg"]} shape (see LoanProductSerializer.validate() in
+// loans/serializers.py) rather than a top-level "detail" — surface the
+// specific field message instead of falling through to a generic string.
+const extractErrorMessage = (err: any, fallback: string): string => {
+  const data = err?.response?.data;
+  if (!data) return err?.message || fallback;
+  if (typeof data === 'string') return data;
+  if (data.detail) return data.detail;
+  if (data.non_field_errors) {
+    return Array.isArray(data.non_field_errors) ? data.non_field_errors.join(' ') : data.non_field_errors;
+  }
+  for (const [field, value] of Object.entries(data)) {
+    const msg = Array.isArray(value) ? value[0] : value;
+    if (typeof msg === 'string') {
+      return field === 'non_field_errors' ? msg : `${field}: ${msg}`;
+    }
+  }
+  return fallback;
+};
+
 // ── Reusable GL account select ───────────────────────────────────────────────
 
 function AccountSelect({
@@ -207,11 +229,12 @@ export default function LoanProductCreatePage() {
       navigate(`/loans/products/${loanProduct.id}/config`);
     } catch (err: any) {
       setError(
-        err?.response?.data?.detail ||
-        err?.message ||
-        (createdProductId
-          ? 'Base product was created, but saving loan configuration failed. Fix the fields below and retry.'
-          : 'Failed to create loan product.')
+        extractErrorMessage(
+          err,
+          createdProductId
+            ? 'Base product was created, but saving loan configuration failed. Fix the fields below and retry.'
+            : 'Failed to create loan product.'
+        )
       );
     } finally {
       setSubmitting(false);

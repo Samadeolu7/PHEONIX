@@ -1,4 +1,6 @@
 # loans/serializers.py
+import copy
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from common.serializers import TenantModelSerializer
 from .models import (
@@ -79,6 +81,30 @@ class LoanProductSerializer(TenantModelSerializer):
             'id', 'name', 'code', 'description', 'is_active',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
+
+    def validate(self, attrs):
+        """
+        LoanProduct.clean() has the authoritative GL-account guards (e.g.
+        penalty_income_account required once late_payment_penalty > 0), but
+        DRF's ModelSerializer never calls Model.clean()/full_clean() on its
+        own — only Django admin's ModelForm does that automatically. Without
+        this, a product missing a required GL account saved fine through the
+        API and the gap only surfaced later, as a hard failure at
+        disbursement time (LoanAccount.disburse()). Run clean() here so
+        misconfiguration is caught at config-save time instead.
+        """
+        instance = copy.copy(self.instance) if self.instance else LoanProduct()
+        for field, value in attrs.items():
+            if field in ('owner', 'branch', 'tenant'):
+                continue
+            setattr(instance, field, value)
+        try:
+            instance.clean()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                getattr(exc, 'message_dict', None) or {'non_field_errors': exc.messages}
+            )
+        return attrs
 
 
 class LoanRepaymentScheduleSerializer(TenantModelSerializer):

@@ -41,6 +41,28 @@ import {
   useDeleteSavingsRequirement,
 } from '../../hooks/useLoans';
 
+// ── Error extraction ─────────────────────────────────────────────────────────
+// LoanProduct settings validation returns DRF's field-keyed {"field": ["msg"]}
+// shape (see LoanProductSerializer.validate() in loans/serializers.py) rather
+// than a top-level "detail" — surface the specific field message instead of
+// falling through to a generic string.
+const extractErrorMessage = (err: any, fallback: string): string => {
+  const data = err?.response?.data;
+  if (!data) return err?.message || fallback;
+  if (typeof data === 'string') return data;
+  if (data.detail) return data.detail;
+  if (data.non_field_errors) {
+    return Array.isArray(data.non_field_errors) ? data.non_field_errors.join(' ') : data.non_field_errors;
+  }
+  for (const [field, value] of Object.entries(data)) {
+    const msg = Array.isArray(value) ? value[0] : value;
+    if (typeof msg === 'string') {
+      return field === 'non_field_errors' ? msg : `${field}: ${msg}`;
+    }
+  }
+  return fallback;
+};
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmt(v: string | number | null | undefined): string {
@@ -642,7 +664,7 @@ export default function LoanProductConfigPage() {
           <form onSubmit={handleSettingsSave} className="space-y-5">
             {updateProductMutation.isError && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-2 text-sm text-red-700">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {(updateProductMutation.error as any)?.response?.data?.detail || updateProductMutation.error?.message || 'Failed to save settings.'}
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {extractErrorMessage(updateProductMutation.error, 'Failed to save settings.')}
               </div>
             )}
             {settingsSaved && (
