@@ -499,6 +499,7 @@ export default function LoanProductConfigPage() {
         insurance_rate: product.insurance_rate,
         late_payment_penalty_type: product.late_payment_penalty_type,
         late_payment_penalty: product.late_payment_penalty,
+        penalty_income_account: product.penalty_income_account,
         grace_period_days: product.grace_period_days,
         requires_collateral: product.requires_collateral,
         collateral_percentage: product.collateral_percentage,
@@ -970,6 +971,26 @@ export default function LoanProductConfigPage() {
                     placeholder="0"
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Penalty Income Account{Number(settingsForm.late_payment_penalty ?? 0) > 0 && <span className="text-red-500 ml-0.5">*</span>}
+                  </label>
+                  <select
+                    value={settingsForm.penalty_income_account ?? ''}
+                    onChange={e => setSettingsForm(p => ({ ...p, penalty_income_account: e.target.value ? Number(e.target.value) : null }))}
+                    aria-label="Penalty income account"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  >
+                    <option value="">— Select account —</option>
+                    {incomeAccounts.map(a => (
+                      <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Required if a penalty rate/amount is set above — without it, disbursement is blocked and
+                    collected penalty has nowhere to post as income.
+                  </p>
                 </div>
               </div>
             </div>
