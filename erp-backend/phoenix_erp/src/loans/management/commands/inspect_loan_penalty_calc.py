@@ -28,6 +28,7 @@ Usage:
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db.models import Q
 
 
 class Command(BaseCommand):
@@ -55,7 +56,16 @@ class Command(BaseCommand):
         if loan_number:
             loans = loans.filter(loan_number=loan_number)
         elif client_name:
-            loans = loans.filter(client__full_name__icontains=client_name)
+            # Client.full_name is a Python @property, not a DB field, so it can't
+            # be used in a queryset lookup across the FK — match first_name/
+            # last_name directly instead. Handles a full "First Last" search
+            # (matched either way round) as well as a single-word partial match.
+            name_q = Q(client__first_name__icontains=client_name) | Q(client__last_name__icontains=client_name)
+            parts = client_name.split()
+            if len(parts) >= 2:
+                name_q |= (Q(client__first_name__icontains=parts[0]) & Q(client__last_name__icontains=parts[-1]))
+                name_q |= (Q(client__first_name__icontains=parts[-1]) & Q(client__last_name__icontains=parts[0]))
+            loans = loans.filter(name_q)
 
         if not scan:
             loans = list(loans)
