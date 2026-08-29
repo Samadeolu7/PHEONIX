@@ -25,6 +25,23 @@ it in the first place. Both commands have since been fixed to only ever
 touch penalty_due. This command finds rows already damaged by the old
 behaviour (or corrupted for any other reason) so they can be repaired.
 
+A THIRD, distinct source found 2026-08-29 (Damola Kadiri / LN-886, reported
+by Br Israel2 as a wrong late-payment penalty — turned out to be this, not a
+formula bug): `restore_flat_schedule_backward_v4`'s "same-pass penalty
+reconciliation" step adds `penalty_shortfall` to BOTH `penalty_due` AND
+`total_due` on the earliest still-open row of any loan it processed (see
+that command, ~line 251-254) — baking penalty into total_due exactly like
+the two commands above used to. Unlike those two, it was never fixed, and it
+logs its evidence at the LOAN level (record_type='LoanAccount'), not per-row,
+so the original `correction_evidence()` lookup below never found it — every
+row damaged this way used to print "no correction command found... not the
+known bug" even though it was. `restore_v4_evidence()` below closes that gap.
+This command only ran once (2026-08-22 loan data integrity investigation),
+so it isn't actively corrupting new rows today, but every loan it touched
+with a nonzero penalty_shortfall at the time is still carrying the damage
+until repaired — including loans whose affected row was still 'pending' back
+then and has only become due/overdue since.
+
 A row is flagged when:
     total_due != principal_due + interest_due + fees_due   (beyond tolerance)
 or
@@ -100,6 +117,20 @@ class Command(BaseCommand):
                 ).order_by('timestamp')
             )
 
+        def restore_v4_evidence(loan):
+            # Logged at the LOAN level (record_id=loan.pk), not per-row — see
+            # restore_flat_schedule_backward_v4.py ~line 274. Only meaningful
+            # when it logged a nonzero penalty_shortfall; a zero one means
+            # this loan went through the command but wasn't damaged by it.
+            return [
+                log for log in FinancialAuditLog.objects.filter(
+                    record_type='LoanAccount',
+                    record_id=str(loan.pk),
+                    extra__source_command='restore_flat_schedule_backward_v4',
+                ).order_by('timestamp')
+                if Decimal(log.extra.get('penalty_shortfall', '0')) != 0
+            ]
+
         checked = schedules.count()
         self.stdout.write(f"Schedule rows checked: {checked}")
         self.stdout.write(
@@ -148,7 +179,15 @@ class Command(BaseCommand):
                             if 'schedule_total_due_before' in log.extra else ''
                         )
                     )
-                if not evidence and sched.penalty_due > 0:
+                v4_evidence = restore_v4_evidence(loan)
+                for log in v4_evidence:
+                    self.stdout.write(
+                        f"      -> {log.timestamp:%Y-%m-%d %H:%M} restore_flat_schedule_backward_v4: "
+                        f"penalty_shortfall {log.extra.get('penalty_shortfall')} baked into total_due "
+                        f"on this loan's earliest open row at the time (loan-level evidence, not "
+                        f"necessarily this exact installment)."
+                    )
+                if not evidence and not v4_evidence and sched.penalty_due > 0:
                     self.stdout.write(
                         "      -> no correction command found in FinancialAuditLog for this row "
                         "— mismatch has a different cause, not the known bug."
@@ -165,6 +204,13 @@ class Command(BaseCommand):
                     f"status={sched.status:<12s} due={sched.due_date} "
                     f"total_due={sched.total_due:>12,.2f} (expected {expected:>12,.2f}, over {diff:,.2f})"
                 )
+                for log in restore_v4_evidence(loan):
+                    self.stdout.write(
+                        f"      -> {log.timestamp:%Y-%m-%d %H:%M} restore_flat_schedule_backward_v4: "
+                        f"penalty_shortfall {log.extra.get('penalty_shortfall')} baked into total_due "
+                        f"on this loan's earliest open row at the time (loan-level evidence, not "
+                        f"necessarily this exact installment)."
+                    )
 
         if impossible:
             self.stdout.write(self.style.ERROR(
