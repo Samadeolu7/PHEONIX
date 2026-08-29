@@ -214,7 +214,37 @@ class Command(BaseCommand):
                     sched.penalty_due = new_penalty_due
                     update_fields.append('penalty_due')
 
+                # Re-derive status/payment_date the same way _update_schedule_
+                # with_payment() does (models.py ~1671-1676) when this correction
+                # alone brings the row fully settled. A row can be stuck
+                # 'overdue'/'partial' purely because it was only partially
+                # covered against the OLD, inflated total_due at the time it was
+                # actually paid — fixing total_due doesn't retroactively flip
+                # that. Found 2026-08-29 on LN-886: total_due repaired correctly,
+                # but the UI kept showing "6d overdue" because _calculate_
+                # arrears() filters on status, not on whether anything is really
+                # still owed. payment_date is taken from the row's own most
+                # recent LoanRepaymentAllocation (the actual journal entry that
+                # settled it), not today, so this stays historically accurate.
+                newly_paid = False
+                if sched.status in ('overdue', 'partial') and sched.total_paid >= expected:
+                    last_alloc = sched.payment_allocations.order_by('-journal_entry__date').first()
+                    sched.status = 'paid'
+                    sched.payment_date = last_alloc.journal_entry.date if last_alloc else today
+                    if sched.due_date and sched.payment_date > sched.due_date:
+                        sched.days_late = (sched.payment_date - sched.due_date).days
+                    update_fields += ['status', 'payment_date', 'days_late']
+                    newly_paid = True
+
                 sched.save(update_fields=update_fields)
+
+                if newly_paid:
+                    newly_paid_counts[loan.pk] = newly_paid_counts.get(loan.pk, 0) + 1
+                    self.stdout.write(
+                        f"      -> also flipped {loan.loan_number} installment #{sched.installment_number} "
+                        f"status {status_before} -> paid (payment_date={sched.payment_date}), now fully "
+                        f"settled by this correction alone."
+                    )
 
                 log_financial_event(
                     FinancialAuditLog.LOAN_BALANCE_CORRECTION,
