@@ -249,8 +249,20 @@ class Command(BaseCommand):
                     'status', 'payment_date', 'updated_at',
                 ]
                 if abs(penalty_shortfall) > TOLERANCE and open_rows_after and r.pk == open_rows_after[0].pk:
+                    # total_due must never include penalty (it's principal_due +
+                    # interest_due + fees_due only, tracked separately in
+                    # penalty_due/outstanding_penalties — see
+                    # audit_total_due_integrity.py). Adding penalty_shortfall to
+                    # total_due here was confirmed 2026-08-29 as real corruption
+                    # on 14 loans (LN-491 and others; see
+                    # audit_restore_v4_penalty_shortfall_damage) — total_due
+                    # stayed inflated by the shortfall forever after, since no
+                    # other command ever touches total_due once set. An earlier,
+                    # uncommitted manual script did the identical thing to a
+                    # separate batch of loans (LN-886/Damola Kadiri among them,
+                    # see audit_adhoc_penalty_gap_fix_damage) — this fixes the
+                    # in-code copy of the mistake, not that one.
                     r.penalty_due += penalty_shortfall
-                    r.total_due += penalty_shortfall
                     update_fields += ['penalty_due']
                 r.save(update_fields=update_fields)
 
