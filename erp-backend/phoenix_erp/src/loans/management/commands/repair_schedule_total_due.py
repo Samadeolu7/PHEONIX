@@ -192,12 +192,14 @@ class Command(BaseCommand):
 
         corrected_count = 0
         loans_touched = {}
+        newly_paid_counts = {}
 
         with db_transaction.atomic():
             for sched, expected, diff in targets:
                 loan = sched.loan
                 total_due_before = sched.total_due
                 penalty_due_before = sched.penalty_due
+                status_before = sched.status
                 evidence = correction_evidence(sched)
 
                 sched.total_due = expected
@@ -285,6 +287,14 @@ class Command(BaseCommand):
                 arrears_before = loan.arrears_amount
                 dpd_before = loan.days_in_arrears
                 outstanding_penalties_before = loan.outstanding_penalties
+                installments_paid_before = loan.installments_paid
+
+                # A row can flip to 'paid' purely because fixing total_due
+                # alone now brings it in line with what's already been paid
+                # (see the newly_paid block above) — mirror _update_schedule_
+                # with_payment()'s self.installments_paid += 1 for each one,
+                # since nothing else will ever do this retroactively.
+                loan.installments_paid += newly_paid_counts.get(loan.pk, 0)
 
                 loan._calculate_arrears()
                 loan.update_risk_classification()
@@ -298,7 +308,7 @@ class Command(BaseCommand):
 
                 loan.save(update_fields=[
                     'risk_classification', 'provision_pct', 'provision_amount',
-                    'outstanding_penalties', 'updated_at',
+                    'outstanding_penalties', 'installments_paid', 'updated_at',
                 ])
 
                 if (
@@ -306,6 +316,7 @@ class Command(BaseCommand):
                     or loan.days_in_arrears != dpd_before
                     or loan.risk_classification != classification_before
                     or loan.outstanding_penalties != outstanding_penalties_before
+                    or loan.installments_paid != installments_paid_before
                 ):
                     log_financial_event(
                         FinancialAuditLog.LOAN_BALANCE_CORRECTION,
@@ -327,6 +338,8 @@ class Command(BaseCommand):
                             'risk_classification_after': loan.risk_classification,
                             'outstanding_penalties_before': str(outstanding_penalties_before),
                             'outstanding_penalties_after': str(loan.outstanding_penalties),
+                            'installments_paid_before': installments_paid_before,
+                            'installments_paid_after': loan.installments_paid,
                             'source_command': 'repair_schedule_total_due',
                         },
                     )
@@ -334,7 +347,8 @@ class Command(BaseCommand):
                         f"  {loan.loan_number}: arrears {arrears_before:,.2f} -> {loan.arrears_amount:,.2f}  "
                         f"DPD {dpd_before} -> {loan.days_in_arrears}  "
                         f"risk {classification_before} -> {loan.risk_classification}  "
-                        f"outstanding_penalties {outstanding_penalties_before:,.2f} -> {loan.outstanding_penalties:,.2f}"
+                        f"outstanding_penalties {outstanding_penalties_before:,.2f} -> {loan.outstanding_penalties:,.2f}  "
+                        f"installments_paid {installments_paid_before} -> {loan.installments_paid}"
                     )
 
         self.stdout.write(self.style.SUCCESS(
