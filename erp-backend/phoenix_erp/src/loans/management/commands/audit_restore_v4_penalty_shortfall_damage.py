@@ -76,10 +76,34 @@ class Command(BaseCommand):
         if loan_number:
             loans = loans.filter(loan_number=loan_number)
             if not loans.exists():
-                self.stdout.write(self.style.WARNING(
-                    f'{loan_number} was not touched by restore_flat_schedule_backward_v4 '
-                    '(or its penalty_shortfall was zero).'
-                ))
+                # Distinguish "never ran on this loan" from "ran but shortfall was
+                # exactly zero" — both look the same from the filtered dict above,
+                # but they mean different things when explaining why a specific
+                # loan's total_due is wrong.
+                try:
+                    target = LoanAccount.all_objects.get(loan_number=loan_number)
+                except LoanAccount.DoesNotExist:
+                    self.stdout.write(self.style.ERROR(f'No loan found with loan_number={loan_number!r}.'))
+                    return
+                any_log = FinancialAuditLog.objects.filter(
+                    record_type='LoanAccount',
+                    record_id=str(target.pk),
+                    extra__source_command='restore_flat_schedule_backward_v4',
+                ).order_by('timestamp')
+                if not any_log.exists():
+                    self.stdout.write(self.style.WARNING(
+                        f'{loan_number}: restore_flat_schedule_backward_v4 never ran on this loan at all '
+                        '— its total_due corruption (if any) has a different cause.'
+                    ))
+                else:
+                    for log in any_log:
+                        self.stdout.write(self.style.WARNING(
+                            f'{loan_number}: restore_flat_schedule_backward_v4 ran '
+                            f'{log.timestamp:%Y-%m-%d %H:%M} with penalty_shortfall='
+                            f'{log.extra.get("penalty_shortfall")} — zero, so this specific mechanism '
+                            'did not touch total_due on this loan. Any current corruption has a '
+                            'different cause.'
+                        ))
                 return
 
         self.stdout.write(f'Loans touched with nonzero penalty_shortfall: {len(touched_loan_ids)}')
