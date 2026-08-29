@@ -52,7 +52,7 @@ class Command(BaseCommand):
         if not (loan_number or client_name or scan):
             raise CommandError('Provide --loan, --client, or --scan')
 
-        loans = LoanAccount.all_objects.select_related('product', 'client').filter(is_deleted=False)
+        loans = LoanAccount.all_objects.select_related('product', 'product__product', 'client').filter(is_deleted=False)
         if loan_number:
             loans = loans.filter(loan_number=loan_number)
         elif client_name:
@@ -86,7 +86,7 @@ class Command(BaseCommand):
                 continue
 
             self.stdout.write(self.style.MIGRATE_HEADING(
-                f'{loan.loan_number} — {loan.client.full_name} — product={product.name} '
+                f'{loan.loan_number} — {loan.client.full_name} — product={product.product.name} '
                 f'configured_rate={product.late_payment_penalty}% type={product.late_payment_penalty_type} '
                 f'frequency={loan.repayment_frequency}'
             ))
