@@ -192,5 +192,12 @@ class Command(BaseCommand):
                 "yet for these rows — reconstruct total_due as principal_due + interest_due + "
                 "fees_due per row once reviewed."
             ))
-        else:
+        if overstated:
+            self.stdout.write(self.style.WARNING(
+                "Rows found where total_due overstates what's actually owed — clients/officers "
+                "will see an inflated Total Due / Balance Remaining for these installments in the "
+                "UI even though nothing that large is really outstanding. repair_schedule_total_due "
+                "handles this direction (dry-run by default)."
+            ))
+        if not (understated or impossible or overstated):
             self.stdout.write(self.style.SUCCESS('No total_due integrity issues found.'))
