@@ -32,6 +32,16 @@ flat_schedule() in schedule_service.py) — reducing-balance loans have a
 legitimately varying per-installment amount, so the flat formula it depends
 on would misstate them. Step 2 is calculation-method-agnostic.
 
+Both steps are true no-ops on a loan that isn't actually broken. Step 1's
+fold-into-principal rewrite only runs when the schedule's current principal+
+interest+fees remaining doesn't already reconcile with outstanding_principal
++ outstanding_interest + outstanding_fees — otherwise a loan that was never
+touched by the payment-allocation bug would still get its interest/fees
+folded into principal on every run, cosmetically restructuring a schedule
+that was already correct. Step 2 has the same shape (only fires when
+drift < -TOLERANCE). This is what actually protects loans that are already
+correct — not who has access to trigger the repair.
+
 No GL entry is posted by either step — outstanding_principal/interest/fees/
 penalties themselves are never changed, only how they're attributed across
 schedule rows. A hard reconciliation failure in either step (the numbers
@@ -78,7 +88,25 @@ def _try_backward_fill(loan, rows, today):
     `rows` in place (via direct field assignment) only when it actually runs.
     Raises _HardFailure if its own preconditions pass but the numbers don't
     reconcile (a genuine data problem, not just "doesn't apply here").
+
+    First checks whether the schedule (principal+interest+fees — penalty is
+    handled separately) already reconciles to what the loan's own
+    outstanding_* totals say is owed. If so this is a silent no-op: nothing
+    is touched, not even to fold interest_due/fees_due into principal_due.
+    Without this check, a loan that was never touched by the payment-
+    allocation bug (or any healthy flat loan that legitimately tracks
+    principal and interest separately) would still get cosmetically
+    restructured on every run, since the fold-into-principal rewrite below
+    was previously applied unconditionally.
     """
+    before_pif_remaining = sum(
+        (r.principal_due - r.principal_paid) + (r.interest_due - r.interest_paid) + (r.fees_due - r.fees_paid)
+        for r in rows
+    )
+    trusted_pif = loan.outstanding_principal + loan.outstanding_interest + loan.outstanding_fees
+    if abs(before_pif_remaining - trusted_pif) <= TOLERANCE:
+        return None, None, Decimal('0.00')
+
     if len(rows) != loan.number_of_installments or loan.number_of_installments == 0:
         return (
             f'Backward-fill skipped: schedule row count ({len(rows)}) does not match '
@@ -254,7 +282,7 @@ def repair_schedule(loan, *, apply: bool, user=None, reason: str = '') -> dict:
     Returns a dict shaped the same whether previewing or applying:
         {
             'eligible': bool,
-            'needs_review_reason': str | None,   # set only when NEITHER step could do anything
+            'needs_review_reason': str | None,   # set only on a hard failure — see below
             'step1_skipped_reason': str | None,   # why backward-fill didn't run, if it didn't
             'step2_skipped_reason': str | None,   # currently always None; reserved for parity
             'loan_number': str,
@@ -266,10 +294,14 @@ def repair_schedule(loan, *, apply: bool, user=None, reason: str = '') -> dict:
             'applied': bool,
         }
 
-    A hard reconciliation failure (the numbers genuinely don't add up, not
-    just "this step doesn't apply here") aborts the whole transaction and
-    comes back as eligible=False — better to refuse everything than write a
-    partial fix.
+    'rows' always reflects the current state whether or not anything needed
+    changing — a loan that's already correct comes back eligible=True with
+    'rows' showing before == after for every installment (empty diff), not
+    ineligible; 'applied' stays False in that case since there's nothing to
+    write or log. eligible=False / needs_review_reason set is reserved for
+    hard failures only: the loan or its schedule can't be found, or a
+    genuine reconciliation mismatch (the numbers don't add up) aborts the
+    whole transaction — better to refuse everything than write a partial fix.
     """
     from django.utils import timezone
     from common.models import FinancialAuditLog, log_financial_event
@@ -308,13 +340,6 @@ def repair_schedule(loan, *, apply: bool, user=None, reason: str = '') -> dict:
             db_transaction.savepoint_rollback(sid)
             return _ineligible(f'{exc.message} Refusing.')
 
-        step1_ran = step1_skipped_reason is None
-        step2_ran = retired_count > 0 or capped_count > 0
-        if not step1_ran and not step2_ran:
-            db_transaction.savepoint_rollback(sid)
-            reasons = ' '.join(r for r in (step1_skipped_reason, step2_skipped_reason) if r)
-            return _ineligible(reasons or "Nothing to repair — this loan's schedule already reconciles.")
-
         row_diffs = [
             {
                 'installment_number': r.installment_number,
@@ -324,6 +349,7 @@ def repair_schedule(loan, *, apply: bool, user=None, reason: str = '') -> dict:
             }
             for r in rows
         ]
+        anything_changed = any(rd['before'] != rd['after'] for rd in row_diffs)
 
         result_base = {
             'eligible': True, 'needs_review_reason': None,
@@ -334,7 +360,7 @@ def repair_schedule(loan, *, apply: bool, user=None, reason: str = '') -> dict:
             'retired_count': retired_count, 'capped_count': capped_count,
         }
 
-        if not apply:
+        if not anything_changed or not apply:
             db_transaction.savepoint_rollback(sid)
             return {**result_base, 'applied': False}
 
@@ -363,7 +389,8 @@ def repair_schedule(loan, *, apply: bool, user=None, reason: str = '') -> dict:
                 + (
                     f'backward-filled payments across the flat schedule ({flat_amount:,.2f}/installment) '
                     f'from outstanding_principal. '
-                    if step1_ran else f'{step1_skipped_reason} '
+                    if flat_amount is not None
+                    else (f'{step1_skipped_reason} ' if step1_skipped_reason else '')
                 )
                 + f'Retired {retired_count} stale row(s) ({capped_count} capped). Reason: {reason}'
             ),

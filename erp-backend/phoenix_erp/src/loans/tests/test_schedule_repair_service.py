@@ -158,20 +158,74 @@ class ScheduleRepairServiceTestCase(TestCase):
         self.assertEqual(log.acted_by, self.actor)
         self.assertIn("July/Aug payment-allocation bug backfill", log.description)
 
-    def test_reducing_balance_product_skips_backward_fill(self):
+    def test_healthy_flat_loan_with_separate_interest_is_left_untouched(self):
+        """
+        A flat loan that legitimately tracks principal_due and interest_due
+        separately (as RepaymentScheduleService.generate() actually produces)
+        and whose schedule already reconciles to outstanding_principal/
+        interest/fees must come back byte-for-byte unchanged — not have its
+        interest folded into principal just because it's eligible in
+        principle. This is what protects a loan that's already correct,
+        independent of who has access to trigger the repair.
+        """
+        loan = self._make_loan(
+            "LN-HEALTHY-001", self.flat_product, number_of_installments=1,
+            outstanding_principal=Decimal("5000.00"), outstanding_interest=Decimal("1000.00"),
+        )
+        row = LoanRepaymentSchedule.objects.create(
+            loan=loan, installment_number=1, due_date=timezone.localdate() - timedelta(days=7),
+            principal_due=Decimal("5000.00"), interest_due=Decimal("1000.00"), fees_due=Decimal("0.00"),
+            penalty_due=Decimal("0.00"), total_due=Decimal("6000.00"),
+            principal_paid=Decimal("0.00"), interest_paid=Decimal("0.00"), total_paid=Decimal("0.00"),
+            status="overdue", owner=self.owner, branch=self.branch, created_by=self.owner,
+        )
+
+        preview = repair_schedule(loan, apply=False, user=self.actor, reason="")
+        self.assertTrue(preview["eligible"])
+        self.assertIsNone(preview["step1_skipped_reason"])
+        self.assertIsNone(preview["flat_installment"])
+        self.assertEqual(preview["retired_count"], 0)
+        self.assertEqual(preview["capped_count"], 0)
+        self.assertEqual(preview["rows"][0]["before"], preview["rows"][0]["after"])
+
+        applied = repair_schedule(loan, apply=True, user=self.actor, reason="should be a genuine no-op")
+        self.assertFalse(applied["applied"], "nothing changed, so there is nothing to apply or log")
+
+        row.refresh_from_db()
+        self.assertEqual(row.principal_due, Decimal("5000.00"))
+        self.assertEqual(row.interest_due, Decimal("1000.00"), "interest must not be folded into principal")
+
+    def test_reducing_balance_loan_still_gets_stale_row_cleanup(self):
+        """
+        A genuinely broken reducing-balance loan can't get the flat-formula
+        backward-fill (step 1 correctly skips itself), but step 2's
+        calculation-method-agnostic stale-row retirement still applies —
+        the two steps stay independent even on a product step 1 refuses.
+        """
         loan = self._make_loan(
             "LN-RB-001", self.reducing_balance_product, number_of_installments=2,
-            outstanding_principal=Decimal("5000.00"), interest_rate=Decimal("5.00"),
+            outstanding_principal=Decimal("2000.00"), interest_rate=Decimal("5.00"),
         )
         today = timezone.localdate()
-        self._make_row(loan, 1, today - timedelta(days=7), principal_due=Decimal("2500.00"), status="overdue")
-        self._make_row(loan, 2, today, principal_due=Decimal("2500.00"), status="pending")
+        row1 = self._make_row(loan, 1, today - timedelta(days=14), principal_due=Decimal("4000.00"))
+        row2 = self._make_row(loan, 2, today - timedelta(days=7), principal_due=Decimal("1000.00"))
 
-        result = repair_schedule(loan, apply=False, user=self.actor, reason="")
-        # Nothing overstated in the schedule either (2500+2500 == outstanding_principal),
-        # so with step 1 skipped and step 2 a no-op, the whole thing is ineligible.
-        self.assertFalse(result["eligible"])
-        self.assertIn("reducing-balance", result["needs_review_reason"])
+        preview = repair_schedule(loan, apply=False, user=self.actor, reason="")
+        self.assertTrue(preview["eligible"])
+        self.assertIsNotNone(preview["step1_skipped_reason"])
+        self.assertIn("reducing-balance", preview["step1_skipped_reason"])
+        self.assertIsNone(preview["flat_installment"])
+        self.assertEqual(preview["retired_count"], 1)
+        self.assertEqual(preview["capped_count"], 1)
+
+        applied = repair_schedule(loan, apply=True, user=self.actor, reason="reducing-balance stale row cleanup")
+        self.assertTrue(applied["applied"])
+
+        row1.refresh_from_db(); row2.refresh_from_db()
+        self.assertEqual(row1.status, "overdue")
+        self.assertEqual(row1.principal_due, Decimal("2000.00"))
+        self.assertEqual(row2.status, "restructured")
+        self.assertEqual(row2.principal_due, Decimal("0.00"))
 
     # ── Step 2: retire stale rows, decoupled from step 1's precondition ────
 
