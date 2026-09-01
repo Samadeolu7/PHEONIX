@@ -11,7 +11,8 @@ from rest_framework.response import Response
 logger = logging.getLogger(__name__)
 
 from common.serializers import IsTenantUser
-from common.views import ScopedModelViewSet, is_elevated_user
+from common.views import ScopedModelViewSet
+from common.approval_permissions import can_user_approve
 
 from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
@@ -740,8 +741,10 @@ class LoanAccountViewSet(ScopedModelViewSet):
         loans (restore_flat_schedule_backward_v4 + retire_stale_legacy_
         schedule_rows) to any repayment_frequency.
 
-        Elevated users only ("All Branches" access) — this can rewrite a
-        loan's entire repayment schedule.
+        Requires approval authority (director) on loans/loan-accounts — same
+        tier as write-off and disbursement-correction approval, not the
+        broader "All Branches" elevated-scope check (a branch-scoped
+        director should still be able to repair a loan on their own branch).
 
         Request body:
           dry_run  (bool, optional, default true)  — preview only, nothing written
@@ -750,8 +753,8 @@ class LoanAccountViewSet(ScopedModelViewSet):
         Response is the same shape whether previewing or applying — see
         schedule_repair_service.repair_schedule's docstring.
         """
-        if not is_elevated_user(request.user):
-            raise PermissionDenied('Only users with all-branches access can repair a loan schedule.')
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            raise PermissionDenied('Only users with approval authority (directors) can repair a loan schedule.')
 
         loan = self.get_object()
         dry_run = bool(request.data.get('dry_run', True))

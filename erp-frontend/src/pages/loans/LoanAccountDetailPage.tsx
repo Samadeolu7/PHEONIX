@@ -1434,7 +1434,11 @@ export default function LoanAccountDetailPage() {
   const [showAddGuarantorModal, setShowAddGuarantorModal] = useState(false);
   const [showRepairScheduleModal, setShowRepairScheduleModal] = useState(false);
   const [reversalTarget, setReversalTarget] = useState<ReversalPaymentRef | null>(null);
-  const { isElevated } = usePermission();
+  const { hasPageAccess } = usePermission();
+  // Same tier as write-off / disbursement-correction approval — a branch-scoped
+  // director should be able to repair a loan on their own branch, so this checks
+  // approval authority on loans/loan-accounts, not the broader "All Branches" scope.
+  const canRepairSchedule = hasPageAccess('loans', 'loan-accounts', 'approve');
 
   // Client bank details inline edit
   const [bankEditMode, setBankEditMode] = useState(false);
@@ -1855,10 +1859,10 @@ export default function LoanAccountDetailPage() {
               ) : null
             )}
 
-            {isElevated && loan.repayment_schedule?.length > 0 && (
+            {canRepairSchedule && loan.repayment_schedule?.length > 0 && (
               <button
                 onClick={() => setShowRepairScheduleModal(true)}
-                title="Backward-fill payments and retire stale schedule rows (elevated users only)"
+                title="Backward-fill payments and retire stale schedule rows (director approval required)"
                 className="flex items-center gap-2 rounded-lg border border-gray-300 bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
               >
                 <Wrench size={14} />
