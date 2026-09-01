@@ -288,9 +288,12 @@ class ScheduleRepairServiceTestCase(TestCase):
         same as before the LN-919 fix.
         """
         # outstanding_principal (24000.00) is deliberately NOT equal to the
-        # schedule's own current remaining (23999.50, from the below-formula
+        # schedule's own current remaining (23998.00, from the below-formula
         # row2) — otherwise the aggregate-reconciles no-op shortcut would fire
         # before this test ever reaches the below-flat check it's testing.
+        # row2's shortfall (2.00) is deliberately bigger than ROUNDING_TOLERANCE
+        # (1.00) — a smaller deviation is now trusted as rounding noise
+        # regardless of chronology (see the LN-897 test below).
         loan = self._make_loan(
             "LN-BEHIND-001", self.flat_product, number_of_installments=3,
             outstanding_principal=Decimal("24000.00"), disbursed_amount=Decimal("30000.00"),
@@ -302,7 +305,7 @@ class ScheduleRepairServiceTestCase(TestCase):
             principal_paid=Decimal("12000.00"), status="paid",
         )
         self._make_row(
-            loan, 2, today - timedelta(weeks=2), principal_due=Decimal("11999.50"), status="overdue",
+            loan, 2, today - timedelta(weeks=2), principal_due=Decimal("11998.00"), status="overdue",
         )
         self._make_row(
             loan, 3, today - timedelta(weeks=1), principal_due=Decimal("12000.00"), status="overdue",
@@ -313,6 +316,42 @@ class ScheduleRepairServiceTestCase(TestCase):
         self.assertIsNotNone(result["step1_skipped_reason"])
         self.assertIn("below the formula", result["step1_skipped_reason"])
         self.assertIn("behind its own repayment calendar", result["step1_skipped_reason"])
+
+    def test_kobo_scale_deviation_proceeds_even_when_behind_schedule(self):
+        """
+        Regression test for a real production case (LN-897, caught
+        2026-09-01): a row 4 kobo under the formula (10,173.87 vs
+        10,173.91) was blocked because the loan also looked behind its own
+        repayment calendar — but a genuine rate/term mismatch shows up as a
+        deviation far larger than a few kobo. A deviation this small must
+        never require manual review, regardless of whether the loan is
+        genuinely behind (unlike test_below_flat_mismatch_still_blocks_
+        when_genuinely_behind_schedule's 2.00 deviation, which still does).
+        """
+        loan = self._make_loan(
+            "LN-897-LIKE", self.flat_product, number_of_installments=3,
+            outstanding_principal=Decimal("24000.00"), disbursed_amount=Decimal("30000.00"),
+            interest_rate=Decimal("20.00"),
+        )
+        today = timezone.localdate()
+        self._make_row(
+            loan, 1, today - timedelta(weeks=3), principal_due=Decimal("12000.00"),
+            principal_paid=Decimal("12000.00"), status="paid",
+        )
+        self._make_row(
+            loan, 2, today - timedelta(weeks=2), principal_due=Decimal("11999.96"), status="overdue",
+        )
+        self._make_row(
+            loan, 3, today - timedelta(weeks=1), principal_due=Decimal("12000.00"), status="overdue",
+        )
+
+        # Confirm this loan really is behind its own calendar (same shape as
+        # the blocking test above) — the point is that the kobo-scale
+        # deviation proceeds anyway, not that the loan isn't actually behind.
+        result = repair_schedule(loan, apply=False, user=self.actor, reason="")
+        self.assertTrue(result["eligible"])
+        self.assertIsNone(result["step1_skipped_reason"])
+        self.assertEqual(result["flat_installment"], "12000.00")
 
     def test_reducing_balance_loan_still_gets_stale_row_cleanup(self):
         """

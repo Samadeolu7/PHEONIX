@@ -66,6 +66,17 @@ from django.db import transaction as db_transaction
 
 TOLERANCE = Decimal('0.01')
 
+# A row this close to the formula (below it) is treated as rounding/
+# capped-row noise, full stop — never flagged as a below-flat mismatch at
+# all, regardless of whether the loan looks behind schedule. Caught live on
+# LN-919 (8 kobo short) and LN-897 (4 kobo short): a genuine rate/term
+# mismatch shows up as a deviation far larger than a few kobo, not this —
+# the plain TOLERANCE (0.01) threshold was flagging rounding-level noise as
+# "not explainable as an add-on" and routing it into manual review for no
+# reason. Deliberately a flat amount, not a percentage of flat_amount — the
+# rounding this covers is kobo-scale regardless of loan size.
+ROUNDING_TOLERANCE = Decimal('1.00')
+
 # (schedule field prefix, LoanAccount outstanding_* field name) — same
 # component list retire_stale_legacy_schedule_rows.py uses.
 _COMPONENTS = [
@@ -194,7 +205,7 @@ def _try_backward_fill(loan, rows, today):
     )
 
     intact = [r for r in rows if r.status != 'restructured' and r.total_due > 1]
-    below_flat = [r for r in intact if r.total_due < flat_amount - TOLERANCE]
+    below_flat = [r for r in intact if r.total_due < flat_amount - ROUNDING_TOLERANCE]
     if below_flat and _behind_schedule(loan, rows, flat_amount, today):
         example = below_flat[0]
         return (
