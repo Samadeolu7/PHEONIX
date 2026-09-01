@@ -195,6 +195,125 @@ class ScheduleRepairServiceTestCase(TestCase):
         self.assertEqual(row.principal_due, Decimal("5000.00"))
         self.assertEqual(row.interest_due, Decimal("1000.00"), "interest must not be folded into principal")
 
+    def test_shape_inconsistency_overrides_aggregate_reconciliation_shortcut(self):
+        """
+        Regression test for a real production case (LN-919, caught 2026-09-01):
+        an earlier retirement left 12 trailing rows zeroed/'restructured'
+        while two OLDER rows (due before all of them) were still genuinely
+        open, one of them (row11) 8 kobo under the formula amount. The
+        aggregate remaining across the whole schedule happens to exactly
+        equal outstanding_principal (2347.84 + 5086.88 == 7434.72), so a
+        pure aggregate-sum check would call this "already reconciles" and
+        report nothing to repair — which is exactly what happened live.
+
+        By the loan's own calendar (23 weekly installments from
+        disbursement, 20 already due today), the borrower has actually
+        repaid MORE than what's due-to-date (109,565.28 repaid vs
+        101,739.20 expected) — so the 8-kobo below-formula row is
+        corroborated as harmless rounding, not a genuine mismatch, and the
+        repair applies automatically rather than requiring a human
+        --force override. Confirms both fixes: the shape check (don't take
+        the no-op shortcut) and the chronological cross-check (don't
+        require manual override when the borrower isn't actually behind).
+        """
+        loan = self._make_loan(
+            "LN-919-LIKE", self.flat_product, number_of_installments=23,
+            repayment_frequency="weekly", outstanding_principal=Decimal("7434.72"),
+            disbursed_amount=Decimal("100000.00"), interest_rate=Decimal("17.00"),
+        )
+        today = timezone.localdate()
+        start = today - timedelta(weeks=19)  # row20 (12th "restructured" loop row) due == today
+        for i in range(9):
+            self._make_row(
+                loan, i + 1, start + timedelta(weeks=i), principal_due=Decimal("5086.96"),
+                principal_paid=Decimal("5086.96"), status="paid",
+            )
+        row10 = self._make_row(
+            loan, 10, start + timedelta(weeks=9), principal_due=Decimal("5086.96"),
+            principal_paid=Decimal("2739.12"), status="overdue",
+        )
+        row11 = self._make_row(
+            loan, 11, start + timedelta(weeks=10), principal_due=Decimal("5086.88"),
+            principal_paid=Decimal("0.00"), status="overdue",
+        )
+        trailing_rows = [
+            self._make_row(
+                loan, 12 + i, start + timedelta(weeks=11 + i), principal_due=Decimal("0.00"),
+                principal_paid=Decimal("0.00"), status="restructured",
+            )
+            for i in range(12)
+        ]
+
+        preview = repair_schedule(loan, apply=False, user=self.actor, reason="")
+        self.assertTrue(preview["eligible"])
+        self.assertIsNone(
+            preview["step1_skipped_reason"],
+            "not behind its own repayment calendar — the below-formula row must be trusted "
+            "automatically rather than blocked pending manual review",
+        )
+        self.assertEqual(preview["flat_installment"], "5086.96")
+
+        applied = repair_schedule(loan, apply=True, user=self.actor, reason="LN-919 chronological repair")
+        self.assertTrue(applied["applied"])
+
+        loan.refresh_from_db()
+        self.assertEqual(loan.days_in_arrears, 0, "chronologically current, not 71 days overdue")
+        self.assertEqual(loan.arrears_amount, Decimal("0.00"))
+
+        # trailing_rows[i] is installment (12+i); rows 10-21 (row10, row11, and
+        # installments 12-21 = trailing_rows[:10]) are fully absorbed and paid —
+        # only the last two installments (22, 23) carry the remaining balance.
+        for r in [row10, row11] + trailing_rows[:10]:
+            r.refresh_from_db()
+            self.assertEqual(r.status, "paid")
+            self.assertEqual(r.principal_paid, Decimal("5086.96"))
+
+        row22, row23 = trailing_rows[10], trailing_rows[11]
+        row22.refresh_from_db(); row23.refresh_from_db()
+        # Newest row (23) is filled first from the pool and absorbs a full
+        # installment (2347.76 pool remaining after it), leaving row22 to
+        # absorb the rest — so 23 ends up with the pool's leftover (0 paid),
+        # and 22 carries the partial payment (2739.20 of its 5086.96 due).
+        self.assertEqual(row22.principal_paid, Decimal("2739.20"))
+        self.assertEqual(row23.principal_paid, Decimal("0.00"))
+        remaining = (row22.principal_due - row22.principal_paid) + (row23.principal_due - row23.principal_paid)
+        self.assertEqual(remaining, Decimal("7434.72"))
+
+    def test_below_flat_mismatch_still_blocks_when_genuinely_behind_schedule(self):
+        """
+        The chronological bypass only trusts a below-formula row when the
+        borrower isn't actually behind their own repayment calendar — this
+        loan IS behind (only ~1/3 of what's due by today has been repaid),
+        so the below-flat guard must still hold and require manual review,
+        same as before the LN-919 fix.
+        """
+        # outstanding_principal (24000.00) is deliberately NOT equal to the
+        # schedule's own current remaining (23999.50, from the below-formula
+        # row2) — otherwise the aggregate-reconciles no-op shortcut would fire
+        # before this test ever reaches the below-flat check it's testing.
+        loan = self._make_loan(
+            "LN-BEHIND-001", self.flat_product, number_of_installments=3,
+            outstanding_principal=Decimal("24000.00"), disbursed_amount=Decimal("30000.00"),
+            interest_rate=Decimal("20.00"),
+        )
+        today = timezone.localdate()
+        self._make_row(
+            loan, 1, today - timedelta(weeks=3), principal_due=Decimal("12000.00"),
+            principal_paid=Decimal("12000.00"), status="paid",
+        )
+        self._make_row(
+            loan, 2, today - timedelta(weeks=2), principal_due=Decimal("11999.50"), status="overdue",
+        )
+        self._make_row(
+            loan, 3, today - timedelta(weeks=1), principal_due=Decimal("12000.00"), status="overdue",
+        )
+
+        result = repair_schedule(loan, apply=False, user=self.actor, reason="")
+        self.assertTrue(result["eligible"])
+        self.assertIsNotNone(result["step1_skipped_reason"])
+        self.assertIn("below the formula", result["step1_skipped_reason"])
+        self.assertIn("behind its own repayment calendar", result["step1_skipped_reason"])
+
     def test_reducing_balance_loan_still_gets_stale_row_cleanup(self):
         """
         A genuinely broken reducing-balance loan can't get the flat-formula

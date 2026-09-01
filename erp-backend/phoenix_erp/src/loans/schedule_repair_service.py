@@ -23,9 +23,13 @@ independently here — one step being unavailable never blocks the other.
 
 Deliberately NOT a refactor of those two commands — they're still mid-use
 for the ongoing book-wide legacy cleanup. This is a fresh implementation
-reusing the same proven math and tolerances, minus the --force bypass:
---force is a CLI-only, engineer-confirmed override and is never exposed to
-self-service callers — step 1 simply skips itself rather than guessing.
+reusing the same proven math and tolerances. The CLI's blind --force
+bypass (an engineer manually confirming a below-flat mismatch is a known
+capped-row artifact) is never exposed here — instead, see _behind_schedule()
+below: a below-flat row is only auto-trusted when the loan's own repayment
+calendar independently corroborates that the borrower isn't actually behind,
+which is a verified judgment call this code can make safely on its own,
+not a blind override.
 
 Only step 1 supports 'flat' interest_calculation_method loans (see
 flat_schedule() in schedule_service.py) — reducing-balance loans have a
@@ -41,6 +45,14 @@ folded into principal on every run, cosmetically restructuring a schedule
 that was already correct. Step 2 has the same shape (only fires when
 drift < -TOLERANCE). This is what actually protects loans that are already
 correct — not who has access to trigger the repair.
+
+An aggregate sum matching is not sufficient on its own, though — see
+_has_shape_inconsistency(). Caught live on LN-919: the aggregate reconciled
+exactly, but an older row was still genuinely open/unpaid while 12 later
+rows spanning real payment dates had already been zeroed under a fake
+'restructured' status. Step 1 also checks for that shape before taking the
+"already reconciles" shortcut, so a loan like that still gets evaluated
+properly instead of being reported as needing nothing.
 
 No GL entry is posted by either step — outstanding_principal/interest/fees/
 penalties themselves are never changed, only how they're attributed across
@@ -82,6 +94,58 @@ class _HardFailure(Exception):
         self.message = message
 
 
+def _has_shape_inconsistency(rows):
+    """
+    True if any open (non-'paid', non-'restructured') row's due_date is on
+    or before a 'restructured' row's due_date.
+
+    A genuine restructure always cancels PRIOR installments and creates new
+    ones going forward — it never leaves an older row dangling open behind
+    a later one that's already been retired. Caught live on LN-919: the
+    aggregate schedule remaining matched outstanding_principal exactly (an
+    older row still carried the whole real balance, unpaid), while 12
+    LATER rows spanning real payment dates from the GL ledger had already
+    been zeroed under a fake 'restructured' status — a pure aggregate-sum
+    reconciliation check can't see this, since the total still adds up.
+    Without this check the "already reconciles" shortcut below would have
+    wrongly reported a genuinely broken loan as needing nothing.
+    """
+    open_due_dates = [r.due_date for r in rows if r.status not in ('paid', 'restructured')]
+    if not open_due_dates:
+        return False
+    earliest_open = min(open_due_dates)
+    return any(r.status == 'restructured' and r.due_date >= earliest_open for r in rows)
+
+
+def _behind_schedule(loan, rows, flat_amount, today):
+    """
+    Cross-check "how many payments should this loan have made by now" — using
+    only the loan's own due dates and trusted totals, independent of the
+    schedule rows' current *_paid/status (which may themselves be exactly
+    what's corrupted) — against what's actually been repaid over the loan's
+    whole life. Returns True only if the borrower is genuinely behind.
+
+    This is what lets a below-formula row (see below_flat below) be trusted
+    as an explainable rounding/capped-row artifact rather than requiring a
+    human override: caught live on LN-919, where a single row sat 8 kobo
+    under the formula amount, and the below_flat guard alone couldn't tell
+    whether that meant a real rate/term mismatch or a harmless leftover from
+    an earlier correction. Reconstructing the loan's own calendar (20 of 23
+    installments due by today, ₦101,739.13 expected) against its total ever
+    repaid (₦109,565.28, derived from disbursed*(1+rate/100) minus
+    outstanding_*) showed the borrower had actually paid ahead, not behind —
+    proving the row-level shortfall was rounding noise, not a genuine
+    mismatch, and safe to fix automatically.
+    """
+    num_due_by_today = sum(1 for r in rows if r.due_date <= today)
+    expected_repaid_by_today = flat_amount * num_due_by_today
+    total_obligation = loan.disbursed_amount * (Decimal('1') + loan.interest_rate / Decimal('100'))
+    actual_repaid_ever = total_obligation - (
+        loan.outstanding_principal + loan.outstanding_interest + loan.outstanding_fees
+    )
+    return actual_repaid_ever < expected_repaid_by_today - TOLERANCE
+
+
 def _try_backward_fill(loan, rows, today):
     """
     Step 1. Returns (skipped_reason, flat_amount, penalty_shortfall) — mutates
@@ -104,7 +168,7 @@ def _try_backward_fill(loan, rows, today):
         for r in rows
     )
     trusted_pif = loan.outstanding_principal + loan.outstanding_interest + loan.outstanding_fees
-    if abs(before_pif_remaining - trusted_pif) <= TOLERANCE:
+    if abs(before_pif_remaining - trusted_pif) <= TOLERANCE and not _has_shape_inconsistency(rows):
         return None, None, Decimal('0.00')
 
     if len(rows) != loan.number_of_installments or loan.number_of_installments == 0:
@@ -131,15 +195,22 @@ def _try_backward_fill(loan, rows, today):
 
     intact = [r for r in rows if r.status != 'restructured' and r.total_due > 1]
     below_flat = [r for r in intact if r.total_due < flat_amount - TOLERANCE]
-    if below_flat:
+    if below_flat and _behind_schedule(loan, rows, flat_amount, today):
         example = below_flat[0]
         return (
             f'Backward-fill skipped: formula gives {flat_amount:,.2f} per installment but row '
             f'due={example.due_date} shows {example.total_due:,.2f} — below the formula, not '
-            'explainable as an add-on. An engineer can bypass this via the CLI '
-            'restore_flat_schedule_backward_v4 --force command if independently confirmed safe.',
+            'explainable as an add-on, AND the loan is genuinely behind its own repayment '
+            "calendar (total repaid falls short of what's due by today), so this can't be "
+            'trusted as a harmless rounding/capped-row artifact automatically. An engineer can '
+            'bypass this via the CLI restore_flat_schedule_backward_v4 --force command if '
+            'independently confirmed safe.',
             None, Decimal('0.00'),
         )
+    # A below-flat row where the borrower is NOT behind their own repayment
+    # calendar is trusted as explainable (rounding, or a leftover capped-row
+    # artifact from an earlier correction) and proceeds automatically —
+    # see _behind_schedule()'s docstring for why this is safe.
 
     for r in rows:
         r._new_due = flat_amount
