@@ -5,13 +5,13 @@ from django.db.models import Q
 from django.core.exceptions import ValidationError
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError, PermissionDenied
 from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
 
 from common.serializers import IsTenantUser
-from common.views import ScopedModelViewSet
+from common.views import ScopedModelViewSet, is_elevated_user
 
 from .models import (
     LoanProduct, LoanAccount, LoanRepaymentSchedule, LoanCollateral, LoanGuarantor,
@@ -729,6 +729,42 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(LoanAccountDetailSerializer(loan, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], url_path='repair-schedule')
+    def repair_schedule(self, request, pk=None):
+        """
+        Self-service loan schedule repair — backward-fills payments across
+        the flat schedule from outstanding_principal, then retires any
+        resulting stale rows. See loans/schedule_repair_service.py for the
+        full algorithm; generalizes the fix already applied to 'monthly'
+        loans (restore_flat_schedule_backward_v4 + retire_stale_legacy_
+        schedule_rows) to any repayment_frequency.
+
+        Elevated users only ("All Branches" access) — this can rewrite a
+        loan's entire repayment schedule.
+
+        Request body:
+          dry_run  (bool, optional, default true)  — preview only, nothing written
+          reason   (str, required when dry_run is false)
+
+        Response is the same shape whether previewing or applying — see
+        schedule_repair_service.repair_schedule's docstring.
+        """
+        if not is_elevated_user(request.user):
+            raise PermissionDenied('Only users with all-branches access can repair a loan schedule.')
+
+        loan = self.get_object()
+        dry_run = bool(request.data.get('dry_run', True))
+        reason = (request.data.get('reason') or '').strip()
+        if not dry_run and len(reason) < 15:
+            return Response(
+                {'detail': 'reason is required (at least 15 characters) to apply a schedule repair.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .schedule_repair_service import repair_schedule as run_repair
+        result = run_repair(loan, apply=not dry_run, user=request.user, reason=reason)
+        return Response(result)
 
     @action(detail=True, methods=['post'])
     def repay(self, request, pk=None):

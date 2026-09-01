@@ -34,6 +34,7 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  Wrench,
 } from 'lucide-react';
 import {
   loanService,
@@ -46,7 +47,10 @@ import {
   LoanRepaymentAllocation,
   RepayLoanPayload,
   ProposeRestructurePayload,
+  ScheduleRepairResult,
+  ScheduleRepairRowDiff,
 } from '../../services/loanService';
+import { usePermission } from '../../hooks/usePermissions';
 import { clientService, ClientOption, Client } from '../../services/clientService';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import { guarantorService, GuarantorProfile } from '../../services/guarantorService';
@@ -736,6 +740,196 @@ function CorrectionModal({ loan, onClose, onSuccess }: CorrectionModalProps) {
   );
 }
 
+// ── Repair Schedule Modal ────────────────────────────────────────────────
+// Self-service backward-fill + retire-stale repair (see loanService.
+// previewScheduleRepair / applyScheduleRepair, backend loans/
+// schedule_repair_service.py). Generalizes the fix already applied to
+// 'monthly' loans to any repayment_frequency. Always previews first —
+// nothing is written until the user reviews the diff and confirms with a
+// reason. Elevated-users-only (enforced server-side too).
+
+const REPAIR_MIN_REASON_LENGTH = 15;
+
+interface RepairScheduleModalProps {
+  loan: LoanAccount;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function rowChanged(row: ScheduleRepairRowDiff): boolean {
+  return JSON.stringify(row.before) !== JSON.stringify(row.after);
+}
+
+function RepairScheduleModal({ loan, onClose, onSuccess }: RepairScheduleModalProps) {
+  const [preview, setPreview] = useState<ScheduleRepairResult | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(true);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [result, setResult] = useState<ScheduleRepairResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingPreview(true);
+    loanService.previewScheduleRepair(loan.id)
+      .then((data) => { if (!cancelled) setPreview(data); })
+      .catch((e) => { if (!cancelled) setPreviewError(extractApiError(e, 'Could not preview the repair.')); })
+      .finally(() => { if (!cancelled) setLoadingPreview(false); });
+    return () => { cancelled = true; };
+  }, [loan.id]);
+
+  const changedRows = preview?.rows.filter(rowChanged) ?? [];
+  const reasonReady = reason.trim().length >= REPAIR_MIN_REASON_LENGTH;
+
+  async function handleConfirm() {
+    if (!reasonReady) return;
+    setSubmitting(true);
+    setApplyError(null);
+    try {
+      const applied = await loanService.applyScheduleRepair(loan.id, reason.trim());
+      setResult(applied);
+    } catch (e: unknown) {
+      setApplyError(extractApiError(e, 'Could not apply the repair.'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleDone() {
+    onSuccess();
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="relative w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl overflow-y-auto max-h-[90vh]">
+        <button type="button" aria-label="Close" onClick={onClose}
+          className="absolute right-4 top-4 rounded-full p-1 text-gray-400 hover:bg-gray-100">
+          <X size={18} />
+        </button>
+        <h2 className="mb-1 text-lg font-semibold text-gray-900">Repair Schedule</h2>
+        <p className="mb-4 text-sm text-gray-500">{loan.loan_number}</p>
+
+        {!result && (
+          <p className="mb-4 text-xs text-gray-500">
+            Backward-fills payments across the loan's flat schedule from its real outstanding
+            principal, then retires any resulting stale rows — the same repair already applied to
+            affected 'monthly' loans, generalized to any repayment frequency. Nothing is written
+            until you review the changes below and confirm.
+          </p>
+        )}
+
+        {loadingPreview && <p className="text-sm text-gray-500">Checking this loan's schedule…</p>}
+
+        {previewError && (
+          <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+            <AlertCircle size={14} />{previewError}
+          </div>
+        )}
+
+        {!loadingPreview && preview && !preview.eligible && (
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+            <span>{preview.needs_review_reason}</span>
+          </div>
+        )}
+
+        {!loadingPreview && preview && preview.eligible && !result && (
+          <>
+            {preview.step1_skipped_reason && (
+              <div className="mb-3 flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+                <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+                <span>{preview.step1_skipped_reason}</span>
+              </div>
+            )}
+            {changedRows.length === 0 ? (
+              <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+                Nothing to repair — this loan's schedule already reconciles.
+              </div>
+            ) : (
+              <>
+                <div className="mb-3 grid grid-cols-2 gap-2 text-xs text-gray-600 sm:grid-cols-4">
+                  {preview.flat_installment && (
+                    <div>Flat installment<br /><span className="font-medium text-gray-900">₦{fmt(preview.flat_installment)}</span></div>
+                  )}
+                  <div>Rows changed<br /><span className="font-medium text-gray-900">{changedRows.length}</span></div>
+                  <div>Rows retired<br /><span className="font-medium text-gray-900">{preview.retired_count}</span></div>
+                  {parseFloat(preview.penalty_shortfall) !== 0 && (
+                    <div>Penalty shortfall<br /><span className="font-medium text-gray-900">₦{fmt(preview.penalty_shortfall)}</span></div>
+                  )}
+                </div>
+                <ul className="mb-4 max-h-64 divide-y divide-gray-200 overflow-y-auto rounded-lg border border-gray-200 text-sm">
+                  {changedRows.map((row) => (
+                    <li key={row.installment_number} className="px-3 py-2">
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <span>#{row.installment_number} · due {fmtDate(row.due_date)}</span>
+                        <span>{row.before.status} → <span className="font-medium text-gray-900">{row.after.status}</span></span>
+                      </div>
+                      <div className="mt-1 grid grid-cols-2 gap-x-3 text-gray-700">
+                        <span>Due: ₦{fmt(row.before.total_due)} → ₦{fmt(row.after.total_due)}</span>
+                        <span>Paid: ₦{fmt(row.before.total_paid)} → ₦{fmt(row.after.total_paid)}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="mb-3">
+                  <label htmlFor="repair-reason" className="mb-1 block text-sm font-medium text-gray-700">
+                    Reason <span className="text-red-500">*</span>
+                  </label>
+                  <textarea id="repair-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
+                    placeholder={`Explain why this repair is needed (min ${REPAIR_MIN_REASON_LENGTH} characters)`}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" />
+                </div>
+
+                {applyError && (
+                  <div className="mb-3 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
+                    <AlertCircle size={14} />{applyError}
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {result && (
+          <div className="flex flex-col items-center py-6 text-center">
+            <CheckCircle size={40} className="mb-2 text-green-500" />
+            <p className="font-medium text-gray-900">Schedule repaired</p>
+            <p className="mt-1 text-sm text-gray-500">
+              {result.retired_count} row(s) retired, {result.capped_count} capped.
+            </p>
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-1">
+          {!result ? (
+            <>
+              <button type="button" onClick={onClose}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Cancel
+              </button>
+              {preview?.eligible && changedRows.length > 0 && (
+                <button type="button" onClick={handleConfirm} disabled={submitting || !reasonReady}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50">
+                  {submitting ? <Loader2 size={14} className="animate-spin" /> : <AlertCircle size={14} />}
+                  Apply Repair
+                </button>
+              )}
+            </>
+          ) : (
+            <button type="button" onClick={handleDone}
+              className="flex-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+              Done
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // A payment reference minimal enough to come from either the Payment History
 // row or a single LoanRepaymentAllocation entry (Repayment Schedule view).
 interface ReversalPaymentRef {
@@ -1238,7 +1432,9 @@ export default function LoanAccountDetailPage() {
   const [showRestructureModal, setShowRestructureModal] = useState(false);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [showAddGuarantorModal, setShowAddGuarantorModal] = useState(false);
+  const [showRepairScheduleModal, setShowRepairScheduleModal] = useState(false);
   const [reversalTarget, setReversalTarget] = useState<ReversalPaymentRef | null>(null);
+  const { isElevated } = usePermission();
 
   // Client bank details inline edit
   const [bankEditMode, setBankEditMode] = useState(false);
@@ -1450,6 +1646,18 @@ export default function LoanAccountDetailPage() {
         />
       )}
 
+      {showRepairScheduleModal && (
+        <RepairScheduleModal
+          loan={loan}
+          onClose={() => setShowRepairScheduleModal(false)}
+          onSuccess={() => {
+            setShowRepairScheduleModal(false);
+            refetchLoan();
+            toast.success('Schedule repaired.');
+          }}
+        />
+      )}
+
       {reversalTarget && (
         <RepaymentReversalModal
           loanId={loanId}
@@ -1645,6 +1853,17 @@ export default function LoanAccountDetailPage() {
                   Correct Disbursement
                 </button>
               ) : null
+            )}
+
+            {isElevated && loan.repayment_schedule?.length > 0 && (
+              <button
+                onClick={() => setShowRepairScheduleModal(true)}
+                title="Backward-fill payments and retire stale schedule rows (elevated users only)"
+                className="flex items-center gap-2 rounded-lg border border-gray-300 bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+              >
+                <Wrench size={14} />
+                Repair Schedule
+              </button>
             )}
           </div>
         </div>

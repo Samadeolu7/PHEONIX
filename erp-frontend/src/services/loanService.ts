@@ -309,6 +309,43 @@ export interface RepayLoanResult {
   overpayment_credited?: string;
 }
 
+export interface ScheduleRepairRowSnapshot {
+  total_due: string;
+  total_paid: string;
+  principal_due: string;
+  principal_paid: string;
+  interest_due: string;
+  interest_paid: string;
+  fees_due: string;
+  fees_paid: string;
+  penalty_due: string;
+  penalty_paid: string;
+  status: string;
+  payment_date: string | null;
+}
+
+export interface ScheduleRepairRowDiff {
+  installment_number: number;
+  due_date: string;
+  before: ScheduleRepairRowSnapshot;
+  after: ScheduleRepairRowSnapshot;
+}
+
+export interface ScheduleRepairResult {
+  eligible: boolean;
+  needs_review_reason: string | null;
+  /** Why the backward-fill step didn't run, if it didn't — the retire-stale step may have run anyway. */
+  step1_skipped_reason: string | null;
+  step2_skipped_reason: string | null;
+  loan_number: string;
+  flat_installment: string | null;
+  penalty_shortfall: string;
+  rows: ScheduleRepairRowDiff[];
+  retired_count: number;
+  capped_count: number;
+  applied: boolean;
+}
+
 export interface GroupCollectionRow {
   client_id: number;
   client_name: string;
@@ -533,6 +570,14 @@ export const loanService = {
     bank_account_id?: number;
   }): Promise<BulkRepayResult> {
     return api.post(`${BASE}/accounts/bulk-repay/`, data);
+  },
+
+  async previewScheduleRepair(loanId: number): Promise<ScheduleRepairResult> {
+    return api.post(`${BASE}/accounts/${loanId}/repair-schedule/`, { dry_run: true });
+  },
+
+  async applyScheduleRepair(loanId: number, reason: string): Promise<ScheduleRepairResult> {
+    return api.post(`${BASE}/accounts/${loanId}/repair-schedule/`, { dry_run: false, reason });
   },
 
   async requestDisbursement(loanId: number, notes?: string): Promise<LoanDisbursement> {
