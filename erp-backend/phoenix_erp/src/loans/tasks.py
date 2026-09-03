@@ -24,6 +24,7 @@ update_all_loan_arrears, apply_daily_loan_penalties
 """
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from celery import shared_task
@@ -132,6 +133,21 @@ def apply_daily_loan_penalties(self):
     with db_transaction.atomic():
         for loan in overdue_loans:
             try:
+                # Respect the product's configured grace period even in this
+                # legacy path — previously this task charged a penalty the
+                # moment a loan had any arrears at all, completely ignoring
+                # LoanProduct.grace_period_days (unlike update_loan_status_task,
+                # the actually-scheduled job, which correctly withholds the
+                # penalty until days late exceeds the configured grace period).
+                # See loans/tasks.py module docstring and models.py's
+                # calculate_late_penalty()/effective_days_late().
+                if loan.product:
+                    approx_due_date = today - timedelta(days=loan.days_in_arrears)
+                    days_late = loan.product.effective_days_late(approx_due_date, today)
+                    if days_late <= loan.product.grace_period_days:
+                        skipped += 1
+                        continue
+
                 # Only apply penalty if the product has a configured rate
                 penalty_rate = DAILY_PENALTY_RATE
                 try:
