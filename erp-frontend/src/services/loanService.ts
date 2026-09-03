@@ -346,6 +346,38 @@ export interface ScheduleRepairResult {
   applied: boolean;
 }
 
+export interface BulkScheduleRepairEntry {
+  loan_number: string;
+  applied: boolean;
+  flat_installment: string | null;
+  retired_count: number;
+  capped_count: number;
+  step1_skipped_reason: string | null;
+}
+
+export interface BulkScheduleRepairNeedsReview {
+  loan_number: string;
+  reason: string | null;
+}
+
+export interface BulkScheduleRepairSummary {
+  dry_run: boolean;
+  reason: string;
+  total_considered: number;
+  changed_count: number;
+  changed: BulkScheduleRepairEntry[];
+  no_op_count: number;
+  needs_review_count: number;
+  needs_review: BulkScheduleRepairNeedsReview[];
+  errors_count: number;
+  errors: { loan_number: string; detail: string }[];
+}
+
+export interface BulkScheduleRepairTaskStatus {
+  status: 'PENDING' | 'STARTED' | 'RETRY' | 'SUCCESS' | 'FAILURE';
+  result: BulkScheduleRepairSummary | null;
+}
+
 export interface GroupCollectionRow {
   client_id: number;
   client_name: string;
@@ -578,6 +610,14 @@ export const loanService = {
 
   async applyScheduleRepair(loanId: number, reason: string): Promise<ScheduleRepairResult> {
     return api.post(`${BASE}/accounts/${loanId}/repair-schedule/`, { dry_run: false, reason });
+  },
+
+  async queueBulkScheduleRepair(dryRun: boolean, reason?: string): Promise<{ task_id: string; dry_run: boolean }> {
+    return api.post(`${BASE}/accounts/bulk-repair-schedule/`, { dry_run: dryRun, reason: reason ?? '' });
+  },
+
+  async getBulkScheduleRepairStatus(taskId: string): Promise<BulkScheduleRepairTaskStatus> {
+    return api.get(`${BASE}/accounts/bulk-repair-schedule-status/`, { params: { task_id: taskId } });
   },
 
   async requestDisbursement(loanId: number, notes?: string): Promise<LoanDisbursement> {

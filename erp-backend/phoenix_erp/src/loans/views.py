@@ -769,6 +769,55 @@ class LoanAccountViewSet(ScopedModelViewSet):
         result = run_repair(loan, apply=not dry_run, user=request.user, reason=reason)
         return Response(result)
 
+    @action(detail=False, methods=['post'], url_path='bulk-repair-schedule')
+    def bulk_repair_schedule(self, request):
+        """
+        Queues loans.tasks.bulk_repair_loan_schedules to run repair_schedule()
+        (see the repair_schedule action above) across every active/disbursed/
+        defaulted loan in one background pass — same safety guarantees per
+        loan (no-op unless actually broken, hard reconciliation checks,
+        never partial), just without having to open each loan individually.
+
+        Same permission/dry-run/reason contract as the single-loan action.
+        Returns immediately with a task_id; poll bulk-repair-schedule-status/
+        with it to see progress/results.
+        """
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            raise PermissionDenied('Only users with approval authority (directors) can bulk-repair loan schedules.')
+
+        dry_run = bool(request.data.get('dry_run', True))
+        reason = (request.data.get('reason') or '').strip()
+        if not dry_run and len(reason) < 15:
+            return Response(
+                {'detail': 'reason is required (at least 15 characters) to apply a bulk schedule repair.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .tasks import bulk_repair_loan_schedules
+        async_result = bulk_repair_loan_schedules.delay(
+            user_id=request.user.id, dry_run=dry_run, reason=reason,
+        )
+        return Response({'task_id': async_result.id, 'dry_run': dry_run}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=False, methods=['get'], url_path='bulk-repair-schedule-status')
+    def bulk_repair_schedule_status(self, request):
+        """
+        GET .../bulk-repair-schedule-status/?task_id=<id> — poll a task
+        queued by bulk_repair_schedule above.
+
+        Response: {'status': 'PENDING'|'STARTED'|'SUCCESS'|'FAILURE', 'result': dict|null}.
+        'result' is the summary dict from bulk_repair_loan_schedules once
+        status is 'SUCCESS' (see that task's docstring for its shape).
+        """
+        task_id = request.query_params.get('task_id')
+        if not task_id:
+            return Response({'detail': 'task_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from celery.result import AsyncResult
+        async_result = AsyncResult(task_id)
+        result = async_result.result if async_result.successful() else None
+        return Response({'status': async_result.status, 'result': result})
+
     @action(detail=True, methods=['post'])
     def repay(self, request, pk=None):
         """

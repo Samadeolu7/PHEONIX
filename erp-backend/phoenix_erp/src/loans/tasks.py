@@ -21,6 +21,17 @@ update_all_loan_arrears, apply_daily_loan_penalties
     bug) that would fight with update_loan_status over outstanding_penalties if
     both ran. Kept only in case they're wanted again; do not schedule alongside
     update_loan_status_task.
+
+On-demand tasks
+----------------
+bulk_repair_loan_schedules
+    Triggered on-demand (not scheduled) from LoanAccountViewSet.bulk_repair_
+    schedule via .delay() — runs schedule_repair_service.repair_schedule()
+    across every in-scope loan in one task, same per-loan-resilient-loop-with-
+    summary-dict shape as update_all_loan_arrears above. Result is read back
+    via Celery's own result backend (django_celery_results, CELERY_RESULT_
+    BACKEND='django-db' — see LoanAccountViewSet.bulk_repair_schedule_status),
+    not a bespoke job-tracking model.
 """
 
 import logging
@@ -168,4 +179,91 @@ def apply_daily_loan_penalties(self):
         'errors': errors,
     }
     logger.info('Daily loan penalty task complete: %s', summary)
+    return summary
+
+
+# In-scope statuses for a bulk repair pass — same convention as loans/
+# management/commands/audit_loan_book_gl_gap.py and friends: a loan that's
+# already fully closed out (paid_off/written_off/rejected/cancelled) has no
+# "current" schedule shape worth fixing.
+BULK_REPAIR_STATUSES = ('active', 'disbursed', 'defaulted')
+
+# Cap on how many per-loan detail entries go into the task result — the
+# result is stored as JSON in django_celery_results; a full book's worth of
+# entries would bloat that table for no real benefit once the counts already
+# tell the story.
+_DETAIL_CAP = 200
+
+
+@shared_task(
+    bind=True,
+    name='loans.tasks.bulk_repair_loan_schedules',
+    max_retries=0,
+    acks_late=True,
+)
+def bulk_repair_loan_schedules(self, *, user_id, dry_run=True, reason=''):
+    """
+    Run schedule_repair_service.repair_schedule() across every loan in
+    BULK_REPAIR_STATUSES. One atomic operation per loan (repair_schedule
+    owns its own transaction) so a failure or hard-refusal on one loan never
+    blocks the rest — same resilience shape as update_all_loan_arrears.
+
+    dry_run defaults True; the actual permission/reason-length checks happen
+    at the trigger point (LoanAccountViewSet.bulk_repair_schedule), not here.
+    """
+    from django.contrib.auth import get_user_model
+    from loans.models import LoanAccount
+    from loans.schedule_repair_service import repair_schedule
+
+    User = get_user_model()
+    user = User.objects.filter(pk=user_id).first()
+
+    cohort = LoanAccount.all_objects.filter(
+        status__in=BULK_REPAIR_STATUSES, is_deleted=False,
+    ).order_by('loan_number')
+
+    changed_loans, no_op, needs_review, errors = [], [], [], []
+
+    for loan in cohort.iterator():
+        try:
+            result = repair_schedule(loan, apply=not dry_run, user=user, reason=reason)
+        except Exception as exc:  # noqa: BLE001
+            errors.append({'loan_number': loan.loan_number, 'detail': str(exc)})
+            logger.exception('Bulk schedule repair failed for loan %s: %s', loan.loan_number, exc)
+            continue
+
+        if not result['eligible']:
+            needs_review.append({
+                'loan_number': loan.loan_number, 'reason': result['needs_review_reason'],
+            })
+            continue
+
+        row_changed = any(rd['before'] != rd['after'] for rd in result['rows'])
+        if not row_changed:
+            no_op.append({'loan_number': loan.loan_number})
+            continue
+
+        entry = {
+            'loan_number': loan.loan_number, 'applied': result['applied'],
+            'flat_installment': result['flat_installment'],
+            'retired_count': result['retired_count'], 'capped_count': result['capped_count'],
+            'step1_skipped_reason': result['step1_skipped_reason'],
+        }
+        changed_loans.append(entry)
+
+    summary = {
+        'dry_run': dry_run,
+        'reason': reason,
+        'total_considered': cohort.count(),
+        'changed_count': len(changed_loans), 'changed': changed_loans[:_DETAIL_CAP],
+        'no_op_count': len(no_op),
+        'needs_review_count': len(needs_review), 'needs_review': needs_review[:_DETAIL_CAP],
+        'errors_count': len(errors), 'errors': errors[:_DETAIL_CAP],
+    }
+    logger.info(
+        'Bulk schedule repair complete (dry_run=%s): considered=%s changed=%s no_op=%s '
+        'needs_review=%s errors=%s',
+        dry_run, summary['total_considered'], summary['changed_count'], summary['no_op_count'],
+        summary['needs_review_count'], summary['errors_count'],
+    )
     return summary
