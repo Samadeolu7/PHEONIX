@@ -305,11 +305,15 @@ class CashReconciliationViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        
+
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
+
         cashier_id = self.request.query_params.get('cashier_account')
         if cashier_id:
             queryset = queryset.filter(cashier_account_id=cashier_id)
-        
+
         # Support both 'date' and date range filters
         date_str = self.request.query_params.get('date')
         if date_str:
@@ -392,15 +396,19 @@ class CashTransferViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        
+
+        branch = resolve_effective_branch(self.request)
+        if branch:
+            queryset = queryset.filter(branch=branch)
+
         cashier_id = self.request.query_params.get('cashier_account')
         if cashier_id:
             queryset = queryset.filter(cashier_account_id=cashier_id)
-        
+
         status_filter = self.request.query_params.get('status')
         if status_filter:
             queryset = queryset.filter(status=status_filter)
-        
+
         date_str = self.request.query_params.get('date')
         if date_str:
             date = timezone.datetime.strptime(date_str, '%Y-%m-%d').date()
