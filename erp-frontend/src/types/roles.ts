@@ -25,6 +25,12 @@ export const AVAILABLE_ROLES: RoleOption[] = [
     rank: 4,
   },
   {
+    value: 'Branch Manager',
+    label: 'Branch Manager',
+    description: 'Full branch scope — microfinance-tenant equivalent of Principal',
+    rank: 4,
+  },
+  {
     value: 'Administrator',
     label: 'Administrator',
     description: 'Full navigation access — cannot approve or delete records',
