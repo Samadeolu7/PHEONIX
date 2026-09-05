@@ -1198,23 +1198,27 @@ class PayrollViewSet(ScopedModelViewSet):
         # Get tenant from user
         user = self.request.user
         tenant = getattr(user, 'tenant', user)
-        
+        # Honor the topbar branch-switcher's X-Branch-ID header for elevated
+        # users — without this, a run created while switched to Branch 3
+        # silently gets stamped with the user's own home branch instead.
+        branch = resolve_effective_branch(self.request) or user.branch
+
         # Generate unique reference_number
         reference_number = ReferenceService.generate_reference(
             module='hr',
             model_name='payroll',
             tenant=tenant,
-            branch=user.branch
+            branch=branch
         )
-        
+
         # Save the payroll
         payroll = serializer.save(
             reference_number=reference_number,
             owner=user,
-            branch=user.branch,
+            branch=branch,
             tenant=tenant
         )
-        
+
         # CRITICAL: Register the reference number in tracking table
         # Without this, the next payroll will get the same number!
         ReferenceService.register_reference(
@@ -1223,7 +1227,7 @@ class PayrollViewSet(ScopedModelViewSet):
             model_name='payroll',
             object_id=payroll.id,
             tenant=tenant,
-            branch=user.branch,
+            branch=branch,
             created_by=user,
             status=payroll.status,
             amount=payroll.total_net_pay if payroll.total_net_pay else Decimal('0'),
