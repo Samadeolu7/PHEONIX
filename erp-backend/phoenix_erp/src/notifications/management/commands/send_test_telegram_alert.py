@@ -45,12 +45,14 @@ class Command(BaseCommand):
 
         if notification is None:
             self.stderr.write(self.style.ERROR(
-                "Alert was not queued — check that TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID are set "
-                "and migration 0005_seed_telegram_channel has run. See logs for details."
+                "Alert was not queued — check that migration 0005_seed_telegram_channel "
+                "has run (creates the 'telegram' NotificationChannel row). See logs for details."
             ))
             return
 
         self.stdout.write(self.style.SUCCESS(
-            f"Test alert queued as Notification #{notification.pk}. "
-            "Check the group chat within a few seconds (requires a running Celery worker)."
+            f"Test alert queued as Notification #{notification.pk}. TELEGRAM_BOT_TOKEN/"
+            "TELEGRAM_CHAT_ID are resolved by the celery_worker container at send time, "
+            "not here — check the group chat within a few seconds, or inspect this "
+            "Notification's status/error_message (via admin or shell) if nothing arrives."
         ))

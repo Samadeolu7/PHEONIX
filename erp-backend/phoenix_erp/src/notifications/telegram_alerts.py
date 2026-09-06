@@ -34,15 +34,19 @@ def notify_directors(event_code: str, subject: str, message: str, *, owner, bran
             )
             return None
 
-        from django.conf import settings
-        chat_id = channel.provider_config.get('chat_id') or settings.TELEGRAM_CHAT_ID
-        if not chat_id:
-            logger.warning(
-                "No Telegram chat_id configured (TELEGRAM_CHAT_ID or channel.provider_config) "
-                "— skipping alert '%s'.",
-                event_code,
-            )
-            return None
+        # Deliberately NOT resolving/requiring TELEGRAM_CHAT_ID here: this
+        # function runs wherever the approval/disbursement call site runs
+        # (the web/backend process), but TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID
+        # are only set on the celery_worker container (see docker-compose.yml)
+        # since that's the only process that actually calls the Telegram API
+        # (TelegramProvider.send(), via send_notification_task). Resolution
+        # happens there instead — recipient_contact is left to
+        # channel.provider_config['chat_id'] if set, otherwise blank, and
+        # TelegramProvider.send() falls back to settings.TELEGRAM_CHAT_ID at
+        # send time. A genuinely missing config surfaces as a failed
+        # Notification (visible via admin/audit trail) instead of silently
+        # never being created.
+        chat_id = channel.provider_config.get('chat_id', '')
 
         content_type = None
         object_id = ''
