@@ -449,7 +449,12 @@ class TelegramProvider(NotificationProvider):
                 'retryable': False
             }
 
-        text = f"*{subject}*\n\n{message}" if subject else message
+        # Plain text, no parse_mode: subject/message are built from business
+        # data (loan numbers, account names, voucher purposes, client names)
+        # that can freely contain *, _, `, [ — any of which breaks Telegram's
+        # Markdown entity parser (e.g. a stray "_" in "chat_id" is enough to
+        # 400 the whole message with "can't find end of the entity").
+        text = f"{subject}\n\n{message}" if subject else message
 
         try:
             response = requests.post(
@@ -457,7 +462,6 @@ class TelegramProvider(NotificationProvider):
                 json={
                     'chat_id': chat_id,
                     'text': text,
-                    'parse_mode': 'Markdown',
                 },
                 timeout=15
             )
@@ -473,7 +477,10 @@ class TelegramProvider(NotificationProvider):
                 return {
                     'success': False,
                     'error': result.get('description', 'Unknown Telegram error'),
-                    'retryable': True
+                    # A 400 (bad chat_id, bot not in group, malformed request) will
+                    # fail identically on every retry — only retry on transient
+                    # errors (429 rate limit, 5xx).
+                    'retryable': response.status_code != 400,
                 }
 
         except Exception as e:
