@@ -343,15 +343,16 @@ class NotificationSender:
         """Load and initialize providers"""
         from .providers import (
             EmailProvider, SMSProvider, WhatsAppProvider,
-            PushProvider, InAppProvider
+            PushProvider, InAppProvider, TelegramProvider
         )
-        
+
         self.providers = {
             'email': EmailProvider(),
             'sms': SMSProvider(),
             'whatsapp': WhatsAppProvider(),
             'push': PushProvider(),
             'in_app': InAppProvider(),
+            'telegram': TelegramProvider(),
         }
     
     def send(self, notification: Notification) -> bool:

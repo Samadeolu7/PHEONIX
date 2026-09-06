@@ -420,6 +420,80 @@ class WhatsAppProvider(NotificationProvider):
         }
 
 
+class TelegramProvider(NotificationProvider):
+    """Telegram Bot API provider — sends to a fixed chat/group via sendMessage.
+
+    `recipient` here is the Telegram chat_id (a group chat for a broadcast
+    alert, not a per-user identifier). bot_token/chat_id are read from
+    channel_config first (so an admin can rotate them without a redeploy,
+    matching how SMSProvider._send_termii reads its api_key), falling back
+    to the TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID settings.
+    """
+
+    def send(
+        self,
+        recipient: str,
+        subject: str,
+        message: str,
+        html_message: str = '',
+        channel_config: dict = None
+    ) -> Dict:
+        config = channel_config or {}
+        bot_token = config.get('bot_token') or settings.TELEGRAM_BOT_TOKEN
+        chat_id = recipient or config.get('chat_id') or settings.TELEGRAM_CHAT_ID
+
+        if not bot_token or not chat_id:
+            return {
+                'success': False,
+                'error': 'Telegram bot_token/chat_id not configured',
+                'retryable': False
+            }
+
+        text = f"*{subject}*\n\n{message}" if subject else message
+
+        try:
+            response = requests.post(
+                f'https://api.telegram.org/bot{bot_token}/sendMessage',
+                json={
+                    'chat_id': chat_id,
+                    'text': text,
+                    'parse_mode': 'Markdown',
+                },
+                timeout=15
+            )
+            result = response.json()
+
+            if response.status_code == 200 and result.get('ok'):
+                return {
+                    'success': True,
+                    'message_id': str(result['result']['message_id']),
+                    'delivered': True  # A successful sendMessage call IS delivery here
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': result.get('description', 'Unknown Telegram error'),
+                    'retryable': True
+                }
+
+        except Exception as e:
+            logger.exception(f"Telegram send failed to chat {chat_id}")
+            return {
+                'success': False,
+                'error': str(e),
+                'retryable': True
+            }
+
+    def check_status(self, message_id: str, channel_config: dict = None) -> Dict:
+        """Telegram's Bot API has no delivery-status lookup for sendMessage —
+        a successful send is already treated as delivered above."""
+        return {
+            'delivered': True,
+            'failed': False,
+            'error': 'Status checking not supported for Telegram'
+        }
+
+
 class PushProvider(NotificationProvider):
     """Push notification provider (Firebase, OneSignal, etc.)"""
     

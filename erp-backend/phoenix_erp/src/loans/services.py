@@ -4,6 +4,7 @@ Business logic for product-driven loan fee collection and savings requirements.
 """
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from django.db import transaction as db_transaction
 from django.utils import timezone
@@ -11,6 +12,8 @@ from django.core.exceptions import ValidationError
 from typing import Optional
 
 from .models import LoanAccount, LoanProductFee, LoanFeeApplication, LoanProductSavingsRequirement
+
+logger = logging.getLogger(__name__)
 
 
 def check_savings_requirement(client, loan_product, requested_amount: Decimal) -> None:
@@ -403,6 +406,22 @@ class DisbursementService:
             disbursed_by_user=disbursed_by_user,
             disbursement_account=gl_account,
         )
+
+        try:
+            from notifications.telegram_alerts import notify_directors
+            loan = disbursement.loan
+            notify_directors(
+                'loan_disbursed',
+                f'💸 Loan Disbursed — {loan.loan_number}',
+                (
+                    f"₦{loan.disbursed_amount:,.2f} disbursed to {loan.client} from "
+                    f"{bank_account} by {disbursed_by_user.get_full_name() or disbursed_by_user.username}."
+                ),
+                owner=loan.owner, branch=loan.branch, related_object=loan,
+            )
+        except Exception:
+            logger.exception("Failed to send loan-disbursed Telegram alert for disbursement %s", disbursement.pk)
+
         return disbursement
 
 

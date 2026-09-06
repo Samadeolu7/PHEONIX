@@ -4,6 +4,7 @@ Bank Management System
 Manages bank accounts, cashier accounts, and cash transfers with approval workflows
 Integrates with general ledger for proper accounting
 """
+import logging
 import uuid
 
 from django.db import models, transaction as db_transaction
@@ -13,6 +14,8 @@ from django.conf import settings
 from decimal import Decimal
 
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
+
+logger = logging.getLogger(__name__)
 from common.managers import OwnerBranchManager
 from accounts.models import Account
 
@@ -828,6 +831,22 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             # Require second approval
             self.status = 'approved'  # Waiting for second approval
             self.save(update_fields=['status', 'approved_by', 'approved_at', 'approval_notes'])
+
+            try:
+                from notifications.telegram_alerts import notify_directors
+                notify_directors(
+                    'bank_transfer_needs_second_approval',
+                    f'🔺 Transfer Needs Director Second Approval — {self.transfer_number}',
+                    (
+                        f"₦{self.amount:,.2f} transfer to {self.destination_bank_account} exceeds the "
+                        f"₦{self.destination_bank_account.dual_approval_threshold:,.2f} dual-approval threshold. "
+                        f"First approved by {approved_by.get_full_name() or approved_by.username} — "
+                        "a second, different approver (director) is needed."
+                    ),
+                    owner=self.owner, branch=self.branch, related_object=self,
+                )
+            except Exception:
+                logger.exception("Failed to send dual-approval Telegram alert for transfer %s", self.transfer_number)
         else:
             # Single approval sufficient - complete the transfer
             self.status = 'approved'
@@ -972,6 +991,25 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             self.destination_cashier_account.save(update_fields=['current_balance'])
         else:
             self.destination_bank_account.save()  # Triggers balance sync
+
+        # Bank-to-bank transfers always required director/admin approval to
+        # reach this point (see check_transfer_approval_permission in
+        # banks/services.py) — alert the group that a director-approved
+        # transfer has moved.
+        if self.source_type == 'bank' and self.destination_type == 'bank':
+            try:
+                from notifications.telegram_alerts import notify_directors
+                notify_directors(
+                    'bank_transfer_completed',
+                    f'🏦 Bank Transfer Completed — {self.transfer_number}',
+                    (
+                        f"₦{self.amount:,.2f} moved from {self.source_bank_account} to "
+                        f"{self.destination_bank_account}, completed by {user.get_full_name() or user.username}."
+                    ),
+                    owner=self.owner, branch=self.branch, related_object=self,
+                )
+            except Exception:
+                logger.exception("Failed to send bank-transfer-completed Telegram alert for transfer %s", self.transfer_number)
 
 
 class BankPayment(TimeStampedModel, BranchScopedModel, SoftDeleteModel):

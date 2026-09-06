@@ -602,8 +602,22 @@ class LoanAccountViewSet(ScopedModelViewSet):
             if effective.approval_limit is not None:
                 from decimal import Decimal
                 limit = Decimal(str(effective.approval_limit))
-                amount = getattr(loan, 'principal_amount', None) or getattr(loan, 'amount', None) or 0
+                amount = loan.requested_amount or 0
                 if Decimal(str(amount)) > limit:
+                    try:
+                        from notifications.telegram_alerts import notify_directors
+                        notify_directors(
+                            'loan_director_approval_needed',
+                            f'🔺 Loan Needs Director Approval — {loan.loan_number}',
+                            (
+                                f"{request.user.get_full_name() or request.user.username} tried to approve "
+                                f"₦{amount:,.2f} for {loan.client} but their approval limit is ₦{limit:,.2f}. "
+                                "A director needs to approve this loan."
+                            ),
+                            owner=loan.owner, branch=loan.branch, related_object=loan,
+                        )
+                    except Exception:
+                        logger.exception("Failed to send director-escalation Telegram alert for loan %s", loan.loan_number)
                     return Response(
                         {
                             'detail': (

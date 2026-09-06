@@ -9,6 +9,7 @@ Use Cases:
 - Retail: Store cashiers collect sales
 - Events: Ticket collectors at venues
 """
+import logging
 from django.db import models, transaction as db_transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -18,6 +19,8 @@ from decimal import Decimal
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
 from accounts.models import Account
+
+logger = logging.getLogger(__name__)
 from clients.models import Client
 
 
@@ -2159,7 +2162,21 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             'status', 'actual_amount_disbursed', 'disbursed_by', 'disbursed_at',
             'journal_entry',
         ])
-    
+
+        try:
+            from notifications.telegram_alerts import notify_directors
+            notify_directors(
+                'petty_cash_disbursed',
+                f'💵 Petty Cash Disbursed — {self.voucher_number}',
+                (
+                    f"₦{actual_amount:,.2f} disbursed for '{self.purpose}' from fund "
+                    f"'{self.fund}' by {user.get_full_name() or user.username}."
+                ),
+                owner=self.owner, branch=self.branch, related_object=self,
+            )
+        except Exception:
+            logger.exception("Failed to send petty-cash-disbursed Telegram alert for voucher %s", self.voucher_number)
+
     def category_breakdown(self, total=None):
         """
         {category_name: Decimal amount} for this voucher, keyed off the

@@ -194,6 +194,11 @@ services:
       # not the gunicorn/backend process.
       - BANK_RECON_SERVICE_URL=${BANK_RECON_SERVICE_URL}
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      # Telegram bot alerts — TelegramProvider.send() runs inside this
+      # worker process (notifications/tasks.py send_notification_task), not
+      # the gunicorn/backend process.
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
     depends_on:
       postgres:
         condition: service_healthy

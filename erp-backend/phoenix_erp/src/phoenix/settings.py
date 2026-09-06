@@ -741,6 +741,14 @@ SERVER_EMAIL = os.environ.get('SERVER_EMAIL', DEFAULT_FROM_EMAIL)
 EMAIL_TIMEOUT = 10  # Seconds
 
 # ==================================================
+# TELEGRAM BOT NOTIFICATIONS
+# ==================================================
+# Bot token from @BotFather; chat_id is the directors/BM group's chat id
+# (add the bot to the group, then call getUpdates to read it off).
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
+
+# ==================================================
 # LOGGING CONFIGURATION
 # ==================================================
 
