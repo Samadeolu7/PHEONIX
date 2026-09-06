@@ -130,6 +130,7 @@ const DashboardCreatePage = lazy(() => import('./pages/DashboardCreatePage'));
 const RefreshTokenTest = lazy(() => import('./components/debug/RefreshTokenTest'));
 const RoleSidebarConfigPage = lazy(() => import('./pages/settings/RoleSidebarConfigPage'));
 const ReportsListPage = lazy(() => import('./pages/ReportsListPage'));
+const UserManualPage = lazy(() => import('./pages/UserManualPage'));
 
 // Form/Workflow pages
 const AdminFormsPage = lazy(() => import('./pages/admin/AdminFormsPage'));
@@ -709,6 +710,16 @@ function App() {
                                   element={
                                     <ProtectedRoute>
                                       <DiscussionsWorkspacePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* User Manual - available to any signed-in user, no specific permission required */}
+                                <Route
+                                  path="/manual"
+                                  element={
+                                    <ProtectedRoute>
+                                      <UserManualPage />
                                     </ProtectedRoute>
                                   }
                                 />

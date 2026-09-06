@@ -4,6 +4,7 @@ import { GitBranch } from 'lucide-react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { RoleBasedNavigation } from './RoleBasedNavigation';
+import Footer from './Footer';
 import { useAuth } from '../../contexts/AuthContext';
 import RoleSidebarPanel from '../dashboard/RoleSidebarPanel';
 import { ThreadProvider } from '../../contexts/ThreadContext';
@@ -63,7 +64,7 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
 
   return (
     <ThreadProvider>
-      <div className="min-h-screen bg-gray-50">
+      <div className="flex min-h-screen flex-col bg-gray-50">
         {/* Navigation */}
         <RoleBasedNavigation
           isMobileMenuOpen={isMobileMenuOpen}
@@ -90,10 +91,12 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
             Key on activeBranch so every page remounts (re-fetches) on branch switch. */}
         <main
           key={activeBranch?.id ?? 'all'}
-          className={`${isDirectorPlus && !activeBranch ? 'pt-24' : 'pt-16'}`}
+          className={`flex-1 ${isDirectorPlus && !activeBranch ? 'pt-24' : 'pt-16'}`}
         >
           {children || <Outlet />}
         </main>
+
+        <Footer />
 
         {/* Mobile menu overlay */}
         {isMobileMenuOpen && (

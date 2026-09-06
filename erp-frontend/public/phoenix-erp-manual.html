@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phoenix ERP Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f3f5f3; --surface:#ffffff; --surface-2:#eaeee9; --border:#dbe3dc;
+  --ink:#17231d; --ink-soft:#4d5b51; --ink-faint:#7c887e;
+  --accent:#1f6f5c; --accent-strong:#123f33; --accent-soft:#e2efe9;
+  --debit:#a5501f; --debit-soft:#f6e6da; --credit:#1f6f5c; --credit-soft:#e2efe9;
+  --warn:#8a5d10; --warn-soft:#f6ecd6;
+  --code-bg:#eef1ec; --shadow:0 1px 2px rgba(23,35,29,.07),0 10px 28px rgba(23,35,29,.06);
+  --serif:'Lora',Georgia,'Times New Roman',serif;
+  --sans:'IBM Plex Sans',-apple-system,Segoe UI,Helvetica,Arial,sans-serif;
+  --mono:'IBM Plex Mono',Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1512; --surface:#161e1a; --surface-2:#1b2420; --border:#28332c;
+    --ink:#e7ece8; --ink-soft:#aab6ae; --ink-faint:#7c8b81;
+    --accent:#57c1a4; --accent-strong:#8adcc4; --accent-soft:#173229;
+    --debit:#e2a06c; --debit-soft:#33261a; --credit:#57c1a4; --credit-soft:#173229;
+    --warn:#dab567; --warn-soft:#332a17;
+    --code-bg:#1b2420; --shadow:0 1px 2px rgba(0,0,0,.5),0 10px 28px rgba(0,0,0,.4);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1512; --surface:#161e1a; --surface-2:#1b2420; --border:#28332c;
+  --ink:#e7ece8; --ink-soft:#aab6ae; --ink-faint:#7c8b81;
+  --accent:#57c1a4; --accent-strong:#8adcc4; --accent-soft:#173229;
+  --debit:#e2a06c; --debit-soft:#33261a; --credit:#57c1a4; --credit-soft:#173229;
+  --warn:#dab567; --warn-soft:#332a17;
+  --code-bg:#1b2420; --shadow:0 1px 2px rgba(0,0,0,.5),0 10px 28px rgba(0,0,0,.4);
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased;}
+h1,h2,h3,h4{font-family:var(--serif);font-weight:600;color:var(--ink);text-wrap:balance;line-height:1.25;}
+a{color:var(--accent-strong);}
+:root[data-theme="dark"] a, :root:not([data-theme="light"]) a{color:var(--accent-strong);}
+code, .mono{font-family:var(--mono);}
+.app{display:flex;min-height:100vh;}
+
+/* Sidebar */
+.sidebar{width:290px;flex:none;border-right:1px solid var(--border);background:var(--surface);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;padding:22px 18px 18px;}
+.brand{display:flex;align-items:baseline;gap:8px;padding:2px 4px 4px;}
+.brand .mark{font-family:var(--serif);font-weight:700;font-size:1.28rem;color:var(--accent-strong);}
+.brand .sub{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);}
+.tagline{font-size:.82rem;color:var(--ink-soft);padding:2px 4px 18px;border-bottom:1px solid var(--border);margin-bottom:14px;}
+
+.searchwrap{position:relative;margin-bottom:14px;}
+#navsearch{width:100%;padding:9px 12px 9px 32px;border-radius:8px;border:1px solid var(--border);
+  background:var(--surface-2);color:var(--ink);font:inherit;font-size:.85rem;}
+#navsearch:focus{outline:2px solid var(--accent);outline-offset:1px;}
+.searchwrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:.55;}
+
+.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:18px;}
+.toggle-row .label{font-size:.78rem;line-height:1.3;color:var(--ink);}
+.toggle-row .label small{display:block;color:var(--ink-faint);font-size:.72rem;margin-top:1px;}
+.switch{position:relative;width:38px;height:22px;flex:none;}
+.switch input{opacity:0;width:0;height:0;}
+.slider{position:absolute;inset:0;background:var(--border);border-radius:999px;cursor:pointer;transition:.15s;}
+.slider::before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;background:var(--surface);border-radius:50%;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.3);}
+.switch input:checked + .slider{background:var(--accent);}
+.switch input:checked + .slider::before{transform:translateX(16px);}
+.switch input:focus-visible + .slider{outline:2px solid var(--accent);outline-offset:2px;}
+
+nav.toc{list-style:none;margin:0;padding:0;flex:1;}
+nav.toc li{margin:0 0 2px;}
+nav.toc a{display:flex;gap:10px;align-items:baseline;text-decoration:none;color:var(--ink-soft);
+  padding:8px 10px;border-radius:8px;font-size:.86rem;border-left:2px solid transparent;}
+nav.toc a:hover{background:var(--surface-2);color:var(--ink);}
+nav.toc a.active{background:var(--accent-soft);color:var(--accent-strong);font-weight:600;border-left-color:var(--accent);}
+nav.toc .num{font-family:var(--mono);font-size:.72rem;color:var(--ink-faint);flex:none;width:1.4em;}
+nav.toc a.active .num{color:var(--accent-strong);}
+.navgroup-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-faint);margin:14px 6px 6px;}
+.hidden-item{display:none !important;}
+
+/* Main */
+.main{flex:1;min-width:0;display:flex;justify-content:center;}
+.col{max-width:760px;width:100%;padding:52px 40px 120px;}
+.eyebrow{font-size:.74rem;text-transform:uppercase;letter-spacing:.09em;color:var(--accent-strong);font-weight:600;margin-bottom:8px;}
+.page h1{font-size:2.1rem;margin:0 0 10px;}
+.page > .dek{font-size:1.06rem;color:var(--ink-soft);margin:0 0 34px;max-width:62ch;}
+.page{display:none;}
+.page.active{display:block;}
+h2{font-size:1.36rem;margin:40px 0 12px;padding-top:6px;border-top:1px solid var(--border);}
+.page h2:first-of-type{border-top:none;padding-top:0;}
+h3{font-size:1.06rem;margin:26px 0 10px;color:var(--accent-strong);}
+p{margin:0 0 14px;max-width:66ch;}
+ul,ol{margin:0 0 16px;padding-left:1.3em;max-width:64ch;}
+li{margin-bottom:6px;}
+.lead{font-size:1.02rem;}
+strong{color:var(--ink);}
+
+.callout{border:1px solid var(--border);background:var(--surface-2);border-radius:10px;padding:14px 16px;margin:0 0 18px;font-size:.92rem;max-width:64ch;}
+.callout.note{border-left:3px solid var(--accent);}
+.callout.warn{border-left:3px solid var(--warn);background:var(--warn-soft);}
+.callout p:last-child{margin-bottom:0;}
+.callout .tag{font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--accent-strong);display:block;margin-bottom:4px;}
+.callout.warn .tag{color:var(--warn);}
+
+.steps{counter-reset:step;list-style:none;padding-left:0;max-width:64ch;}
+.steps li{counter-increment:step;position:relative;padding-left:38px;margin-bottom:14px;}
+.steps li::before{content:counter(step);position:absolute;left:0;top:-1px;width:26px;height:26px;border-radius:50%;
+  background:var(--accent-soft);color:var(--accent-strong);font-family:var(--mono);font-size:.78rem;font-weight:600;
+  display:flex;align-items:center;justify-content:center;}
+
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 22px;}
+.chip{font-family:var(--mono);font-size:.76rem;padding:5px 10px;border-radius:6px;background:var(--surface-2);border:1px solid var(--border);color:var(--ink);white-space:nowrap;}
+.chip.end{background:var(--accent-soft);color:var(--accent-strong);border-color:var(--accent);}
+.chip.stop{background:var(--debit-soft);color:var(--debit);border-color:var(--debit);}
+.arrow{color:var(--ink-faint);font-size:.9rem;}
+
+table.datatable{width:100%;border-collapse:collapse;margin:0 0 22px;font-size:.88rem;}
+table.datatable th{text-align:left;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-faint);
+  border-bottom:1px solid var(--border);padding:6px 10px 8px 0;font-weight:600;}
+table.datatable td{padding:9px 10px 9px 0;border-bottom:1px solid var(--border);vertical-align:top;}
+table.datatable tr:last-child td{border-bottom:none;}
+.tablewrap{overflow-x:auto;margin-bottom:22px;}
+.num-cell{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;}
+
+.ledger-detail{margin:6px 0 26px;}
+.ledger-detail-inner{border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:var(--shadow);overflow:hidden;max-width:64ch;}
+.ledger-detail-head{display:flex;align-items:center;gap:8px;background:var(--accent-soft);color:var(--accent-strong);
+  padding:9px 16px;font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;font-weight:600;}
+.ledger-body{padding:14px 16px 6px;}
+.ledger-body p{font-size:.88rem;}
+.ledger{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin:0 0 12px;}
+.ledger-head-row,.ledger-row{display:grid;grid-template-columns:1fr 110px 110px;gap:8px;padding:8px 12px;font-size:.84rem;}
+.ledger-head-row{background:var(--code-bg);font-family:var(--mono);font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-faint);}
+.ledger-row{border-top:1px solid var(--border);}
+.ledger-row .acct{color:var(--ink);}
+.ledger-row .dr,.ledger-row .cr{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums;}
+.ledger-row .dr{color:var(--debit);}
+.ledger-row .cr{color:var(--credit);}
+.series{display:inline-block;font-family:var(--mono);font-size:.7rem;background:var(--code-bg);color:var(--accent-strong);
+  padding:2px 7px;border-radius:5px;border:1px solid var(--border);margin-left:6px;}
+
+.rolebox{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:0 0 22px;max-width:64ch;}
+@media (max-width:600px){.rolebox{grid-template-columns:1fr;}}
+.rolecard{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--surface);}
+.rolecard h4{margin:0 0 4px;font-size:.94rem;font-family:var(--sans);color:var(--ink);}
+.rolecard .meta{font-size:.78rem;color:var(--ink-faint);font-family:var(--mono);}
+
+.pagenav{display:flex;justify-content:space-between;gap:16px;margin-top:56px;padding-top:22px;border-top:1px solid var(--border);}
+.pagenav a{text-decoration:none;font-size:.84rem;color:var(--ink-soft);display:flex;flex-direction:column;gap:2px;}
+.pagenav a:hover{color:var(--accent-strong);}
+.pagenav .dir{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-faint);}
+.pagenav .next{text-align:right;margin-left:auto;}
+
+.hamburger{display:none;}
+@media (max-width:880px){
+  .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:20;transform:translateX(-100%);transition:transform .18s ease;box-shadow:var(--shadow);}
+  .sidebar.open{transform:translateX(0);}
+  .hamburger{display:flex;position:sticky;top:14px;left:14px;z-index:10;align-items:center;gap:8px;
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font:inherit;font-size:.82rem;
+    color:var(--ink);cursor:pointer;box-shadow:var(--shadow);margin:14px 0 -20px 14px;}
+  .col{padding-top:70px;}
+  .scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:15;}
+  .scrim.show{display:block;}
+}
+body:not(.show-ledger) .ledger-detail{display:none;}
+
+::selection{background:var(--accent-soft);color:var(--accent-strong);}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <button class="hamburger" id="hamburger" aria-label="Open chapter list">☰ Chapters</button>
+  <div class="scrim" id="scrim"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><span class="mark">Phoenix</span><span class="sub">ERP Manual</span></div>
+    <div class="tagline">How the books actually move, from the counter to the trial balance.</div>
+
+    <div class="searchwrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input id="navsearch" type="text" placeholder="Find a topic…" autocomplete="off">
+    </div>
+
+    <div class="toggle-row">
+      <span class="label">Accountant view<small>Show GL postings under each task</small></span>
+      <label class="switch"><input type="checkbox" id="ledgerToggle"><span class="slider"></span></label>
+    </div>
+
+    <ol class="toc" id="toc">
+      <li><a href="#welcome" data-kw="start introduction overview"><span class="num">00</span><span>Welcome</span></a></li>
+      <li><a href="#getting-started" data-kw="login branch role navigation"><span class="num">01</span><span>Getting Started</span></a></li>
+      <li><a href="#fundamentals" data-kw="debit credit chart of accounts journal ledger trial balance"><span class="num">02</span><span>Accounting Fundamentals</span></a></li>
+      <li><a href="#loans" data-kw="client loan disbursement repayment schedule penalty interest writeoff"><span class="num">03</span><span>Clients &amp; Loans</span></a></li>
+      <li><a href="#savings" data-kw="savings smart savers deposit withdrawal interest ajo"><span class="num">04</span><span>Savings</span></a></li>
+      <li><a href="#cash-banking" data-kw="bank account till cashier reconciliation transfer"><span class="num">05</span><span>Cash &amp; Banking</span></a></li>
+      <li><a href="#petty-cash" data-kw="petty cash voucher imprest fund replenishment"><span class="num">06</span><span>Petty Cash</span></a></li>
+      <li><a href="#income-expenses" data-kw="income invoice expense fee category office use request"><span class="num">07</span><span>Income &amp; Expenses</span></a></li>
+      <li><a href="#inventory" data-kw="inventory procurement stock purchase order transfer office use request"><span class="num">08</span><span>Inventory &amp; Procurement</span></a></li>
+      <li><a href="#interbranch" data-kw="interbranch transfer due from due to clearing consolidated"><span class="num">09</span><span>Interbranch Transfers</span></a></li>
+      <li><a href="#reports" data-kw="trial balance profit loss balance sheet cash flow report"><span class="num">10</span><span>Reports</span></a></li>
+      <li><a href="#roles" data-kw="role permission approval limit telegram notification director"><span class="num">11</span><span>Roles, Approvals &amp; Alerts</span></a></li>
+      <li><a href="#glossary" data-kw="glossary terms definitions"><span class="num">12</span><span>Glossary</span></a></li>
+    </ol>
+  </aside>
+
+  <main class="main">
+    <div class="col">
+
+      <!-- 00 WELCOME -->
+      <section class="page" id="page-welcome">
+        <div class="eyebrow">Chapter 00</div>
+        <h1>Welcome</h1>
+        <p class="dek">This manual explains how Phoenix — the system this business runs its accounting, loans, savings and branch operations on — actually works. It assumes no prior accounting background, and builds up to how each screen you use turns into an entry in the general ledger.</p>
+
+        <h2>Who this is for</h2>
+        <p>Every chapter is written twice in one page. The plain-language instructions — how to submit a loan, take a deposit, raise a petty cash voucher — are always visible. Turn on <strong>Accountant view</strong> in the sidebar and each chapter also shows the exact debit/credit entries that action creates, so someone new to accounting can watch a familiar task turn into the two-sided ledger postings behind it.</p>
+
+        <div class="callout note">
+          <span class="tag">How to use this manual</span>
+          <p>Read Chapters 01–02 in order first — they're the foundation everything else builds on. After that, jump straight to whichever module your role touches using the sidebar, or the search box at the top of it.</p>
+        </div>
+
+        <h2>What Phoenix actually is</h2>
+        <p>Phoenix is a branch-based financial system: every client, loan, savings account, bank account and voucher belongs to a specific branch, and almost everything you do posts a balanced entry into that branch's own set of accounts (its "chart of accounts"). A small number of head-office roles can see and post across every branch at once, and can produce one combined, "consolidated" set of books for the whole organisation.</p>
+        <p>Three ideas recur in almost every chapter, so it's worth meeting them here first:</p>
+        <ul>
+          <li><strong>Every transaction is double-sided.</strong> Nothing moves money without an equal and opposite entry elsewhere — Chapter 02 explains why.</li>
+          <li><strong>Most approvals are maker-checker.</strong> The person who requests, the person who approves, and the person who pays out are usually required to be three different people. You'll see this pattern in loans, petty cash and bank transfers.</li>
+          <li><strong>Big or unusual actions page a director.</strong> Certain events — an over-limit loan approval, a large bank transfer, a petty cash payout — send an automatic alert to a director's Telegram group, whether or not anyone asks for it.</li>
+        </ul>
+
+        <div class="pagenav">
+          <span></span>
+          <a class="next" href="#getting-started"><span class="dir">Next</span>01 · Getting Started →</a>
+        </div>
+      </section>
+
+      <!-- 01 GETTING STARTED -->
+      <section class="page" id="page-getting-started">
+        <div class="eyebrow">Chapter 01</div>
+        <h1>Getting Started</h1>
+        <p class="dek">Your login, your branch, and what you'll actually see depend on the role you've been assigned.</p>
+
+        <h2>Branches and "your" data</h2>
+        <p>When you log in, Phoenix already knows your <strong>home branch</strong> and your <strong>role</strong>. Most roles only ever see that branch's clients, loans, savings accounts and cash — this is called <span class="mono">own_branch</span> scope. A handful of senior roles (see Chapter 11) have <span class="mono">global</span> scope and can switch between branches, or select "All Branches" to see the organisation as a whole.</p>
+        <p>There is no separate "head office" branch in the system — head office isn't a place, it's a permission. Anyone with global scope effectively gets a head-office view over every branch's books at once.</p>
+
+        <h2>Your role decides what you can do</h2>
+        <p>Every role carries two things: a <strong>scope</strong> (whose records you can see) and an <strong>approval limit</strong> (the largest amount you're allowed to approve or disburse on your own signature). Try to approve something above your limit and Phoenix blocks it and quietly pages a director instead — see Chapter 11 for the full table of roles and limits.</p>
+
+        <h2>Finding your way around</h2>
+        <ul>
+          <li><strong>Clients &amp; Loans, Savings</strong> — day-to-day work for tellers, loan officers and recovery officers.</li>
+          <li><strong>Cash &amp; Banking, Petty Cash</strong> — where physical and bank money is tracked and moved.</li>
+          <li><strong>Reports</strong> — trial balance, profit &amp; loss, balance sheet and more, for accountants and management.</li>
+          <li><strong>Income &amp; Expenses, Inventory &amp; Procurement</strong> — everything the business buys, holds or bills for outside of lending.</li>
+        </ul>
+        <div class="callout note">
+          <span class="tag">Tip</span>
+          <p>If a screen or button you expect isn't visible, it's almost always a permission, not a bug — ask your branch manager whether your role or scope needs adjusting.</p>
+        </div>
+
+        <div class="pagenav">
+          <a href="#welcome"><span class="dir">Back</span>← 00 · Welcome</a>
+          <a class="next" href="#fundamentals"><span class="dir">Next</span>02 · Accounting Fundamentals →</a>
+        </div>
+      </section>
+
+      <!-- 02 FUNDAMENTALS -->
+      <section class="page" id="page-fundamentals">
+        <div class="eyebrow">Chapter 02</div>
+        <h1>Accounting Fundamentals</h1>
+        <p class="dek">Everything downstream in this manual — loans, savings, petty cash, reports — is really just this chapter applied to a specific situation. It's worth reading slowly once.</p>
+
+        <h2>Double-entry: every entry has two sides</h2>
+        <p>Money never moves in Phoenix without two things happening at once: one account is <strong>debited</strong>, another is <strong>credited</strong>, for the exact same amount. A loan disbursement isn't just "money went out" — it's "Cash went down and Loan Receivable went up, by the same ₦50,000." This pairing is what lets the books always prove themselves: if you add up every debit and every credit in the system, they must be equal.</p>
+        <p>A common misconception: <em>debit</em> doesn't mean "subtract" and <em>credit</em> doesn't mean "add." Which one increases a balance depends on the type of account:</p>
+
+        <div class="tablewrap">
+        <table class="datatable">
+          <tr><th>Account type</th><th>A debit…</th><th>A credit…</th><th>Everyday example</th></tr>
+          <tr><td>Asset (things you own)</td><td class="num-cell" style="color:var(--credit)">increases</td><td class="num-cell" style="color:var(--debit)">decreases</td><td>Cash, Bank, Loan Receivable, Inventory</td></tr>
+          <tr><td>Liability (things you owe)</td><td class="num-cell" style="color:var(--debit)">decreases</td><td class="num-cell" style="color:var(--credit)">increases</td><td>Customer Savings Deposits, Accounts Payable</td></tr>
+          <tr><td>Equity</td><td class="num-cell" style="color:var(--debit)">decreases</td><td class="num-cell" style="color:var(--credit)">increases</td><td>Owner's capital, retained earnings</td></tr>
+          <tr><td>Income</td><td class="num-cell" style="color:var(--debit)">decreases</td><td class="num-cell" style="color:var(--credit)">increases</td><td>Interest Income, Penalty Income, Fee Income</td></tr>
+          <tr><td>Expense</td><td class="num-cell" style="color:var(--credit)">increases</td><td class="num-cell" style="color:var(--debit)">decreases</td><td>Rent, Utilities, Salaries</td></tr>
+        </table>
+        </div>
+
+        <h3>Reading a Phoenix ledger entry</h3>
+        <p>Throughout this manual, ledger postings are shown in this format — the same shape as a traditional cash book, just typed:</p>
+        <div class="ledger">
+          <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit (₦)</span><span style="text-align:right">Credit (₦)</span></div>
+          <div class="ledger-row"><span class="acct">Cash at Teller</span><span class="dr">50,000</span><span class="cr"></span></div>
+          <div class="ledger-row"><span class="acct">Loan Receivable — LN-1042</span><span class="dr"></span><span class="cr">50,000</span></div>
+        </div>
+        <p>Read this as: cash went <em>up</em> by ₦50,000 (a debit to an asset), and the client's loan balance owed to the branch went <em>down</em> by ₦50,000 (a credit to an asset) — a repayment coming in.</p>
+
+        <h2>The Chart of Accounts</h2>
+        <p>Every branch has its own full set of accounts, numbered by type in blocks: <span class="mono">1000s Assets</span>, <span class="mono">2000s Liabilities</span>, <span class="mono">3000s Equity</span>, <span class="mono">4000s Income</span>, <span class="mono">5000s Expenses</span>. Most accounts you'll never touch directly: a "parent" account like <em>1100 — Cash and Cash Equivalents</em> is just a heading, while its "child" accounts underneath — <em>1101 Cash on Hand, 1102 Petty Cash, 1104 First City Bank — Current</em> — are the ones that actually receive postings.</p>
+        <p>A special kind of child account, a <strong>sub-ledger</strong>, is auto-created and linked one-to-one to a single real-world thing: one per loan, one per savings account, one per till/cashier. This is how the system can tell you "LN-1042 owes ₦38,000" instead of just "Loans Receivable in total is ₦14.2m" — and it's also why reports hide these individual sub-ledger rows by default (Chapter 10) while still counting them correctly in the parent total.</p>
+
+        <h2>Journal entries and the General Ledger</h2>
+        <p>Every posting — whether typed by hand as a journal voucher or generated automatically by disbursing a loan — is one <strong>transaction</strong> with two or more <strong>lines</strong>, each hitting one account as a debit or a credit. A transaction can only be saved if its debits and credits are exactly equal; Phoenix will not let an unbalanced entry through. Once a transaction is approved, it is not edited — a mistake is corrected by <strong>reversing</strong> it (posting an equal and opposite entry that cancels it out, keeping a full trail of what happened) rather than deleting it.</p>
+        <p>Every transaction is stamped with a <strong>series</strong> — a short code like <span class="series">LNDIS</span> for a loan disbursement or <span class="series">SVDEP</span> for a savings deposit — which is really just which "book" the entry was filed under, similar to a paper ledger having a separate Cash Book, Sales Day Book and Purchases Day Book.</p>
+
+        <h2>Trial balance and the financial statements</h2>
+        <p>A <strong>trial balance</strong> is simply a list of every account and its balance on a given date, with total debits proving equal to total credits. From that same underlying data, Phoenix can also produce a <strong>Profit &amp; Loss statement</strong> (income minus expenses, over a period) and a <strong>Balance Sheet</strong> (assets, liabilities and equity, at a point in time). Chapter 10 covers each report in detail.</p>
+
+        <div class="callout note">
+          <span class="tag">Why this matters</span>
+          <p>Once you can read a two-line Dr/Cr entry, you can read every "Accountant view" box in this manual — they're all built from exactly this pattern, just with different accounts.</p>
+        </div>
+
+        <div class="pagenav">
+          <a href="#getting-started"><span class="dir">Back</span>← 01 · Getting Started</a>
+          <a class="next" href="#loans"><span class="dir">Next</span>03 · Clients &amp; Loans →</a>
+        </div>
+      </section>
+
+      <!-- 03 LOANS -->
+      <section class="page" id="page-loans">
+        <div class="eyebrow">Chapter 03</div>
+        <h1>Clients &amp; Loans</h1>
+        <p class="dek">From onboarding a client through to a loan being fully paid off.</p>
+
+        <h2>Onboarding a client</h2>
+        <p>A client record captures identity, contact and next-of-kin details, an ID type and number, and — required and validated — their <strong>NIN</strong> and <strong>BVN</strong>. Clients are classified by how they contribute: <em>Daily</em>, <em>Weekly</em>, <em>Monthly</em> contributor, or <em>Prospect</em>, and each is assigned a credit/loan officer and an account manager. A client also has a KYC status (pending → submitted → verified) tracked for compliance record-keeping.</p>
+        <p>Someone who guarantees a loan without being a full client themselves is recorded as a <strong>Guarantor</strong> — they can later be converted into a full client if they take a loan of their own.</p>
+
+        <h2>Loan products</h2>
+        <p>Each loan product fixes the rules a loan under it must follow: interest method (flat-rate or reducing balance), minimum/maximum amount and term, allowed repayment frequency (daily, weekly, biweekly, monthly, quarterly), processing fee, insurance, and a late-payment penalty with its own grace period. A product can also require collateral and a minimum number of guarantors before a loan against it can be approved.</p>
+
+        <h2>Application and approval</h2>
+        <div class="flow">
+          <span class="chip">Pending</span><span class="arrow">→</span><span class="chip">Approved</span><span class="arrow">→</span><span class="chip">Disbursed</span><span class="arrow">→</span><span class="chip">Active</span><span class="arrow">→</span><span class="chip end">Paid Off</span>
+        </div>
+        <p>A loan officer submits the application; approval is separate step performed by someone else — the system will not let the person who created the loan also approve it. If the product requires guarantors, approval is blocked until enough are attached.</p>
+
+        <h3>Disbursement is its own three-person approval</h3>
+        <p>Approving a loan does not release funds. Disbursement is a distinct workflow: a branch manager or supervisor approves the disbursement request, and then a third person — finance or a teller — actually pays it out. Requester, approver and disburser must be three different people.</p>
+        <div class="steps">
+          <li>Loan officer submits the loan application.</li>
+          <li>A different, authorised person approves the loan.</li>
+          <li>A branch manager/supervisor approves the disbursement request.</li>
+          <li>Finance/teller executes the disbursement, choosing the cash till or bank account funds are paid from.</li>
+        </div>
+
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — disbursing ₦50,000<span class="series">LNDIS</span></div>
+            <div class="ledger-body">
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Loan Receivable — LN-1042</span><span class="dr">50,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Cash / Bank (disbursing account)</span><span class="dr"></span><span class="cr">50,000</span></div>
+              </div>
+              <p>By default, Phoenix also recognises the loan's <strong>full scheduled interest as income immediately at disbursement</strong>, matching how this business has always run its books — it adds the interest onto the Loan Receivable debit and credits Interest Income for the same amount, in the same entry. A slower, "as-it's-earned" alternative exists for products configured for it, but immediate recognition is the default.</p>
+            </div>
+          </div>
+        </div>
+
+        <h2>The repayment schedule</h2>
+        <p>The moment a loan is disbursed, Phoenix generates its full repayment schedule: one row per installment, each with a due date and its share of principal, interest, fees and any penalty. Flat-rate products split interest evenly across every installment; reducing-balance products calculate a standard declining-balance amortisation, same as a conventional loan schedule.</p>
+
+        <h2>Repayments and penalties</h2>
+        <p>A missed installment doesn't just sit there — once it passes its grace period, a <strong>penalty is assessed and booked as income immediately</strong>, whether or not the client has paid anything yet. When a payment does come in, it isn't swallowed entirely by an overdue penalty: Phoenix splits the payment proportionally between the outstanding penalty and everything else, by their relative share of what's owed, so a partial payment always makes some progress on the loan itself. Within the non-penalty portion, interest is settled before principal — unless a loan has gone seriously delinquent, in which case that order flips to protect the recorded principal balance first.</p>
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — a routine repayment</div>
+            <div class="ledger-body">
+              <p>Because interest was already recognised as income at disbursement, an on-time repayment is usually a simple two-line entry — it isn't re-crediting income a second time:</p>
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Cash at Teller</span><span class="dr">12,500</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Loan Receivable — LN-1042</span><span class="dr"></span><span class="cr">12,500</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout note">
+          <span class="tag">Good to know</span>
+          <p>Write-offs (formally closing out an unrecoverable loan) exist as a feature but are not part of how this business currently manages bad debt in practice — don't expect to see them used day to day.</p>
+        </div>
+
+        <h2>Closing a loan</h2>
+        <p>A loan moves itself to <strong>Paid Off</strong> automatically the instant a payment brings its outstanding principal, interest, fees and penalties all to zero — there's no separate "close the loan" step. If a loan had previously been flagged as defaulted and a payment leaves any balance still outstanding, it's automatically restored to Active rather than staying marked as default.</p>
+
+        <div class="pagenav">
+          <a href="#fundamentals"><span class="dir">Back</span>← 02 · Accounting Fundamentals</a>
+          <a class="next" href="#savings"><span class="dir">Next</span>04 · Savings →</a>
+        </div>
+      </section>
+
+      <!-- 04 SAVINGS -->
+      <section class="page" id="page-savings">
+        <div class="eyebrow">Chapter 04</div>
+        <h1>Savings</h1>
+        <p class="dek">Every client automatically has a savings account before they ever ask for one.</p>
+
+        <h2>Regular Savings — created automatically</h2>
+        <p>The moment a new client record is created, Phoenix opens a <strong>Regular Savings</strong> account for them behind the scenes, with a minimum balance of at least ₦1,000 regardless of what any product configuration says. Nothing needs collecting to open it — it's simply ready for the client's first deposit.</p>
+
+        <h2>Other savings products</h2>
+        <ul>
+          <li><strong>Daily Contribution ("Ajo") accounts</strong> — for clients expected to deposit small amounts frequently against a fixed contribution schedule.</li>
+          <li><strong>Savings Cycle products, incl. Smart Savings</strong> — a fixed term (Smart Savings runs a 3-month cycle) earning interest at maturity, with a penalty if the client breaks the cycle and withdraws early.</li>
+        </ul>
+        <p>A client can also have savings automatically topped up: if a compulsory-savings policy is switched on for the branch, disbursing a loan automatically deposits a fixed amount straight into the client's savings out of the same funds used to disburse the loan.</p>
+
+        <h2>Taking a deposit</h2>
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — a cash deposit<span class="series">SVDEP</span></div>
+            <div class="ledger-body">
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Cash at Teller</span><span class="dr">5,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Customer Savings — client's account</span><span class="dr"></span><span class="cr">5,000</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3>The first-deposit income sweep</h3>
+        <p>For daily-contribution products configured this way, the <em>first</em> deposit collected in a calendar month is treated specially: up to the amount the client has committed to contributing, it is swept straight to income rather than credited to the client's savings balance — anything collected above that committed amount is deposited normally. This mirrors how the business has always accounted for the first collection of the month on these products; it only fires once per month, and never applies to a Smart Savings-enrolled account.</p>
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — first deposit of the month, ₦2,000 committed<span class="series">SV1ST</span></div>
+            <div class="ledger-body">
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Cash at Teller</span><span class="dr">2,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Collection Income</span><span class="dr"></span><span class="cr">2,000</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h2>Withdrawals — always maker-checker</h2>
+        <p>A withdrawal is never a single click. It moves through a tiered approval chain sized to the amount, and the person who requests it can never be the one who approves or pays it out. Cash payouts are capped at ₦50,000 — anything larger must go out by bank transfer. Funds only actually leave the client's account balance at the final step, once every approval has been granted.</p>
+        <div class="flow">
+          <span class="chip">Requested</span><span class="arrow">→</span><span class="chip">Approved</span><span class="arrow">→</span><span class="chip">Fully Approved</span><span class="arrow">→</span><span class="chip end">Disbursed</span>
+        </div>
+
+        <h2>Interest</h2>
+        <p>Interest-bearing Regular Savings accounts are credited automatically on the 1st of every month, based on the account's annual rate and its balance over the month. Smart Savings accounts instead earn a flat <strong>6% every 3-month cycle</strong>, credited automatically the day the cycle matures — after which the cycle either renews or ends, depending on the client's preference. Breaking a Smart Savings cycle early (an early withdrawal) triggers an automatic penalty charged against the account instead.</p>
+
+        <div class="pagenav">
+          <a href="#loans"><span class="dir">Back</span>← 03 · Clients &amp; Loans</a>
+          <a class="next" href="#cash-banking"><span class="dir">Next</span>05 · Cash &amp; Banking →</a>
+        </div>
+      </section>
+
+      <!-- 05 CASH & BANKING -->
+      <section class="page" id="page-cash-banking">
+        <div class="eyebrow">Chapter 05</div>
+        <h1>Cash &amp; Banking</h1>
+        <p class="dek">Every naira the business holds — in a till, a safe, or a real bank account — has its own dedicated ledger account behind it.</p>
+
+        <h2>Bank accounts</h2>
+        <p>Each real-world bank account the business holds is set up once as a <strong>Bank Account</strong> record — account number, currency, an assigned manager, withdrawal limits — and Phoenix links it to its own dedicated GL account (accounts <span class="mono">1104</span> and up; <span class="mono">1101–1103</span> are reserved for Cash on Hand, Petty Cash and the branch's Main Bank). The account's displayed balance is always read live from that GL account, never stored separately, so it can never drift out of sync with the ledger.</p>
+        <p>A bank account can be marked as <strong>dual-approval</strong> above a chosen threshold — a transfer over that amount needs a second, director-level sign-off before it goes out, and completion of that transfer pages the directors' Telegram group automatically either way.</p>
+
+        <h2>Cash on the floor: cashiers and tills</h2>
+        <p>Every teller, cashier or field agent who physically handles cash has their own <strong>cashier account</strong> — a live running cash balance backed by its own GL account, with an optional daily collection limit. At day's end, cash typically sweeps from a cashier's account into the branch's main bank account.</p>
+
+        <h2>Reconciliation</h2>
+        <p>Bank statements are matched against Phoenix's own recorded transactions automatically, but only a <strong>high-confidence</strong> match is ever posted without a person looking at it. Medium- or low-confidence matches are held out for manual review rather than auto-accepted — better an accountant spends two minutes confirming a match than the books silently absorb a wrong one. A director can always unmatch a bad auto-match later; the system keeps the original match history rather than erasing it, so nothing about a correction is lost.</p>
+        <div class="callout note">
+          <span class="tag">Why it's built this way</span>
+          <p>A cautious, human-reviewed matching threshold is a deliberate trade-off — it means a small backlog of unmatched lines will always exist, in exchange for the guarantee that nothing gets auto-reconciled to the wrong transaction.</p>
+        </div>
+
+        <div class="pagenav">
+          <a href="#savings"><span class="dir">Back</span>← 04 · Savings</a>
+          <a class="next" href="#petty-cash"><span class="dir">Next</span>06 · Petty Cash →</a>
+        </div>
+      </section>
+
+      <!-- 06 PETTY CASH -->
+      <section class="page" id="page-petty-cash">
+        <div class="eyebrow">Chapter 06</div>
+        <h1>Petty Cash</h1>
+        <p class="dek">A small, tightly controlled float for day-to-day branch spending — run as a classic imprest fund.</p>
+
+        <h2>The fund</h2>
+        <p>A <strong>Petty Cash Fund</strong> is a fixed float amount held by a named custodian (plus an alternate), with its own GL account and a per-transaction spending limit. When the float runs low, the custodian submits receipts for what's already been spent and requests a top-up (a <strong>replenishment</strong>) that restores the fund back to its fixed float — the top-up itself draws fresh cash out of the bank, it doesn't create any new expense on its own; the expense was already booked when each voucher was disbursed.</p>
+
+        <h2>Raising and paying a voucher</h2>
+        <div class="flow">
+          <span class="chip">Draft</span><span class="arrow">→</span><span class="chip">Pending</span><span class="arrow">→</span><span class="chip">Approved</span><span class="arrow">→</span><span class="chip">Disbursed</span><span class="arrow">→</span><span class="chip end">Retired</span>
+        </div>
+        <div class="steps">
+          <li>Requestor raises a voucher — purpose, amount, payee, and an expense category — and submits it.</li>
+          <li>An approver reviews and approves it (must be a different person from the requestor when paying by bank transfer).</li>
+          <li>Only the fund's custodian, alternate custodian, or a director can disburse it. A bank-transfer payout additionally requires the disburser to be a third person, distinct from both requestor and approver.</li>
+          <li>The custodian later <strong>retires</strong> the voucher by submitting the actual receipt, recording any variance between what was requested and what was actually spent.</li>
+        </div>
+        <p>A voucher can cover several unrelated expenses at once — say, fuel and stationery in the same trip. Each line item carries its own expense category, so the posting splits correctly across each category's own expense account rather than lumping everything into one.</p>
+
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — a two-line voucher disbursed in cash</div>
+            <div class="ledger-body">
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Fuel Expense</span><span class="dr">6,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Stationery Expense</span><span class="dr">1,500</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Petty Cash Fund</span><span class="dr"></span><span class="cr">7,500</span></div>
+              </div>
+              <p>If the fund's <strong>disbursement mode</strong> is set to bank transfer instead, the credit side hits the chosen bank account's GL account rather than the till, and the fund's own cash balance is untouched.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout note">
+          <span class="tag">Directors are watching</span>
+          <p>Every petty cash disbursement — cash or bank transfer — fires an automatic Telegram alert to the directors' group the moment it happens. This isn't an approval gate, it's visibility: directors see every payout in near-real time without having to log in and check.</p>
+        </div>
+
+        <h2>Undoing a mistake</h2>
+        <p>A voucher can't simply be deleted once disbursed. Instead, someone requests a reversal, and a <em>different</em> authorised person must approve it before the original ledger entry is reversed and the fund's balance restored — the same maker-checker discipline applies to undoing a payment as to making one.</p>
+
+        <div class="pagenav">
+          <a href="#cash-banking"><span class="dir">Back</span>← 05 · Cash &amp; Banking</a>
+          <a class="next" href="#income-expenses"><span class="dir">Next</span>07 · Income &amp; Expenses →</a>
+        </div>
+      </section>
+
+      <!-- 07 INCOME & EXPENSES -->
+      <section class="page" id="page-income-expenses">
+        <div class="eyebrow">Chapter 07</div>
+        <h1>Income &amp; Expenses</h1>
+        <p class="dek">Money the business earns and spends outside of lending, savings and petty cash.</p>
+
+        <h2>Income</h2>
+        <p>Every income category is tied to its own income GL account — set that up once, and every income record filed under that category posts to the right place automatically. Where income is billed rather than collected on the spot, Phoenix raises an <strong>invoice</strong>: the amount owed is recorded straight away as a receivable, and only converts to cash later when it's actually collected. An invoice covering several kinds of income (say, registration plus a service fee) correctly splits across each item's own income account in one entry.</p>
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — raising an invoice</div>
+            <div class="ledger-body">
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Accounts Receivable</span><span class="dr">15,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Service Fee Income</span><span class="dr"></span><span class="cr">15,000</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p>Loan interest and penalty income are handled directly inside the Loans module (Chapter 03) rather than here — this chapter's income tools are for everything else the business bills or earns.</p>
+
+        <h2>Expenses</h2>
+        <p>A general expense (as opposed to a petty cash voucher) records a category, amount, payee and payment method, and moves through the same shape of workflow: <span class="mono">Draft → Submitted → Approved → Paid</span>. Larger categories can be configured to require approval past a set threshold. Depending on whether it's paid immediately or the business is settling it later, it posts either straight against cash/bank or first into Accounts Payable.</p>
+
+        <h2>Office Use Requests</h2>
+        <p>When staff need something out of the store room for internal use — not for a client, not for resale — they raise an <strong>Office Use Request</strong> rather than a client-facing order. This replaced the old "Material Request" process, which used to be shared with client-facing requests; the two have now been kept fully separate.</p>
+        <div class="flow">
+          <span class="chip">Draft</span><span class="arrow">→</span><span class="chip">Submitted</span><span class="arrow">→</span><span class="chip">Approved</span><span class="arrow">→</span><span class="chip end">Fulfilled</span>
+        </div>
+        <p>On fulfilment, Phoenix checks stock at the chosen location, reduces it, and expenses the item automatically — using the expense account already configured against that item's category, not a manually picked account. See Chapter 08 for how stock itself is tracked.</p>
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — fulfilling an office use request</div>
+            <div class="ledger-body">
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Office Supplies Expense</span><span class="dr">3,200</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Inventory — Stationery</span><span class="dr"></span><span class="cr">3,200</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="pagenav">
+          <a href="#petty-cash"><span class="dir">Back</span>← 06 · Petty Cash</a>
+          <a class="next" href="#inventory"><span class="dir">Next</span>08 · Inventory &amp; Procurement →</a>
+        </div>
+      </section>
+
+      <!-- 08 INVENTORY & PROCUREMENT -->
+      <section class="page" id="page-inventory">
+        <div class="eyebrow">Chapter 08</div>
+        <h1>Inventory &amp; Procurement</h1>
+        <p class="dek">Buying stock in, tracking it per branch, and moving it between branches.</p>
+
+        <h2>Buying stock in</h2>
+        <div class="flow">
+          <span class="chip">Requisition</span><span class="arrow">→</span><span class="chip">Purchase Order</span><span class="arrow">→</span><span class="chip">Sent</span><span class="arrow">→</span><span class="chip end">Goods Received</span>
+        </div>
+        <p>A staff member raises a <strong>Purchase Requisition</strong>, which — once approved — becomes a <strong>Purchase Order</strong> to a supplier. When the goods actually arrive, a <strong>Goods Received Note (GRN)</strong> is inspected and posted: this is the moment stock and the ledger both move, not when the order was merely placed.</p>
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — posting a GRN on credit</div>
+            <div class="ledger-body">
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Inventory — Stationery</span><span class="dr">80,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Accounts Payable — Supplier</span><span class="dr"></span><span class="cr">80,000</span></div>
+              </div>
+              <p>Every supplier has its own dedicated payable sub-ledger account, the same way every loan has its own receivable account — so at any moment you can see exactly what's owed to which supplier.</p>
+            </div>
+          </div>
+        </div>
+
+        <h2>Stock, per branch and per location</h2>
+        <p>Stock quantities are tracked per item, per specific location (a warehouse, store or vehicle) within a branch — never as one company-wide number. Every single change in quantity, whatever caused it, leaves behind a stock movement record, so a full history of every increase and decrease is always available.</p>
+
+        <h2>Moving stock between branches</h2>
+        <div class="flow">
+          <span class="chip">Approved</span><span class="arrow">→</span><span class="chip">Dispatched</span><span class="arrow">→</span><span class="chip end">Acknowledged</span>
+        </div>
+        <p>Dispatching a transfer reduces stock at the sending branch; acknowledging it (done by the receiving branch) adds it there — and if what arrives is less than what was sent, it's recorded as a short receipt rather than silently adjusted away. Moving stock <em>within</em> one branch touches no ledger accounts at all, since nothing has left the branch's books; moving it <em>between</em> branches posts through the same reciprocal clearing-account mechanism used for any interbranch transfer — see Chapter 09.</p>
+
+        <div class="pagenav">
+          <a href="#income-expenses"><span class="dir">Back</span>← 07 · Income &amp; Expenses</a>
+          <a class="next" href="#interbranch"><span class="dir">Next</span>09 · Interbranch Transfers →</a>
+        </div>
+      </section>
+
+      <!-- 09 INTERBRANCH -->
+      <section class="page" id="page-interbranch">
+        <div class="eyebrow">Chapter 09</div>
+        <h1>Interbranch Transfers</h1>
+        <p class="dek">How money or stock crosses from one branch's books to another's without ever mixing the two.</p>
+
+        <h2>Why this needs its own mechanism</h2>
+        <p>Because every branch keeps its own separate chart of accounts, a single journal entry is never allowed to debit an account in one branch and credit an account in another. Instead, an interbranch transfer is really <strong>two ordinary, single-branch entries</strong>, linked together, each using a matching pair of "clearing" accounts: <strong>Due from [other branch]</strong> on one side, <strong>Due to [other branch]</strong> on the other.</p>
+
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — Branch A sends ₦200,000 to Branch B</div>
+            <div class="ledger-body">
+              <p><strong>Branch A's books:</strong></p>
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Due from Branch B</span><span class="dr">200,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Bank / Cash</span><span class="dr"></span><span class="cr">200,000</span></div>
+              </div>
+              <p style="margin-top:10px;"><strong>Branch B's books:</strong></p>
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Bank / Cash</span><span class="dr">200,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">Due to Branch A</span><span class="dr"></span><span class="cr">200,000</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p>Both legs post together, atomically — either the whole transfer goes through or none of it does — and can later be reversed as one linked pair. Because the two clearing accounts are always equal and opposite, adding them into a company-wide total would double count real money that never left the organisation; Chapter 10 explains how the consolidated trial balance cancels them out.</p>
+
+        <div class="callout note">
+          <span class="tag">Who can do this</span>
+          <p>Creating and reversing an interbranch transfer is restricted to elevated, all-branch roles. A regular branch user can only ever view transfers that touch their own branch, as either the sender or the receiver.</p>
+        </div>
+
+        <div class="pagenav">
+          <a href="#inventory"><span class="dir">Back</span>← 08 · Inventory &amp; Procurement</a>
+          <a class="next" href="#reports"><span class="dir">Next</span>10 · Reports →</a>
+        </div>
+      </section>
+
+      <!-- 10 REPORTS -->
+      <section class="page" id="page-reports">
+        <div class="eyebrow">Chapter 10</div>
+        <h1>Reports</h1>
+        <p class="dek">Everything in this section is generated live from the ledger — nothing here is typed in separately.</p>
+
+        <div class="tablewrap">
+        <table class="datatable">
+          <tr><th>Report</th><th>What it tells you</th></tr>
+          <tr><td><strong>Trial Balance</strong></td><td>Every account and its balance as of a date, proving total debits equal total credits. Can be run summarised or in full detail.</td></tr>
+          <tr><td><strong>Consolidated Trial Balance</strong></td><td>Every branch's trial balance combined into one, with matching Due-from/Due-to interbranch pairs netted out so they don't double-count. Only available to all-branch roles.</td></tr>
+          <tr><td><strong>Profit &amp; Loss</strong></td><td>Total income minus total expenses over a chosen period, optionally compared against a prior period.</td></tr>
+          <tr><td><strong>Balance Sheet</strong></td><td>Assets, liabilities and equity as of a single date — what the business owns, owes, and is worth.</td></tr>
+          <tr><td><strong>Monthly Profit &amp; Loss</strong></td><td>One row per income/expense account, one column per month — a spreadsheet-style view built for month-on-month comparison.</td></tr>
+          <tr><td><strong>Cash Flow Statement</strong></td><td>Cash movement grouped into operating, investing and financing activity.</td></tr>
+        </table>
+        </div>
+
+        <h2>Why the Trial Balance looks cleaner than the ledger</h2>
+        <p>Recall from Chapter 02 that every loan, savings account and till has its own individual sub-ledger account. Listing every one of those individually on a Trial Balance would bury the report in thousands of one-off rows — so the detailed Trial Balance hides these individual sub-ledger rows from view by default, while still counting every one of them correctly inside its parent account's total (e.g. "Loans Receivable"). Nothing is excluded from the arithmetic — only from the printed row.</p>
+
+        <div class="pagenav">
+          <a href="#interbranch"><span class="dir">Back</span>← 09 · Interbranch Transfers</a>
+          <a class="next" href="#roles"><span class="dir">Next</span>11 · Roles, Approvals &amp; Alerts →</a>
+        </div>
+      </section>
+
+      <!-- 11 ROLES -->
+      <section class="page" id="page-roles">
+        <div class="eyebrow">Chapter 11</div>
+        <h1>Roles, Approvals &amp; Alerts</h1>
+        <p class="dek">Who can see what, who can approve how much, and who gets paged when something needs attention.</p>
+
+        <h2>The standard roles</h2>
+        <p>Every role combines a <strong>scope</strong> (whose records it can see) with an <strong>approval limit</strong> (the largest amount it can sign off on alone). This is the standard set of roles this business runs on:</p>
+        <div class="rolebox">
+          <div class="rolecard"><h4>MD / CEO</h4><div class="meta">global · unlimited</div></div>
+          <div class="rolecard"><h4>Operations Manager</h4><div class="meta">global · ₦10,000,000</div></div>
+          <div class="rolecard"><h4>Branch Manager</h4><div class="meta">own branch · ₦5,000,000</div></div>
+          <div class="rolecard"><h4>Loan Officer</h4><div class="meta">assigned clients · ₦500,000</div></div>
+          <div class="rolecard"><h4>Recovery Officer</h4><div class="meta">own branch · no approval rights</div></div>
+          <div class="rolecard"><h4>Teller / Cashier</h4><div class="meta">own branch · no approval rights</div></div>
+          <div class="rolecard"><h4>Accountant</h4><div class="meta">own branch · full GL access, no approvals</div></div>
+          <div class="rolecard"><h4>Auditor</h4><div class="meta">global · view &amp; export only</div></div>
+          <div class="rolecard"><h4>Data Entry Clerk</h4><div class="meta">own branch · create/edit only</div></div>
+        </div>
+        <p>A user's actual permissions can also be individually extended or restricted beyond their role's defaults — for example, a temporary, time-limited grant to cover another branch while someone's on leave — and every action taken under such an extended grant is logged for audit.</p>
+
+        <h2>When a director gets paged</h2>
+        <p>A fixed set of events sends an automatic message to a directors'/branch-managers' Telegram group — not to one named person, but to the group, so any director on duty sees it:</p>
+        <ul>
+          <li>Someone tries to approve a loan above their own approval limit.</li>
+          <li>A loan is disbursed.</li>
+          <li>A bank transfer exceeds an account's dual-approval threshold and needs a second sign-off, and again once that transfer completes.</li>
+          <li>A petty cash voucher is disbursed, cash or bank transfer.</li>
+        </ul>
+        <p>A failed Telegram send is never allowed to block the underlying approval or payment it's reporting on — the alert quietly retries in the background, and the action it's describing has already gone through regardless.</p>
+
+        <div class="pagenav">
+          <a href="#reports"><span class="dir">Back</span>← 10 · Reports</a>
+          <a class="next" href="#glossary"><span class="dir">Next</span>12 · Glossary →</a>
+        </div>
+      </section>
+
+      <!-- 12 GLOSSARY -->
+      <section class="page" id="page-glossary">
+        <div class="eyebrow">Chapter 12</div>
+        <h1>Glossary</h1>
+        <p class="dek">Plain-English definitions of every accounting term used in this manual.</p>
+
+        <div class="tablewrap">
+        <table class="datatable">
+          <tr><th style="width:180px">Term</th><th>Meaning</th></tr>
+          <tr><td><strong>Debit / Credit</strong></td><td>The two sides of every ledger entry. Which one increases a balance depends on the account type — see Chapter 02.</td></tr>
+          <tr><td><strong>Chart of Accounts</strong></td><td>The full numbered list of every account a branch's books are built from, grouped into Assets, Liabilities, Equity, Income and Expenses.</td></tr>
+          <tr><td><strong>General Ledger (GL)</strong></td><td>The complete record of every posted transaction across every account — the books, in full.</td></tr>
+          <tr><td><strong>Journal entry / Transaction</strong></td><td>One balanced posting: two or more lines, debits equal to credits, hitting one or more accounts.</td></tr>
+          <tr><td><strong>Sub-ledger</strong></td><td>An individual account auto-linked to one specific loan, savings account, till or supplier, rolling up into its parent account's total.</td></tr>
+          <tr><td><strong>Trial Balance</strong></td><td>Every account and its balance as of a date, with total debits proven equal to total credits.</td></tr>
+          <tr><td><strong>Balance Sheet</strong></td><td>What the business owns, owes and is worth, at one point in time.</td></tr>
+          <tr><td><strong>Profit &amp; Loss (P&amp;L)</strong></td><td>Income minus expenses, over a period of time.</td></tr>
+          <tr><td><strong>Reconciliation</strong></td><td>Matching a bank's own statement against what the system recorded, to catch anything missing or wrong on either side.</td></tr>
+          <tr><td><strong>Disbursement</strong></td><td>Paying money out — most often, releasing an approved loan to a client.</td></tr>
+          <tr><td><strong>Maker-checker</strong></td><td>A control requiring the person who requests an action and the person who approves (and often pays) it to be two different people.</td></tr>
+          <tr><td><strong>Branch scoping</strong></td><td>Restricting what a user can see or do to their own branch's records, unless their role grants access across all branches.</td></tr>
+          <tr><td><strong>Due from / Due to</strong></td><td>The matched pair of clearing accounts used to record money or stock crossing between two branches — see Chapter 09.</td></tr>
+          <tr><td><strong>Consolidated Trial Balance</strong></td><td>Every branch's books combined into one, with interbranch Due-from/Due-to balances cancelled out.</td></tr>
+          <tr><td><strong>Imprest fund</strong></td><td>A fixed cash float (like Petty Cash) that's topped back up to its original amount each time it's replenished, rather than re-funded from scratch.</td></tr>
+          <tr><td><strong>Accounts Payable / Receivable</strong></td><td>Money the business owes to suppliers (Payable) or is owed by others (Receivable), before cash actually changes hands.</td></tr>
+        </table>
+        </div>
+
+        <div class="pagenav">
+          <a href="#roles"><span class="dir">Back</span>← 11 · Roles, Approvals &amp; Alerts</a>
+          <a class="next" href="#welcome"><span class="dir">Start over</span>00 · Welcome →</a>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+(function(){
+  var pages = Array.prototype.slice.call(document.querySelectorAll('.page'));
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+  var ids = pages.map(function(p){ return p.id.replace('page-',''); });
+
+  function showPage(id){
+    if(ids.indexOf(id) === -1) id = ids[0];
+    pages.forEach(function(p){ p.classList.toggle('active', p.id === 'page-' + id); });
+    links.forEach(function(a){ a.classList.toggle('active', a.getAttribute('href') === '#' + id); });
+    document.querySelector('.main').scrollTo && document.querySelector('.main').scrollTo(0,0);
+    window.scrollTo(0,0);
+    closeSidebar();
+  }
+  function route(){ showPage((location.hash || '#welcome').slice(1)); }
+  window.addEventListener('hashchange', route);
+  route();
+
+  // Ledger toggle, persisted
+  var ledgerToggle = document.getElementById('ledgerToggle');
+  try{
+    var saved = localStorage.getItem('phx-manual-ledger');
+    if(saved === '1'){ ledgerToggle.checked = true; document.body.classList.add('show-ledger'); }
+  }catch(e){}
+  ledgerToggle.addEventListener('change', function(){
+    document.body.classList.toggle('show-ledger', ledgerToggle.checked);
+    try{ localStorage.setItem('phx-manual-ledger', ledgerToggle.checked ? '1':'0'); }catch(e){}
+  });
+
+  // Search filter
+  var search = document.getElementById('navsearch');
+  search.addEventListener('input', function(){
+    var q = search.value.trim().toLowerCase();
+    links.forEach(function(a){
+      var li = a.parentElement;
+      var text = (a.textContent + ' ' + (a.getAttribute('data-kw')||'')).toLowerCase();
+      li.classList.toggle('hidden-item', q.length > 0 && text.indexOf(q) === -1);
+    });
+  });
+
+  // Mobile sidebar
+  var sidebar = document.getElementById('sidebar');
+  var scrim = document.getElementById('scrim');
+  var hamburger = document.getElementById('hamburger');
+  function closeSidebar(){ sidebar.classList.remove('open'); scrim.classList.remove('show'); }
+  hamburger.addEventListener('click', function(){ sidebar.classList.add('open'); scrim.classList.add('show'); });
+  scrim.addEventListener('click', closeSidebar);
+})();
+</script>
+</body>
+</html>
