@@ -570,7 +570,7 @@ class PettyCashFundSerializer(serializers.ModelSerializer):
             'alternate_custodian', 'alternate_custodian_name',
             'petty_cash_account', 'petty_cash_account_name', 'petty_cash_account_code',
             'float_amount', 'current_balance', 'replenishment_threshold',
-            'single_transaction_limit', 'status', 'established_date',
+            'single_transaction_limit', 'disbursement_mode', 'status', 'established_date',
             'last_replenishment_date', 'last_audit_date',
             'needs_replenishment', 'disbursed_amount', 'pending_vouchers_count',
             'cashier_account',
@@ -650,6 +650,14 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
     replenishment_number = serializers.SerializerMethodField()
     branch_name = serializers.SerializerMethodField()
     transaction_reference = serializers.SerializerMethodField()
+    payee_staff_name = serializers.SerializerMethodField()
+    payee_display_bank_name = serializers.SerializerMethodField()
+    payee_display_bank_account_name = serializers.SerializerMethodField()
+    payee_display_bank_account_number = serializers.SerializerMethodField()
+    disbursement_account_name = serializers.SerializerMethodField()
+    disbursement_account_number = serializers.SerializerMethodField()
+    disbursement_bank_name = serializers.SerializerMethodField()
+    fund_disbursement_mode = serializers.SerializerMethodField()
 
     # fund is required by the DB, but we allow it to be omitted on the API
     # request so that perform_create can auto-provision the default fund.
@@ -657,6 +665,7 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         from .models import PettyCashFund
         from expenses.models import ExpenseCategory
+        from hr.models import Staff
 
         self.fields['fund'] = serializers.PrimaryKeyRelatedField(
             queryset=PettyCashFund.objects.all(),
@@ -674,13 +683,21 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
             branch = getattr(user, 'branch', None)
             if branch:
                 cat_qs = ExpenseCategory.objects.filter(branch=branch)
+                staff_qs = Staff.objects.filter(branch=branch)
             else:
                 # No branch â€” fall back to all records (system admin scenario)
                 cat_qs = ExpenseCategory.objects.all()
+                staff_qs = Staff.objects.all()
         else:
             cat_qs = ExpenseCategory.objects.none()
+            staff_qs = Staff.objects.none()
         self.fields['expense_category'] = serializers.PrimaryKeyRelatedField(
             queryset=cat_qs,
+            required=False,
+            allow_null=True,
+        )
+        self.fields['payee_staff'] = serializers.PrimaryKeyRelatedField(
+            queryset=staff_qs,
             required=False,
             allow_null=True,
         )
@@ -725,13 +742,19 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
         from .models import PettyCashVoucher
         model = PettyCashVoucher
         fields = [
-            'id', 'fund', 'fund_name', 'voucher_number', 'voucher_date',
+            'id', 'fund', 'fund_name', 'fund_disbursement_mode', 'voucher_number', 'voucher_date',
             'requested_by', 'requested_by_name', 'purpose', 'amount',
             'expense_category', 'expense_category_name', 'lines',
-            'payee_name', 'payee_phone', 'status',
+            'payee_name', 'payee_phone', 'payee_staff', 'payee_staff_name',
+            'payee_bank_name', 'payee_bank_account_name', 'payee_bank_account_number',
+            'payee_display_bank_name', 'payee_display_bank_account_name',
+            'payee_display_bank_account_number',
+            'status',
             'submitted_at', 'approved_by', 'approved_by_name', 'approved_at', 'approval_notes',
             'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',
             'disbursed_at', 'disbursed_by', 'disbursed_by_name', 'actual_amount_disbursed',
+            'disbursement_account', 'disbursement_account_name', 'disbursement_account_number',
+            'disbursement_bank_name',
             'receipt_submitted', 'receipt_amount', 'receipt_date', 'receipt_reference',
             'receipt_attachment', 'retired_at', 'retired_by', 'retired_by_name',
             'variance', 'variance_explanation', 'replenishment', 'replenishment_number',
@@ -748,6 +771,10 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
             'approved_by', 'approved_at',
             'rejected_by', 'rejected_at',
             'disbursed_at', 'disbursed_by',
+            'disbursement_account', 'disbursement_account_name', 'disbursement_account_number',
+            'disbursement_bank_name', 'fund_disbursement_mode',
+            'payee_staff_name', 'payee_display_bank_name', 'payee_display_bank_account_name',
+            'payee_display_bank_account_number',
             'retired_at', 'retired_by',
             'variance', 'journal_entry',
             'reversal_requested_by', 'reversal_requested_at',
@@ -795,7 +822,59 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
     def get_transaction_reference(self, obj):
         """Return the GL transaction reference number once disbursed."""
         return obj.journal_entry.reference_number if obj.journal_entry_id else None
-    
+
+    def get_fund_disbursement_mode(self, obj):
+        return obj.fund.disbursement_mode if obj.fund_id else None
+
+    def get_payee_staff_name(self, obj):
+        if not obj.payee_staff_id:
+            return None
+        return f"{obj.payee_staff.first_name} {obj.payee_staff.last_name}".strip()
+
+    def get_payee_display_bank_name(self, obj):
+        if obj.payee_staff_id:
+            return obj.payee_staff.bank_name or None
+        return obj.payee_bank_name or None
+
+    def get_payee_display_bank_account_name(self, obj):
+        if obj.payee_staff_id:
+            # hr.Staff has no account-holder-name field, unlike clients.Client
+            # — fall back to the staff's own name.
+            return self.get_payee_staff_name(obj) or None
+        return obj.payee_bank_account_name or None
+
+    def get_payee_display_bank_account_number(self, obj):
+        if obj.payee_staff_id:
+            return obj.payee_staff.bank_account_number or None
+        return obj.payee_bank_account_number or None
+
+    # Mirrors loans.serializers.LoanDisbursementSerializer.get_disbursement_account_name/
+    # _number/get_disbursement_bank_name exactly — same GL Account -> BankAccount
+    # traversal, same fallback to the GL account's own name/code.
+    def get_disbursement_account_name(self, obj):
+        if not obj.disbursement_account_id:
+            return None
+        try:
+            return obj.disbursement_account.bank_account.account_name
+        except Exception:
+            return obj.disbursement_account.name
+
+    def get_disbursement_account_number(self, obj):
+        if not obj.disbursement_account_id:
+            return None
+        try:
+            return obj.disbursement_account.bank_account.account_number
+        except Exception:
+            return obj.disbursement_account.code
+
+    def get_disbursement_bank_name(self, obj):
+        if not obj.disbursement_account_id:
+            return None
+        try:
+            return str(obj.disbursement_account.bank_account.bank)
+        except Exception:
+            return None
+
     def validate_amount(self, value):
         """Validate amount is positive"""
         if value <= 0:
@@ -812,6 +891,8 @@ class PettyCashVoucherActionSerializer(serializers.Serializer):
     receipt_date = serializers.DateField(required=False)
     receipt_reference = serializers.CharField(max_length=100, required=False, allow_blank=True)
     variance_explanation = serializers.CharField(required=False, allow_blank=True)
+    # disburse() only, bank_transfer-mode funds: BankAccount pk to disburse from.
+    bank_account = serializers.IntegerField(required=False, allow_null=True)
 
 
 class PettyCashReplenishmentSerializer(serializers.ModelSerializer):

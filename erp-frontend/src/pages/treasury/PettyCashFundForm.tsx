@@ -24,9 +24,10 @@ export const PettyCashFundForm: React.FC = () => {
     custodian: 0,
     float_amount: '',
     petty_cash_account: 0,
+    disbursement_mode: 'cash',
     description: '',
     is_active: true,
-  });
+  } as CreatePettyCashFund);
 
   const [setupData, setSetupData] = useState({
     sourceAccountId: 0,
@@ -55,9 +56,10 @@ export const PettyCashFundForm: React.FC = () => {
         custodian: existingFund.custodian,
         float_amount: existingFund.float_amount,
         petty_cash_account: existingFund.petty_cash_account,
-        description: existingFund.description || '',
-        is_active: existingFund.is_active,
-      });
+        disbursement_mode: existingFund.disbursement_mode || 'cash',
+        description: (existingFund as any).description || '',
+        is_active: (existingFund as any).is_active,
+      } as CreatePettyCashFund);
     }
   }, [existingFund, isEditMode]);
 
@@ -370,6 +372,42 @@ export const PettyCashFundForm: React.FC = () => {
           {errors.petty_cash_account && (
             <p className="text-red-500 text-sm mt-1">{errors.petty_cash_account}</p>
           )}
+        </div>
+
+        {/* Disbursement Mode */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Disbursement Mode
+          </label>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="disbursement_mode"
+                value="cash"
+                checked={formData.disbursement_mode !== 'bank_transfer'}
+                onChange={handleChange}
+                className="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-700">Cash (physical till)</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="disbursement_mode"
+                value="bank_transfer"
+                checked={formData.disbursement_mode === 'bank_transfer'}
+                onChange={handleChange}
+                className="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-700">Bank Transfer</span>
+            </label>
+          </div>
+          <p className="text-sm text-gray-500 mt-1">
+            Bank Transfer requires a 3-person maker-checker: the requester, approver, and
+            the person who executes the transfer must all be different people. Switch back
+            to Cash at any time — no code change needed.
+          </p>
         </div>
 
         {/* Description */}

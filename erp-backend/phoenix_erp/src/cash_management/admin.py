@@ -153,12 +153,12 @@ class CashReconciliationAdmin(admin.ModelAdmin):
 
 @admin.register(PettyCashFund)
 class PettyCashFundAdmin(admin.ModelAdmin):
-    list_display = ['fund_code', 'fund_name', 'custodian', 'float_amount', 'current_balance', 'status', 'needs_replenishment']
-    list_filter = ['status', 'branch', 'established_date']
+    list_display = ['fund_code', 'fund_name', 'custodian', 'float_amount', 'current_balance', 'disbursement_mode', 'status', 'needs_replenishment']
+    list_filter = ['disbursement_mode', 'status', 'branch', 'established_date']
     search_fields = ['fund_code', 'fund_name', 'custodian__username']
     readonly_fields = ['current_balance', 'last_replenishment_date', 'needs_replenishment', 'disbursed_amount', 'created_at', 'updated_at']
     date_hierarchy = 'established_date'
-    
+
     fieldsets = (
         ('Fund Information', {
             'fields': ('fund_name', 'fund_code', 'petty_cash_account', 'status')
@@ -167,7 +167,7 @@ class PettyCashFundAdmin(admin.ModelAdmin):
             'fields': ('custodian', 'alternate_custodian')
         }),
         ('Limits & Controls', {
-            'fields': ('float_amount', 'current_balance', 'replenishment_threshold', 'single_transaction_limit')
+            'fields': ('float_amount', 'current_balance', 'replenishment_threshold', 'single_transaction_limit', 'disbursement_mode')
         }),
         ('Status', {
             'fields': ('needs_replenishment', 'disbursed_amount', 'last_replenishment_date', 'last_audit_date')
@@ -191,14 +191,14 @@ class PettyCashVoucherAdmin(admin.ModelAdmin):
     list_filter = ['status', 'voucher_date', 'fund', 'branch']
     search_fields = ['voucher_number', 'purpose', 'payee_name', 'requested_by__username']
     readonly_fields = [
-        'voucher_number', 'status', 'variance', 'submitted_at', 
+        'voucher_number', 'status', 'variance', 'submitted_at',
         'approved_by', 'approved_at', 'rejected_by', 'rejected_at',
         'disbursed_by', 'disbursed_at', 'retired_by', 'retired_at',
-        'created_at', 'updated_at'
+        'disbursement_account', 'created_at', 'updated_at'
     ]
     date_hierarchy = 'voucher_date'
     inlines = [PettyCashVoucherLineInline, PettyCashReceiptInline]
-    
+
     fieldsets = (
         ('Voucher Details', {
             'fields': ('voucher_number', 'fund', 'voucher_date', 'status')
@@ -207,7 +207,7 @@ class PettyCashVoucherAdmin(admin.ModelAdmin):
             'fields': ('requested_by', 'purpose', 'amount', 'expense_category')
         }),
         ('Payee Details', {
-            'fields': ('payee_name', 'payee_phone')
+            'fields': ('payee_name', 'payee_phone', 'payee_staff', 'payee_bank_name', 'payee_bank_account_name', 'payee_bank_account_number')
         }),
         ('Approval', {
             'fields': ('submitted_at', 'approved_by', 'approved_at', 'approval_notes')
@@ -217,7 +217,7 @@ class PettyCashVoucherAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Disbursement', {
-            'fields': ('disbursed_by', 'disbursed_at', 'actual_amount_disbursed')
+            'fields': ('disbursed_by', 'disbursed_at', 'actual_amount_disbursed', 'disbursement_account')
         }),
         ('Receipt & Retirement', {
             'fields': (

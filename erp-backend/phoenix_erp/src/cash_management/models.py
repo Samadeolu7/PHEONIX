@@ -1338,7 +1338,25 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         default=Decimal('5000.00'),
         help_text="Maximum amount for a single petty cash transaction"
     )
-    
+
+    DISBURSEMENT_MODE_CHOICES = [
+        ('cash', 'Cash (physical till)'),
+        ('bank_transfer', 'Bank Transfer'),
+    ]
+    disbursement_mode = models.CharField(
+        max_length=20,
+        choices=DISBURSEMENT_MODE_CHOICES,
+        default='cash',
+        help_text=(
+            "'cash' = physical-till workflow (disburse() credits "
+            "petty_cash_account and decrements current_balance). "
+            "'bank_transfer' = maker-checker bank transfer to the payee "
+            "(disburse() credits the chosen BankAccount's GL account instead "
+            "and does not touch current_balance). Change any time — no "
+            "redeploy needed."
+        )
+    )
+
     # Status
     STATUS_CHOICES = [
         ('active', 'Active'),
@@ -1752,7 +1770,28 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         blank=True,
         help_text="Payee contact"
     )
-    
+
+    # Optional link to an HR Staff record for bank-transfer disbursement —
+    # auto-fills bank details (staff.bank_name/bank_account_number) instead
+    # of requiring them to be typed in. Additive: payee_name/payee_phone
+    # stay required regardless of whether this is set.
+    payee_staff = models.ForeignKey(
+        'hr.Staff',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='petty_cash_vouchers_as_payee',
+        help_text="Optional HR Staff link — auto-fills bank details for bank-transfer disbursement."
+    )
+
+    # Free-text bank details for non-staff payees (vendors, one-off
+    # recipients). Ignored when payee_staff is set — the Staff record's own
+    # bank_name/bank_account_number win instead (see _payee_display_name /
+    # _payee_bank_details).
+    payee_bank_name = models.CharField(max_length=100, blank=True)
+    payee_bank_account_name = models.CharField(max_length=200, blank=True)
+    payee_bank_account_number = models.CharField(max_length=20, blank=True)
+
     # Approval workflow
     STATUS_CHOICES = [
         ('draft', 'Draft'),
@@ -1884,6 +1923,19 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         help_text="GL transaction created when cash is disbursed"
     )
 
+    # bank_transfer mode only: the GL account (resolved from the chosen
+    # banks.BankAccount) actually credited at disbursement — mirrors
+    # loans.LoanDisbursement.disbursement_account, which likewise stores the
+    # resolved GL Account rather than the BankAccount itself.
+    disbursement_account = models.ForeignKey(
+        'accounts.Account',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='petty_cash_voucher_disbursements',
+        help_text="Bank GL account the transfer was executed from (bank_transfer mode only)."
+    )
+
     # Reversal (undoes a disbursement) - maker/checker: request_reversal()
     # stages it, a *different* authorised user must approve_reversal() before
     # the GL entry is actually reversed and the fund balance restored.
@@ -2002,14 +2054,26 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """Approve voucher"""
         if self.status != 'pending':
             raise ValidationError("Only pending vouchers can be approved")
-        
-        # Check fund has sufficient balance
-        if self.amount > self.fund.current_balance:
-            raise ValidationError(
-                f'Insufficient fund balance. Available: ₦{self.fund.current_balance}, '
-                f'Required: ₦{self.amount}. Fund needs replenishment.'
-            )
-        
+
+        if self.fund.disbursement_mode == 'bank_transfer':
+            # No till involved in this mode — fund.current_balance is never
+            # funded, so the balance check below doesn't apply. Instead
+            # enforce the maker-checker split up front: the requester can't
+            # also be the one who approves it (disburse() enforces the rest:
+            # the approver also can't be the one who executes the transfer).
+            if user.pk == self.requested_by_id:
+                raise ValidationError(
+                    "The person who requested this voucher cannot approve it "
+                    "(maker-checker violation)."
+                )
+        else:
+            # Check fund has sufficient balance
+            if self.amount > self.fund.current_balance:
+                raise ValidationError(
+                    f'Insufficient fund balance. Available: ₦{self.fund.current_balance}, '
+                    f'Required: ₦{self.amount}. Fund needs replenishment.'
+                )
+
         self.status = 'approved'
         self.approved_by = user
         self.approved_at = timezone.now()
@@ -2028,42 +2092,15 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.rejection_reason = reason
         self.save(update_fields=['status', 'rejected_by', 'rejected_at', 'rejection_reason'])
     
-    @db_transaction.atomic
-    def disburse(self, user, amount=None):
+    def _resolve_disbursement_debits(self, actual_amount):
         """
-        Disburse cash to payee and create a GL journal entry.
-
-        GL Entry:
-          Dr. Expense Account(s) — one per distinct expense account across
-                                    this voucher's line items (or the
-                                    voucher's single expense_category for
-                                    legacy vouchers with no lines)
-          Cr. Petty Cash Fund GL Account
-
-        Expenses are recognised at disbursement so every voucher has its own
-        traceable Transaction reference in the ledger.  The replenishment
-        posting later restores the petty-cash balance by drawing from bank
-        (Dr. Petty Cash, Cr. Bank) rather than re-debiting expense accounts.
+        Returns {expense_account: Decimal amount} — one entry per distinct
+        expense account, from this voucher's PettyCashVoucherLine rows if
+        present, else the legacy single expense_category/amount pair.
+        Shared by disburse() for both 'cash' and 'bank_transfer' modes — the
+        debit side of the GL entry is identical either way; only the credit
+        side (and fund balance treatment) differs by mode.
         """
-        if self.status != 'approved':
-            raise ValidationError("Only approved vouchers can be disbursed")
-
-        if not self.is_authorized_to_disburse(user, self.fund):
-            raise ValidationError(
-                "Only the fund custodian, alternate custodian, or a director can disburse cash"
-            )
-
-        # Use requested amount if actual not specified
-        actual_amount = amount or self.amount
-
-        # Check fund balance
-        if actual_amount > self.fund.current_balance:
-            raise ValidationError(f'Insufficient fund balance: ₦{self.fund.current_balance}')
-
-        # --- GL ENTRY ---------------------------------------------------------
-        # Resolve the debit side: one amount per distinct expense account,
-        # built from this voucher's line items when present, otherwise the
-        # legacy single expense_category/amount pair.
         lines = list(self.lines.all())
         debits_by_account = {}
 
@@ -2109,6 +2146,91 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 )
             debits_by_account[expense_account] = actual_amount
 
+        return debits_by_account
+
+    def _payee_display_name(self):
+        """Staff has no get_full_name() (that's a User method) — build the
+        name from first_name/last_name, falling back to the free-text
+        payee_name when no staff is linked or the staff record is blank."""
+        if self.payee_staff_id:
+            name = f"{self.payee_staff.first_name} {self.payee_staff.last_name}".strip()
+            if name:
+                return name
+        return self.payee_name
+
+    @db_transaction.atomic
+    def disburse(self, user, amount=None, bank_account_id=None):
+        """
+        Disburse funds to payee and create a GL journal entry. Branches on
+        self.fund.disbursement_mode:
+
+          'cash' (default — unchanged physical-till behaviour):
+            Dr. Expense Account(s)   Cr. fund.petty_cash_account
+            Decrements fund.current_balance. Authorization is
+            is_authorized_to_disburse() only — no maker-checker distinctness
+            requirement, exactly as before.
+
+          'bank_transfer':
+            Dr. Expense Account(s)   Cr. bank_account.gl_account
+            Does NOT touch fund.current_balance (no till involved in this
+            mode). Requires bank_account_id (a banks.BankAccount pk).
+            Enforces the full 3-way maker-checker split, mirroring
+            loans.LoanDisbursement.execute_disbursement(): the disburser
+            must differ from both the requester and the approver, in
+            addition to the same is_authorized_to_disburse() role gate used
+            in cash mode.
+
+        Expenses are recognised at disbursement so every voucher has its own
+        traceable Transaction reference in the ledger. In cash mode, the
+        replenishment posting later restores the petty-cash balance by
+        drawing from bank (Dr. Petty Cash, Cr. Bank) rather than re-debiting
+        expense accounts — bank_transfer-mode vouchers never enter that
+        replenishment cycle since they never drew from the till.
+        """
+        if self.status != 'approved':
+            raise ValidationError("Only approved vouchers can be disbursed")
+
+        if not self.is_authorized_to_disburse(user, self.fund):
+            raise ValidationError(
+                "Only the fund custodian, alternate custodian, or a director can disburse cash"
+            )
+
+        actual_amount = amount or self.amount
+        bank_transfer_mode = self.fund.disbursement_mode == 'bank_transfer'
+        bank_account = None
+
+        if bank_transfer_mode:
+            if user.pk == self.requested_by_id:
+                raise ValidationError(
+                    "The person who requested this voucher cannot execute its "
+                    "disbursement (maker-checker violation)."
+                )
+            if self.approved_by_id and user.pk == self.approved_by_id:
+                raise ValidationError(
+                    "The person who approved this voucher cannot execute its "
+                    "disbursement (maker-checker violation)."
+                )
+            if not bank_account_id:
+                raise ValidationError("bank_account_id is required for bank-transfer disbursement.")
+
+            from banks.models import BankAccount
+            try:
+                bank_account = BankAccount.objects.select_related('gl_account').get(pk=bank_account_id)
+            except BankAccount.DoesNotExist:
+                raise ValidationError("Bank account not found.")
+            if not bank_account.gl_account_id:
+                raise ValidationError(
+                    f"Bank account '{bank_account}' has no linked GL account. Link one first."
+                )
+            credit_account = bank_account.gl_account
+        else:
+            if actual_amount > self.fund.current_balance:
+                raise ValidationError(f'Insufficient fund balance: ₦{self.fund.current_balance}')
+            credit_account = self.fund.petty_cash_account
+
+        # --- GL ENTRY ---------------------------------------------------------
+        debits_by_account = self._resolve_disbursement_debits(actual_amount)
+
         from transactions.models import Transaction, TransactionEntry, TransactionSeries
 
         series, _ = TransactionSeries.objects.get_or_create(
@@ -2137,10 +2259,11 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 amount=debit_amount,
             )
 
-        # Credit: Petty Cash Fund GL account (reduces fund balance on the GL)
+        # Credit: petty cash till (cash mode) or the chosen bank's GL account
+        # (bank_transfer mode)
         TransactionEntry.objects.create(
             transaction=journal_entry,
-            account=self.fund.petty_cash_account,
+            account=credit_account,
             side=TransactionEntry.CREDIT,
             amount=actual_amount,
         )
@@ -2148,9 +2271,17 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         journal_entry.post()
         # --- END GL ENTRY -----------------------------------------------------
 
-        # Update fund balance (physical cash tracking)
-        self.fund.current_balance -= actual_amount
-        self.fund.save(update_fields=['current_balance'])
+        update_fields = [
+            'status', 'actual_amount_disbursed', 'disbursed_by', 'disbursed_at', 'journal_entry',
+        ]
+        if bank_transfer_mode:
+            self.disbursement_account = credit_account
+            update_fields.append('disbursement_account')
+        else:
+            # Update fund balance (physical cash tracking) — bank_transfer
+            # mode never touches this, since no till is involved.
+            self.fund.current_balance -= actual_amount
+            self.fund.save(update_fields=['current_balance'])
 
         # Update voucher
         self.status = 'disbursed'
@@ -2158,22 +2289,31 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.disbursed_by = user
         self.disbursed_at = timezone.now()
         self.journal_entry = journal_entry
-        self.save(update_fields=[
-            'status', 'actual_amount_disbursed', 'disbursed_by', 'disbursed_at',
-            'journal_entry',
-        ])
+        self.save(update_fields=update_fields)
 
         try:
             from notifications.telegram_alerts import notify_directors
-            notify_directors(
-                'petty_cash_disbursed',
-                f'💵 Petty Cash Disbursed — {self.voucher_number}',
-                (
-                    f"₦{actual_amount:,.2f} disbursed for '{self.purpose}' from fund "
-                    f"'{self.fund}' by {user.get_full_name() or user.username}."
-                ),
-                owner=self.owner, branch=self.branch, related_object=self,
-            )
+            if bank_transfer_mode:
+                notify_directors(
+                    'petty_cash_disbursed',
+                    f'🏦 Petty Cash Disbursed (Bank Transfer) — {self.voucher_number}',
+                    (
+                        f"₦{actual_amount:,.2f} transferred for '{self.purpose}' from fund "
+                        f"'{self.fund}' to {self._payee_display_name()} via {bank_account} "
+                        f"by {user.get_full_name() or user.username}."
+                    ),
+                    owner=self.owner, branch=self.branch, related_object=self,
+                )
+            else:
+                notify_directors(
+                    'petty_cash_disbursed',
+                    f'💵 Petty Cash Disbursed — {self.voucher_number}',
+                    (
+                        f"₦{actual_amount:,.2f} disbursed for '{self.purpose}' from fund "
+                        f"'{self.fund}' by {user.get_full_name() or user.username}."
+                    ),
+                    owner=self.owner, branch=self.branch, related_object=self,
+                )
         except Exception:
             logger.exception("Failed to send petty-cash-disbursed Telegram alert for voucher %s", self.voucher_number)
 

@@ -3,7 +3,7 @@
  * View voucher details and perform workflow actions
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import {
@@ -20,6 +20,7 @@ import {
   ClockIcon,
   UserIcon,
   UndoIcon,
+  Building2Icon,
 } from 'lucide-react';
 import {
   usePettyCashVoucher,
@@ -36,6 +37,8 @@ import {
 import PettyCashReceiptUpload from '../../components/treasury/PettyCashReceiptUpload';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 import { useAuth } from '../../hooks/useAuth';
+import { bankService } from '../../services/bankService';
+import type { BankAccount } from '../../types/banks';
 
 const STATUS_INFO = {
   draft: { color: 'bg-gray-100 text-gray-800', icon: ClockIcon, label: 'Draft' },
@@ -72,12 +75,20 @@ export const PettyCashVoucherDetail: React.FC = () => {
   const [actionComments, setActionComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [selectedBankAccount, setSelectedBankAccount] = useState<number | ''>('');
 
   // Fetch voucher data
   const { data: voucher, isLoading } = usePettyCashVoucher(voucherId);
   const { canUserApprove } = useApprovalGuard();
   const { user: currentUser } = useAuth();
   const currentUserId = currentUser?.id != null ? Number(currentUser.id) : null;
+
+  useEffect(() => {
+    if (voucher?.fund_disbursement_mode === 'bank_transfer') {
+      bankService.listBankAccounts({ is_active: true }).then(setBankAccounts).catch(() => {});
+    }
+  }, [voucher?.fund_disbursement_mode]);
 
   // Mutations
   const submitMutation = useSubmitVoucher();
@@ -129,7 +140,13 @@ export const PettyCashVoucherDetail: React.FC = () => {
           await rejectMutation.mutateAsync({ id: voucherId, data });
           break;
         case 'disburse':
-          await disburseMutation.mutateAsync({ id: voucherId, data });
+          await disburseMutation.mutateAsync({
+            id: voucherId,
+            data:
+              voucher?.fund_disbursement_mode === 'bank_transfer'
+                ? { ...data, bank_account: selectedBankAccount || null }
+                : data,
+          });
           break;
         case 'retire':
           await retireMutation.mutateAsync({ id: voucherId, data });
@@ -147,6 +164,7 @@ export const PettyCashVoucherDetail: React.FC = () => {
 
       setActionDialog({ visible: false, type: null });
       setActionComments('');
+      setSelectedBankAccount('');
     } catch (err: any) {
       setError(
         err.response?.data?.error ||
@@ -215,7 +233,16 @@ export const PettyCashVoucherDetail: React.FC = () => {
   const canSubmit = voucher.status === 'draft';
   const canApprove = canUserApprove && voucher.status === 'pending';
   const canReject = canUserApprove && voucher.status === 'pending';
-  const canDisburse = canUserApprove && voucher.status === 'approved';
+  const isBankTransferVoucher = voucher.fund_disbursement_mode === 'bank_transfer';
+  // Maker-checker for bank-transfer disbursement: the requester and approver
+  // can't also be the one who executes the transfer. The backend enforces
+  // this for real — this just hides the button rather than surfacing a 400.
+  const isMakerOrChecker =
+    voucher.requested_by === currentUserId || voucher.approved_by === currentUserId;
+  const canDisburse =
+    canUserApprove &&
+    voucher.status === 'approved' &&
+    (!isBankTransferVoucher || !isMakerOrChecker);
   const canRetire = voucher.status === 'disbursed';
   // Maker step: stage a reversal request. Anyone who could disburse can request one.
   const canRequestReversal =
@@ -300,8 +327,30 @@ export const PettyCashVoucherDetail: React.FC = () => {
               </div>
               <div>
                 <p className="text-sm text-gray-600">Payee</p>
-                <p className="font-medium">{voucher.payee_name}</p>
+                <p className="font-medium">
+                  {voucher.payee_name}
+                  {voucher.payee_staff_name && (
+                    <span className="text-gray-500 font-normal"> ({voucher.payee_staff_name})</span>
+                  )}
+                </p>
               </div>
+              {isBankTransferVoucher &&
+                (voucher.payee_display_bank_name || voucher.payee_display_bank_account_number) && (
+                  <div>
+                    <p className="text-sm text-gray-600">Payee Bank Details</p>
+                    <p className="font-medium">
+                      {voucher.payee_display_bank_name || '—'}
+                      {voucher.payee_display_bank_account_number
+                        ? ` — ${voucher.payee_display_bank_account_number}`
+                        : ''}
+                    </p>
+                    {voucher.payee_display_bank_account_name && (
+                      <p className="text-xs text-gray-500">
+                        {voucher.payee_display_bank_account_name}
+                      </p>
+                    )}
+                  </div>
+                )}
               {(!voucher.lines || voucher.lines.length === 0) && (
                 <div>
                   <p className="text-sm text-gray-600">Expense Category</p>
@@ -429,11 +478,26 @@ export const PettyCashVoucherDetail: React.FC = () => {
                       )}
                     </div>
                     <div className="flex-1 pb-4">
-                      <p className="font-medium">Cash Disbursed</p>
+                      <p className="font-medium">
+                        {voucher.disbursement_account
+                          ? 'Bank Transfer Executed'
+                          : 'Cash Disbursed'}
+                      </p>
                       <p className="text-sm text-gray-600">
                         By {voucher.disbursed_by_name} on{' '}
                         {format(new Date(voucher.disbursed_at), 'MMM dd, yyyy HH:mm')}
                       </p>
+                      {voucher.disbursement_account && (
+                        <p className="text-sm text-gray-700 mt-1">
+                          Via {voucher.disbursement_bank_name || 'bank'}
+                          {voucher.disbursement_account_number
+                            ? ` — ${voucher.disbursement_account_number}`
+                            : ''}
+                          {voucher.disbursement_account_name
+                            ? ` (${voucher.disbursement_account_name})`
+                            : ''}
+                        </p>
+                      )}
                       {voucher.notes && (
                         <p className="text-sm text-gray-700 mt-1 italic">"{voucher.notes}"</p>
                       )}
@@ -533,9 +597,20 @@ export const PettyCashVoucherDetail: React.FC = () => {
                   disabled={submitting}
                   className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2 justify-center disabled:opacity-50"
                 >
-                  <BanknoteIcon className="h-4 w-4" />
-                  Disburse Cash
+                  {isBankTransferVoucher ? (
+                    <Building2Icon className="h-4 w-4" />
+                  ) : (
+                    <BanknoteIcon className="h-4 w-4" />
+                  )}
+                  {isBankTransferVoucher ? 'Disburse via Bank Transfer' : 'Disburse Cash'}
                 </button>
+              )}
+
+              {isBankTransferVoucher && voucher.status === 'approved' && isMakerOrChecker && (
+                <p className="text-xs text-gray-500 text-center px-2">
+                  You requested or approved this voucher — a different authorised person must
+                  execute the bank transfer (maker-checker).
+                </p>
               )}
 
               {canRetire && (
@@ -610,11 +685,15 @@ export const PettyCashVoucherDetail: React.FC = () => {
               {voucher.status === 'pending' &&
                 'This voucher is awaiting approval from an authorized person.'}
               {voucher.status === 'approved' &&
-                'This voucher has been approved. Cash can now be disbursed.'}
+                (isBankTransferVoucher
+                  ? 'This voucher has been approved. A different, authorised person (not the requester or approver) can now execute the bank transfer.'
+                  : 'This voucher has been approved. Cash can now be disbursed.')}
               {voucher.status === 'rejected' &&
                 'This voucher has been rejected and cannot proceed further.'}
               {voucher.status === 'disbursed' &&
-                'Cash has been disbursed. Waiting for receipts to be submitted.'}
+                (isBankTransferVoucher
+                  ? 'The bank transfer has been executed. Waiting for receipts to be submitted.'
+                  : 'Cash has been disbursed. Waiting for receipts to be submitted.')}
               {voucher.status === 'retired' &&
                 'Receipts have been submitted. This voucher can be included in reimbursement.'}
               {voucher.status === 'reversal_pending' &&
@@ -634,7 +713,8 @@ export const PettyCashVoucherDetail: React.FC = () => {
             <h3 className="text-lg font-semibold mb-4">
               {actionDialog.type === 'approve' && 'Approve Voucher'}
               {actionDialog.type === 'reject' && 'Reject Voucher'}
-              {actionDialog.type === 'disburse' && 'Disburse Cash'}
+              {actionDialog.type === 'disburse' &&
+                (isBankTransferVoucher ? 'Disburse via Bank Transfer' : 'Disburse Cash')}
               {actionDialog.type === 'retire' && 'Retire with Receipts'}
               {actionDialog.type === 'request_reversal' && 'Request Reversal'}
               {actionDialog.type === 'approve_reversal' && 'Approve Reversal'}
@@ -654,6 +734,60 @@ export const PettyCashVoucherDetail: React.FC = () => {
                 Approving posts an offsetting GL entry, restores the amount to the fund's cash
                 balance, and cancels this voucher. It cannot be undone.
               </p>
+            )}
+            {actionDialog.type === 'disburse' && isBankTransferVoucher && (
+              <div className="mb-4 space-y-3">
+                <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm space-y-1">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
+                    Payee Bank Details
+                  </p>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Payee:</span>
+                    <span className="font-medium text-gray-900">{voucher.payee_name}</span>
+                  </div>
+                  {voucher.payee_display_bank_account_number ? (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Account:</span>
+                        <span className="font-mono font-bold text-gray-900 tracking-wider">
+                          {voucher.payee_display_bank_account_number}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Bank:</span>
+                        <span className="font-medium text-gray-900">
+                          {voucher.payee_display_bank_name || '—'}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-amber-700 text-xs">
+                      No bank details on file for this payee — confirm them before transferring.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Disbursement Account (source) <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    title="Disbursement account"
+                    value={selectedBankAccount}
+                    onChange={e =>
+                      setSelectedBankAccount(e.target.value ? Number(e.target.value) : '')
+                    }
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">— Select bank account —</option>
+                    {bankAccounts.map(ba => (
+                      <option key={ba.id} value={ba.id}>
+                        {ba.bank_display_name || ba.bank_name} — {ba.account_number} (
+                        {ba.account_name})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             )}
             {(actionDialog.type === 'request_reversal' ||
               actionDialog.type === 'reject_reversal') && (
@@ -691,6 +825,7 @@ export const PettyCashVoucherDetail: React.FC = () => {
                 onClick={() => {
                   setActionDialog({ visible: false, type: null });
                   setActionComments('');
+                  setSelectedBankAccount('');
                 }}
                 disabled={submitting}
                 className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
@@ -704,7 +839,10 @@ export const PettyCashVoucherDetail: React.FC = () => {
                   (['reject', 'request_reversal', 'reject_reversal'].includes(
                     actionDialog.type ?? ''
                   ) &&
-                    !actionComments.trim())
+                    !actionComments.trim()) ||
+                  (actionDialog.type === 'disburse' &&
+                    isBankTransferVoucher &&
+                    !selectedBankAccount)
                 }
                 className={`px-4 py-2 rounded-lg text-white disabled:opacity-50 ${
                   actionDialog.type === 'approve'

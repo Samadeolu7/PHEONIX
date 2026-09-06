@@ -1345,7 +1345,8 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
         try:
             voucher.disburse(
                 user=request.user,
-                amount=action_serializer.validated_data.get('amount')
+                amount=action_serializer.validated_data.get('amount'),
+                bank_account_id=action_serializer.validated_data.get('bank_account'),
             )
             serializer = self.get_serializer(voucher)
             return Response(serializer.data, status=status.HTTP_200_OK)

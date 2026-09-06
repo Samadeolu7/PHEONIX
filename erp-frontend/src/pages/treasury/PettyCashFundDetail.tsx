@@ -202,12 +202,28 @@ export const PettyCashFundDetail: React.FC = () => {
               <WalletIcon className="h-8 w-8" />
               {fund.fund_name}
             </h1>
-            <p className="text-gray-600 mt-1">
-              Custodian: {fund.custodian_name} • Status:{' '}
+            <p className="text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
+              <span>
+                Custodian: {fund.custodian_name} • Status:{' '}
+                <span
+                  className={`font-semibold ${fund.status === 'active' ? 'text-green-600' : 'text-gray-600'}`}
+                >
+                  {fund.status === 'active' ? 'Active' : fund.status}
+                </span>
+              </span>
               <span
-                className={`font-semibold ${fund.status === 'active' ? 'text-green-600' : 'text-gray-600'}`}
+                className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                  fund.disbursement_mode === 'bank_transfer'
+                    ? 'bg-blue-100 text-blue-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}
+                title={
+                  fund.disbursement_mode === 'bank_transfer'
+                    ? 'Disbursed via bank transfer (maker-checker)'
+                    : 'Disbursed as physical cash from the till'
+                }
               >
-                {fund.status === 'active' ? 'Active' : fund.status}
+                {fund.disbursement_mode === 'bank_transfer' ? 'Bank Transfer' : 'Cash (Till)'}
               </span>
             </p>
           </div>

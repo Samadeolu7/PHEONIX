@@ -14,6 +14,10 @@ export interface PettyCashFund {
   current_balance: string;
   replenishment_threshold: string;
   single_transaction_limit: string;
+  /** 'cash' = physical till (today's behavior). 'bank_transfer' = maker-checker
+   * bank transfer to the payee, does not touch current_balance. Switch any
+   * time via Edit Fund — no backend change needed. */
+  disbursement_mode: 'cash' | 'bank_transfer';
   status: 'active' | 'suspended' | 'closed';
   established_date: string;
   last_replenishment_date: string | null;
@@ -60,6 +64,26 @@ export interface PettyCashVoucher {
   lines: PettyCashVoucherLine[];
   payee_name: string;
   payee_phone: string;
+  /** Optional HR Staff link — auto-fills bank details for bank-transfer
+   * disbursement. Additive: payee_name/payee_phone stay required regardless. */
+  payee_staff: number | null;
+  payee_staff_name: string | null;
+  /** Free-text fallback bank details for non-staff payees. Ignored (in favor
+   * of the staff record's own bank details) when payee_staff is set. */
+  payee_bank_name: string;
+  payee_bank_account_name: string;
+  payee_bank_account_number: string;
+  /** Read-only: whichever of payee_staff's or the free-text fields actually apply. */
+  payee_display_bank_name: string | null;
+  payee_display_bank_account_name: string | null;
+  payee_display_bank_account_number: string | null;
+  /** The fund's disbursement_mode, surfaced here so the UI can branch without a second fetch. */
+  fund_disbursement_mode: 'cash' | 'bank_transfer';
+  /** bank_transfer mode only: the GL account the transfer was executed from. */
+  disbursement_account: number | null;
+  disbursement_account_name: string | null;
+  disbursement_account_number: string | null;
+  disbursement_bank_name: string | null;
   status:
     | 'draft'
     | 'pending'
@@ -175,6 +199,7 @@ export interface CreatePettyCashFund {
   float_amount: string | number;
   replenishment_threshold: string | number;
   single_transaction_limit: string | number;
+  disbursement_mode?: 'cash' | 'bank_transfer';
   status?: 'active' | 'suspended' | 'closed';
   established_date?: string;
   notes?: string;
@@ -197,6 +222,10 @@ export interface CreatePettyCashVoucher {
   expense_category?: number | null;
   payee_name: string;
   payee_phone?: string;
+  payee_staff?: number | null;
+  payee_bank_name?: string;
+  payee_bank_account_name?: string;
+  payee_bank_account_number?: string;
   voucher_date?: string;
   notes?: string;
 }
@@ -246,6 +275,8 @@ export interface VoucherActionData {
   receipt_date?: string;
   receipt_reference?: string;
   variance_explanation?: string;
+  /** disburse() only, bank_transfer-mode funds: BankAccount pk to disburse from. */
+  bank_account?: number | null;
 }
 
 export interface ReplenishmentActionData {
