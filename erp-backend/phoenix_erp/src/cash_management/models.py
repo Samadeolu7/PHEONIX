@@ -2079,7 +2079,34 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.approved_at = timezone.now()
         self.approval_notes = notes
         self.save(update_fields=['status', 'approved_by', 'approved_at', 'approval_notes'])
-    
+
+        if self.fund.disbursement_mode == 'bank_transfer':
+            # Proactive alert: this voucher is now sitting in "approved"
+            # waiting for a third, distinct person to execute the bank
+            # transfer — unlike cash mode (custodian just hands over cash
+            # right after approval), nobody is automatically primed to act
+            # on this. Without this, the only alert was the post-hoc
+            # "already disbursed" one in disburse() — too late to be useful
+            # for someone deciding whether to log in and action it.
+            try:
+                from notifications.telegram_alerts import notify_directors
+                notify_directors(
+                    'petty_cash_awaiting_disbursement',
+                    f'⏳ Petty Cash Awaiting Bank Transfer — {self.voucher_number}',
+                    (
+                        f"₦{self.amount:,.2f} approved for '{self.purpose}' from fund "
+                        f"'{self.fund}', payee {self._payee_display_name()}. Approved by "
+                        f"{user.get_full_name() or user.username} — needs a different, "
+                        f"authorised person to execute the transfer."
+                    ),
+                    owner=self.owner, branch=self.branch, related_object=self,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send petty-cash-awaiting-disbursement Telegram alert for voucher %s",
+                    self.voucher_number,
+                )
+
     @db_transaction.atomic
     def reject(self, user, reason):
         """Reject voucher"""

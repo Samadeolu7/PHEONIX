@@ -335,6 +335,31 @@ class DisbursementService:
         from django.utils import timezone as tz
         disbursement.approved_at = tz.now()
         disbursement.save(update_fields=['status', 'approved_by', 'approved_at'])
+
+        # Proactive alert: this is now waiting for a third, distinct person
+        # to execute it (execute_disbursement() enforces executor != approver
+        # != requester) — the only alert before this was the post-hoc
+        # "already disbursed" one in execute(), too late to prompt anyone
+        # into actually logging in and doing it.
+        try:
+            from notifications.telegram_alerts import notify_directors
+            loan = disbursement.loan
+            notify_directors(
+                'loan_disbursement_awaiting_execution',
+                f'⏳ Loan Disbursement Awaiting Execution — {loan.loan_number}',
+                (
+                    f"₦{loan.principal_amount:,.2f} approved for disbursement to {loan.client} "
+                    f"by {approved_by_user.get_full_name() or approved_by_user.username} — "
+                    f"needs a different, authorised person to execute it."
+                ),
+                owner=loan.owner, branch=loan.branch, related_object=disbursement,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send loan-disbursement-awaiting-execution Telegram alert for %s",
+                disbursement.loan.loan_number,
+            )
+
         return disbursement
 
     @staticmethod
