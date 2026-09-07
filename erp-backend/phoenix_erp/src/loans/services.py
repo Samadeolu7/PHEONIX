@@ -342,9 +342,9 @@ class DisbursementService:
         # "already disbursed" one in execute(), too late to prompt anyone
         # into actually logging in and doing it.
         try:
-            from notifications.telegram_alerts import notify_directors
+            from notifications.telegram_alerts import notify_pending_disbursements
             loan = disbursement.loan
-            notify_directors(
+            notify_pending_disbursements(
                 'loan_disbursement_awaiting_execution',
                 f'⏳ Loan Disbursement Awaiting Execution — {loan.loan_number}',
                 (

@@ -2089,8 +2089,8 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             # "already disbursed" one in disburse() — too late to be useful
             # for someone deciding whether to log in and action it.
             try:
-                from notifications.telegram_alerts import notify_directors
-                notify_directors(
+                from notifications.telegram_alerts import notify_pending_disbursements
+                notify_pending_disbursements(
                     'petty_cash_awaiting_disbursement',
                     f'⏳ Petty Cash Awaiting Bank Transfer — {self.voucher_number}',
                     (
