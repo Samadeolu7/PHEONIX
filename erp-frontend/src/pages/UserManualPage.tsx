@@ -1,4 +1,5 @@
 import React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 // Full-screen embed of the static manual in public/phoenix-erp-manual.html.
@@ -10,9 +11,18 @@ const UserManualPage: React.FC = () => {
   // and the all-branches banner, so the manual starts right below them.
   const topOffset = isDirectorPlus && !activeBranch ? 96 : 64;
 
+  // ?topic=howto-petty-cash-bank deep-links straight to a chapter or How-To
+  // entry (its anchor id in the manual) — see ManualLink.tsx for the sender side.
+  const [searchParams] = useSearchParams();
+  const topic = searchParams.get('topic');
+  const src = topic
+    ? `/phoenix-erp-manual.html#${encodeURIComponent(topic)}`
+    : '/phoenix-erp-manual.html';
+
   return (
     <iframe
-      src="/phoenix-erp-manual.html"
+      key={src}
+      src={src}
       title="Phoenix ERP Manual"
       style={{
         position: 'fixed',

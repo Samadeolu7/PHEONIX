@@ -13,6 +13,7 @@ import {
   useSetupPettyCashFund,
 } from '../../hooks/usePettyCash';
 import { CreatePettyCashFund } from '../../types/pettyCash';
+import { ManualLink } from '../../components/help/ManualLink';
 
 export const PettyCashFundForm: React.FC = () => {
   const navigate = useNavigate();
@@ -376,9 +377,12 @@ export const PettyCashFundForm: React.FC = () => {
 
         {/* Disbursement Mode */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Disbursement Mode
-          </label>
+          <div className="mb-2 flex items-center justify-between">
+            <label className="block text-sm font-medium text-gray-700">Disbursement Mode</label>
+            <ManualLink topic="howto-petty-cash-bank">
+              How do I switch this to a bank transfer?
+            </ManualLink>
+          </div>
           <div className="flex gap-4">
             <label className="flex items-center gap-2 cursor-pointer">
               <input

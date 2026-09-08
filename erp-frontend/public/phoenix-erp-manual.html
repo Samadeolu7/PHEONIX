@@ -71,15 +71,17 @@ code, .mono{font-family:var(--mono);}
 .switch input:checked + .slider::before{transform:translateX(16px);}
 .switch input:focus-visible + .slider{outline:2px solid var(--accent);outline-offset:2px;}
 
-nav.toc{list-style:none;margin:0;padding:0;flex:1;}
-nav.toc li{margin:0 0 2px;}
-nav.toc a{display:flex;gap:10px;align-items:baseline;text-decoration:none;color:var(--ink-soft);
+.toc{list-style:none;margin:0;padding:0;flex:1;}
+.toc li{margin:0 0 2px;}
+.toc a{display:flex;gap:10px;align-items:baseline;text-decoration:none;color:var(--ink-soft);
   padding:8px 10px;border-radius:8px;font-size:.86rem;border-left:2px solid transparent;}
-nav.toc a:hover{background:var(--surface-2);color:var(--ink);}
-nav.toc a.active{background:var(--accent-soft);color:var(--accent-strong);font-weight:600;border-left-color:var(--accent);}
-nav.toc .num{font-family:var(--mono);font-size:.72rem;color:var(--ink-faint);flex:none;width:1.4em;}
-nav.toc a.active .num{color:var(--accent-strong);}
+.toc a:hover{background:var(--surface-2);color:var(--ink);}
+.toc a.active{background:var(--accent-soft);color:var(--accent-strong);font-weight:600;border-left-color:var(--accent);}
+.toc .num{font-family:var(--mono);font-size:.72rem;color:var(--ink-faint);flex:none;width:1.4em;}
+.toc a.active .num{color:var(--accent-strong);}
 .navgroup-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-faint);margin:14px 6px 6px;}
+.howto-toc{flex:none;padding-bottom:6px;}
+.howto-toc .num{color:var(--accent-strong);}
 .hidden-item{display:none !important;}
 
 /* Main */
@@ -206,6 +208,11 @@ body:not(.show-ledger) .ledger-detail{display:none;}
       <li><a href="#roles" data-kw="role permission approval limit telegram notification director"><span class="num">11</span><span>Roles, Approvals &amp; Alerts</span></a></li>
       <li><a href="#glossary" data-kw="glossary terms definitions"><span class="num">12</span><span>Glossary</span></a></li>
     </ol>
+
+    <div class="navgroup-label">How-To Guides</div>
+    <ul class="toc howto-toc" id="howtotoc">
+      <li><a href="#howto-petty-cash-bank" data-kw="petty cash bank transfer disbursement mode switch fund"><span class="num">↻</span><span>Switch petty cash to bank transfer</span></a></li>
+    </ul>
   </aside>
 
   <main class="main">
@@ -222,7 +229,7 @@ body:not(.show-ledger) .ledger-detail{display:none;}
 
         <div class="callout note">
           <span class="tag">How to use this manual</span>
-          <p>Read Chapters 01–02 in order first — they're the foundation everything else builds on. After that, jump straight to whichever module your role touches using the sidebar, or the search box at the top of it.</p>
+          <p>Read Chapters 01–02 in order first — they're the foundation everything else builds on. After that, jump straight to whichever module your role touches using the sidebar, or the search box at the top of it. Below the chapters, <strong>How-To Guides</strong> is a separate, growing list of short answers to specific questions — not meant to be read in order, and added to over time as new ones come up.</p>
         </div>
 
         <h2>What Phoenix actually is</h2>
@@ -521,6 +528,11 @@ body:not(.show-ledger) .ledger-detail{display:none;}
         </div>
 
         <div class="callout note">
+          <span class="tag">How-to</span>
+          <p>Need to switch an existing fund from cash to bank transfer? See <a href="#howto-petty-cash-bank">How-To: Switch Petty Cash to Bank Transfer</a>.</p>
+        </div>
+
+        <div class="callout note">
           <span class="tag">Directors are watching</span>
           <p>Every petty cash disbursement — cash or bank transfer — fires an automatic Telegram alert to the directors' group the moment it happens. This isn't an approval gate, it's visibility: directors see every payout in near-real time without having to log in and check.</p>
         </div>
@@ -763,6 +775,60 @@ body:not(.show-ledger) .ledger-detail{display:none;}
         </div>
       </section>
 
+      <!-- HOW-TO: PETTY CASH TO BANK -->
+      <section class="page" id="page-howto-petty-cash-bank">
+        <div class="eyebrow">How-To Guide</div>
+        <h1>Switch Petty Cash to Bank Transfer</h1>
+        <p class="dek">Move a fund's payouts off the physical till and onto a bank account — and know what changes the next time a voucher from it is paid out.</p>
+
+        <div class="callout note">
+          <span class="tag">Where to do this</span>
+          <p>Treasury → Petty Cash → open the fund → Edit. You'll need Treasury edit rights on that fund — usually a branch manager or accountant.</p>
+        </div>
+
+        <div class="steps">
+          <li>Go to <strong>Treasury → Petty Cash</strong> and open the fund you want to change.</li>
+          <li>Click <strong>Edit</strong>.</li>
+          <li>Under <strong>Disbursement Mode</strong>, switch it from <em>Cash (physical till)</em> to <em>Bank Transfer</em>.</li>
+          <li>Save the fund.</li>
+        </div>
+        <p>That's the whole switch. It takes effect on the <em>next</em> voucher disbursed from this fund — nothing already paid out in cash is rewritten.</p>
+
+        <h2>What changes from here</h2>
+        <p>A bank-transfer fund isn't locked to one fixed account. Instead, <strong>whoever disburses each voucher picks the bank account to pay from</strong>, at the moment they disburse it — so the same fund can pay different vouchers from different accounts if needed.</p>
+        <div class="flow">
+          <span class="chip">Voucher approved</span><span class="arrow">→</span><span class="chip">Disburser opens it</span><span class="arrow">→</span><span class="chip end">Picks a bank account → Disburse</span>
+        </div>
+
+        <div class="callout warn">
+          <span class="tag">Maker-checker still applies</span>
+          <p>Bank-transfer disbursement needs three different people: whoever requested the voucher, whoever approved it, and whoever executes the transfer. Switching a fund to Bank Transfer doesn't relax that — if anything, it's the mode where it's enforced most strictly.</p>
+        </div>
+
+        <div class="ledger-detail">
+          <div class="ledger-detail-inner">
+            <div class="ledger-detail-head">📒 In the ledger — after the switch</div>
+            <div class="ledger-body">
+              <p>The debit side — the expense itself — doesn't change. Only the credit side moves, off the till's GL account and onto the chosen bank account's:</p>
+              <div class="ledger">
+                <div class="ledger-head-row"><span>Account</span><span style="text-align:right">Debit</span><span style="text-align:right">Credit</span></div>
+                <div class="ledger-row"><span class="acct">Fuel Expense</span><span class="dr">6,000</span><span class="cr"></span></div>
+                <div class="ledger-row"><span class="acct">First City Bank — Current</span><span class="dr"></span><span class="cr">6,000</span></div>
+              </div>
+              <p>The fund's own till balance is untouched, because no physical cash moved out of it.</p>
+            </div>
+          </div>
+        </div>
+
+        <p>Changed your mind? Switching back to Cash is safe at any time — it only affects vouchers disbursed after the change.</p>
+        <p>See <a href="#petty-cash">Chapter 06 · Petty Cash</a> for the full picture of how petty cash works end to end.</p>
+
+        <div class="callout note">
+          <span class="tag">This library will keep growing</span>
+          <p>This is the first entry in the How-To Guides — short, task-specific answers that sit alongside the numbered chapters. More get added here as new questions come up, and a Help link in the app can point straight to any one of them.</p>
+        </div>
+      </section>
+
     </div>
   </main>
 </div>
@@ -770,7 +836,7 @@ body:not(.show-ledger) .ledger-detail{display:none;}
 <script>
 (function(){
   var pages = Array.prototype.slice.call(document.querySelectorAll('.page'));
-  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
   var ids = pages.map(function(p){ return p.id.replace('page-',''); });
 
   function showPage(id){
