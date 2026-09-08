@@ -1288,8 +1288,15 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve voucher"""
+        from common.approval_permissions import IsApprover as _IsApprover
         from .serializers import PettyCashVoucherActionSerializer
-        
+
+        if not _IsApprover().has_permission(request, self):
+            return Response(
+                {'error': 'You do not have permission to approve vouchers'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         voucher = self.get_object()
         action_serializer = PettyCashVoucherActionSerializer(data=request.data)
         action_serializer.is_valid(raise_exception=True)
@@ -1310,12 +1317,19 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Reject voucher"""
+        from common.approval_permissions import IsApprover as _IsApprover
         from .serializers import PettyCashVoucherActionSerializer
-        
+
+        if not _IsApprover().has_permission(request, self):
+            return Response(
+                {'error': 'You do not have permission to reject vouchers'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         voucher = self.get_object()
         action_serializer = PettyCashVoucherActionSerializer(data=request.data)
         action_serializer.is_valid(raise_exception=True)
-        
+
         reason = action_serializer.validated_data.get('reason', '')
         if not reason:
             return Response(

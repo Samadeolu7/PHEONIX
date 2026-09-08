@@ -2055,24 +2055,23 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         if self.status != 'pending':
             raise ValidationError("Only pending vouchers can be approved")
 
-        if self.fund.disbursement_mode == 'bank_transfer':
-            # No till involved in this mode — fund.current_balance is never
-            # funded, so the balance check below doesn't apply. Instead
-            # enforce the maker-checker split up front: the requester can't
-            # also be the one who approves it (disburse() enforces the rest:
-            # the approver also can't be the one who executes the transfer).
-            if user.pk == self.requested_by_id:
-                raise ValidationError(
-                    "The person who requested this voucher cannot approve it "
-                    "(maker-checker violation)."
-                )
-        else:
-            # Check fund has sufficient balance
-            if self.amount > self.fund.current_balance:
-                raise ValidationError(
-                    f'Insufficient fund balance. Available: ₦{self.fund.current_balance}, '
-                    f'Required: ₦{self.amount}. Fund needs replenishment.'
-                )
+        # Maker-checker split applies regardless of disbursement mode: the
+        # requester can't also be the one who approves their own voucher.
+        if user.pk == self.requested_by_id:
+            raise ValidationError(
+                "The person who requested this voucher cannot approve it "
+                "(maker-checker violation)."
+            )
+
+        # In bank_transfer mode, fund.current_balance is never funded (no
+        # till involved), so the balance check doesn't apply — disburse()
+        # separately enforces that the approver can't be the one who
+        # executes the transfer.
+        if self.fund.disbursement_mode != 'bank_transfer' and self.amount > self.fund.current_balance:
+            raise ValidationError(
+                f'Insufficient fund balance. Available: ₦{self.fund.current_balance}, '
+                f'Required: ₦{self.amount}. Fund needs replenishment.'
+            )
 
         self.status = 'approved'
         self.approved_by = user

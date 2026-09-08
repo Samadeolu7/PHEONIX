@@ -306,27 +306,31 @@ const PayrollDetailPage: React.FC = () => {
 
             {/* Standard Actions */}
             {payroll.status === PayrollStatus.DRAFT && (
-              <>
-                <Link
-                  to={`/hr/payroll/${payroll.id}/edit`}
-                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center"
-                >
-                  <Edit className="h-4 w-4 mr-2" />
-                  Edit
-                </Link>
-                <button
-                  onClick={handleDelete}
-                  disabled={deleteMutation.isPending}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center"
-                >
-                  {deleteMutation.isPending ? (
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                  ) : (
-                    <Trash2 className="h-4 w-4 mr-2" />
-                  )}
-                  Delete
-                </button>
-              </>
+              <Link
+                to={`/hr/payroll/${payroll.id}/edit`}
+                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center"
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </Link>
+            )}
+            {/* Draft or calculated runs have no posted GL entries yet, so
+                they're still safe to delete — e.g. a run created against
+                the wrong branch. */}
+            {(payroll.status === PayrollStatus.DRAFT ||
+              payroll.status === PayrollStatus.CALCULATED) && (
+              <button
+                onClick={handleDelete}
+                disabled={deleteMutation.isPending}
+                className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center"
+              >
+                {deleteMutation.isPending ? (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                Delete
+              </button>
             )}
           </div>
         </div>

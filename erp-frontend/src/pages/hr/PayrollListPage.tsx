@@ -560,22 +560,27 @@ const PayrollListPage: React.FC = () => {
                           </Link>
 
                           {payroll.status === PayrollStatus.DRAFT && (
-                            <>
-                              <Link
-                                to={`/hr/payroll/${payroll.id}/edit`}
-                                className="text-green-600 hover:text-green-900"
-                                title="Edit"
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Link>
-                              <button
-                                onClick={() => handleDelete(payroll.id)}
-                                className="text-red-600 hover:text-red-900"
-                                title="Delete"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </>
+                            <Link
+                              to={`/hr/payroll/${payroll.id}/edit`}
+                              className="text-green-600 hover:text-green-900"
+                              title="Edit"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Link>
+                          )}
+
+                          {/* Draft or calculated runs have no posted GL
+                              entries yet, so they're still safe to delete —
+                              e.g. a run created against the wrong branch. */}
+                          {(payroll.status === PayrollStatus.DRAFT ||
+                            payroll.status === PayrollStatus.CALCULATED) && (
+                            <button
+                              onClick={() => handleDelete(payroll.id)}
+                              className="text-red-600 hover:text-red-900"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
                           )}
                         </div>
                       </td>

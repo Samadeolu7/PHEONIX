@@ -1190,7 +1190,45 @@ class PayrollViewSet(ScopedModelViewSet):
             queryset = queryset.filter(status=status_filter)
 
         return queryset.order_by('-created_at')
-    
+
+    def perform_destroy(self, instance):
+        """
+        Delete a salary run — only while it's still safe to unwind.
+
+        Once a payroll is 'approved' it has posted GL journal entries
+        (liabilities_journal_entry / pension_expense_journal_entry, and
+        'paid' additionally has the disbursement journal_entry). Deleting
+        the Payroll row at that point would orphan those Transactions
+        instead of reversing them, silently breaking the books. Reversing
+        those entries is a separate, deliberate operation — not something
+        a delete should do implicitly — so approved/paid/cancelled runs
+        must be rejected here.
+
+        draft/calculated runs have payslips but no accounting entries yet,
+        so they can be safely torn down: hard-delete the payslips (mirrors
+        the `recalculate` action's cleanup) and un-apply any
+        BonusDeductionRequests that were linked to this run, then soft-
+        delete the payroll itself.
+        """
+        from rest_framework.exceptions import ValidationError
+        from hr.models import Payslip, BonusDeductionRequest
+
+        if instance.status not in ('draft', 'calculated'):
+            raise ValidationError({
+                'detail': (
+                    f"Cannot delete a payroll that is '{instance.status}'. "
+                    "Approved/paid runs have posted accounting entries — "
+                    "reverse those first if this run needs to be undone."
+                )
+            })
+
+        BonusDeductionRequest.objects.filter(applied_in_payroll=instance).update(
+            applied_in_payroll=None
+        )
+        Payslip.all_objects.filter(payroll=instance).hard_delete()
+
+        super().perform_destroy(instance)
+
     def perform_create(self, serializer):
         """Auto-generate reference number and register it in tracking system"""
         from common.services.reference_service import ReferenceService
@@ -1444,23 +1482,27 @@ class PayrollViewSet(ScopedModelViewSet):
     def process(self, request, pk=None):
         """Process approved payroll (mark as paid) with accounting entries"""
         payroll = self.get_object()
-        
+
         if payroll.status != 'approved':
             return Response(
                 {'error': 'Only approved payroll can be processed'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Get optional payment account from request
         payment_account_id = request.data.get('payment_account_id')
         payment_account = None
-        
+
         if payment_account_id:
             try:
                 from accounts.models import Account
+                # Scope to the payroll's own branch, not request.user.branch —
+                # a director processing a run for a branch other than their
+                # own home branch must resolve the account against that run's
+                # branch, never silently fall back to an account in theirs.
                 payment_account = Account.objects.get(
                     id=payment_account_id,
-                    branch=request.user.branch
+                    branch=payroll.branch
                 )
             except Account.DoesNotExist:
                 return Response(
@@ -1516,23 +1558,24 @@ class PayrollViewSet(ScopedModelViewSet):
     def mark_paid(self, request, pk=None):
         """Mark payroll as paid with accounting entries (alias for process)"""
         payroll = self.get_object()
-        
+
         if payroll.status != 'approved':
             return Response(
                 {'error': 'Only approved payroll can be marked as paid'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Get optional payment account from request
         payment_account_id = request.data.get('payment_account_id')
         payment_account = None
-        
+
         if payment_account_id:
             try:
                 from accounts.models import Account
+                # Scope to the payroll's own branch — see the `process` action.
                 payment_account = Account.objects.get(
                     id=payment_account_id,
-                    branch=request.user.branch
+                    branch=payroll.branch
                 )
             except Account.DoesNotExist:
                 return Response(
