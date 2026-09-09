@@ -542,6 +542,12 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
           ]).then(([pending, awaitingSecond]) => [...pending, ...awaitingSecond]),
         staleTime: 30_000,
       },
+      // 24 – Loan Restructure Requests pending director approval
+      {
+        queryKey: ['pending-approvals-loan-restructures'],
+        queryFn: () => loanService.listRestructureRequests({ status: 'pending' }),
+        staleTime: 30_000,
+      },
     ],
   });
 
@@ -570,6 +576,7 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
     loanRepaymentRequestsQ,
     pettyCashVoucherReversalsQ,
     loanRepaymentReversalsQ,
+    loanRestructuresQ,
   ] = results;
 
   // Invalidate helper – re-run all queries
@@ -975,6 +982,24 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
     ),
   }));
 
+  const loanRestructureItems: ApprovalItem[] = (
+    Array.isArray(loanRestructuresQ.data) ? loanRestructuresQ.data : []
+  ).map((r: any) => ({
+    id: r.id,
+    title: r.loan_number || `Restructure #${r.id}`,
+    subtitle: `${r.client_name || ''} — ${r.current_term}→${r.new_term} ${r.current_term_unit || ''}`.replace(
+      /^— /,
+      ''
+    ),
+    amount: fmt(r.outstanding_principal),
+    date: fmtDate(r.created_at || r.requested_at),
+    viewPath: `/loans/restructure-approvals`,
+    onApprove: act((_notes: string) => loanService.approveRestructureRequest(r.id).then(() => {})),
+    onReject: act((reason: string) =>
+      loanService.rejectRestructureRequest(r.id, reason).then(() => {})
+    ),
+  }));
+
   // ── Build sections ─────────────────────────────────────────────────────────
 
   const sections: ApprovalSection[] = [
@@ -1217,6 +1242,16 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       isLoading: loanRepaymentReversalsQ.isLoading,
       isError: loanRepaymentReversalsQ.isError && !isForbidden(loanRepaymentReversalsQ),
       isForbidden: isForbidden(loanRepaymentReversalsQ),
+    },
+    {
+      id: 'loan-restructures',
+      label: 'Loan Restructure Requests',
+      icon: <RotateCcw className="w-4 h-4" />,
+      color: 'bg-amber-800',
+      items: loanRestructureItems,
+      isLoading: loanRestructuresQ.isLoading,
+      isError: loanRestructuresQ.isError && !isForbidden(loanRestructuresQ),
+      isForbidden: isForbidden(loanRestructuresQ),
     },
   ];
 

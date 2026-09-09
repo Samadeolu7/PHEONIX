@@ -10,14 +10,17 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from decimal import Decimal
 from datetime import timedelta
+from unittest.mock import patch
 
 from hr.models import (
     Staff, LeaveType, LeaveBalance, LeaveRequest,
-    Attendance, Payroll, Payslip, SalaryComponent, StaffPayInfo
+    Attendance, Payroll, Payslip, SalaryComponent, StaffPayInfo,
+    BonusDeductionRequest,
 )
 from hr.config_models import HRConfig
 from branches.models import Branch
 from users.models import Tenant
+from accounts.models import Account
 
 User = get_user_model()
 
@@ -572,13 +575,145 @@ class TestPayrollAPI(TestCase):
     
     def test_approve_payroll(self):
         """Test approving payroll"""
-        self.payroll.status = 'calculated'
-        self.payroll.save()
-        
+        # Must actually run `calculate` first (not just force status to
+        # 'calculated') so the payroll has real, non-zero totals — approving
+        # a payroll that was never calculated leaves total_gross_pay etc. at
+        # their 0.00 default, and the accounting service correctly refuses
+        # to post a zero-amount GL entry ("Amount must be POSITIVE"). This
+        # mirrors the real workflow, where Approve is only ever reachable
+        # after Calculate.
+        calculate_url = reverse('hr:payroll-calculate', kwargs={'pk': self.payroll.id})
+        calc_response = self.client.post(calculate_url, {}, format='json')
+        self.assertEqual(calc_response.status_code, status.HTTP_200_OK)
+
         url = reverse('hr:payroll-approve', kwargs={'pk': self.payroll.id})
         response = self.client.post(url, {}, format='json')
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
+
         self.payroll.refresh_from_db()
         self.assertEqual(self.payroll.status, 'approved')
+
+    def test_process_payroll_scopes_payment_account_to_payroll_branch(self):
+        """Regression test: `process` must resolve payment_account against
+        the payroll's own branch, not request.user.branch. Before the fix,
+        an elevated user processing a run for a branch other than their
+        home branch could have the account lookup silently scoped to their
+        own branch instead of the run's — this reproduces exactly that
+        shape and asserts it's now rejected."""
+        other_branch = Branch.objects.create(name='Other Branch', code='OB001')
+
+        # Lives in the user's own home branch (self.branch) — must NOT be
+        # accepted for a payroll that belongs to a different branch, even
+        # though the old `branch=request.user.branch` lookup would have
+        # matched it.
+        home_branch_account = Account.objects.create(
+            name='Home Branch Cash',
+            code='1011',
+            account_type=Account.ASSET,
+            account_level=Account.LEVEL_PARENT,
+            owner=self.user,
+            branch=self.branch,
+        )
+
+        self.payroll.branch = other_branch
+        self.payroll.status = 'approved'
+        self.payroll.save()
+
+        url = reverse('hr:payroll-process', kwargs={'pk': self.payroll.id})
+        response = self.client.post(
+            url, {'payment_account_id': home_branch_account.id}, format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid payment account', str(response.data))
+
+        # The matching account, scoped to the payroll's own branch, must be
+        # accepted and handed through to the accounting service — proves
+        # this isn't just rejecting every account. `mark_as_paid` is mocked
+        # out here because posting the actual GL entries needs a full chart
+        # of accounts (salary payable, etc.) that's out of scope for a test
+        # of the account *lookup* fix specifically.
+        correct_account = Account.objects.create(
+            name='Other Branch Cash',
+            code='1012',
+            account_type=Account.ASSET,
+            account_level=Account.LEVEL_PARENT,
+            owner=self.user,
+            branch=other_branch,
+        )
+        with patch(
+            'hr.services.payroll_service.PayrollService.mark_as_paid',
+            return_value=(self.payroll, None),
+        ) as mock_mark_as_paid:
+            response = self.client.post(
+                url, {'payment_account_id': correct_account.id}, format='json'
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_mark_as_paid.assert_called_once()
+        self.assertEqual(
+            mock_mark_as_paid.call_args.kwargs['payment_account'].id,
+            correct_account.id,
+        )
+
+    def test_delete_draft_payroll_succeeds(self):
+        """draft payrolls have no accounting entries yet — safe to delete."""
+        url = reverse('hr:payroll-detail', kwargs={'pk': self.payroll.id})
+        response = self.client.delete(url)
+
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_204_NO_CONTENT, status.HTTP_200_OK),
+        )
+        self.assertTrue(
+            Payroll.all_objects.get(pk=self.payroll.id).is_deleted
+        )
+
+    def test_delete_calculated_payroll_cleans_up_payslips_and_bonus_links(self):
+        """calculated payrolls have payslips (and possibly linked
+        bonus/deduction requests) but still no GL postings — deleting must
+        tear those down rather than leave them dangling."""
+        calculate_url = reverse('hr:payroll-calculate', kwargs={'pk': self.payroll.id})
+        self.client.post(calculate_url, {}, format='json')
+        self.payroll.refresh_from_db()
+        self.assertEqual(self.payroll.status, 'calculated')
+        self.assertGreater(Payslip.objects.filter(payroll=self.payroll).count(), 0)
+
+        bonus_request = BonusDeductionRequest.objects.create(
+            reference_number='BDR-TEST-001',
+            staff=self.staff,
+            component=self.basic_salary,
+            amount=Decimal('5000.00'),
+            reason='Test bonus',
+            for_month=self.payroll.period_start,
+            applied_in_payroll=self.payroll,
+            requested_by=self.user,
+            owner=self.user,
+            branch=self.branch,
+        )
+
+        url = reverse('hr:payroll-detail', kwargs={'pk': self.payroll.id})
+        response = self.client.delete(url)
+
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_204_NO_CONTENT, status.HTTP_200_OK),
+        )
+        self.assertEqual(Payslip.all_objects.filter(payroll=self.payroll).count(), 0)
+        bonus_request.refresh_from_db()
+        self.assertIsNone(bonus_request.applied_in_payroll)
+
+    def test_delete_approved_payroll_rejected(self):
+        """Approved/paid runs have posted GL journal entries — deleting the
+        Payroll row would orphan those Transactions, so this must be
+        rejected rather than silently corrupting the books."""
+        self.payroll.status = 'approved'
+        self.payroll.save()
+
+        url = reverse('hr:payroll-detail', kwargs={'pk': self.payroll.id})
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.payroll.refresh_from_db()
+        self.assertFalse(self.payroll.is_deleted)
