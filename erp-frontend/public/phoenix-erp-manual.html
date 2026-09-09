@@ -212,6 +212,9 @@ body:not(.show-ledger) .ledger-detail{display:none;}
     <div class="navgroup-label">How-To Guides</div>
     <ul class="toc howto-toc" id="howtotoc">
       <li><a href="#howto-petty-cash-bank" data-kw="petty cash bank transfer disbursement mode switch fund"><span class="num">↻</span><span>Switch petty cash to bank transfer</span></a></li>
+      <li><a href="#howto-staff-guarantors" data-kw="hr staff guarantor guarantors document upload id passport employment"><span class="num">↻</span><span>Add a staff guarantor & upload documents</span></a></li>
+      <li><a href="#howto-leave-requests" data-kw="hr leave request annual sick vacation apply submit approve reject cancel balance carryover"><span class="num">↻</span><span>Request, approve & cancel leave</span></a></li>
+      <li><a href="#howto-attendance-location" data-kw="attendance clock in clock out gps geofence location radius branch auto login"><span class="num">↻</span><span>Set up branch location & auto clock-in</span></a></li>
     </ul>
   </aside>
 
@@ -825,8 +828,128 @@ body:not(.show-ledger) .ledger-detail{display:none;}
 
         <div class="callout note">
           <span class="tag">This library will keep growing</span>
-          <p>This is the first entry in the How-To Guides — short, task-specific answers that sit alongside the numbered chapters. More get added here as new questions come up, and a Help link in the app can point straight to any one of them.</p>
+          <p>This is one of the How-To Guides — short, task-specific answers that sit alongside the numbered chapters. More get added here as new questions come up, and a Help link in the app can point straight to any one of them.</p>
         </div>
+      </section>
+
+      <!-- HOW-TO: STAFF GUARANTORS -->
+      <section class="page" id="page-howto-staff-guarantors">
+        <div class="eyebrow">How-To Guide</div>
+        <h1>Add a Staff Guarantor &amp; Upload Documents</h1>
+        <p class="dek">Record who is guaranteeing a staff member, and attach the ID, proof of address, or reference letter that backs it up.</p>
+
+        <div class="callout note">
+          <span class="tag">Where to do this</span>
+          <p>HR → Staff → open the staff member → <strong>Guarantors</strong>. You'll need the same access used to view that staff member's record.</p>
+        </div>
+
+        <div class="steps">
+          <li>Go to <strong>HR → Staff</strong> and open the staff member's profile.</li>
+          <li>Click <strong>Guarantors</strong> among the profile's quick actions.</li>
+          <li>Click <strong>Add Guarantor</strong> and fill in their name, relationship to the staff member, contact details, occupation, address, and ID number. A photo is optional.</li>
+          <li>Save the guarantor.</li>
+          <li>On the guarantor's row, click <strong>Documents</strong> to expand it, then <strong>Upload Document</strong>.</li>
+          <li>Give the document a title, pick a category (ID/Passport, Utility Bill, Employment Letter, Reference Letter, or Other), choose the file, and upload.</li>
+        </div>
+
+        <div class="callout warn">
+          <span class="tag">Keep files small</span>
+          <p>Uploads are capped at 8MB and accept PDF, Word, or image files (JPG/PNG). Photos are automatically compressed on upload; scan documents at a normal resolution rather than a high-DPI setting to stay well under the limit. This matters because documents are stored on the server's own disk — there's no unlimited cloud storage behind this, so keeping files lean protects space for everyone.</p>
+        </div>
+
+        <p>A guarantor can have as many documents as needed — for example, an ID document alongside a reference letter. Deleting a guarantor removes their documents with them, so double-check before confirming that.</p>
+        <p>This is separate from <strong>Employee Documents</strong> on the same profile, which holds the staff member's own contract, ID, and certificates rather than their guarantor's.</p>
+      </section>
+
+      <!-- HOW-TO: LEAVE REQUESTS -->
+      <section class="page" id="page-howto-leave-requests">
+        <div class="eyebrow">How-To Guide</div>
+        <h1>Request, Approve &amp; Cancel Leave</h1>
+        <p class="dek">How a staff member applies for time off, how an approver decides on it, and what happens to the leave balance at each step.</p>
+
+        <div class="callout note">
+          <span class="tag">Where to do this</span>
+          <p>HR → Leave Requests to apply, submit, and track your own leave. HR → Leave Balances to check how many days you have left. HR → Leave Calendar shows everyone's approved and pending leave on one calendar.</p>
+        </div>
+
+        <h2>Applying for leave</h2>
+        <div class="steps">
+          <li>Go to <strong>HR → Leave Requests</strong> and click <strong>New Leave Request</strong>.</li>
+          <li>Pick the <strong>leave type</strong> (Annual, Sick, Personal, Unpaid, Maternity, Paternity — or whatever your branch has configured), a start and end date, and a reason.</li>
+          <li>Optionally name a <strong>relief officer</strong> — the colleague covering your duties while you're away.</li>
+          <li>For sick leave, paste a link to your medical certificate under <strong>Medical Certificate URL</strong> (see the callout below — this isn't a file upload yet).</li>
+          <li>Save. This creates the request as a <strong>Draft</strong> — it isn't visible to an approver until you submit it.</li>
+          <li>Open the draft and click <strong>Submit</strong>. This is what actually sends it for approval and reserves the days against your balance as <em>pending</em>.</li>
+        </div>
+
+        <div class="callout warn">
+          <span class="tag">"No leave balance found" when creating a request?</span>
+          <p>Every staff member needs a leave balance initialized for each leave type, for the current year, before they can request it — this normally happens automatically when the staff record is created. If it's missing, ask HR to initialize your branch's leave balances for the year (HR → Leave Balances → Initialize for Year) rather than trying to work around it.</p>
+        </div>
+
+        <div class="flow">
+          <span class="chip">Draft</span><span class="arrow">→</span><span class="chip">Submitted</span><span class="arrow">→</span><span class="chip end">Approved</span><span class="arrow">→</span><span class="chip stop">Rejected</span>
+        </div>
+
+        <h2>Approving or rejecting</h2>
+        <p>Anyone with approval rights on Leave Requests for the branch sees submitted requests waiting for a decision, and gets an in-app notification the moment one comes in. Approving moves the reserved days from <em>pending</em> to <em>used</em> on the staff member's balance; rejecting releases the reserved days back without touching the used total, and requires a short reason so the requester knows why.</p>
+        <div class="callout warn">
+          <span class="tag">You can't approve your own leave</span>
+          <p>Maker-checker applies here the same as everywhere else in Phoenix — whoever submitted the request cannot also approve or reject it, even if they otherwise hold approval rights. It needs to go to someone else.</p>
+        </div>
+        <p>Either way, the staff member gets an in-app notification telling them the outcome — including the rejection reason, when it's rejected.</p>
+
+        <h2>Cancelling a request</h2>
+        <p>A leave request can be cancelled while it's still a <strong>Draft</strong> or <strong>Submitted</strong>, or after it's already <strong>Approved</strong> if plans change. Either the staff member it belongs to, or someone with approval rights on Leave Requests, can cancel it — nobody else. Cancelling always gives back whatever days it had reserved: pending days if it hadn't been approved yet, used days if it had. A request that's already been rejected, cancelled, or marked as taken can't be cancelled again.</p>
+
+        <h2>Leave balances &amp; carryover</h2>
+        <p>Each balance tracks <strong>entitled</strong> days for the year, <strong>used</strong>, <strong>pending</strong>, and any <strong>carried over</strong> from the year before — available days is entitled plus carried-over, minus used and pending. If a leave type is configured to allow carryover, initializing next year's balance automatically rolls over whatever was left unused the prior year, capped at that leave type's maximum carryover days; a leave type without carryover always starts the new year at zero regardless of what was left unused.</p>
+
+        <p>See <a href="#roles">Chapter 11 · Roles, Approvals &amp; Alerts</a> for how approval rights are granted more generally.</p>
+      </section>
+
+      <!-- HOW-TO: ATTENDANCE LOCATION & AUTO CLOCK-IN -->
+      <section class="page" id="page-howto-attendance-location">
+        <div class="eyebrow">How-To Guide</div>
+        <h1>Set Up Branch Location &amp; Auto Clock-In</h1>
+        <p class="dek">Pin a branch's GPS coordinates so staff can only clock in/out nearby — and get clocked in automatically the moment they log in from there.</p>
+
+        <div class="callout note">
+          <span class="tag">Where to do this</span>
+          <p>Administration → Branches → open the branch → Edit, under <strong>Attendance Location</strong>. You'll need branch-edit rights, usually a branch manager, operations, or admin.</p>
+        </div>
+
+        <h2>Setting the branch's location</h2>
+        <div class="steps">
+          <li>Go to <strong>Administration → Branches</strong> and open the branch you want to configure.</li>
+          <li>Click <strong>Edit</strong>.</li>
+          <li>Under <strong>Attendance Location</strong>, click <strong>Use my current location</strong> while standing at the branch — this fills in Latitude and Longitude from your browser's GPS. You can also type coordinates in directly.</li>
+          <li>Set the <strong>Allowed Radius (meters)</strong> — how far from that point staff may clock in or out. Defaults to 1,500m; tighten it for a single small office, widen it for a larger compound.</li>
+          <li>Save the branch.</li>
+        </div>
+
+        <div class="callout warn">
+          <span class="tag">No location set = no GPS check</span>
+          <p>Leaving Latitude/Longitude blank doesn't block attendance — it simply skips the location check entirely for that branch. Staff can still clock in and out from anywhere. Set a location only once you actually want it enforced.</p>
+        </div>
+
+        <h2>How staff experience it</h2>
+        <p>Once a branch has a location configured, two things use it — the same distance check both times:</p>
+        <div class="flow">
+          <span class="chip">Login</span><span class="arrow">→</span><span class="chip">Within radius?</span><span class="arrow">→</span><span class="chip end">Clocked in automatically</span>
+        </div>
+        <ul>
+          <li><strong>Automatic, on login</strong> — the moment someone logs in, the browser silently checks their location; if they're within the branch's radius, they're clocked in with no button press. If they're outside it, deny location access, or the browser can't get a GPS fix, nothing happens — no error is shown, since this is a background convenience, not a required step.</li>
+          <li><strong>Manual, any time</strong> — the Clock In/Out widget on the dashboard always works as a fallback (or as the only method, for branches with no location configured). It asks for location permission and shows a clear error if you're too far from the branch.</li>
+        </ul>
+        <p>Clocking <em>out</em> is never automatic either way — staff always clock out manually, whether or not a location is configured.</p>
+
+        <div class="callout note">
+          <span class="tag">Didn't get auto clocked in?</span>
+          <p>Check the Clock In/Out widget — if it still shows "Clocked Out", just clock in manually from there. Common reasons the automatic attempt didn't fire: location permission was denied or never granted, GPS took too long to respond, or you were genuinely outside the configured radius.</p>
+        </div>
+
+        <p>See <a href="#roles">Chapter 11 · Roles, Approvals &amp; Alerts</a> for who can edit branch settings.</p>
       </section>
 
     </div>

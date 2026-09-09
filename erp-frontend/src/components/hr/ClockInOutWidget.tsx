@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, LogIn, LogOut, User } from 'lucide-react';
 import { useCurrentAttendanceStatus, useClockIn, useClockOut } from '../../hooks/useClock';
+import { ManualLink } from '../help';
 
 interface ClockInOutWidgetProps {
   staffId: number;
@@ -205,6 +206,9 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
               <span className="truncate">{staffName}</span>
             </p>
           )}
+          <ManualLink topic="howto-attendance-location" className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline">
+            How does clock-in work?
+          </ManualLink>
         </div>
       </div>
 

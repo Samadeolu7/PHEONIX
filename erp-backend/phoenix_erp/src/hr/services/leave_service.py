@@ -250,8 +250,8 @@ class LeaveService:
         Returns:
             LeaveRequest instance
         """
-        if self.leave_request.status not in ['submitted', 'approved']:
-            raise ValidationError("Can only cancel submitted or approved leave requests")
+        if self.leave_request.status not in ['draft', 'submitted', 'approved']:
+            raise ValidationError("Can only cancel draft, submitted, or approved leave requests")
         
         old_status = self.leave_request.status
         
@@ -314,6 +314,34 @@ class LeaveService:
             pass
     
     @staticmethod
+    def _compute_carryover(staff, leave_type, year):
+        """
+        Compute carried_over_days for a new (staff, leave_type, year) balance
+        from the prior year's unused balance, capped at leave_type.max_carryover_days.
+
+        Returns Decimal('0.00') when the leave type doesn't allow carryover or
+        no prior-year balance exists.
+        """
+        from hr.models import LeaveBalance
+
+        if not leave_type.allow_carryover:
+            return Decimal('0.00')
+
+        prior_balance = LeaveBalance.all_objects.filter(
+            staff=staff,
+            leave_type=leave_type,
+            year=year - 1,
+            is_deleted=False,
+        ).first()
+
+        if not prior_balance:
+            return Decimal('0.00')
+
+        unused = prior_balance.available_days
+        cap = Decimal(leave_type.max_carryover_days or 0)
+        return max(Decimal('0.00'), min(unused, cap))
+
+    @staticmethod
     def initialize_leave_balances(staff, year):
         """
         Initialize leave balances for staff for a given year
@@ -343,47 +371,57 @@ class LeaveService:
         created_count = 0
         
         for leave_type in leave_types_list:
-            # Check for existing balance first (regardless of owner filter)
+            # Check for existing balance first (regardless of owner filter).
+            # Deliberately NOT filtered to is_deleted=False here: the
+            # unique_together=('staff','leave_type','year') constraint is
+            # enforced at the DB level regardless of soft-delete status, so a
+            # previously soft-deleted row still occupies that slot — missing
+            # it here would fall through to a create attempt that hits an
+            # unrecoverable UniqueViolation below.
             existing = LeaveBalance.all_objects.filter(
                 staff=staff,
                 leave_type=leave_type,
                 year=year,
-                is_deleted=False
             ).first()
-            
-            if existing:
+
+            if existing and not existing.is_deleted:
                 logger.info(f"Balance already exists: staff={staff.id}, leave_type={leave_type.id}, year={year}")
                 balances.append(existing)
                 continue
-            
-            # CRITICAL: Create balance with explicit field values
+
+            # CRITICAL: Create (or revive) balance with explicit field values
             try:
                 # Ensure tenant is not None
                 tenant = staff.tenant
                 if tenant is None and hasattr(staff, 'tenant_id') and staff.tenant_id:
                     from users.models import Tenant
                     tenant = Tenant.objects.get(id=staff.tenant_id)
-                
+
                 if tenant is None:
                     logger.error(
                         f"CRITICAL: Cannot create balance - staff {staff.id} has no tenant! "
                         f"tenant={staff.tenant}, tenant_id={getattr(staff, 'tenant_id', 'N/A')}"
                     )
                     raise ValueError(f"Staff {staff.id} has no tenant")
-                
-                balance = LeaveBalance(
-                    tenant=tenant,
-                    staff=staff,
-                    leave_type=leave_type,
-                    year=year,
-                    branch=staff.branch,
-                    owner=staff.owner,
-                    entitled_days=leave_type.default_days_per_year,
-                    used_days=Decimal('0.00'),
-                    pending_days=Decimal('0.00'),
-                    carried_over_days=Decimal('0.00'),
-                )
-                
+
+                carried_over_days = LeaveService._compute_carryover(staff, leave_type, year)
+
+                if existing and existing.is_deleted:
+                    # Revive the soft-deleted row rather than inserting a new
+                    # one, which would collide on the unique constraint.
+                    balance = existing
+                    balance.is_deleted = False
+                else:
+                    balance = LeaveBalance(staff=staff, leave_type=leave_type, year=year)
+
+                balance.tenant = tenant
+                balance.branch = staff.branch
+                balance.owner = staff.owner
+                balance.entitled_days = leave_type.default_days_per_year
+                balance.used_days = Decimal('0.00')
+                balance.pending_days = Decimal('0.00')
+                balance.carried_over_days = carried_over_days
+
                 # Explicitly save and verify
                 balance.save()
                 
@@ -416,7 +454,6 @@ class LeaveService:
                     staff=staff,
                     leave_type=leave_type,
                     year=year,
-                    is_deleted=False
                 ).first()
                 if balance:
                     balances.append(balance)

@@ -523,11 +523,16 @@ class LeaveRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     reason = models.TextField()
     
     # Supporting documents
-    medical_certificate = models.FileField(
-        upload_to='hr/medical_certificates/',
+    # URLField, not FileField: the frontend has no multipart upload UI for
+    # this yet (see LeaveRequestFormPage's "Cloudinary integration coming
+    # soon" note) — it only ever lets staff paste a link to an
+    # externally-hosted certificate and posts it as a plain JSON string.
+    # A FileField here rejects that with "submitted data was not a file".
+    medical_certificate = models.URLField(
+        max_length=500,
         null=True,
         blank=True,
-        help_text="Medical certificate (for sick leave)"
+        help_text="Link to medical certificate (for sick leave)"
     )
     supporting_documents = models.FileField(
         upload_to='hr/leave_documents/',

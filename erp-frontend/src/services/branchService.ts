@@ -12,6 +12,11 @@ export interface Branch {
   is_active: boolean;
   owner?: number | null;
   created_by?: number | null;
+  /** GPS coordinates for attendance clock-in/out validation. Null = no geofence. */
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  /** Allowed distance (meters) from latitude/longitude for clock-in/out. Ignored if latitude/longitude aren't set. */
+  attendance_radius_meters?: number;
 }
 
 export interface BranchFilters {
@@ -29,6 +34,9 @@ export interface CreateBranchData {
   is_deleted?: boolean;
   owner?: number | null;
   created_by?: number | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  attendance_radius_meters?: number;
 }
 
 export interface BranchOption {

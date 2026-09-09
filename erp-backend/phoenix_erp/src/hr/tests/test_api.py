@@ -36,15 +36,18 @@ class TestLeaveRequestAPI(TestCase):
             code="MB001"
         )
         
-        # Create user
+        # Create user. is_system_admin bypasses HasActionPermission's
+        # fine-grained checks (see permissions.services.PermissionResolver.
+        # _is_wildcard) — no Role is set up here to grant HR page access.
         self.user = User.objects.create_user(
             username='testuser',
             email='test@test.com',
             password='testpass123',
             tenant=self.tenant,
-            branch=self.branch
+            branch=self.branch,
+            is_system_admin=True,
         )
-        
+
         # Create HR config
         self.hr_config = HRConfig.objects.create(
             branch=self.branch,
@@ -54,17 +57,22 @@ class TestLeaveRequestAPI(TestCase):
             overtime_multiplier=Decimal('1.5')
         )
         
-        # Create staff
-        self.staff = Staff.objects.create(
+        # Create staff. auto_create_staff_profile (hr/signals.py) already
+        # created a stub Staff the moment self.user was saved above, so this
+        # must update that row rather than create a second one — a plain
+        # Staff.objects.create() here collides on the OneToOne user_id.
+        self.staff, _ = Staff.objects.update_or_create(
             user=self.user,
-            first_name='John',
-            last_name='Doe',
-            department='IT',
-            position='Developer',
-            owner=self.user,
-            branch=self.branch
+            defaults=dict(
+                first_name='John',
+                last_name='Doe',
+                department='IT',
+                position='Developer',
+                owner=self.user,
+                branch=self.branch,
+            ),
         )
-        
+
         # Create leave type
         self.leave_type = LeaveType.objects.create(
             name='Annual Leave',
@@ -86,7 +94,21 @@ class TestLeaveRequestAPI(TestCase):
             owner=self.user,
             branch=self.branch
         )
-        
+
+        # A second user, distinct from the requester, to act as approver.
+        # Self-approval is blocked by the view, so approve/reject tests must
+        # authenticate as someone other than the leave request's own staff.
+        # is_system_admin grants can_approve via PermissionResolver's
+        # wildcard bypass — no Role/RolePermissionPolicy is set up here.
+        self.approver = User.objects.create_user(
+            username='approveruser',
+            email='approver@test.com',
+            password='testpass123',
+            tenant=self.tenant,
+            branch=self.branch,
+            is_system_admin=True,
+        )
+
         # Create API client
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
@@ -160,19 +182,102 @@ class TestLeaveRequestAPI(TestCase):
         # Update leave balance to reflect pending
         self.leave_balance.pending_days = Decimal('3.0')
         self.leave_balance.save()
-        
+
+        self.client.force_authenticate(user=self.approver)
         url = reverse('hr:leave-request-approve', kwargs={'pk': leave_request.id})
         response = self.client.post(url, {'notes': 'Approved'}, format='json')
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
+
         leave_request.refresh_from_db()
         self.leave_balance.refresh_from_db()
-        
+
         self.assertEqual(leave_request.status, 'approved')
         self.assertEqual(self.leave_balance.used_days, Decimal('3.0'))
         self.assertEqual(self.leave_balance.pending_days, Decimal('0.0'))
-    
+
+    def test_cannot_approve_own_leave_request(self):
+        """A staff member cannot approve their own leave request."""
+        today = timezone.now().date()
+
+        leave_request = LeaveRequest.objects.create(
+            reference_number='LV001',
+            staff=self.staff,
+            leave_type=self.leave_type,
+            start_date=today + timedelta(days=7),
+            end_date=today + timedelta(days=9),
+            num_days=Decimal('3.0'),
+            reason='Vacation',
+            status='submitted',
+            owner=self.user,
+            branch=self.branch
+        )
+        self.leave_balance.pending_days = Decimal('3.0')
+        self.leave_balance.save()
+
+        # self.client is still authenticated as self.user, who *is*
+        # leave_request.staff.user
+        url = reverse('hr:leave-request-approve', kwargs={'pk': leave_request.id})
+        response = self.client.post(url, {'notes': 'Approved'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        leave_request.refresh_from_db()
+        self.assertEqual(leave_request.status, 'submitted')
+
+    def test_cancel_approved_leave_request_restores_balance(self):
+        """Cancelling an approved leave request must give the used days back."""
+        today = timezone.now().date()
+
+        leave_request = LeaveRequest.objects.create(
+            reference_number='LV001',
+            staff=self.staff,
+            leave_type=self.leave_type,
+            start_date=today + timedelta(days=7),
+            end_date=today + timedelta(days=9),
+            num_days=Decimal('3.0'),
+            reason='Vacation',
+            status='approved',
+            owner=self.user,
+            branch=self.branch
+        )
+        self.leave_balance.used_days = Decimal('3.0')
+        self.leave_balance.save()
+
+        url = reverse('hr:leave-request-cancel', kwargs={'pk': leave_request.id})
+        response = self.client.post(url, {}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        leave_request.refresh_from_db()
+        self.leave_balance.refresh_from_db()
+
+        self.assertEqual(leave_request.status, 'cancelled')
+        self.assertEqual(self.leave_balance.used_days, Decimal('0.0'))
+
+    def test_create_leave_request_with_medical_certificate_url(self):
+        """medical_certificate must accept a plain URL string, matching how
+        the frontend actually submits it (JSON, not multipart)."""
+        today = timezone.now().date()
+
+        data = {
+            'staff': self.staff.id,
+            'leave_type': self.leave_type.id,
+            'start_date': str(today + timedelta(days=7)),
+            'end_date': str(today + timedelta(days=9)),
+            'reason': 'Sick leave',
+            'medical_certificate': 'https://example.com/medical-certificate.pdf',
+        }
+
+        url = reverse('hr:leave-request-list')
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        leave_request = LeaveRequest.objects.get(pk=response.data['id'])
+        self.assertEqual(
+            leave_request.medical_certificate,
+            'https://example.com/medical-certificate.pdf'
+        )
+
     def test_reject_leave_request(self):
         """Test rejecting a leave request"""
         today = timezone.now().date()
@@ -193,14 +298,15 @@ class TestLeaveRequestAPI(TestCase):
         
         self.leave_balance.pending_days = Decimal('3.0')
         self.leave_balance.save()
-        
+
+        self.client.force_authenticate(user=self.approver)
         url = reverse('hr:leave-request-reject', kwargs={'pk': leave_request.id})
         response = self.client.post(
             url,
             {'reason': 'Not enough notice'},
             format='json'
         )
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         leave_request.refresh_from_db()
@@ -240,36 +346,51 @@ class TestAttendanceAPI(TestCase):
     
     def setUp(self):
         """Setup test data"""
+        # Create tenant. Required so the Staff row auto-created by
+        # auto_create_staff_profile (hr/signals.py) below has a tenant.
+        self.tenant = Tenant.objects.create(name='Test Company')
+
         # Create branch
         self.branch = Branch.objects.create(
             name="Main Branch",
             code="MB001"
         )
-        
-        # Create user
+
+        # Create user. is_system_admin bypasses HasActionPermission's
+        # fine-grained checks (see permissions.services.PermissionResolver.
+        # _is_wildcard) — these tests exercise the attendance endpoints'
+        # own behavior, not the separate permissions system, and no Role
+        # is set up here to grant the plain endpoint access it needs.
         self.user = User.objects.create_user(
             username='testuser',
             email='test@test.com',
-            password='testpass123'
+            password='testpass123',
+            tenant=self.tenant,
+            branch=self.branch,
+            is_system_admin=True,
         )
-        self.user.branch = self.branch
-        self.user.save()
-        
-        # Create staff
-        self.staff = Staff.objects.create(
+
+        # Create staff. auto_create_staff_profile (hr/signals.py) already
+        # created a stub Staff the moment self.user was saved above, so this
+        # must update that row rather than create a second one — a plain
+        # Staff.objects.create() here collides on the OneToOne user_id.
+        self.staff, _ = Staff.objects.update_or_create(
             user=self.user,
-            first_name='John',
-            last_name='Doe',
-            department='IT',
-            position='Developer',
-            owner=self.user,
-            branch=self.branch
+            defaults=dict(
+                first_name='John',
+                last_name='Doe',
+                department='IT',
+                position='Developer',
+                owner=self.user,
+                branch=self.branch,
+                tenant=self.tenant,
+            ),
         )
-        
+
         # Create API client
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
-    
+
     def test_clock_in(self):
         """Test clocking in"""
         url = reverse('hr:attendance-clock-in')
@@ -351,15 +472,18 @@ class TestPayrollAPI(TestCase):
             code="MB001"
         )
         
-        # Create user
+        # Create user. is_system_admin bypasses HasActionPermission's
+        # fine-grained checks (see permissions.services.PermissionResolver.
+        # _is_wildcard) — no Role is set up here to grant HR page access.
         self.user = User.objects.create_user(
             username='testuser',
             email='test@test.com',
             password='testpass123',
             tenant=self.tenant,
-            branch=self.branch
+            branch=self.branch,
+            is_system_admin=True,
         )
-        
+
         # Create HR config
         self.hr_config = HRConfig.objects.create(
             branch=self.branch,
@@ -369,17 +493,22 @@ class TestPayrollAPI(TestCase):
             overtime_multiplier=Decimal('1.5')
         )
         
-        # Create staff
-        self.staff = Staff.objects.create(
+        # Create staff. auto_create_staff_profile (hr/signals.py) already
+        # created a stub Staff the moment self.user was saved above, so this
+        # must update that row rather than create a second one — a plain
+        # Staff.objects.create() here collides on the OneToOne user_id.
+        self.staff, _ = Staff.objects.update_or_create(
             user=self.user,
-            first_name='John',
-            last_name='Doe',
-            department='IT',
-            position='Developer',
-            owner=self.user,
-            branch=self.branch
+            defaults=dict(
+                first_name='John',
+                last_name='Doe',
+                department='IT',
+                position='Developer',
+                owner=self.user,
+                branch=self.branch,
+            ),
         )
-        
+
         # Create salary components
         self.basic_salary = SalaryComponent.objects.create(
             name='Basic Salary',

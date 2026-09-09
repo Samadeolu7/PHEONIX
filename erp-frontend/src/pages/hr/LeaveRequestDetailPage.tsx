@@ -18,6 +18,7 @@ import { useToast } from '../../hooks/useToast';
 import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 import hrService from '../../services/hrService';
 import { leaveBalanceService } from '../../services/leaveBalanceService';
+import { ManualLink } from '../../components/help';
 import {
   LeaveRequestStatus,
   getLeaveRequestStatusColor,
@@ -192,10 +193,17 @@ const LeaveRequestDetailPage: React.FC = () => {
   };
 
   const canCancel = () => {
-    return (
+    if (
       leaveRequest?.status === LeaveRequestStatus.DRAFT ||
       leaveRequest?.status === LeaveRequestStatus.SUBMITTED
-    );
+    ) {
+      return true;
+    }
+    // Cancelling an already-approved request is also allowed (the backend
+    // restores the used-days balance), but only surfaced here for approvers —
+    // the requester's own case isn't distinguishable client-side yet since
+    // this page doesn't know the viewer's own staff id.
+    return canUserApprove && leaveRequest?.status === LeaveRequestStatus.APPROVED;
   };
 
   const getStatusIcon = (status: LeaveRequestStatus) => {
@@ -253,6 +261,9 @@ const LeaveRequestDetailPage: React.FC = () => {
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Leave Request Details</h1>
               <p className="text-gray-600">Review and manage leave request</p>
+              <ManualLink topic="howto-leave-requests" className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">
+                How do I approve, reject, or cancel this?
+              </ManualLink>
             </div>
           </div>
           <div className="flex space-x-3">

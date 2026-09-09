@@ -17,7 +17,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExampl
 from drf_spectacular.types import OpenApiTypes
 
 from common.views import ScopedModelViewSet, resolve_effective_branch
-from common.approval_permissions import IsApprover
+from common.approval_permissions import IsApprover, can_user_approve
 from automations.models import WorkflowTemplate, WorkflowRun
 from .models import (
     Staff, SalaryComponent, StaffPayInfo, PayrollSchedule,
@@ -869,97 +869,143 @@ class LeaveRequestViewSet(ScopedModelViewSet):
     def submit(self, request, pk=None):
         """Submit leave request for approval"""
         leave_request = self.get_object()
-        
+
         if leave_request.status != 'draft':
             return Response(
                 {'error': 'Only draft leave requests can be submitted'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
             service = LeaveService(leave_request)
             service.submit_leave_request()
-            
-            return Response(self.get_serializer(leave_request).data)
         except Exception as e:
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
+        from .notifications import notify_leave_submitted
+        notify_leave_submitted(leave_request, request.user)
+
+        return Response(self.get_serializer(leave_request).data)
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve leave request"""
         leave_request = self.get_object()
-        
+
         if leave_request.status != 'submitted':
             return Response(
                 {'error': 'Only submitted leave requests can be approved'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if leave_request.staff.user_id == request.user.id:
+            return Response(
+                {'error': 'You cannot approve your own leave request.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         notes = request.data.get('notes', '')
-        
+
         try:
             service = LeaveService(leave_request)
             service.approve_leave_request(
                 approved_by=request.user,
                 notes=notes
             )
-            
-            return Response(self.get_serializer(leave_request).data)
         except Exception as e:
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
+        from .notifications import notify_leave_decision
+        notify_leave_decision(leave_request, request.user, 'approved')
+
+        return Response(self.get_serializer(leave_request).data)
+
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """Reject leave request"""
         leave_request = self.get_object()
-        
-        if leave_request.status not in ['submitted', 'draft']:
+
+        if leave_request.status != 'submitted':
             return Response(
-                {'error': 'Cannot reject this leave request'},
+                {'error': 'Only submitted leave requests can be rejected'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if leave_request.staff.user_id == request.user.id:
+            return Response(
+                {'error': 'You cannot reject your own leave request.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         reason = request.data.get('reason', '')
         if not reason:
             return Response(
                 {'error': 'Rejection reason is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
             service = LeaveService(leave_request)
             service.reject_leave_request(
                 rejected_by=request.user,
                 reason=reason
             )
-            
-            return Response(self.get_serializer(leave_request).data)
         except Exception as e:
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
+        from .notifications import notify_leave_decision
+        notify_leave_decision(leave_request, request.user, 'rejected', reason=reason)
+
+        return Response(self.get_serializer(leave_request).data)
+
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        """Cancel leave request"""
+        """Cancel a draft, submitted, or approved leave request.
+
+        Restores any pending/used balance via LeaveService (previously this
+        action flipped status directly and never released the balance it had
+        reserved, permanently overstating used_days on every cancelled
+        approved leave). Only the requester themselves or someone with
+        approval authority on leave-requests may cancel.
+        """
         leave_request = self.get_object()
-        
-        if leave_request.status in ['cancelled', 'taken']:
+
+        if leave_request.status in ['cancelled', 'taken', 'rejected']:
             return Response(
                 {'error': 'Cannot cancel this leave request'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        leave_request.status = 'cancelled'
-        leave_request.save()
-        
+
+        is_owner = leave_request.staff.user_id == request.user.id
+        if not is_owner and not can_user_approve(request.user, module='hr', page='leave-requests'):
+            return Response(
+                {'error': 'You do not have permission to cancel this leave request.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        reason = request.data.get('reason', '')
+
+        try:
+            service = LeaveService(leave_request)
+            service.cancel_leave_request(cancelled_by=request.user, reason=reason)
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        from .notifications import notify_leave_decision
+        notify_leave_decision(leave_request, request.user, 'cancelled', reason=reason)
+
         return Response(self.get_serializer(leave_request).data)
 
     @action(detail=False, methods=['get'], url_path='my-leave-requests')

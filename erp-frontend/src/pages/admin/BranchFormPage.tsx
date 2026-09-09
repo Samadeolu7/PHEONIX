@@ -4,7 +4,8 @@ import { CreateBranchData } from '../../services/branchService';
 import { useBranch, useCreateBranch, useUpdateBranch } from '../../hooks/useBranches';
 import { useTenantOptions } from '../../hooks/useTenants';
 import { useToast } from '../../hooks/useToast';
-import { ArrowLeft, Save, Building } from 'lucide-react';
+import { ManualLink } from '../../components/help';
+import { ArrowLeft, Save, Building, MapPin, Loader2 } from 'lucide-react';
 
 const BranchFormPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -13,6 +14,7 @@ const BranchFormPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [originalData, setOriginalData] = useState<CreateBranchData | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+  const [locatingBranch, setLocatingBranch] = useState(false);
   const { success, error: showError } = useToast();
 
   const { data: branch, isLoading: branchLoading } = useBranch(isEditMode ? Number(id) : 0);
@@ -28,6 +30,9 @@ const BranchFormPage: React.FC = () => {
     is_deleted: false,
     owner: null,
     created_by: null,
+    latitude: null,
+    longitude: null,
+    attendance_radius_meters: 1500,
   });
 
   useEffect(() => {
@@ -40,11 +45,38 @@ const BranchFormPage: React.FC = () => {
         is_deleted: branch.is_deleted,
         owner: branch.owner,
         created_by: branch.created_by,
+        latitude: branch.latitude ?? null,
+        longitude: branch.longitude ?? null,
+        attendance_radius_meters: branch.attendance_radius_meters ?? 1500,
       };
       setFormData(branchData);
       setOriginalData(branchData);
     }
   }, [branch]);
+
+  const useCurrentLocationForBranch = () => {
+    if (!navigator.geolocation) {
+      showError('Geolocation is not supported by your browser');
+      return;
+    }
+    setLocatingBranch(true);
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        setFormData(prev => ({
+          ...prev,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        }));
+        setLocatingBranch(false);
+        success('Current location captured — remember to save.');
+      },
+      geoError => {
+        setLocatingBranch(false);
+        showError(geoError.message || 'Failed to get your current location');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
 
   useEffect(() => {
     if (isEditMode && originalData) {
@@ -231,6 +263,78 @@ const BranchFormPage: React.FC = () => {
                   <span className="text-sm text-gray-700">Inactive</span>
                 </label>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Attendance Location */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-lg font-medium text-gray-900">Attendance Location</h3>
+            <button
+              type="button"
+              onClick={useCurrentLocationForBranch}
+              disabled={locatingBranch}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100 disabled:opacity-50"
+            >
+              {locatingBranch ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <MapPin className="h-4 w-4" />
+              )}
+              {locatingBranch ? 'Locating…' : 'Use my current location'}
+            </button>
+          </div>
+          <p className="text-sm text-gray-500 mb-2">
+            Optional. When set, staff can only clock in/out (manually, or automatically on login)
+            within the radius below of this point. Leave blank to skip GPS checks for this branch
+            entirely.
+          </p>
+          <ManualLink topic="howto-attendance-location" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">
+            How do I set this up?
+          </ManualLink>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Latitude</label>
+              <input
+                type="number"
+                step="any"
+                value={formData.latitude ?? ''}
+                onChange={e =>
+                  handleInputChange('latitude', e.target.value === '' ? null : Number(e.target.value))
+                }
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                placeholder="e.g. 6.524400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Longitude</label>
+              <input
+                type="number"
+                step="any"
+                value={formData.longitude ?? ''}
+                onChange={e =>
+                  handleInputChange('longitude', e.target.value === '' ? null : Number(e.target.value))
+                }
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                placeholder="e.g. 3.379200"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Allowed Radius (meters)
+              </label>
+              <input
+                type="number"
+                min={10}
+                max={50000}
+                value={formData.attendance_radius_meters ?? 1500}
+                onChange={e => handleInputChange('attendance_radius_meters', Number(e.target.value))}
+                className="w-full border border-gray-300 rounded-md px-3 py-2"
+              />
             </div>
           </div>
         </div>

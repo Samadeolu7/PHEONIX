@@ -8,6 +8,7 @@ import { tokenManager } from '../services/tokenManager';
 import { permissionService } from '@/services/permissionService';
 import { navConfigService } from '../services/navConfigService';
 import { queryClient } from '../lib/queryClient';
+import { useAutoClockIn } from '../hooks/useAutoClockIn';
 
 // Use the real User type from authService
 type User = RealUser;
@@ -67,6 +68,12 @@ const MOCK_STORAGE_KEY = 'mock_auth_user_v1';
 const wait = (ms = 200) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Mounted at the app root, before the login page can possibly submit, so
+  // its 'auth:login' listener is always registered before authService.login()
+  // could dispatch that event — see useAutoClockIn.ts for why that ordering
+  // matters and why it's deliberately toast-free.
+  useAutoClockIn();
+
   const [user, setUser] = useState<User | null>(null);
   const [selectedRole, setSelectedRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState(true);

@@ -39,7 +39,12 @@ class Branch(TimeStampedModel, SoftDeleteModel):
         validators=[MinValueValidator(-180), MaxValueValidator(180)],
         help_text="Branch longitude for GPS-based attendance validation"
     )
-    
+    attendance_radius_meters = models.PositiveIntegerField(
+        default=1500,
+        validators=[MinValueValidator(10), MaxValueValidator(50000)],
+        help_text="How far (in meters) from latitude/longitude staff may clock in/out. Ignored if latitude/longitude aren't set."
+    )
+
     # Multi-tenancy support
     tenant = models.ForeignKey(
         'users.Tenant',

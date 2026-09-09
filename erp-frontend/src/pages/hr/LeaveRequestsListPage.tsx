@@ -17,6 +17,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../../hooks/useToast';
 import hrService from '../../services/hrService';
+import { ManualLink } from '../../components/help';
 import {
   LeaveRequest,
   LeaveRequestFilters,
@@ -126,6 +127,9 @@ const LeaveRequestsListPage: React.FC = () => {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Leave Requests</h1>
             <p className="text-gray-600">Manage staff leave requests and approvals</p>
+            <ManualLink topic="howto-leave-requests" className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">
+              How do I request, approve, or cancel leave?
+            </ManualLink>
           </div>
           <div className="flex gap-2">
             <button

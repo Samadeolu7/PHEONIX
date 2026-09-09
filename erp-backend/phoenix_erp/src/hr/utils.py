@@ -43,21 +43,24 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return c * r
 
 
-def validate_attendance_location(branch, user_latitude, user_longitude, max_distance_km=1.5):
+def validate_attendance_location(branch, user_latitude, user_longitude, max_distance_km=None):
     """
     Validate if user's location is within acceptable distance from branch.
-    
+
     Args:
-        branch: Branch instance with latitude/longitude
+        branch: Branch instance with latitude/longitude and attendance_radius_meters
         user_latitude: User's current latitude
         user_longitude: User's current longitude
-        max_distance_km: Maximum allowed distance in kilometers (default: 1.5 km)
-    
+        max_distance_km: Maximum allowed distance in kilometers. Defaults to the
+            branch's own configurable attendance_radius_meters (falls back to
+            1.5 km for branches predating that field, e.g. in older migrations
+            or tests that construct a bare Branch() without it).
+
     Returns:
         tuple: (is_valid: bool, distance: float, message: str)
-    
+
     Example:
-        >>> branch = Branch(latitude=6.5244, longitude=3.3792)
+        >>> branch = Branch(latitude=6.5244, longitude=3.3792, attendance_radius_meters=1000)
         >>> is_valid, distance, msg = validate_attendance_location(branch, 6.5200, 3.3800)
         >>> is_valid
         True
@@ -67,11 +70,14 @@ def validate_attendance_location(branch, user_latitude, user_longitude, max_dist
     # Check if branch has GPS coordinates
     if not branch.latitude or not branch.longitude:
         return True, 0, "Branch GPS coordinates not configured - location check skipped"
-    
+
     # Check if user provided coordinates
     if not user_latitude or not user_longitude:
         return False, 0, "GPS coordinates required for attendance at this branch"
-    
+
+    if max_distance_km is None:
+        max_distance_km = getattr(branch, 'attendance_radius_meters', 1500) / 1000
+
     try:
         # Calculate distance
         distance = calculate_distance(
@@ -80,11 +86,11 @@ def validate_attendance_location(branch, user_latitude, user_longitude, max_dist
             user_latitude,
             user_longitude
         )
-        
+
         if distance <= max_distance_km:
             return True, distance, f"Location validated: {distance:.2f} km from branch"
         else:
             return False, distance, f"Too far from branch location: {distance:.2f} km (max: {max_distance_km} km)"
-            
+
     except Exception as e:
         return False, 0, f"Location validation error: {str(e)}"

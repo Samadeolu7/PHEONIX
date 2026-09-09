@@ -5,6 +5,7 @@ import { ArrowLeft, Save, Upload, Calendar, User, X } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../../hooks/useToast';
 import hrService from '../../services/hrService';
+import { ManualLink } from '../../components/help';
 import {
   CreateLeaveRequestData,
   UpdateLeaveRequestData,
@@ -314,6 +315,9 @@ const LeaveRequestFormPage: React.FC = () => {
             <p style={{ margin: 0, color: '#6b7280', fontSize: '16px' }}>
               {isEditing ? `Editing leave request` : 'Submit a new leave request'}
             </p>
+            <ManualLink topic="howto-leave-requests" className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">
+              How do I request leave?
+            </ManualLink>
           </div>
         </div>
       </div>
@@ -635,7 +639,7 @@ const LeaveRequestFormPage: React.FC = () => {
                   </p>
                 )}
                 <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#6b7280' }}>
-                  Enter the URL of the medical certificate (Cloudinary integration coming soon)
+                  Paste a link to your medical certificate (e.g. from Google Drive, Dropbox, or Cloudinary)
                 </p>
               </div>
             </form>
