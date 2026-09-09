@@ -5,6 +5,7 @@ from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
+from common.validators import validate_document_file_size, validate_document_extension
 
 # Import config models
 from hr.config_models import HRConfig  # noqa
@@ -1440,7 +1441,10 @@ class EmployeeDocument(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         choices=CATEGORY_CHOICES,
         default='other',
     )
-    file = models.FileField(upload_to='employee_documents/')
+    file = models.FileField(
+        upload_to='employee_documents/',
+        validators=[validate_document_file_size, validate_document_extension],
+    )
     description = models.TextField(blank=True)
     expiry_date = models.DateField(null=True, blank=True)
     uploaded_by = models.ForeignKey(
@@ -1458,3 +1462,92 @@ class EmployeeDocument(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
     def __str__(self):
         return f"{self.title} - {self.staff}"
+
+
+class StaffGuarantor(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    A guarantor nominated for a staff member (e.g. as a condition of
+    employment or salary-advance eligibility).
+
+    Distinct from clients.Guarantor, which guarantees loan clients — this
+    model exists purely for HR's own vetting needs and carries no loan or
+    client semantics.
+    """
+    staff = models.ForeignKey(
+        Staff,
+        on_delete=models.CASCADE,
+        related_name='guarantors',
+    )
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100)
+    relationship = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Relationship to the staff member (e.g. Spouse, Sibling, Colleague)",
+    )
+    phone = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+    occupation = models.CharField(max_length=200, blank=True)
+    address = models.TextField(blank=True)
+    id_number = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text='National ID / voter\'s card / passport number',
+    )
+    photo = models.ImageField(upload_to='staff_guarantors/photos/', blank=True, null=True)
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name} (guarantor for {self.staff})"
+
+
+class GuarantorDocument(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    Stores documents associated with a staff guarantor (ID, proof of
+    address, reference letter, etc.) — the guarantor-side counterpart of
+    EmployeeDocument.
+    """
+    CATEGORY_CHOICES = [
+        ('id_document', 'ID / Passport'),
+        ('utility_bill', 'Utility Bill / Proof of Address'),
+        ('employment_letter', "Guarantor's Employment Letter"),
+        ('reference_letter', 'Reference Letter'),
+        ('other', 'Other'),
+    ]
+
+    guarantor = models.ForeignKey(
+        StaffGuarantor,
+        on_delete=models.CASCADE,
+        related_name='documents',
+    )
+    title = models.CharField(max_length=200)
+    category = models.CharField(
+        max_length=30,
+        choices=CATEGORY_CHOICES,
+        default='other',
+    )
+    file = models.FileField(
+        upload_to='guarantor_documents/',
+        validators=[validate_document_file_size, validate_document_extension],
+    )
+    description = models.TextField(blank=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='uploaded_guarantor_docs',
+    )
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.title} - {self.guarantor}"

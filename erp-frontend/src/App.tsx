@@ -399,6 +399,7 @@ const PayrollScheduleFormPage = lazy(() => import('./pages/hr/PayrollScheduleFor
 const PensionRemittancePage = lazy(() => import('./pages/hr/PensionRemittancePage'));
 const StaffExcelImportPage = lazy(() => import('./pages/hr/StaffExcelImportPage'));
 const EmployeeDocumentsPage = lazy(() => import('./pages/hr/EmployeeDocumentsPage'));
+const StaffGuarantorsPage = lazy(() => import('./pages/hr/StaffGuarantorsPage'));
 
 // Resource Consumption pages
 const ResourceConsumptionListPage = lazy(
@@ -2024,6 +2025,14 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="staff-list" module="hr" page="staff">
                                       <EmployeeDocumentsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/hr/staff/:staffId/guarantors"
+                                  element={
+                                    <ProtectedRoute requiredPermission="staff-list" module="hr" page="staff">
+                                      <StaffGuarantorsPage />
                                     </ProtectedRoute>
                                   }
                                 />

@@ -997,6 +997,67 @@ export interface DocumentCategoryOption {
   label: string;
 }
 
+// ============================================================================
+// STAFF GUARANTORS
+// ============================================================================
+
+export interface StaffGuarantor {
+  id: number;
+  staff: number;
+  staff_name: string;
+  first_name: string;
+  last_name: string;
+  relationship?: string;
+  phone?: string;
+  email?: string;
+  occupation?: string;
+  address?: string;
+  id_number?: string;
+  photo?: string | null;
+  document_count: number;
+  owner: number;
+  branch: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StaffGuarantorFilters {
+  staff?: number | string;
+  page?: number;
+}
+
+export type GuarantorDocumentCategory =
+  | 'id_document'
+  | 'utility_bill'
+  | 'employment_letter'
+  | 'reference_letter'
+  | 'other';
+
+export interface GuarantorDocument {
+  id: number;
+  guarantor: number;
+  guarantor_name: string;
+  staff_name: string;
+  title: string;
+  category: GuarantorDocumentCategory;
+  category_display: string;
+  file: string; // URL
+  description?: string;
+  uploaded_by?: number | null;
+  uploaded_by_name?: string | null;
+  owner: number;
+  branch: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GuarantorDocumentFilters {
+  guarantor?: number | string;
+  staff?: number | string;
+  category?: GuarantorDocumentCategory;
+  page?: number;
+}
+
 // -- Statutory Filings (NHF / NSITF) ------------------------------------------
 
 export interface StatutoryFiling {

@@ -55,6 +55,10 @@ import {
   EmployeeDocument,
   EmployeeDocumentFilters,
   DocumentCategoryOption,
+  StaffGuarantor,
+  StaffGuarantorFilters,
+  GuarantorDocument,
+  GuarantorDocumentFilters,
   StatutoryFiling,
   CreateStatutoryFilingData,
 } from '../types/hr';
@@ -1257,6 +1261,74 @@ class HRService {
     return ErrorHandler.withRetry(
       () => api.get('/hr/employee-documents/categories/'),
       'get-document-categories'
+    );
+  }
+
+  // ============================================================================
+  // STAFF GUARANTORS
+  // ============================================================================
+
+  async getStaffGuarantors(
+    params?: StaffGuarantorFilters
+  ): Promise<PaginatedResponse<StaffGuarantor>> {
+    return ErrorHandler.withRetry(
+      () => api.get('/hr/staff-guarantors/', { params }),
+      'get-staff-guarantors'
+    );
+  }
+
+  async getStaffGuarantor(id: number): Promise<StaffGuarantor> {
+    return ErrorHandler.withRetry(
+      () => api.get(`/hr/staff-guarantors/${id}/`),
+      'get-staff-guarantor'
+    );
+  }
+
+  async createStaffGuarantor(data: FormData): Promise<StaffGuarantor> {
+    return ErrorHandler.withRetry(
+      () => api.post('/hr/staff-guarantors/', data),
+      'create-staff-guarantor'
+    );
+  }
+
+  async updateStaffGuarantor(id: number, data: FormData): Promise<StaffGuarantor> {
+    return ErrorHandler.withRetry(
+      () => api.patch(`/hr/staff-guarantors/${id}/`, data),
+      'update-staff-guarantor'
+    );
+  }
+
+  async deleteStaffGuarantor(id: number): Promise<void> {
+    return ErrorHandler.withRetry(
+      () => api.delete(`/hr/staff-guarantors/${id}/`),
+      'delete-staff-guarantor'
+    );
+  }
+
+  // ============================================================================
+  // GUARANTOR DOCUMENTS
+  // ============================================================================
+
+  async getGuarantorDocuments(
+    params?: GuarantorDocumentFilters
+  ): Promise<PaginatedResponse<GuarantorDocument>> {
+    return ErrorHandler.withRetry(
+      () => api.get('/hr/guarantor-documents/', { params }),
+      'get-guarantor-documents'
+    );
+  }
+
+  async uploadGuarantorDocument(data: FormData): Promise<GuarantorDocument> {
+    return ErrorHandler.withRetry(
+      () => api.post('/hr/guarantor-documents/', data),
+      'upload-guarantor-document'
+    );
+  }
+
+  async deleteGuarantorDocument(id: number): Promise<void> {
+    return ErrorHandler.withRetry(
+      () => api.delete(`/hr/guarantor-documents/${id}/`),
+      'delete-guarantor-document'
     );
   }
 

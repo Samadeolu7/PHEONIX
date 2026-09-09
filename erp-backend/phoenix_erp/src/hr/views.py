@@ -24,6 +24,7 @@ from .models import (
     LeaveType, LeaveBalance, LeaveRequest,
     Attendance, Payroll, Payslip, BonusDeductionRequest, PensionRemittance,
     EmployeeDocument, PayComponentRemovalRequest, StaffIOU, PayrollStatutoryFiling,
+    StaffGuarantor, GuarantorDocument,
 )
 from .config_models import HRConfig
 from .serializers import (
@@ -37,6 +38,7 @@ from .serializers import (
     PayComponentRemovalRequestSerializer, PayComponentRemovalRequestCreateSerializer,
     StaffIOUSerializer, StaffIOUCreateSerializer,
     PayrollStatutoryFilingSerializer, PayrollStatutoryFilingListSerializer,
+    StaffGuarantorSerializer, GuarantorDocumentSerializer,
 )
 from .services.payroll_service import PayrollService
 from .services.leave_service import LeaveService
@@ -2207,6 +2209,78 @@ class EmployeeDocumentViewSet(ScopedModelViewSet):
         return Response([
             {'value': choice[0], 'label': choice[1]}
             for choice in EmployeeDocument.CATEGORY_CHOICES
+        ])
+
+
+class StaffGuarantorViewSet(ScopedModelViewSet):
+    """
+    API endpoint for managing staff guarantors.
+
+    Supports:
+      - List guarantors (filterable by staff)
+      - Create / retrieve / update / delete a guarantor
+    """
+    permission_module = 'hr'
+    permission_page = 'staff'
+    queryset = StaffGuarantor.objects.select_related('staff').prefetch_related('documents').all()
+    serializer_class = StaffGuarantorSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        staff_id = self.request.query_params.get('staff')
+        if staff_id:
+            if str(staff_id).isdigit():
+                qs = qs.filter(staff_id=int(staff_id))
+            else:
+                qs = qs.filter(staff__staff_id=staff_id)
+        return qs.order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(
+            owner=self.request.user,
+            branch=self.request.user.branch,
+        )
+
+
+class GuarantorDocumentViewSet(ScopedModelViewSet):
+    """
+    API endpoint for managing documents attached to a staff guarantor
+    (ID, proof of address, reference letter, etc.).
+    """
+    permission_module = 'hr'
+    permission_page = 'staff'
+    queryset = GuarantorDocument.objects.select_related('guarantor__staff', 'uploaded_by').all()
+    serializer_class = GuarantorDocumentSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        guarantor_id = self.request.query_params.get('guarantor')
+        if guarantor_id:
+            qs = qs.filter(guarantor_id=guarantor_id)
+        staff_id = self.request.query_params.get('staff')
+        if staff_id:
+            if str(staff_id).isdigit():
+                qs = qs.filter(guarantor__staff_id=int(staff_id))
+            else:
+                qs = qs.filter(guarantor__staff__staff_id=staff_id)
+        category = self.request.query_params.get('category')
+        if category:
+            qs = qs.filter(category=category)
+        return qs.order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(
+            uploaded_by=self.request.user,
+            owner=self.request.user,
+            branch=self.request.user.branch,
+        )
+
+    @action(detail=False, methods=['get'])
+    def categories(self, request):
+        """Return available document categories"""
+        return Response([
+            {'value': choice[0], 'label': choice[1]}
+            for choice in GuarantorDocument.CATEGORY_CHOICES
         ])
 
 

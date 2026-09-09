@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Hash,
   FileText,
+  Users,
 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../../hooks/useToast';
@@ -963,6 +964,17 @@ const StaffDetailPage: React.FC = () => {
               <div className="text-left">
                 <p className="font-medium text-gray-900">Employee Documents</p>
                 <p className="text-sm text-gray-500">Manage files & certificates</p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => navigate(`/hr/staff/${staff.staff_id || staff.id}/guarantors`)}
+              className="flex items-center p-4 border border-gray-200 rounded-lg hover:border-teal-300 hover:bg-teal-50 transition-colors duration-200"
+            >
+              <Users className="h-5 w-5 text-teal-600 mr-3" />
+              <div className="text-left">
+                <p className="font-medium text-gray-900">Guarantors</p>
+                <p className="text-sm text-gray-500">Manage guarantors & their documents</p>
               </div>
             </button>
           </div>

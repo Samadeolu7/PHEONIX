@@ -13,6 +13,7 @@ from .models import (
     Attendance, Payroll, Payslip, SalaryComponent, StaffPayInfo, PayrollSchedule,
     BonusDeductionRequest, PensionRemittance, EmployeeDocument,
     PayComponentRemovalRequest, StaffIOU, PayrollStatutoryFiling,
+    StaffGuarantor, GuarantorDocument,
 )
 from .config_models import HRConfig
 from automations.models import WorkflowTemplate, WorkflowRun
@@ -823,6 +824,71 @@ class EmployeeDocumentSerializer(TenantModelSerializer):
             return False
         from django.utils import timezone
         return obj.expiry_date < timezone.now().date()
+
+    def validate_file(self, value):
+        if value and value.content_type and value.content_type.startswith('image/'):
+            value = compress_image(value, max_dimension=1800, quality=85)
+        return value
+
+
+class StaffGuarantorSerializer(TenantModelSerializer):
+    """Staff guarantor serializer"""
+    staff_name = serializers.SerializerMethodField()
+    document_count = serializers.IntegerField(source='documents.count', read_only=True)
+
+    class Meta:
+        model = StaffGuarantor
+        fields = [
+            'id', 'staff', 'staff_name', 'first_name', 'last_name', 'relationship',
+            'phone', 'email', 'occupation', 'address', 'id_number', 'photo',
+            'document_count', 'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_staff_name(self, obj):
+        if obj.staff.user:
+            return obj.staff.user.get_full_name()
+        return f"{obj.staff.first_name} {obj.staff.last_name}"
+
+    def validate_photo(self, value):
+        if value and value.content_type and value.content_type.startswith('image/'):
+            value = compress_image(value, max_dimension=1200, quality=82)
+        return value
+
+
+class GuarantorDocumentSerializer(TenantModelSerializer):
+    """Guarantor document serializer for file uploads and management"""
+    guarantor_name = serializers.SerializerMethodField()
+    staff_name = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.SerializerMethodField()
+    category_display = serializers.CharField(source='get_category_display', read_only=True)
+
+    class Meta:
+        model = GuarantorDocument
+        fields = [
+            'id', 'guarantor', 'guarantor_name', 'staff_name', 'title', 'category',
+            'category_display', 'file', 'description',
+            'uploaded_by', 'uploaded_by_name',
+            'owner', 'branch', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['uploaded_by', 'created_at', 'updated_at']
+
+    def get_guarantor_name(self, obj):
+        return f"{obj.guarantor.first_name} {obj.guarantor.last_name}"
+
+    def get_staff_name(self, obj):
+        staff = obj.guarantor.staff
+        if staff.user:
+            return staff.user.get_full_name()
+        return f"{staff.first_name} {staff.last_name}"
+
+    def get_uploaded_by_name(self, obj):
+        return obj.uploaded_by.get_full_name() if obj.uploaded_by else None
+
+    def validate_file(self, value):
+        if value and value.content_type and value.content_type.startswith('image/'):
+            value = compress_image(value, max_dimension=1800, quality=85)
+        return value
 
 
 # ── Staff IOU Serializers ────────────────────────────────────────────────────

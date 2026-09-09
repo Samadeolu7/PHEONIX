@@ -13,6 +13,7 @@ from .views import (
     BonusDeductionRequestViewSet, PensionRemittanceViewSet,
     EmployeeDocumentViewSet, PayComponentRemovalRequestViewSet,
     StaffIOUViewSet, PayrollStatutoryFilingViewSet,
+    StaffGuarantorViewSet, GuarantorDocumentViewSet,
 )
 
 app_name = 'hr'
@@ -32,6 +33,8 @@ router.register(r'payroll', PayrollViewSet, basename='payroll')
 router.register(r'payslips', PayslipViewSet, basename='payslip')
 router.register(r'pension-remittances', PensionRemittanceViewSet, basename='pension-remittance')
 router.register(r'employee-documents', EmployeeDocumentViewSet, basename='employee-document')
+router.register(r'staff-guarantors', StaffGuarantorViewSet, basename='staff-guarantor')
+router.register(r'guarantor-documents', GuarantorDocumentViewSet, basename='guarantor-document')
 router.register(r'pay-component-removals', PayComponentRemovalRequestViewSet, basename='pay-component-removal')
 router.register(r'staff-ious', StaffIOUViewSet, basename='staff-iou')
 router.register(r'statutory-filings', PayrollStatutoryFilingViewSet, basename='statutory-filing')
