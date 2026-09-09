@@ -2031,7 +2031,7 @@ function App() {
                                 <Route
                                   path="/hr/staff/:staffId/guarantors"
                                   element={
-                                    <ProtectedRoute requiredPermission="staff-list" module="hr" page="staff">
+                                    <ProtectedRoute requiredPermission="staff-guarantors-list" module="hr" page="staff-guarantors">
                                       <StaffGuarantorsPage />
                                     </ProtectedRoute>
                                   }

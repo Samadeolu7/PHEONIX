@@ -2221,7 +2221,7 @@ class StaffGuarantorViewSet(ScopedModelViewSet):
       - Create / retrieve / update / delete a guarantor
     """
     permission_module = 'hr'
-    permission_page = 'staff'
+    permission_page = 'staff-guarantors'
     queryset = StaffGuarantor.objects.select_related('staff').prefetch_related('documents').all()
     serializer_class = StaffGuarantorSerializer
 
@@ -2248,7 +2248,7 @@ class GuarantorDocumentViewSet(ScopedModelViewSet):
     (ID, proof of address, reference letter, etc.).
     """
     permission_module = 'hr'
-    permission_page = 'staff'
+    permission_page = 'staff-guarantors'
     queryset = GuarantorDocument.objects.select_related('guarantor__staff', 'uploaded_by').all()
     serializer_class = GuarantorDocumentSerializer
 
