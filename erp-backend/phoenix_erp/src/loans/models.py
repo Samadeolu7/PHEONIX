@@ -2048,11 +2048,18 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 "This product has no interest_income_account configured — "
                 "required before restructuring loans under it."
             )
-        if restructure_interest_amount != 0 and not self.product.restructure_interest_income_account:
+        # restructure_interest_income_account is preferred (keeps restructure
+        # revenue separate from ordinary interest), but falls back to the
+        # product's ordinary interest_income_account when unconfigured rather
+        # than blocking the restructure outright.
+        restructure_income_account = (
+            self.product.restructure_interest_income_account or self.product.interest_income_account
+        )
+        if restructure_interest_amount != 0 and not restructure_income_account:
             raise ValidationError(
-                "This product has no restructure_interest_income_account configured — "
-                "required before restructuring loans under it, so restructure "
-                "revenue can be monitored separately from ordinary interest."
+                "This product has no restructure_interest_income_account or "
+                "interest_income_account configured — at least one is required "
+                "before restructuring loans under it."
             )
 
         carried_interest = self.outstanding_interest
@@ -2179,7 +2186,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             if restructure_interest_amount > 0:
                 JournalEntryLine.objects.create(
                     transaction=journal_entry,
-                    account=self.product.restructure_interest_income_account,
+                    account=restructure_income_account,
                     side=JournalEntryLine.CREDIT,
                     amount=restructure_interest_amount,
                 )
@@ -2189,7 +2196,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 # monitoring account (contra) instead of crediting it.
                 JournalEntryLine.objects.create(
                     transaction=journal_entry,
-                    account=self.product.restructure_interest_income_account,
+                    account=restructure_income_account,
                     side=JournalEntryLine.DEBIT,
                     amount=-restructure_interest_amount,
                 )
