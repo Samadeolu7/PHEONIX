@@ -1095,10 +1095,12 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                    'journal_entry_id': str(journal_entry.pk)},
         )
 
-    def _generate_repayment_schedule(self, principal_override=None):
+    def _generate_repayment_schedule(self, principal_override=None, start_number=1):
         """Delegate schedule generation to RepaymentScheduleService."""
         from .schedule_service import RepaymentScheduleService
-        RepaymentScheduleService.generate(self, principal_override=principal_override)
+        RepaymentScheduleService.generate(
+            self, principal_override=principal_override, start_number=start_number
+        )
 
     def periods_late_for_installment(self, sched, as_of=None):
         """
@@ -2106,7 +2108,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         # Regenerate schedule for the OUTSTANDING balance, not the original
         # disbursed_amount (which stays fixed as the historical disbursement figure).
-        self._generate_repayment_schedule(principal_override=balance)
+        # The old (now 'restructured') rows above are kept, not deleted, as a
+        # historical record — so the new rows must continue installment_number
+        # past whatever's already taken, or they collide with the old ones on
+        # the (loan, installment_number) unique constraint.
+        from django.db.models import Max
+        max_existing_number = self.repayment_schedule.aggregate(m=Max('installment_number'))['m'] or 0
+        self._generate_repayment_schedule(
+            principal_override=balance, start_number=max_existing_number + 1
+        )
 
         new_schedules = list(self.repayment_schedule.filter(status='pending').order_by('due_date'))
         if new_schedules:
