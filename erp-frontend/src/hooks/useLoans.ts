@@ -875,8 +875,14 @@ export const useApproveRestructureRequest = (
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id) => loanService.approveRestructureRequest(id),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: loanKeys.restructureRequests() });
+      // Approval actually runs LoanAccount.restructure() — term, rate, schedule,
+      // and GL all change on data.loan, so anything already rendering that loan
+      // (e.g. the loan detail page, opened before approval) needs to refetch
+      // rather than keep showing stale pre-restructure state.
+      queryClient.invalidateQueries({ queryKey: loanKeys.accountDetail(data.loan) });
+      queryClient.invalidateQueries({ queryKey: loanKeys.accountSchedule(data.loan) });
     },
     ...options,
   });
