@@ -41,7 +41,7 @@ def _handle_loan_account_post_save(sender, instance, created, **kwargs):
     # On approval: auto-create a LoanDisbursement already in 'approved' state.
     # The BM who approved the loan IS the disbursement approver — no separate step needed.
     if not created and instance.status == 'approved':
-        LoanDisbursement.objects.get_or_create(
+        disbursement, was_created = LoanDisbursement.objects.get_or_create(
             loan=instance,
             defaults={
                 'requested_by': instance.created_by or instance.owner,
@@ -54,3 +54,32 @@ def _handle_loan_account_post_save(sender, instance, created, **kwargs):
                 'created_by': instance.created_by or instance.approved_by,
             },
         )
+
+        # This — not DisbursementService.approve() — is the real place a
+        # disbursement enters "approved, awaiting execution" for this
+        # business's 3-person flow (see module docstring): the BM's loan
+        # approval IS the disbursement approval, so DisbursementService.approve()
+        # is never actually called in practice. The only alert that fired
+        # before this was the post-execution "loan_disbursed" one — too late
+        # to prompt the Disburser into acting. Only alert on first creation,
+        # not on every subsequent post_save of an already-approved loan.
+        if was_created:
+            try:
+                from notifications.telegram_alerts import notify_pending_disbursements
+                notify_pending_disbursements(
+                    'loan_disbursement_awaiting_execution',
+                    f'⏳ Loan Disbursement Awaiting Execution — {instance.loan_number}',
+                    (
+                        f"₦{instance.principal_amount:,.2f} approved for disbursement to "
+                        f"{instance.client} — approved by "
+                        f"{instance.approved_by.get_full_name() or instance.approved_by.username if instance.approved_by else 'unknown'} "
+                        f"— needs a different, authorised person to execute it."
+                    ),
+                    owner=instance.owner, branch=instance.branch, related_object=disbursement,
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Failed to send loan-disbursement-awaiting-execution Telegram alert for %s",
+                    instance.loan_number,
+                )
