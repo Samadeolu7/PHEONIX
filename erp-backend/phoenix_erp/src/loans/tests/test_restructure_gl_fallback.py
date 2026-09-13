@@ -181,3 +181,72 @@ class RestructureGLFallbackTestCase(TestCase):
 
         with self.assertRaises(ValidationError):
             self._make_loan(product, "LN-NOACC-1", term_months=6)
+
+    def test_explicit_new_rate_bypasses_proportional_derivation(self):
+        """A large term-scale change (e.g. 2 days -> 60 days) makes the
+        proportional derivation produce a nonsensical rate (10%/day * 60 =
+        600%). Passing new_rate explicitly must skip that derivation
+        entirely and use the supplied rate as-is."""
+        product_gl = Product.objects.create(name="Short Term Loan", code="LOAN-SHORT", product_type="LOAN", owner=self.owner, branch=self.branch)
+        product = LoanProduct.objects.create(
+            product=product_gl,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            interest_income_account=self.interest_income_account,
+            default_interest_rate=Decimal("20.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            term_unit="days",
+            owner=self.owner, branch=self.branch,
+        )
+        seq = LoanAccount.objects.count() + 1
+        account = Account.objects.create(
+            name="LN-SHORT-1 Loan Account", code=f"13{seq:04d}",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        loan = LoanAccount.objects.create(
+            client=self.client,
+            product=product,
+            account=account,
+            loan_number="LN-SHORT-1",
+            requested_amount=Decimal("100000.00"),
+            interest_rate=Decimal("20.00"),
+            term_months=2,
+            term_unit="days",
+            repayment_frequency="daily",
+            status="pending",
+            owner=self.owner,
+            branch=self.branch,
+        )
+        loan.approve(user=self.approver)
+        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+
+        # The full ₦20,000 original interest is already sitting in
+        # outstanding_interest, unpaid — restructure() ADDS whatever this
+        # call computes as "new" interest on top of that carried-forward
+        # amount, it doesn't replace it. So to keep total interest owed at
+        # ₦20,000 (not 40,000), the new term's own rate must be 0% — no
+        # *additional* interest for the extension itself.
+        restructure = loan.restructure(
+            new_term=60,
+            restructured_by=self.approver,
+            reason="extend term, keep same total interest",
+            new_rate=Decimal("0.00"),
+        )
+
+        loan.refresh_from_db()
+        self.assertEqual(loan.term_months, 60)
+        self.assertEqual(loan.interest_rate, Decimal("0.00"))
+        # normal_interest_amount/restructure_interest_amount are still
+        # computed off the OLD rate for informational/audit purposes, but
+        # since total_new_interest is 0 here, nothing is actually posted to
+        # the GL for either — see the `if total_new_interest != 0:` gate.
+        self.assertEqual(restructure.normal_interest_amount, Decimal("20000.00"))
+        self.assertEqual(restructure.restructure_interest_amount, Decimal("-20000.00"))
+        self.assertIsNone(restructure.journal_entry)
+        # carried_interest (the pre-existing ₦20,000) + this restructure's own
+        # new interest (₦0) = ₦20,000 total, unchanged from before.
+        self.assertEqual(restructure.carried_interest, Decimal("20000.00"))
+        self.assertEqual(loan.outstanding_interest, Decimal("20000.00"))
