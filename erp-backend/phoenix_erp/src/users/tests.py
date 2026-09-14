@@ -124,3 +124,63 @@ class StaffUserListSecondDirectorTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         ids = {u['id'] for u in resp.data['results']} if 'results' in resp.data else {u['id'] for u in resp.data}
         self.assertIn(self.staff_new_branch.id, ids)
+
+
+class StaffUserBranchUpdateTests(TestCase):
+    """
+    PATCH /api/users/staff-users/<id>/ with {"branch": <id>} — the
+    /admin/users "change branch" control. A director may move a user
+    between branches in their own tenant, but the `branch` field's
+    queryset must stay scoped to the requester's tenant, otherwise a
+    director could reassign a user to another tenant's branch by id
+    (IDOR) since PrimaryKeyRelatedField only checks queryset membership.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name='Branch Update Org', slug='branch-update-org')
+        self.branch_a = Branch.objects.create(name='Branch A', code='BUA', tenant=self.tenant)
+        self.branch_b = Branch.objects.create(name='Branch B', code='BUB', tenant=self.tenant)
+
+        self.other_tenant = Tenant.objects.create(name='Other Org', slug='other-org')
+        self.other_branch = Branch.objects.create(
+            name='Other Tenant Branch', code='OTB', tenant=self.other_tenant
+        )
+
+        self.director = User.objects.create_user(
+            username='bu_director', password='test123', tenant=self.tenant, branch=self.branch_a,
+            is_superuser=True,
+        )
+        self.tenant.owner = self.director
+        self.tenant.save(update_fields=['owner'])
+
+        self.staff = User.objects.create_user(
+            username='bu_staff', password='test123', tenant=self.tenant, branch=self.branch_a,
+        )
+
+    def test_director_can_move_staff_to_another_branch_in_own_tenant(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.patch(
+            f'/api/users/staff-users/{self.staff.id}/', {'branch': self.branch_b.id}, format='json'
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.branch_id, self.branch_b.id)
+
+    def test_director_cannot_assign_staff_to_another_tenants_branch(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.patch(
+            f'/api/users/staff-users/{self.staff.id}/', {'branch': self.other_branch.id}, format='json'
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.staff.refresh_from_db()
+        self.assertEqual(self.staff.branch_id, self.branch_a.id)
+
+    def test_director_can_unassign_branch(self):
+        self.client.force_authenticate(user=self.director)
+        resp = self.client.patch(
+            f'/api/users/staff-users/{self.staff.id}/', {'branch': None}, format='json'
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.staff.refresh_from_db()
+        self.assertIsNone(self.staff.branch_id)

@@ -106,6 +106,16 @@ class UserSerializer(serializers.ModelSerializer):
             # Fallback: set to empty queryset if no tenant context
             self.fields['assigned_dashboard'].queryset = Dashboard.objects.none()
 
+        # Scope assignable branches to the request user's own tenant so a
+        # director can't reassign a user to another tenant's branch by id.
+        # System admins may assign across tenants.
+        if request and hasattr(request, 'user') and getattr(request.user, 'is_system_admin', False):
+            self.fields['branch'].queryset = Branch.objects.all()
+        elif request and hasattr(request, 'user') and hasattr(request.user, 'tenant') and request.user.tenant:
+            self.fields['branch'].queryset = Branch.objects.filter(tenant=request.user.tenant)
+        else:
+            self.fields['branch'].queryset = Branch.objects.none()
+
         # Make `tenant` writable for system admins so they can create users under any tenant.
         # For non-admins, `tenant` remains effectively read-only and will be assigned from the request user.
         try:
