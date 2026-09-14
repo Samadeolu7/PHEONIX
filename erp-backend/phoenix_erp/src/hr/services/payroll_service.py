@@ -43,7 +43,19 @@ class PayrollService:
         sets `connection.needs_rollback = True` on the outer transaction,
         poisoning every subsequent DB query with TransactionManagementError.
         A plain filter + conditional create avoids that internal atomic block.
+
+        The create itself is still a real DB write that can race — two
+        overlapping requests (e.g. a user re-clicking Calculate after a slow
+        first attempt) can both pass the "no existing row" check before
+        either commits, so the loser's INSERT hits the (tenant, owner,
+        branch) unique constraint. Without a savepoint around it, that
+        IntegrityError is uncaught at this point in the call stack (no
+        per-staff savepoint exists yet — this runs before the staff loop),
+        and propagates as exactly the poisoning this docstring describes.
+        Wrap it in its own savepoint and recover by re-fetching the row the
+        winner created, instead of leaking a raw IntegrityError.
         """
+        from django.db import IntegrityError
         from hr.config_models import HRConfig
 
         if not self.config:
@@ -55,27 +67,44 @@ class PayrollService:
             ).first()
 
             if self.config is None:
-                # Genuinely no record — safe to create without IntegrityError.
-                self.config = HRConfig(
-                    tenant=self.payroll.tenant,
-                    owner=self.payroll.owner,
-                    branch=self.payroll.branch,
-                    enable_leave_approval=True,
-                    max_consecutive_leave_days=14,
-                    annual_leave_days=20,
-                    sick_leave_days=10,
-                    enable_attendance_tracking=True,
-                    working_hours_per_day=Decimal('8.00'),
-                    late_arrival_grace_minutes=15,
-                    payroll_currency='USD',
-                    payroll_frequency='monthly',
-                    tax_rate_percentage=0,
-                    enable_pension=False,
-                    enable_paye=True,
-                    enable_nhf=False,
-                    enable_development_levy=False,
-                )
-                self.config.save()
+                # Genuinely no record (at the time of the check above) —
+                # but the create below can still lose a race, so protect it
+                # with its own savepoint rather than the bare `.save()` this
+                # replaced get_or_create() to avoid in the first place.
+                sid = db_transaction.savepoint()
+                try:
+                    self.config = HRConfig(
+                        tenant=self.payroll.tenant,
+                        owner=self.payroll.owner,
+                        branch=self.payroll.branch,
+                        enable_leave_approval=True,
+                        max_consecutive_leave_days=14,
+                        annual_leave_days=20,
+                        sick_leave_days=10,
+                        enable_attendance_tracking=True,
+                        working_hours_per_day=Decimal('8.00'),
+                        late_arrival_grace_minutes=15,
+                        payroll_currency='USD',
+                        payroll_frequency='monthly',
+                        tax_rate_percentage=0,
+                        enable_pension=False,
+                        enable_paye=True,
+                        enable_nhf=False,
+                        enable_development_levy=False,
+                    )
+                    self.config.save()
+                    db_transaction.savepoint_commit(sid)
+                except IntegrityError:
+                    db_transaction.savepoint_rollback(sid)
+                    self.config = HRConfig.all_objects.filter(
+                        tenant=self.payroll.tenant,
+                        owner=self.payroll.owner,
+                        branch=self.payroll.branch,
+                    ).first()
+                    if self.config is None:
+                        # Not actually a race on this constraint — re-raise
+                        # so the real cause surfaces instead of being masked.
+                        raise
             elif self.config.is_deleted:
                 # Restore a previously soft-deleted config.
                 self.config.is_deleted = False
