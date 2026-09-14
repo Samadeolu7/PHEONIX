@@ -21,6 +21,7 @@ import { PayrollStatusBadge } from '../../components/hr/PayrollStatusBadge';
 import { PayrollActions } from '../../components/hr/PayrollActions';
 import { hrService } from '../../services/hrService';
 import { useToast } from '../../hooks/useToast';
+import { ErrorHandler } from '../../utils/errorHandler';
 import { Payroll, PayrollFilters, PayrollStatus } from '../../types/hr';
 
 const PayrollListPage: React.FC = () => {
@@ -51,14 +52,20 @@ const PayrollListPage: React.FC = () => {
   });
 
   // Mutations for payroll actions
+  // Surface the backend's actual error message (e.g. "Amount must be
+  // POSITIVE...") instead of a generic string — a flat "please try again"
+  // hides exactly the detail needed to diagnose branch-specific failures.
+  const describeError = (error: unknown, fallback: string) =>
+    ErrorHandler.classifyError(error).message || fallback;
+
   const calculateMutation = useMutation({
     mutationFn: (payrollId: number) => hrService.calculatePayroll(payrollId),
     onSuccess: (data, payrollId) => {
       toast.success('Payroll calculated successfully!');
       queryClient.invalidateQueries(['payrolls']);
     },
-    onError: () => {
-      toast.error('Failed to calculate payroll. Please try again.');
+    onError: (error: unknown) => {
+      toast.error(describeError(error, 'Failed to calculate payroll. Please try again.'));
     },
   });
 
@@ -68,8 +75,8 @@ const PayrollListPage: React.FC = () => {
       toast.success('Payroll approved successfully!');
       queryClient.invalidateQueries(['payrolls']);
     },
-    onError: () => {
-      toast.error('Failed to approve payroll. Please try again.');
+    onError: (error: unknown) => {
+      toast.error(describeError(error, 'Failed to approve payroll. Please try again.'));
     },
   });
 
@@ -79,8 +86,8 @@ const PayrollListPage: React.FC = () => {
       toast.success('Payroll processed successfully!');
       queryClient.invalidateQueries(['payrolls']);
     },
-    onError: () => {
-      toast.error('Failed to process payroll. Please try again.');
+    onError: (error: unknown) => {
+      toast.error(describeError(error, 'Failed to process payroll. Please try again.'));
     },
   });
 
@@ -90,8 +97,8 @@ const PayrollListPage: React.FC = () => {
       toast.success('Payroll marked as paid successfully!');
       queryClient.invalidateQueries(['payrolls']);
     },
-    onError: () => {
-      toast.error('Failed to mark payroll as paid. Please try again.');
+    onError: (error: unknown) => {
+      toast.error(describeError(error, 'Failed to mark payroll as paid. Please try again.'));
     },
   });
 
@@ -101,8 +108,8 @@ const PayrollListPage: React.FC = () => {
       toast.success('Payroll deleted successfully!');
       queryClient.invalidateQueries(['payrolls']);
     },
-    onError: () => {
-      toast.error('Failed to delete payroll. Please try again.');
+    onError: (error: unknown) => {
+      toast.error(describeError(error, 'Failed to delete payroll. Please try again.'));
     },
   });
 

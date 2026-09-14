@@ -1350,7 +1350,10 @@ class PayrollViewSet(ScopedModelViewSet):
                 PayrollDetailSerializer(payroll).data
             )
         except Exception as e:
-            logger.error(f"Payroll calculation failed: {str(e)}")
+            logger.error(
+                "Payroll calculation failed for payroll_pk=%s (branch=%s): %s",
+                payroll.pk, payroll.branch_id, str(e), exc_info=True,
+            )
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
@@ -2047,17 +2050,22 @@ class PensionRemittanceViewSet(ScopedModelViewSet):
         from common.services.reference_service import ReferenceService
         user = self.request.user
         tenant = getattr(user, 'tenant', user)
+        # Honor the topbar branch-switcher's X-Branch-ID header for elevated
+        # users — same fix as PayrollViewSet.perform_create; without this a
+        # remittance created while switched to Branch 3 silently gets
+        # stamped with the user's own home branch instead.
+        branch = resolve_effective_branch(self.request) or user.branch
 
         reference_number = ReferenceService.generate_reference(
             module='hr',
             model_name='pension_remittance',
             tenant=tenant,
-            branch=user.branch
+            branch=branch
         )
         remittance = serializer.save(
             reference_number=reference_number,
             owner=user,
-            branch=user.branch,
+            branch=branch,
             tenant=tenant,
             status='draft'
         )
@@ -2068,7 +2076,7 @@ class PensionRemittanceViewSet(ScopedModelViewSet):
                 model_name='pension_remittance',
                 object_id=remittance.id,
                 tenant=tenant,
-                branch=user.branch,
+                branch=branch,
                 created_by=user,
                 status='draft',
                 amount=remittance.total_amount if remittance.total_amount else Decimal('0'),
@@ -2101,9 +2109,13 @@ class PensionRemittanceViewSet(ScopedModelViewSet):
 
         try:
             from accounts.models import Account
+            # Scope to the remittance's own branch, not request.user.branch —
+            # see PayrollViewSet.process for why (an elevated user remitting
+            # for a branch other than their own must resolve the account
+            # against that branch, not silently fall back to their own).
             payment_account = Account.objects.get(
                 id=payment_account_id,
-                branch=request.user.branch
+                branch=remittance.branch
             )
         except Account.DoesNotExist:
             return Response(

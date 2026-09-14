@@ -12,7 +12,12 @@ import {
 } from '../types/hr';
 
 interface ApiError {
-  response?: { data?: { detail?: string } };
+  // The DRF views in this module return errors under either `detail` (DRF's
+  // own exception handler) or `error` (this app's hand-rolled `{'error': ...}`
+  // responses, e.g. PayrollViewSet.calculate/approve/process) — reading only
+  // `detail` silently drops the real message for the latter, leaving every
+  // toast on a generic "Failed to X" fallback.
+  response?: { data?: { detail?: string; error?: string } };
   message?: string;
 }
 
@@ -96,7 +101,7 @@ export const useCreateAttendance = () => {
       toast.success('Attendance record created successfully!');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to create attendance record');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to create attendance record');
     },
   });
 };
@@ -113,7 +118,7 @@ export const useUpdateAttendance = () => {
       toast.success('Attendance record updated successfully!');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to update attendance record');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to update attendance record');
     },
   });
 };
@@ -129,7 +134,7 @@ export const useDeleteAttendance = () => {
       toast.success('Attendance record deleted successfully!');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to delete attendance record');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to delete attendance record');
     },
   });
 };
@@ -147,7 +152,7 @@ export const useCreatePayroll = () => {
       toast.success('Payroll created successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to create payroll');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to create payroll');
     },
   });
 };
@@ -164,7 +169,7 @@ export const useUpdatePayroll = () => {
       toast.success('Payroll updated successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to update payroll');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to update payroll');
     },
   });
 };
@@ -180,7 +185,7 @@ export const useDeletePayroll = () => {
       toast.success('Payroll deleted successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to delete payroll');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to delete payroll');
     },
   });
 };
@@ -196,7 +201,7 @@ export const useCalculatePayroll = () => {
       toast.success('Payroll calculated successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to calculate payroll');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to calculate payroll');
     },
   });
 };
@@ -214,7 +219,7 @@ export const useRecalculatePayroll = () => {
       );
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to recalculate payroll');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to recalculate payroll');
     },
   });
 };
@@ -230,7 +235,7 @@ export const useApprovePayroll = () => {
       toast.success('Payroll approved successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to approve payroll');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to approve payroll');
     },
   });
 };
@@ -246,7 +251,7 @@ export const useProcessPayroll = () => {
       toast.success('Payroll processed successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to process payroll');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to process payroll');
     },
   });
 };
@@ -262,7 +267,7 @@ export const useMarkPayrollPaid = () => {
       toast.success('Payroll marked as paid successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to mark payroll as paid');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to mark payroll as paid');
     },
   });
 };
@@ -278,7 +283,7 @@ export const useGeneratePayslips = () => {
       toast.success(result.message || `Generated ${result.generated} payslips`);
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to generate payslips');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to generate payslips');
     },
   });
 };
@@ -296,7 +301,7 @@ export const useCreatePayrollSchedule = () => {
       toast.success('Payroll schedule created successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to create payroll schedule');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to create payroll schedule');
     },
   });
 };
@@ -313,7 +318,7 @@ export const useUpdatePayrollSchedule = () => {
       toast.success('Payroll schedule updated successfully');
     },
     onError: (err: ApiError) => {
-      toast.error(err?.response?.data?.detail || 'Failed to update payroll schedule');
+      toast.error(err?.response?.data?.detail || err?.response?.data?.error || 'Failed to update payroll schedule');
     },
   });
 };
