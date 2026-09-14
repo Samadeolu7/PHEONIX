@@ -70,7 +70,7 @@ def _handle_loan_account_post_save(sender, instance, created, **kwargs):
                     'loan_disbursement_awaiting_execution',
                     f'⏳ Loan Disbursement Awaiting Execution — {instance.loan_number}',
                     (
-                        f"₦{instance.principal_amount:,.2f} approved for disbursement to "
+                        f"₦{instance.approved_amount:,.2f} approved for disbursement to "
                         f"{instance.client} — approved by "
                         f"{instance.approved_by.get_full_name() or instance.approved_by.username if instance.approved_by else 'unknown'} "
                         f"— needs a different, authorised person to execute it."

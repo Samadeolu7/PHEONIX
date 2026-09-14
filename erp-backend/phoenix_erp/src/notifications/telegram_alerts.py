@@ -120,7 +120,7 @@ def _pending_disbursement_lines():
         ):
             branch_name = d.loan.branch.name if d.loan.branch else 'Unknown branch'
             lines.append(
-                f"• [Loan] {d.loan.loan_number} — ₦{d.loan.principal_amount:,.2f} — "
+                f"• [Loan] {d.loan.loan_number} — ₦{d.loan.approved_amount:,.2f} — "
                 f"{d.loan.client} — {branch_name}"
             )
     except Exception:
