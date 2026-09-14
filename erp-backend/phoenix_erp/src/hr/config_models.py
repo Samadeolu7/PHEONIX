@@ -290,8 +290,26 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         return self.default_leave_workflow
     
     def get_next_payslip_number(self):
-        """Generate next payslip number"""
+        """Generate next payslip number.
+
+        `Payslip.payslip_number` is unique across the WHOLE table (not
+        scoped per tenant/branch), but every HRConfig keeps its own
+        independent counter that starts at 1 with the same default 'PAY'
+        prefix. Any branch/tenant getting its own HRConfig for the first
+        time (a brand new branch, or — as happened here — a second config
+        row for the same branch under a different owner) collides with
+        whichever other config already claimed e.g. PAY000001, and keeps
+        colliding forever since the counter never advances past the
+        clash. Skip past any number that's already taken instead of
+        trusting the local counter blindly.
+        """
+        from hr.models import Payslip
+
         number = f"{self.payslip_prefix}{str(self.payslip_current_number).zfill(6)}"
+        while Payslip.all_objects.filter(payslip_number=number).exists():
+            self.payslip_current_number += 1
+            number = f"{self.payslip_prefix}{str(self.payslip_current_number).zfill(6)}"
+
         self.payslip_current_number += 1
         self.save(update_fields=['payslip_current_number'])
         return number

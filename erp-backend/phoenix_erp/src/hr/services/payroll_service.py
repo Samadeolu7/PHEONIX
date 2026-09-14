@@ -48,12 +48,14 @@ class PayrollService:
         overlapping requests (e.g. a user re-clicking Calculate after a slow
         first attempt) can both pass the "no existing row" check before
         either commits, so the loser's INSERT hits the (tenant, owner,
-        branch) unique constraint. Without a savepoint around it, that
-        IntegrityError is uncaught at this point in the call stack (no
-        per-staff savepoint exists yet — this runs before the staff loop),
-        and propagates as exactly the poisoning this docstring describes.
-        Wrap it in its own savepoint and recover by re-fetching the row the
-        winner created, instead of leaking a raw IntegrityError.
+        branch) unique constraint. It's wrapped in its own nested
+        transaction.atomic() (NOT raw transaction.savepoint()/
+        savepoint_rollback() — that pair doesn't clear the connection's
+        broken-transaction flag on failure the way atomic() does, so a
+        real IntegrityError there would come back out as an opaque
+        TransactionManagementError from the rollback attempt itself,
+        instead of a clean, catchable IntegrityError) and recovers by
+        re-fetching the row the winner created.
         """
         from django.db import IntegrityError
         from hr.config_models import HRConfig
@@ -69,33 +71,32 @@ class PayrollService:
             if self.config is None:
                 # Genuinely no record (at the time of the check above) —
                 # but the create below can still lose a race, so protect it
-                # with its own savepoint rather than the bare `.save()` this
-                # replaced get_or_create() to avoid in the first place.
-                sid = db_transaction.savepoint()
+                # with its own nested atomic() rather than the bare
+                # `.save()` this replaced get_or_create() to avoid in the
+                # first place.
                 try:
-                    self.config = HRConfig(
-                        tenant=self.payroll.tenant,
-                        owner=self.payroll.owner,
-                        branch=self.payroll.branch,
-                        enable_leave_approval=True,
-                        max_consecutive_leave_days=14,
-                        annual_leave_days=20,
-                        sick_leave_days=10,
-                        enable_attendance_tracking=True,
-                        working_hours_per_day=Decimal('8.00'),
-                        late_arrival_grace_minutes=15,
-                        payroll_currency='USD',
-                        payroll_frequency='monthly',
-                        tax_rate_percentage=0,
-                        enable_pension=False,
-                        enable_paye=True,
-                        enable_nhf=False,
-                        enable_development_levy=False,
-                    )
-                    self.config.save()
-                    db_transaction.savepoint_commit(sid)
+                    with db_transaction.atomic():
+                        self.config = HRConfig(
+                            tenant=self.payroll.tenant,
+                            owner=self.payroll.owner,
+                            branch=self.payroll.branch,
+                            enable_leave_approval=True,
+                            max_consecutive_leave_days=14,
+                            annual_leave_days=20,
+                            sick_leave_days=10,
+                            enable_attendance_tracking=True,
+                            working_hours_per_day=Decimal('8.00'),
+                            late_arrival_grace_minutes=15,
+                            payroll_currency='USD',
+                            payroll_frequency='monthly',
+                            tax_rate_percentage=0,
+                            enable_pension=False,
+                            enable_paye=True,
+                            enable_nhf=False,
+                            enable_development_levy=False,
+                        )
+                        self.config.save()
                 except IntegrityError:
-                    db_transaction.savepoint_rollback(sid)
                     self.config = HRConfig.all_objects.filter(
                         tenant=self.payroll.tenant,
                         owner=self.payroll.owner,
@@ -164,52 +165,56 @@ class PayrollService:
         total_nsitf = Decimal('0.00')
 
         for staff in staff_queryset:
-            # Use a savepoint per staff member so that a failure for one employee
-            # only rolls back that slot; the outer atomic block stays intact.
-            # Without this, a caught exception breaks the entire transaction in
-            # PostgreSQL and all subsequent queries raise TransactionManagementError.
-            sid = db_transaction.savepoint()
+            # Isolate each staff member's work in its own nested atomic()
+            # block so a failure for one employee only rolls back that
+            # slot; the outer atomic block stays intact. This MUST be
+            # transaction.atomic(), not raw transaction.savepoint()/
+            # savepoint_rollback() — the raw savepoint_rollback() call goes
+            # through the same query-execution guard as any other query, so
+            # if the connection is already marked "needs rollback" (e.g.
+            # from an IntegrityError raised earlier in this same block),
+            # the rollback attempt itself raises TransactionManagementError
+            # instead of recovering, masking the real error entirely.
+            # atomic()'s own __exit__ handles this correctly internally.
             try:
-                # Calculate staff payslip
-                payslip_data = self._calculate_staff_payslip(staff, config)
+                with db_transaction.atomic():
+                    # Calculate staff payslip
+                    payslip_data = self._calculate_staff_payslip(staff, config)
 
-                # Extract approved_requests before creating payslip
-                approved_requests = payslip_data.pop('approved_requests', [])
+                    # Extract approved_requests before creating payslip
+                    approved_requests = payslip_data.pop('approved_requests', [])
 
-                # Create payslip
-                payslip = Payslip.objects.create(
-                    tenant=self.payroll.tenant,
-                    payslip_number=config.get_next_payslip_number(),
-                    payroll=self.payroll,
-                    staff=staff,
-                    branch=self.payroll.branch,
-                    owner=self.payroll.owner,
-                    **payslip_data
-                )
+                    # Create payslip
+                    payslip = Payslip.objects.create(
+                        tenant=self.payroll.tenant,
+                        payslip_number=config.get_next_payslip_number(),
+                        payroll=self.payroll,
+                        staff=staff,
+                        branch=self.payroll.branch,
+                        owner=self.payroll.owner,
+                        **payslip_data
+                    )
 
-                # Calculate totals
-                payslip.calculate_totals()
-                payslip.save()
+                    # Calculate totals
+                    payslip.calculate_totals()
+                    payslip.save()
 
-                # Mark bonus/deduction requests as applied to this payroll
-                for request in approved_requests:
-                    request.applied_in_payroll = self.payroll
-                    request.save()
+                    # Mark bonus/deduction requests as applied to this payroll
+                    for request in approved_requests:
+                        request.applied_in_payroll = self.payroll
+                        request.save()
 
-                # Update totals
-                payslips_created     += 1
-                total_gross          += payslip.gross_pay
-                total_deductions     += payslip.total_deductions
-                total_net            += payslip.net_pay
-                total_employee_pension += payslip.employee_pension
-                total_employer_pension += payslip.employer_pension
-                total_nhf            += payslip.nhf
-                total_nsitf          += payslip.nsitf
-
-                db_transaction.savepoint_commit(sid)
+                    # Update totals
+                    payslips_created     += 1
+                    total_gross          += payslip.gross_pay
+                    total_deductions     += payslip.total_deductions
+                    total_net            += payslip.net_pay
+                    total_employee_pension += payslip.employee_pension
+                    total_employer_pension += payslip.employer_pension
+                    total_nhf            += payslip.nhf
+                    total_nsitf          += payslip.nsitf
 
             except Exception as e:
-                db_transaction.savepoint_rollback(sid)
                 logger.warning(
                     "Payroll: skipping staff %s (%s) — %s: %s",
                     staff.pk, staff, type(e).__name__, e,
