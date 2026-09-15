@@ -1625,6 +1625,27 @@ class ResolveExceptionToExpenseView(APIView):
         if not category_id:
             return Response({'detail': 'category is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # The resulting BankPayment/JournalEntry is always branch=recon.branch
+        # (below); an account can only receive postings from transactions in
+        # its own branch (transactions.TransactionEntry.clean()), so a
+        # category whose expense_account belongs to a different branch would
+        # pass validation here and then fail at approval/posting time with a
+        # confusing GL error. Catch it up front instead, while there's still
+        # a category picker in front of the user to fix it.
+        from expenses.models import ExpenseCategory
+        category = get_object_or_404(ExpenseCategory, pk=category_id)
+        if category.expense_account.branch_id != recon.branch_id:
+            return Response(
+                {'detail': (
+                    f'Category "{category.name}" posts to account '
+                    f'"{category.expense_account.name}", which belongs to branch '
+                    f'"{category.expense_account.branch}", but this reconciliation is for branch '
+                    f'"{recon.branch}". Choose a category whose account belongs to '
+                    f'"{recon.branch}".'
+                )},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # The bank's own reference (not exc_obj.bank_transaction_id, which is
         # Java's internal UUID for the line, nor bank_narration, which is
         # free text) lives on the ReconciliationBankTransaction row that id
