@@ -74,6 +74,13 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('--dry-run', action='store_true', help='Preview without making changes.')
+        parser.add_argument(
+            '--list-all', action='store_true',
+            help='List every pending BankPayment-with-expense row (match or not), with full '
+                 'category/account/branch detail, instead of only the ones flagged as mismatched. '
+                 'Use this to sanity-check the mismatch detection itself against what you see in '
+                 'the Approvals UI.',
+        )
 
     def handle(self, *args, **options):
         from accounts.utils.account_creation import get_system_account
@@ -81,6 +88,7 @@ class Command(BaseCommand):
         from banks.reconciliation_utils import get_or_create_bank_charges_category
 
         dry_run = options['dry_run']
+        list_all = options['list_all']
         if dry_run:
             self.stdout.write(self.style.WARNING('DRY RUN — no changes will be saved.\n'))
 
@@ -89,11 +97,15 @@ class Command(BaseCommand):
             .filter(expense__isnull=False, status='pending')
             .select_related('expense', 'expense__category', 'expense__category__expense_account',
                              'branch', 'expense__branch', 'expense__owner')
+            .order_by('payment_number')
         )
 
         fixed = []
         needs_review = []
         skipped_posted = []
+
+        if list_all:
+            self.stdout.write(f'{candidates.count()} pending BankPayment(s) with a linked expense:\n')
 
         for payment in candidates:
             expense = payment.expense
@@ -104,14 +116,34 @@ class Command(BaseCommand):
             else:
                 account = get_system_account('general_expense', expense.owner, expense.branch)
 
-            if account.branch_id == payment.branch_id:
+            matches = account.branch_id == payment.branch_id
+
+            if list_all:
+                self.stdout.write(
+                    f'  {payment.payment_number}  expense={expense.reference_number}  '
+                    f'category={category.name if category else "(none)"} '
+                    f'(code={category.code if category else "-"})  '
+                    f'account={account.name} ({account.code})  '
+                    f'account.branch={account.branch}  payment.branch={payment.branch}  '
+                    f'{"OK" if matches else "MISMATCH"}'
+                )
+
+            if matches:
                 continue  # would post fine — not a mismatch
 
             if expense.is_posted:
                 skipped_posted.append((payment, account))
                 continue
 
-            if category and category.code == 'BANKCHG':
+            # Matching on code=='BANKCHG' turned out too brittle — every mismatch
+            # actually seen in production has category.name == 'Bank Charges' (the
+            # get_or_create_bank_charges_category default) but a code that isn't
+            # literally 'BANKCHG' (created before that convention, or via the
+            # generic category-management UI rather than auto-provisioning).
+            # Match on name instead; --list-all prints each row's actual code so
+            # this can be re-tightened later if a non-bank-charge category ever
+            # happens to share the name.
+            if category and category.name.strip().lower() == 'bank charges':
                 fixed.append((payment, category, account))
             else:
                 needs_review.append((payment, category, account))
