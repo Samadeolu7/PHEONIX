@@ -1669,7 +1669,13 @@ class ResolveExceptionToExpenseView(APIView):
         # has_tenant_set_and_is_listable). Leaving it unset here would
         # silently produce a BankPayment/Expense invisible to their own
         # tenant-scoped viewsets, including the approver's own request.
-        expense = expense_serializer.save(tenant=recon.tenant)
+        # branch=recon.branch (not request.user.branch) — this expense
+        # belongs to the bank account being reconciled, which may differ
+        # from an elevated (cross-branch) director's own branch. Without
+        # this, ExpenseSerializer.create() defaults to request.user.branch,
+        # leaving the expense disagreeing with the BankPayment.branch set
+        # explicitly below — a mismatch the GL posting guard then rejects.
+        expense = expense_serializer.save(branch=recon.branch, tenant=recon.tenant)
 
         # branch=recon.branch (not request.user.branch) — this payment
         # belongs to the bank account being reconciled, which may differ
@@ -2095,7 +2101,13 @@ def _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, resolution_notes)
             context={'request': request},
         )
         expense_serializer.is_valid(raise_exception=True)
-        expense = expense_serializer.save(tenant=recon.tenant)
+        # branch=recon.branch (not request.user.branch) — this expense
+        # belongs to the bank account being reconciled, which may differ
+        # from an elevated (cross-branch) director's own branch. Without
+        # this, ExpenseSerializer.create() defaults to request.user.branch,
+        # leaving the expense disagreeing with the BankPayment.branch set
+        # explicitly below — a mismatch the GL posting guard then rejects.
+        expense = expense_serializer.save(branch=recon.branch, tenant=recon.tenant)
 
         payment = BankPayment.objects.create(
             bank_account=recon.bank_account,

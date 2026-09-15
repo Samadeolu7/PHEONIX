@@ -136,14 +136,21 @@ class ExpenseSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create expense with automatic reference number"""
         request = self.context.get('request')
-        
+
         # Auto-generate reference number if not provided
         # (signal will handle this on save, so just ensure branch is set)
-        
-        # Set branch and created_by
-        validated_data['branch'] = request.user.branch
+
+        # Default branch to the acting user's own branch, but don't clobber
+        # one the caller already pinned via serializer.save(branch=...) —
+        # e.g. banks._resolve_bank_charge_pair pins this to the reconciliation's
+        # own branch, which may differ from an elevated director's branch.
+        # Silently defaulting to request.user.branch there produced expenses
+        # whose branch disagreed with their own linked BankPayment.branch,
+        # which the GL posting guard then rejects (account/transaction branch
+        # mismatch) — see audit_bank_charge_expense_branch_mismatch.
+        validated_data.setdefault('branch', request.user.branch)
         validated_data['created_by'] = request.user
-        
+
         return super().create(validated_data)
 
 
