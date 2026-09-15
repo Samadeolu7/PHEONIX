@@ -1180,7 +1180,16 @@ def ingest_reconciliation_transactions(bank_account, statement_file, parsed_tran
                 total_bank_transactions=len(candidates),
                 include_debits=include_debits,
                 owner=user,
-                branch=getattr(user, 'branch', None),
+                # bank_account.branch (not the uploader's own branch) — this
+                # reconciliation belongs to the bank account being uploaded
+                # for, which may differ from an elevated (cross-branch)
+                # director's own branch. Using the uploader's branch here
+                # produced reconciliations, BankPayments, and their downstream
+                # GL postings all tagged to the uploader's home branch even
+                # when the bank account itself belonged to a different one —
+                # see fix_reconciliation_branch_mismatch for the historical
+                # cleanup.
+                branch=getattr(bank_account, 'branch', None) or getattr(user, 'branch', None),
                 # Explicit, not left to TimeStampedModel.save()'s
                 # thread-local fallback — that fallback only fills in
                 # when the middleware-set thread-local happens to be
