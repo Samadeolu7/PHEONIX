@@ -8,6 +8,7 @@ import {
   UserCheck,
   Receipt,
   ShoppingCart,
+  BookOpen,
 } from 'lucide-react';
 import {
   SearchState,
@@ -68,6 +69,13 @@ const initialCategories: SearchCategory[] = [
     label: 'Purchase Orders',
     icon: ShoppingCart,
     color: 'teal',
+    enabled: true,
+  },
+  {
+    type: 'transaction',
+    label: 'Transactions',
+    icon: BookOpen,
+    color: 'amber',
     enabled: true,
   },
 ];

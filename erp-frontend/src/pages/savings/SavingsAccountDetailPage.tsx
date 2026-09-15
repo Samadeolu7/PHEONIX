@@ -693,7 +693,17 @@ export default function SavingsAccountDetailPage() {
                       <tr key={tx.id} className={`hover:bg-gray-50 ${tx.is_reversed || tx.is_reversal ? 'opacity-50' : ''}`}>
                         <td className="px-4 py-2.5 text-gray-600">{fmtDate(tx.date)}</td>
                         <td className="px-4 py-2.5 font-mono text-xs text-gray-500">
-                          {tx.reference}
+                          {tx.transaction_id ? (
+                            <Link
+                              to={`/transactions/${tx.transaction_id}`}
+                              className="text-blue-600 hover:underline"
+                              title="View full transaction and its other leg"
+                            >
+                              {tx.reference}
+                            </Link>
+                          ) : (
+                            tx.reference
+                          )}
                           {tx.is_reversed && (
                             <span className="ml-1.5 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-sans font-medium text-red-600">Reversed</span>
                           )}

@@ -446,6 +446,7 @@ class SavingsAccountViewSet(ScopedModelViewSet):
                 running_balance += entry.amount
             rows.append({
                 'id': entry.id,
+                'transaction_id': entry.transaction_id,
                 'date': entry.transaction.date,
                 'reference': entry.transaction.reference_number,
                 'description': entry.transaction.description,

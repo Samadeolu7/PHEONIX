@@ -54,6 +54,12 @@ const getTypeStyles = (type: SearchResult['type']) => {
         textColor: 'text-teal-700',
         borderColor: 'border-teal-200',
       };
+    case 'transaction':
+      return {
+        bgColor: 'bg-amber-50',
+        textColor: 'text-amber-700',
+        borderColor: 'border-amber-200',
+      };
     default:
       return {
         bgColor: 'bg-gray-50',
@@ -80,6 +86,8 @@ const getTypeLabel = (type: SearchResult['type']) => {
       return 'Receivable';
     case 'purchase-order':
       return 'Purchase Order';
+    case 'transaction':
+      return 'Transaction';
     default:
       return 'Unknown';
   }

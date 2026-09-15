@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../services/api';
 import { journalVoucherService, JournalVoucher } from '../services/journalVoucherService';
 import { usePermission } from '../hooks/usePermissions';
@@ -55,6 +55,8 @@ interface Account {
 const AccountLedgerPage: React.FC = () => {
   const { accountId } = useParams<{ accountId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const highlightTxnId = searchParams.get('highlight');
   const [account, setAccount] = useState<Account | null>(null);
   const [transactions, setTransactions] = useState<LedgerEntry[]>([]);
   const [summary, setSummary] = useState<LedgerSummary | null>(null);
@@ -111,10 +113,25 @@ const AccountLedgerPage: React.FC = () => {
     };
   }, [selectedEntry]);
 
-  const goToAccountLedger = (targetAccountId: number) => {
+  const goToAccountLedger = (targetAccountId: number, highlightTransactionId?: number) => {
     setSelectedEntry(null);
-    navigate(`/accounts/${targetAccountId}/ledger`);
+    const suffix = highlightTransactionId ? `?highlight=${highlightTransactionId}` : '';
+    navigate(`/accounts/${targetAccountId}/ledger${suffix}`);
   };
+
+  // Deep-link support: land directly on the entry a search result, a savings
+  // account row, or another ledger's "other leg" link pointed at, instead of
+  // making the user re-find it in a (possibly date-filtered) list.
+  useEffect(() => {
+    if (!highlightTxnId || transactions.length === 0) return;
+    const match = transactions.find(t => String(t.id) === highlightTxnId);
+    if (match) {
+      setSelectedEntry(match);
+    }
+    // Only run once per load — selecting an entry shouldn't re-trigger this
+    // if the user later clicks a different row.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightTxnId, transactions]);
 
   useEffect(() => {
     if (accountId) {
@@ -697,6 +714,10 @@ const AccountLedgerPage: React.FC = () => {
                         borderBottom: '1px solid #e5e7eb',
                         transition: 'background 0.15s',
                         cursor: 'pointer',
+                        background:
+                          highlightTxnId && String(entry.id) === highlightTxnId
+                            ? '#fef9c3'
+                            : undefined,
                       }}
                       onMouseEnter={e => (e.currentTarget.style.background = '#eff6ff')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
@@ -880,6 +901,14 @@ const AccountLedgerPage: React.FC = () => {
                   }}
                 >
                   {selectedEntry.reference}
+                  {txnDetail && (
+                    <Link
+                      to={`/transactions/${txnDetail.id}`}
+                      style={{ marginLeft: '10px', color: '#2563eb', fontWeight: 500 }}
+                    >
+                      View Full Transaction →
+                    </Link>
+                  )}
                 </p>
               </div>
               <button
@@ -1086,7 +1115,9 @@ const AccountLedgerPage: React.FC = () => {
                       return (
                         <button
                           key={entry.id}
-                          onClick={() => !isCurrentAccount && goToAccountLedger(entry.account.id)}
+                          onClick={() =>
+                            !isCurrentAccount && goToAccountLedger(entry.account.id, txnDetail.id)
+                          }
                           disabled={isCurrentAccount}
                           style={{
                             width: '100%',

@@ -3,7 +3,15 @@ import { LucideIcon } from 'lucide-react';
 
 export interface SearchResult {
   id: string;
-  type: 'invoice' | 'client' | 'supplier' | 'item' | 'staff' | 'receivable' | 'purchase-order';
+  type:
+    | 'invoice'
+    | 'client'
+    | 'supplier'
+    | 'item'
+    | 'staff'
+    | 'receivable'
+    | 'purchase-order'
+    | 'transaction';
   title: string;
   subtitle: string;
   description?: string;

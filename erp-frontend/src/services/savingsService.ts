@@ -432,6 +432,7 @@ export const disburseWithdrawal = (
 
 export interface SavingsTransactionRow {
   id: number;
+  transaction_id: number;
   date: string;
   reference: string;
   description: string;

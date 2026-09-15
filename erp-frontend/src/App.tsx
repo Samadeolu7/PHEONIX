@@ -1572,6 +1572,19 @@ function App() {
                                     </ProtectedRoute>
                                   }
                                 />
+                                {/* Universal read-only transaction viewer — the landing spot for
+                                    global reference search, a savings/loan account's ledger rows,
+                                    and an account ledger's "other leg" links. Same underlying GL
+                                    Transaction as journal vouchers, but with Post/Reverse hidden
+                                    since those belong to each module's own workflow. */}
+                                <Route
+                                  path="/transactions/:id"
+                                  element={
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
+                                      <JournalVoucherDetailPage readOnly />
+                                    </ProtectedRoute>
+                                  }
+                                />
 
                                 {/* Inter-Branch Transfer routes */}
                                 <Route

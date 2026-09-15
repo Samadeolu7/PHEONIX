@@ -7,6 +7,7 @@ import {
   UserCheck,
   Receipt,
   ShoppingCart,
+  BookOpen,
 } from 'lucide-react';
 import { SearchResult, SearchFilters, SearchOptions } from '../types/search';
 import { invoiceService } from './invoiceService';
@@ -15,6 +16,7 @@ import { inventoryService } from './inventoryService';
 import { staffService } from './staffService';
 import { receivablesService } from './receivablesService';
 import { procurementService } from './procurementService';
+import { journalVoucherService } from './journalVoucherService';
 
 class SearchService {
   private searchCache = new Map<string, { results: SearchResult[]; timestamp: number }>();
@@ -45,12 +47,13 @@ class SearchService {
       const searchPromises: Promise<SearchResult[]>[] = [];
       const enabledTypes = filters.types || [
         'invoice',
-        'student',
+        'client',
         'supplier',
         'item',
         'staff',
         'receivable',
         'purchase-order',
+        'transaction',
       ];
 
       // Search invoices
@@ -86,6 +89,12 @@ class SearchService {
       // Search purchase orders
       if (enabledTypes.includes('purchase-order')) {
         searchPromises.push(this.searchPurchaseOrders(query, filters));
+      }
+
+      // Search GL transactions (journal entries) by reference number/description —
+      // this is what makes references like SVWDR-20260911-0125 findable at all.
+      if (enabledTypes.includes('transaction')) {
+        searchPromises.push(this.searchTransactions(query, filters));
       }
 
       const searchResults = await Promise.allSettled(searchPromises);
@@ -326,6 +335,43 @@ class SearchService {
       }));
     } catch (error) {
       console.error('Purchase order search error:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Search GL transactions (journal entries) by reference number or
+   * description — e.g. "SVWDR-20260911-0125" (a savings withdrawal
+   * reversal), "LNDIS-..." (loan disbursement), "PROLL-..." (payroll), etc.
+   * Every posting across every module ends up as a Transaction row with a
+   * reference in this format, so this single search covers all of them.
+   */
+  private async searchTransactions(query: string, filters: SearchFilters): Promise<SearchResult[]> {
+    try {
+      const response = await journalVoucherService.getJournalVouchers({
+        search: query,
+        page_size: 20,
+      });
+
+      return (response.results || []).map(txn => ({
+        id: txn.id.toString(),
+        type: 'transaction' as const,
+        title: txn.reference_number,
+        subtitle: txn.description || (txn.series?.description ?? 'Transaction'),
+        description: `${new Date(txn.date).toLocaleDateString('en-GB')} | ${
+          txn.approved ? 'Posted' : 'Pending'
+        }${txn.is_reversed ? ' | Reversed' : ''}`,
+        path: `/transactions/${txn.id}`,
+        icon: BookOpen,
+        metadata: {
+          date: txn.date,
+          approved: txn.approved,
+          isReversed: txn.is_reversed,
+          seriesCode: txn.series?.code,
+        },
+      }));
+    } catch (error) {
+      console.error('Transaction search error:', error);
       return [];
     }
   }

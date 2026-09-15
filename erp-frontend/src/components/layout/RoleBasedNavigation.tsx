@@ -19,6 +19,7 @@ import {
   ChevronDown,
   Check,
   MessageSquare,
+  Search,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
@@ -28,6 +29,63 @@ import { api } from '../../services/api';
 import { branchService, Branch } from '../../services/branchService';
 import { getRoleRank } from '../../types/roles';
 import { useThreadContext } from '../../contexts/ThreadContext';
+import { UnifiedSearchBar } from '../navigation/UnifiedSearchBar';
+
+// ---------------------------------------------------------------------------
+// GlobalSearchButton — a compact ⌘K/Ctrl+K trigger that expands into the
+// full unified search bar. Covers clients/invoices/staff/etc. (existing
+// search providers) and, since it was added, GL transactions by reference
+// number — e.g. pasting "SVWDR-20260911-0125" now finds the posting instead
+// of there being nowhere in the app to look it up.
+// ---------------------------------------------------------------------------
+function GlobalSearchButton() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (open && ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setOpen(true);
+      } else if (e.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+        title="Search (Ctrl/Cmd+K)"
+      >
+        <Search size={13} />
+        <span className="hidden lg:inline">Search</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-[9999] mt-1.5 w-96 max-w-[90vw]">
+          <UnifiedSearchBar
+            autoFocus
+            className="w-full"
+            placeholder="Search transactions, clients, invoices…"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // BranchSwitcher — visible to director/admin/operations/owner (any tenant
@@ -362,6 +420,9 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 <Clock className="h-4 w-4" />
                 <span>Approvals</span>
               </Link>
+
+              {/* Global search — find a transaction, client, invoice, etc. */}
+              <GlobalSearchButton />
 
               {/* Branch Switcher — director/admin/operations/owner only */}
               <BranchSwitcher />
