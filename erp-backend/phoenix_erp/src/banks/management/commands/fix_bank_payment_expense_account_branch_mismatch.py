@@ -143,10 +143,29 @@ class Command(BaseCommand):
             # Match on name instead; --list-all prints each row's actual code so
             # this can be re-tightened later if a non-bank-charge category ever
             # happens to share the name.
-            if category and category.name.strip().lower() == 'bank charges':
-                fixed.append((payment, category, account))
-            else:
-                needs_review.append((payment, category, account))
+            if not (category and category.name.strip().lower() == 'bank charges'):
+                needs_review.append((payment, category, account, None))
+                continue
+
+            # Don't trust get_or_create_bank_charges_category blindly — it (via
+            # get_or_create_child_account) looks up an existing account by CODE
+            # ONLY, never by name, before returning it. If some other feature's
+            # account already occupies the branch's computed 5300+002 code (this
+            # is exactly how Orimerunmu's "BANKCHG" category ended up wired to
+            # "Payroll Related Expenses" — a real production case, not a
+            # hypothetical), get_or_create_bank_charges_category would silently
+            # return THAT account, and this "fix" would just move the mismatch
+            # from loud (blocked at approval) to silent (posts to the wrong
+            # expense line). Verify the resolved account's name actually looks
+            # like a bank-charges account before trusting it.
+            target_category = get_or_create_bank_charges_category(
+                branch=payment.branch, tenant=payment.tenant, owner=expense.owner,
+            )
+            if 'bank charg' not in target_category.expense_account.name.strip().lower():
+                needs_review.append((payment, category, account, target_category))
+                continue
+
+            fixed.append((payment, category, account, target_category))
 
         if not fixed and not needs_review and not skipped_posted:
             self.stdout.write(self.style.SUCCESS(
@@ -156,27 +175,25 @@ class Command(BaseCommand):
 
         if fixed:
             self.stdout.write(f'{len(fixed)} auto-fixable BANKCHG mismatch(es):\n')
-            for payment, old_category, old_account in fixed:
+            for payment, old_category, old_account, target_category in fixed:
                 expense = payment.expense
                 self.stdout.write(
                     f'  {"[DRY RUN] " if dry_run else ""}'
                     f'{payment.payment_number}  expense={expense.reference_number}  '
                     f'category account branch {old_account.branch} -> {payment.branch} '
-                    f'(reassigning to branch-correct BANKCHG category)'
+                    f'(reassigning to "{target_category.expense_account.name}" '
+                    f'({target_category.expense_account.code}))'
                 )
                 if not dry_run:
-                    new_category = get_or_create_bank_charges_category(
-                        branch=payment.branch, tenant=payment.tenant, owner=expense.owner,
-                    )
-                    expense.category = new_category
+                    expense.category = target_category
                     expense.save(update_fields=['category'])
 
         if needs_review:
             self.stdout.write(self.style.WARNING(
-                f'\n{len(needs_review)} mismatch(es) NOT auto-fixed — category is not the '
-                f'auto-provisioned BANKCHG one, so reassigning it is a judgment call:'
+                f'\n{len(needs_review)} mismatch(es) NOT auto-fixed — needs a human to confirm '
+                f'the right category/account before reassigning:'
             ))
-            for payment, category, account in needs_review:
+            for payment, category, account, target_category in needs_review:
                 expense = payment.expense
                 self.stdout.write(
                     f'  {payment.payment_number}  expense={expense.reference_number}  '
@@ -184,6 +201,14 @@ class Command(BaseCommand):
                     f'account={account.name} ({account.code})  '
                     f'account.branch={account.branch}  payment.branch={payment.branch}'
                 )
+                if target_category is not None:
+                    self.stdout.write(
+                        f'      the branch-correct BANKCHG category resolves to account '
+                        f'"{target_category.expense_account.name}" ({target_category.expense_account.code}) '
+                        f'— that does NOT look like a bank-charges account, so it was NOT used. '
+                        f'Check whether {payment.branch} has a real "Bank Charges" account, and '
+                        f'whether that category is already wrongly linked elsewhere too.'
+                    )
 
         if skipped_posted:
             self.stdout.write(self.style.ERROR(
