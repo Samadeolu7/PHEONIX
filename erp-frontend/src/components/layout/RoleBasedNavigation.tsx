@@ -29,61 +29,35 @@ import { api } from '../../services/api';
 import { branchService, Branch } from '../../services/branchService';
 import { getRoleRank } from '../../types/roles';
 import { useThreadContext } from '../../contexts/ThreadContext';
-import { UnifiedSearchBar } from '../navigation/UnifiedSearchBar';
 
 // ---------------------------------------------------------------------------
-// GlobalSearchButton — a compact ⌘K/Ctrl+K trigger that expands into the
-// full unified search bar. Covers clients/invoices/staff/etc. (existing
-// search providers) and, since it was added, GL transactions by reference
-// number — e.g. pasting "SVWDR-20260911-0125" now finds the posting instead
-// of there being nowhere in the app to look it up.
+// TransactionSearchLink — Ctrl/Cmd+K shortcut to the dedicated transaction
+// search page (find a GL transaction by reference number, e.g.
+// SVWDR-20260911-0125). A plain link rather than an inline expanding
+// popover, which crowded out the rest of the nav.
 // ---------------------------------------------------------------------------
-function GlobalSearchButton() {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+function TransactionSearchLink() {
+  const navigate = useNavigate();
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (open && ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        setOpen(true);
-      } else if (e.key === 'Escape') {
-        setOpen(false);
+        navigate('/transactions/search');
       }
     };
-    document.addEventListener('mousedown', handler);
     document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handler);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [navigate]);
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
-        title="Search (Ctrl/Cmd+K)"
-      >
-        <Search size={13} />
-        <span className="hidden lg:inline">Search</span>
-      </button>
-
-      {open && (
-        <div className="absolute right-0 top-full z-[9999] mt-1.5 w-96 max-w-[90vw]">
-          <UnifiedSearchBar
-            autoFocus
-            className="w-full"
-            placeholder="Search transactions, clients, invoices…"
-          />
-        </div>
-      )}
-    </div>
+    <Link
+      to="/transactions/search"
+      className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+      title="Transaction Search (Ctrl/Cmd+K)"
+    >
+      <Search className="h-4 w-4" />
+    </Link>
   );
 }
 
@@ -421,9 +395,6 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 <span>Approvals</span>
               </Link>
 
-              {/* Global search — find a transaction, client, invoice, etc. */}
-              <GlobalSearchButton />
-
               {/* Branch Switcher — director/admin/operations/owner only */}
               <BranchSwitcher />
 
@@ -455,6 +426,9 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                   <div className="text-white/80 hover:text-white">
                     <NotificationDropdown />
                   </div>
+
+                  {/* Transaction search — find a GL transaction by reference number */}
+                  <TransactionSearchLink />
 
                   {/* Discussions workspace */}
                   <Link
@@ -604,6 +578,18 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 >
                   <Clock className="h-5 w-5" />
                   <span>Pending Approvals</span>
+                </Link>
+                <Link
+                  to="/transactions/search"
+                  onClick={closeMobileMenu}
+                  className={`flex items-center space-x-3 px-3 py-3 rounded-md text-base font-medium transition-colors ${
+                    isActivePath('/transactions/search')
+                      ? 'bg-white/20 text-white'
+                      : 'text-white/80 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <Search className="h-5 w-5" />
+                  <span>Transaction Search</span>
                 </Link>
                 {/* Notification bell — desktop-only block above (hidden lg:flex)
                     never showed this on mobile at all; the dark variant matches

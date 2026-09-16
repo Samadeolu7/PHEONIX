@@ -318,6 +318,7 @@ const JournalVoucherListPage = lazy(() => import('./pages/accounting/JournalVouc
 const JournalVoucherFormPage = lazy(() => import('./pages/accounting/JournalVoucherFormPage'));
 const JournalVoucherDetailPage = lazy(() => import('./pages/accounting/JournalVoucherDetailPage'));
 const PeriodManagementPage = lazy(() => import('./pages/accounting/PeriodManagementPage'));
+const TransactionSearchPage = lazy(() => import('./pages/transactions/TransactionSearchPage'));
 
 // Discount/Scholarship System pages
 const DiscountProgramsList = lazy(() => import('./pages/discounts/DiscountProgramsList'));
@@ -1569,6 +1570,17 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
                                       <JournalVoucherDetailPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                {/* Dedicated transaction search page — find a GL transaction by
+                                    reference number or description. Replaces the navbar's inline
+                                    expanding search popover. */}
+                                <Route
+                                  path="/transactions/search"
+                                  element={
+                                    <ProtectedRoute requiredPermission="accounts-view" module="accounts" page="chart-of-accounts">
+                                      <TransactionSearchPage />
                                     </ProtectedRoute>
                                   }
                                 />
