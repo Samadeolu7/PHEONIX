@@ -347,7 +347,9 @@ const JournalVoucherDetailPage: React.FC<JournalVoucherDetailPageProps> = ({ rea
                 <tr key={entry.id} className="hover:bg-gray-50">
                   <td className="px-4 py-2.5">
                     <button
-                      onClick={() => navigate(`/accounts/${entry.account.id}/ledger`)}
+                      onClick={() =>
+                        navigate(`/accounts/${entry.account.id}/ledger?highlight=${jv.id}`)
+                      }
                       className="flex items-center gap-1.5 text-left hover:text-blue-600 transition-colors group"
                     >
                       <span className="font-mono text-xs text-gray-500 group-hover:text-blue-500">
