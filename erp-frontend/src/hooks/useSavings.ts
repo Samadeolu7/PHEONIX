@@ -33,6 +33,7 @@ import {
   approveWithdrawalStep,
   cancelWithdrawal,
   disburseWithdrawal,
+  rejectWithdrawalDisbursement,
   getSavingsTransactions,
   depositToSavings,
   type SavingsAccount,
@@ -418,6 +419,20 @@ export const useDisburseWithdrawal = (
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, data }) => disburseWithdrawal(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: savingsKeys.pendingDisburse() });
+      queryClient.invalidateQueries({ queryKey: savingsKeys.withdrawals() });
+    },
+    ...options,
+  });
+};
+
+export const useRejectWithdrawalDisbursement = (
+  options?: Omit<UseMutationOptions<SavingsWithdrawalRequest, Error, { id: number; data: { comment: string } }>, 'mutationFn'>
+) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }) => rejectWithdrawalDisbursement(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: savingsKeys.pendingDisburse() });
       queryClient.invalidateQueries({ queryKey: savingsKeys.withdrawals() });

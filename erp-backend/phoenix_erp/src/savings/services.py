@@ -614,7 +614,10 @@ def process_withdrawal_approval(
 
     if not approved:
         wr.status = SavingsWithdrawalRequest.STATUS_REJECTED
-        wr.save(update_fields=['status', 'updated_at'])
+        wr.rejected_by = approver
+        wr.rejected_at = timezone.now()
+        wr.rejection_reason = comment
+        wr.save(update_fields=['status', 'rejected_by', 'rejected_at', 'rejection_reason', 'updated_at'])
         return wr
 
     # Count approvals
@@ -691,6 +694,49 @@ def disburse_withdrawal(
         )
 
     _execute_withdrawal(wr, disbursed_by, destination_bank_account=destination_bank_account)
+    return wr
+
+
+def reject_withdrawal_disbursement(
+    wr: SavingsWithdrawalRequest,
+    rejected_by: User,
+    comment: str = '',
+) -> SavingsWithdrawalRequest:
+    """
+    Third-role rejection: a fully-approved request is refused by the disburser
+    before any funds move (no GL entry exists yet at this stage — it's only
+    created on completion — so this is a plain status transition).
+
+    Subject to the same maker-checker constraints as disbursement: the
+    rejecter must differ from the creator and from every approver.
+    """
+    if wr.status != SavingsWithdrawalRequest.STATUS_APPROVED:
+        raise ValidationError(
+            "Only fully-approved requests awaiting disbursement can be rejected here."
+        )
+
+    if rejected_by.pk == wr.requested_by_id:
+        raise ValidationError(
+            "The person who created the withdrawal request cannot also reject it "
+            "(maker-checker violation)."
+        )
+
+    approver_ids = set(
+        wr.approval_steps
+        .filter(status=WithdrawalApprovalStep.STATUS_APPROVED)
+        .values_list('approver_id', flat=True)
+    )
+    if rejected_by.pk in approver_ids:
+        raise ValidationError(
+            "An approver of this withdrawal request cannot also reject it "
+            "(maker-checker violation)."
+        )
+
+    wr.status = SavingsWithdrawalRequest.STATUS_REJECTED
+    wr.rejected_by = rejected_by
+    wr.rejected_at = timezone.now()
+    wr.rejection_reason = comment
+    wr.save(update_fields=['status', 'rejected_by', 'rejected_at', 'rejection_reason', 'updated_at'])
     return wr
 
 

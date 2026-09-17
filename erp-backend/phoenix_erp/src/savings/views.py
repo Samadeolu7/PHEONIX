@@ -32,11 +32,13 @@ from .serializers import (
     SavingsWithdrawalRequestSerializer,
     WithdrawalApprovalActionSerializer,
     WithdrawalApprovalStepSerializer,
+    WithdrawalRejectionSerializer,
 )
 from .services import (
     initiate_withdrawal,
     process_withdrawal_approval,
     disburse_withdrawal,
+    reject_withdrawal_disbursement,
 )
 
 
@@ -780,6 +782,7 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
     GET   /api/savings/withdrawals/pending-disburse/   — fully approved, awaiting disburse
     POST  /api/savings/withdrawals/{id}/approve-step/  — approve/reject a step
     POST  /api/savings/withdrawals/{id}/disburse/      — release funds (3rd maker-checker role)
+    POST  /api/savings/withdrawals/{id}/reject-disburse/ — refuse a fully-approved request (3rd maker-checker role)
     POST  /api/savings/withdrawals/{id}/cancel/        — cancel (before approvals)
     """
     permission_module = 'savings'
@@ -1055,6 +1058,31 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
             disburse_withdrawal(wr, request.user, destination_bank_account=destination_bank)
         except Exception as exc:
             return Response({'detail': str(exc)}, status=400)
+        return Response(
+            SavingsWithdrawalRequestSerializer(wr, context={'request': request}).data
+        )
+
+    @action(detail=True, methods=['post'], url_path='reject-disburse')
+    def reject_disburse(self, request, pk=None):
+        """
+        Reject a fully-approved withdrawal request instead of disbursing it.
+
+        Subject to the same maker-checker rule as disburse: the rejecter must
+        be a different person from the requester and from every approver.
+        A comment explaining the rejection is required.
+        """
+        wr = self.get_object()
+        serializer = WithdrawalRejectionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+
+        try:
+            reject_withdrawal_disbursement(
+                wr, request.user, comment=serializer.validated_data['comment']
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=400)
+
         return Response(
             SavingsWithdrawalRequestSerializer(wr, context={'request': request}).data
         )

@@ -316,6 +316,10 @@ export interface SavingsWithdrawalRequest {
   disbursed_by?: number | null;
   disbursed_by_name?: string | null;
   disbursed_at?: string | null;
+  rejected_by?: number | null;
+  rejected_by_name?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
   created_at: string;
   updated_at: string;
   approval_steps: WithdrawalApprovalStep[];
@@ -427,6 +431,12 @@ export const disburseWithdrawal = (
   data: { destination_bank_account?: number }
 ): Promise<SavingsWithdrawalRequest> =>
   api.post(`${BASE_WITHDRAWALS}/${id}/disburse/`, data);
+
+export const rejectWithdrawalDisbursement = (
+  id: number,
+  data: { comment: string }
+): Promise<SavingsWithdrawalRequest> =>
+  api.post(`${BASE_WITHDRAWALS}/${id}/reject-disburse/`, data);
 
 // ── Savings Account Transaction Ledger ─────────────────────────────────────
 
