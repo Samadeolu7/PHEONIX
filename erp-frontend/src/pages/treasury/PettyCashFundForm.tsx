@@ -103,7 +103,9 @@ export const PettyCashFundForm: React.FC = () => {
     if (!formData.float_amount || parseFloat(formData.float_amount) <= 0) {
       newErrors.float_amount = 'Please enter a valid float amount greater than 0';
     }
-    if (!formData.petty_cash_account) {
+    // Bank-transfer funds disburse straight from a BankAccount chosen per voucher,
+    // which already has its own GL account — no separate one is needed here.
+    if (formData.disbursement_mode !== 'bank_transfer' && !formData.petty_cash_account) {
       newErrors.petty_cash_account = 'Please select a petty cash account';
     }
 
@@ -115,16 +117,27 @@ export const PettyCashFundForm: React.FC = () => {
     e.preventDefault();
     if (!validate()) return;
 
+    const isBankTransfer = formData.disbursement_mode === 'bank_transfer';
+    const payload = {
+      ...formData,
+      petty_cash_account: isBankTransfer ? null : formData.petty_cash_account,
+    };
+
     setSubmitting(true);
     try {
       if (isEditMode) {
         await updateMutation.mutateAsync({
           id: parseInt(id!),
-          data: formData,
+          data: payload,
         });
         navigate('/treasury/petty-cash');
       } else {
-        const result = await createMutation.mutateAsync(formData);
+        await createMutation.mutateAsync(payload);
+        if (isBankTransfer) {
+          // No till to fund - bank-transfer funds skip the float-transfer setup step.
+          navigate('/treasury/petty-cash');
+          return;
+        }
         // After creating, show setup dialog
         setShowSetupDialog(true);
         setSubmitting(false);
@@ -357,31 +370,35 @@ export const PettyCashFundForm: React.FC = () => {
           </p>
         </div>
 
-        {/* Petty Cash Account */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Petty Cash GL Account <span className="text-red-500">*</span>
-          </label>
-          <select
-            name="petty_cash_account"
-            value={formData.petty_cash_account}
-            onChange={handleChange}
-            disabled={isEditMode && existingFund?.status !== 'draft'}
-            className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.petty_cash_account ? 'border-red-500' : 'border-gray-300'
-            }`}
-          >
-            <option value="">Select GL account...</option>
-            {pettyCashAccounts.map(a => (
-              <option key={a.id} value={a.id}>
-                {a.code} - {a.name}
-              </option>
-            ))}
-          </select>
-          {errors.petty_cash_account && (
-            <p className="text-red-500 text-sm mt-1">{errors.petty_cash_account}</p>
-          )}
-        </div>
+        {/* Petty Cash Account - only relevant for the physical-till (cash) workflow.
+            Bank transfers disburse from a BankAccount chosen per voucher, which
+            already has its own GL account, so there's nothing to pick here. */}
+        {formData.disbursement_mode !== 'bank_transfer' && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Petty Cash GL Account <span className="text-red-500">*</span>
+            </label>
+            <select
+              name="petty_cash_account"
+              value={formData.petty_cash_account}
+              onChange={handleChange}
+              disabled={isEditMode && existingFund?.status !== 'draft'}
+              className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                errors.petty_cash_account ? 'border-red-500' : 'border-gray-300'
+              }`}
+            >
+              <option value="">Select GL account...</option>
+              {pettyCashAccounts.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.code} - {a.name}
+                </option>
+              ))}
+            </select>
+            {errors.petty_cash_account && (
+              <p className="text-red-500 text-sm mt-1">{errors.petty_cash_account}</p>
+            )}
+          </div>
+        )}
 
         {/* Disbursement Mode */}
         <div>

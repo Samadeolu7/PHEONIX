@@ -1309,7 +1309,14 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         Account,
         on_delete=models.PROTECT,
         related_name='petty_cash_funds',
-        help_text="Petty Cash GL Account (ASSET account - typically 110-xxx)"
+        null=True, blank=True,
+        help_text=(
+            "Petty Cash GL Account (ASSET account - typically 110-xxx). Only "
+            "meaningful in 'cash' disbursement_mode, where it tracks the "
+            "physical till. Leave unset for 'bank_transfer' mode - disburse() "
+            "credits the chosen BankAccount's own GL account instead and "
+            "never touches this fund's balance."
+        )
     )
     
     # Fund limits
@@ -1620,10 +1627,17 @@ class PettyCashFund(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """
         if self.setup_journal_entry:
             raise ValidationError("Fund already established with journal entry")
-        
+
         if self.current_balance != Decimal('0.00'):
             raise ValidationError("Fund already has balance. Cannot re-establish.")
-        
+
+        if self.petty_cash_account_id is None:
+            raise ValidationError(
+                "This fund has no GL account to fund - that's expected for "
+                "'bank_transfer' mode, which doesn't need a till setup transfer. "
+                "Nothing to do here."
+            )
+
         # Validate source account is ASSET type (bank/cash)
         if source_account.account_type != 'ASSET':
             raise ValidationError(

@@ -980,13 +980,21 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
         from transactions.models import Transaction, TransactionEntry, TransactionSeries
         
         fund = self.get_object()
-        
+
         if fund.setup_journal_entry:
             return Response(
                 {'error': 'Fund already setup'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if fund.disbursement_mode == 'bank_transfer':
+            return Response(
+                {'error': "Bank-transfer funds don't need a till setup transfer - "
+                          "disbursement draws directly from the bank account chosen "
+                          "on each voucher."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         source_account_id = request.data.get('source_account')
         if not source_account_id:
             return Response(

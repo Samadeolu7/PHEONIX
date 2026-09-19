@@ -7,7 +7,7 @@ export interface PettyCashFund {
   custodian_name: string;
   alternate_custodian: number | null;
   alternate_custodian_name: string | null;
-  petty_cash_account: number;
+  petty_cash_account: number | null;
   petty_cash_account_name: string;
   petty_cash_account_code: string;
   float_amount: string;
@@ -195,7 +195,7 @@ export interface CreatePettyCashFund {
   fund_code: string;
   custodian: number;
   alternate_custodian?: number | null;
-  petty_cash_account: number;
+  petty_cash_account: number | null;
   float_amount: string | number;
   replenishment_threshold: string | number;
   single_transaction_limit: string | number;
