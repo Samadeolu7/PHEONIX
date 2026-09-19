@@ -769,14 +769,18 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
     queryset = PettyCashFund.objects.all()
     serializer_class = PettyCashFundSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filter by branch (honors the topbar branch-switcher for elevated users)
+
+        # Filter by branch (honors the topbar branch-switcher for elevated users).
+        # NULL-branch funds are tenant-wide (e.g. auto-created before any branch
+        # was assigned) and must stay visible no matter which branch is selected -
+        # otherwise a fund that shows up on the dashboard (which doesn't apply this
+        # filter) 404s as "not found" the moment a specific branch is selected.
         branch = resolve_effective_branch(self.request)
         if branch:
-            queryset = queryset.filter(branch=branch)
+            queryset = queryset.filter(Q(branch=branch) | Q(branch__isnull=True))
         
         # Filter by status
         status = self.request.query_params.get('status')
@@ -1096,14 +1100,17 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
     queryset = PettyCashVoucher.objects.all()
     serializer_class = PettyCashVoucherSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filter by branch (honors the topbar branch-switcher for elevated users)
+
+        # Filter by branch (honors the topbar branch-switcher for elevated users).
+        # NULL-branch vouchers (inherited from a NULL-branch fund) are tenant-wide
+        # and must stay visible no matter which branch is selected - see the same
+        # fix on PettyCashFundViewSet.get_queryset() for why.
         branch = resolve_effective_branch(self.request)
         if branch:
-            queryset = queryset.filter(branch=branch)
+            queryset = queryset.filter(Q(branch=branch) | Q(branch__isnull=True))
         
         # Filter by fund
         fund_id = self.request.query_params.get('fund')
@@ -1561,14 +1568,17 @@ class PettyCashReplenishmentViewSet(viewsets.ModelViewSet):
     queryset = PettyCashReplenishment.objects.all()
     serializer_class = PettyCashReplenishmentSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filter by branch (honors the topbar branch-switcher for elevated users)
+
+        # Filter by branch (honors the topbar branch-switcher for elevated users).
+        # NULL-branch replenishments (inherited from a NULL-branch fund) are
+        # tenant-wide and must stay visible no matter which branch is selected -
+        # see the same fix on PettyCashFundViewSet.get_queryset() for why.
         branch = resolve_effective_branch(self.request)
         if branch:
-            queryset = queryset.filter(branch=branch)
+            queryset = queryset.filter(Q(branch=branch) | Q(branch__isnull=True))
         
         # Filter by fund
         fund_id = self.request.query_params.get('fund')

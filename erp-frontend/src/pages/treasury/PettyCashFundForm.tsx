@@ -12,6 +12,8 @@ import {
   usePettyCashFund,
   useSetupPettyCashFund,
 } from '../../hooks/usePettyCash';
+import { useUsers } from '../../hooks/useUsers';
+import { useAccountsByType } from '../../hooks/useAccountsSimple';
 import { CreatePettyCashFund } from '../../types/pettyCash';
 import { ManualLink } from '../../components/help/ManualLink';
 
@@ -48,6 +50,10 @@ export const PettyCashFundForm: React.FC = () => {
   const createMutation = useCreatePettyCashFund();
   const updateMutation = useUpdatePettyCashFund();
   const setupMutation = useSetupPettyCashFund();
+
+  // Custodian and GL account options
+  const { data: users = [] } = useUsers();
+  const { data: pettyCashAccounts = [] } = useAccountsByType('ASSET');
 
   // Load existing fund data
   useEffect(() => {
@@ -313,10 +319,11 @@ export const PettyCashFundForm: React.FC = () => {
             }`}
           >
             <option value="">Select custodian...</option>
-            {/* TODO: Load users from API */}
-            <option value="1">John Doe (Accountant)</option>
-            <option value="2">Jane Smith (Admin)</option>
-            <option value="3">Mike Johnson (Office Manager)</option>
+            {users.map(u => (
+              <option key={u.id} value={u.id}>
+                {`${u.first_name} ${u.last_name}`.trim() || u.username}
+              </option>
+            ))}
           </select>
           {errors.custodian && <p className="text-red-500 text-sm mt-1">{errors.custodian}</p>}
         </div>
@@ -365,10 +372,11 @@ export const PettyCashFundForm: React.FC = () => {
             }`}
           >
             <option value="">Select GL account...</option>
-            {/* TODO: Load petty cash accounts from API */}
-            <option value="1">1010 - Petty Cash - Main Office</option>
-            <option value="2">1011 - Petty Cash - Admin</option>
-            <option value="3">1012 - Petty Cash - Branch</option>
+            {pettyCashAccounts.map(a => (
+              <option key={a.id} value={a.id}>
+                {a.code} - {a.name}
+              </option>
+            ))}
           </select>
           {errors.petty_cash_account && (
             <p className="text-red-500 text-sm mt-1">{errors.petty_cash_account}</p>
