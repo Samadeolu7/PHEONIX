@@ -163,10 +163,13 @@ services:
       - "traefik.http.routers.phoenix-kti-ws.entrypoints=websecure"
       - "traefik.http.routers.phoenix-kti-ws.tls=true"
       - "traefik.http.routers.phoenix-kti-ws.tls.certresolver=letsencrypt"
-      # Explicit priority (rather than relying on Traefik's implicit
-      # rule-length ordering) so /ws always wins over the plain Host(...)
-      # rule on the `backend` service above, even if either rule changes.
-      - "traefik.http.routers.phoenix-kti-ws.priority=10"
+      # Explicit priority so /ws always wins over the plain Host(...) rule
+      # on the `backend` service above. Traefik's default priority is the
+      # rule string's length (Host(...) alone is ~31), so this must be a
+      # number higher than that — not just "explicitly set" — or the
+      # shorter, path-agnostic `backend` rule wins ties/comparisons and
+      # WebSocket upgrades get routed to gunicorn, which can't handle them.
+      - "traefik.http.routers.phoenix-kti-ws.priority=100"
       - "traefik.http.services.phoenix-kti-ws.loadbalancer.server.port=8001"
       - "traefik.docker.network=traefik_public"
 
