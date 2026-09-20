@@ -458,7 +458,7 @@ export const PettyCashVoucherForm: React.FC = () => {
         description: item.description,
         amount: item.amount,
         line_order: i,
-        ...(isBankTransferMode ? { staff: item.staffId ? parseInt(item.staffId) : null } : {}),
+        staff: item.staffId ? parseInt(item.staffId) : null,
       })),
       purpose: combinedPurpose,
       payee_name: payeeName,
@@ -814,11 +814,7 @@ export const PettyCashVoucherForm: React.FC = () => {
                   <th className="px-3 py-2.5 font-medium border-b border-gray-200">
                     Description <span className="text-red-500">*</span>
                   </th>
-                  {isBankTransferMode && (
-                    <th className="px-3 py-2.5 w-52 font-medium border-b border-gray-200">
-                      Recipient
-                    </th>
-                  )}
+                  <th className="px-3 py-2.5 w-52 font-medium border-b border-gray-200">Payee</th>
                   <th className="px-3 py-2.5 w-40 text-right font-medium border-b border-gray-200">
                     Amount (₦) <span className="text-red-500">*</span>
                   </th>
@@ -881,25 +877,25 @@ export const PettyCashVoucherForm: React.FC = () => {
                       )}
                     </td>
 
-                    {/* Recipient (bank_transfer mode only) — lets one voucher cover
-                        several staff at once, each with their own reimbursement line */}
-                    {isBankTransferMode && (
-                      <td className="px-3 py-2">
-                        <select
-                          title={`Recipient for row ${index + 1}`}
-                          value={item.staffId}
-                          onChange={e => updateLineItem(item.id, 'staffId', e.target.value)}
-                          className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Same as payee above</option>
-                          {staffList.map(s => (
-                            <option key={s.id} value={s.id}>
-                              {s.full_name || `${s.first_name} ${s.last_name}`}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                    )}
+                    {/* Payee — lets one voucher cover several staff at once, each with
+                        their own reimbursement line instead of one payee for the whole
+                        voucher. Bank-transfer-mode funds use this to auto-fill each
+                        recipient's bank details at disbursement. */}
+                    <td className="px-3 py-2">
+                      <select
+                        title={`Payee for row ${index + 1}`}
+                        value={item.staffId}
+                        onChange={e => updateLineItem(item.id, 'staffId', e.target.value)}
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="">Same as payee above</option>
+                        {staffList.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.full_name || `${s.first_name} ${s.last_name}`}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
 
                     {/* Amount */}
                     <td className="px-3 py-2">
@@ -939,7 +935,7 @@ export const PettyCashVoucherForm: React.FC = () => {
               {/* Footer: Add row button + running total */}
               <tfoot>
                 <tr className="bg-gray-50">
-                  <td colSpan={isBankTransferMode ? 4 : 3} className="px-3 py-3">
+                  <td colSpan={4} className="px-3 py-3">
                     <button
                       type="button"
                       onClick={addLineItem}

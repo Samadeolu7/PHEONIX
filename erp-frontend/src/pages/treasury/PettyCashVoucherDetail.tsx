@@ -236,8 +236,11 @@ export const PettyCashVoucherDetail: React.FC = () => {
   const isBankTransferVoucher = voucher.fund_disbursement_mode === 'bank_transfer';
   // True when this voucher covers several staff at once — each line names its
   // own reimbursement recipient instead of the whole voucher going to one payee.
-  const hasLineRecipients =
-    isBankTransferVoucher && (voucher.lines ?? []).some(l => l.staff_name);
+  // Mode-agnostic: cash-mode vouchers can record per-line payees too, for
+  // tracking who received what — only the disburse dialog's bank-details
+  // breakdown below is bank-transfer-specific.
+  const linesHavePayees = (voucher.lines ?? []).some(l => l.staff_name);
+  const hasLineRecipients = isBankTransferVoucher && linesHavePayees;
   // Maker-checker for bank-transfer disbursement: the requester and approver
   // can't also be the one who executes the transfer. The backend enforces
   // this for real — this just hides the button rather than surfacing a 400.
@@ -373,9 +376,7 @@ export const PettyCashVoucherDetail: React.FC = () => {
                     <tr className="text-left text-gray-500">
                       <th className="py-1.5 pr-3 font-medium">Category</th>
                       <th className="py-1.5 pr-3 font-medium">Description</th>
-                      {hasLineRecipients && (
-                        <th className="py-1.5 pr-3 font-medium">Recipient</th>
-                      )}
+                      {linesHavePayees && <th className="py-1.5 pr-3 font-medium">Payee</th>}
                       <th className="py-1.5 text-right font-medium">Amount</th>
                     </tr>
                   </thead>
@@ -384,12 +385,12 @@ export const PettyCashVoucherDetail: React.FC = () => {
                       <tr key={line.id} className="border-t border-gray-100">
                         <td className="py-1.5 pr-3">{line.expense_category_name ?? `Category #${line.expense_category}`}</td>
                         <td className="py-1.5 pr-3 text-gray-700">{line.description}</td>
-                        {hasLineRecipients && (
+                        {linesHavePayees && (
                           <td className="py-1.5 pr-3">
                             {line.staff_name ? (
                               <>
                                 <span className="text-gray-900">{line.staff_name}</span>
-                                {line.staff_bank_account_number && (
+                                {isBankTransferVoucher && line.staff_bank_account_number && (
                                   <span className="block text-xs text-gray-500">
                                     {line.staff_bank_name || '—'} — {line.staff_bank_account_number}
                                   </span>
