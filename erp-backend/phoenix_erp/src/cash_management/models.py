@@ -2103,6 +2103,7 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             # for someone deciding whether to log in and action it.
             try:
                 from notifications.telegram_alerts import notify_pending_disbursements
+                recipients = self._staff_recipients_summary()
                 notify_pending_disbursements(
                     'petty_cash_awaiting_disbursement',
                     f'⏳ Petty Cash Awaiting Bank Transfer — {self.voucher_number}',
@@ -2111,6 +2112,8 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                         f"'{self.fund}', payee {self._payee_display_name()}. Approved by "
                         f"{user.get_full_name() or user.username} — needs a different, "
                         f"authorised person to execute the transfer."
+                        + (f"\n\nCovers: {recipients}." if recipients else "")
+                        + "\n\nOpen the voucher's Disburse page for account details."
                     ),
                     owner=self.owner, branch=self.branch, related_object=self,
                 )
@@ -2119,6 +2122,21 @@ class PettyCashVoucher(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     "Failed to send petty-cash-awaiting-disbursement Telegram alert for voucher %s",
                     self.voucher_number,
                 )
+
+    def _staff_recipients_summary(self):
+        """
+        Comma-separated staff names for lines that set their own reimbursement
+        recipient (the multi-staff pattern — see PettyCashVoucherLine.staff).
+        Names only, no bank details — this is a notification, not where account
+        details are meant to live. Empty string when no line sets its own payee
+        (the ordinary single-payee voucher).
+        """
+        names = [
+            f"{line.staff.first_name} {line.staff.last_name}".strip()
+            for line in self.lines.select_related('staff').all()
+            if line.staff_id
+        ]
+        return ', '.join(names)
 
     @db_transaction.atomic
     def reject(self, user, reason):
@@ -2516,6 +2534,25 @@ class PettyCashVoucherLine(models.Model):
         'expenses.ExpenseCategory',
         on_delete=models.PROTECT,
         related_name='petty_cash_voucher_lines',
+    )
+    # Optional per-line reimbursement recipient — lets one voucher cover many
+    # staff at once (e.g. a weekly transport reimbursement for the whole
+    # team), each as their own line with their own amount, rather than one
+    # payee per voucher. Additive: voucher.payee_staff/payee_name still cover
+    # the single-payee, multi-category case (one trip, several expense
+    # types) and stay required regardless of whether lines set this.
+    staff = models.ForeignKey(
+        'hr.Staff',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='petty_cash_voucher_lines_as_payee',
+        help_text=(
+            "Staff member being reimbursed for this specific line, when a "
+            "voucher covers several people's expenses at once. Auto-fills "
+            "bank details for bank-transfer disbursement, same as "
+            "voucher.payee_staff."
+        ),
     )
     description = models.CharField(max_length=500)
     amount = models.DecimalField(max_digits=18, decimal_places=2)

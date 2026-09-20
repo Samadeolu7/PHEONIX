@@ -47,6 +47,13 @@ export interface PettyCashVoucherLine {
   description: string;
   amount: string;
   line_order: number;
+  /** Optional per-line reimbursement recipient — lets one voucher cover several
+   * staff at once, each with their own amount. Auto-fills bank details for
+   * bank-transfer disbursement, same as the voucher-level payee_staff. */
+  staff: number | null;
+  staff_name: string | null;
+  staff_bank_name: string | null;
+  staff_bank_account_number: string | null;
 }
 
 export interface PettyCashVoucher {
@@ -210,6 +217,8 @@ export interface CreatePettyCashVoucherLine {
   description: string;
   amount: string | number;
   line_order?: number;
+  /** Optional per-line reimbursement recipient — see PettyCashVoucherLine.staff. */
+  staff?: number | null;
 }
 
 export interface CreatePettyCashVoucher {

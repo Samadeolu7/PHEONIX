@@ -620,15 +620,32 @@ class PettyCashFundSerializer(serializers.ModelSerializer):
 
 
 class PettyCashVoucherLineSerializer(serializers.ModelSerializer):
-    """One expense line on a voucher (its own category + amount)."""
+    """One expense line on a voucher (its own category + amount + optional payee)."""
     expense_category_name = serializers.SerializerMethodField()
+    staff_name = serializers.SerializerMethodField()
+    staff_bank_name = serializers.SerializerMethodField()
+    staff_bank_account_number = serializers.SerializerMethodField()
 
     class Meta:
         model = PettyCashVoucherLine
-        fields = ['id', 'expense_category', 'expense_category_name', 'description', 'amount', 'line_order']
+        fields = [
+            'id', 'expense_category', 'expense_category_name', 'description', 'amount', 'line_order',
+            'staff', 'staff_name', 'staff_bank_name', 'staff_bank_account_number',
+        ]
 
     def get_expense_category_name(self, obj):
         return obj.expense_category.name if obj.expense_category else None
+
+    def get_staff_name(self, obj):
+        if not obj.staff_id:
+            return None
+        return f"{obj.staff.first_name} {obj.staff.last_name}".strip()
+
+    def get_staff_bank_name(self, obj):
+        return obj.staff.bank_name or None if obj.staff_id else None
+
+    def get_staff_bank_account_number(self, obj):
+        return obj.staff.bank_account_number or None if obj.staff_id else None
 
 
 class PettyCashVoucherSerializer(serializers.ModelSerializer):
@@ -701,10 +718,13 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
             required=False,
             allow_null=True,
         )
-        # Same branch scoping for each line's expense_category.
+        # Same branch scoping for each line's expense_category and staff payee.
         if 'lines' in self.fields:
             self.fields['lines'].child.fields['expense_category'] = serializers.PrimaryKeyRelatedField(
                 queryset=cat_qs,
+            )
+            self.fields['lines'].child.fields['staff'] = serializers.PrimaryKeyRelatedField(
+                queryset=staff_qs, required=False, allow_null=True,
             )
 
     def validate_lines(self, value):

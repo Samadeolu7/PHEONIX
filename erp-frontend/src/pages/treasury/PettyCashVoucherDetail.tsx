@@ -234,6 +234,10 @@ export const PettyCashVoucherDetail: React.FC = () => {
   const canApprove = canUserApprove && voucher.status === 'pending';
   const canReject = canUserApprove && voucher.status === 'pending';
   const isBankTransferVoucher = voucher.fund_disbursement_mode === 'bank_transfer';
+  // True when this voucher covers several staff at once — each line names its
+  // own reimbursement recipient instead of the whole voucher going to one payee.
+  const hasLineRecipients =
+    isBankTransferVoucher && (voucher.lines ?? []).some(l => l.staff_name);
   // Maker-checker for bank-transfer disbursement: the requester and approver
   // can't also be the one who executes the transfer. The backend enforces
   // this for real — this just hides the button rather than surfacing a 400.
@@ -369,6 +373,9 @@ export const PettyCashVoucherDetail: React.FC = () => {
                     <tr className="text-left text-gray-500">
                       <th className="py-1.5 pr-3 font-medium">Category</th>
                       <th className="py-1.5 pr-3 font-medium">Description</th>
+                      {hasLineRecipients && (
+                        <th className="py-1.5 pr-3 font-medium">Recipient</th>
+                      )}
                       <th className="py-1.5 text-right font-medium">Amount</th>
                     </tr>
                   </thead>
@@ -377,6 +384,22 @@ export const PettyCashVoucherDetail: React.FC = () => {
                       <tr key={line.id} className="border-t border-gray-100">
                         <td className="py-1.5 pr-3">{line.expense_category_name ?? `Category #${line.expense_category}`}</td>
                         <td className="py-1.5 pr-3 text-gray-700">{line.description}</td>
+                        {hasLineRecipients && (
+                          <td className="py-1.5 pr-3">
+                            {line.staff_name ? (
+                              <>
+                                <span className="text-gray-900">{line.staff_name}</span>
+                                {line.staff_bank_account_number && (
+                                  <span className="block text-xs text-gray-500">
+                                    {line.staff_bank_name || '—'} — {line.staff_bank_account_number}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-gray-400">Same as payee above</span>
+                            )}
+                          </td>
+                        )}
                         <td className="py-1.5 text-right font-medium">
                           ${parseFloat(line.amount).toLocaleString()}
                         </td>
@@ -737,35 +760,77 @@ export const PettyCashVoucherDetail: React.FC = () => {
             )}
             {actionDialog.type === 'disburse' && isBankTransferVoucher && (
               <div className="mb-4 space-y-3">
-                <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm space-y-1">
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
-                    Payee Bank Details
-                  </p>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Payee:</span>
-                    <span className="font-medium text-gray-900">{voucher.payee_name}</span>
-                  </div>
-                  {voucher.payee_display_bank_account_number ? (
-                    <>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Account:</span>
-                        <span className="font-mono font-bold text-gray-900 tracking-wider">
-                          {voucher.payee_display_bank_account_number}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Bank:</span>
-                        <span className="font-medium text-gray-900">
-                          {voucher.payee_display_bank_name || '—'}
-                        </span>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="text-amber-700 text-xs">
-                      No bank details on file for this payee — confirm them before transferring.
+                {hasLineRecipients ? (
+                  <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm">
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                      Pay Each Of
                     </p>
-                  )}
-                </div>
+                    <div className="space-y-2">
+                      {(voucher.lines ?? []).map(line => (
+                        <div
+                          key={line.id}
+                          className="flex items-start justify-between border-t border-gray-200 pt-2 first:border-t-0 first:pt-0"
+                        >
+                          <div>
+                            <p className="font-medium text-gray-900">
+                              {line.staff_name || voucher.payee_name}
+                            </p>
+                            {(line.staff_name
+                              ? line.staff_bank_account_number
+                              : voucher.payee_display_bank_account_number) ? (
+                              <p className="text-xs text-gray-600">
+                                {(line.staff_name
+                                  ? line.staff_bank_name
+                                  : voucher.payee_display_bank_name) || '—'}{' '}
+                                —{' '}
+                                <span className="font-mono font-bold tracking-wider">
+                                  {line.staff_name
+                                    ? line.staff_bank_account_number
+                                    : voucher.payee_display_bank_account_number}
+                                </span>
+                              </p>
+                            ) : (
+                              <p className="text-xs text-amber-700">No bank details on file</p>
+                            )}
+                          </div>
+                          <span className="font-mono font-semibold text-gray-900 shrink-0 ml-4">
+                            ₦{parseFloat(line.amount).toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm space-y-1">
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">
+                      Payee Bank Details
+                    </p>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Payee:</span>
+                      <span className="font-medium text-gray-900">{voucher.payee_name}</span>
+                    </div>
+                    {voucher.payee_display_bank_account_number ? (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Account:</span>
+                          <span className="font-mono font-bold text-gray-900 tracking-wider">
+                            {voucher.payee_display_bank_account_number}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Bank:</span>
+                          <span className="font-medium text-gray-900">
+                            {voucher.payee_display_bank_name || '—'}
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-amber-700 text-xs">
+                        No bank details on file for this payee — confirm them before transferring.
+                      </p>
+                    )}
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Disbursement Account (source) <span className="text-red-500">*</span>
