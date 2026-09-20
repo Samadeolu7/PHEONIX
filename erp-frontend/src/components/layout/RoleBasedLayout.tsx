@@ -25,7 +25,7 @@ const RoleBasedLayout: React.FC<RoleBasedLayoutProps> = ({ children }) => {
 
   // Single app-wide notification socket (replaces the bell's/Discussions
   // badge's polling with a push — see NotificationDropdown.tsx,
-  // ThreadWidget.tsx). No-ops internally while logged out (see
+  // ThreadsNavDropdown.tsx). No-ops internally while logged out (see
   // useRealtimeSocket: it only connects once an access token exists).
   useNotificationSocket(() => {
     queryClient.invalidateQueries({ queryKey: ['notifications'] });

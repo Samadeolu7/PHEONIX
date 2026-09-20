@@ -25,10 +25,10 @@ import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
 import { BRAND } from '../../constants/brand';
 import NotificationDropdown from '../notifications/NotificationDropdown';
+import ThreadsNavDropdown from '../threads/ThreadsNavDropdown';
 import { api } from '../../services/api';
 import { branchService, Branch } from '../../services/branchService';
 import { getRoleRank } from '../../types/roles';
-import { useThreadContext } from '../../contexts/ThreadContext';
 
 // ---------------------------------------------------------------------------
 // TransactionSearchLink — Ctrl/Cmd+K shortcut to the dedicated transaction
@@ -240,7 +240,6 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
 }) => {
   const { user, selectedRole, logout } = useAuth();
   const { hasAnyPageAccessInModule } = usePermission();
-  const { globalUnreadCount } = useThreadContext();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -430,23 +429,11 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                   {/* Transaction search — find a GL transaction by reference number */}
                   <TransactionSearchLink />
 
-                  {/* Discussions workspace */}
-                  <Link
-                    to="/discussions"
-                    className={`relative p-2 rounded-md transition-colors ${
-                      isActivePath('/discussions') || isActivePath('/threads')
-                        ? 'bg-white/20 text-white'
-                        : 'text-white/80 hover:text-white hover:bg-white/10'
-                    }`}
-                    title="Discussions"
-                  >
-                    <MessageSquare className="h-4 w-4" />
-                    {globalUnreadCount > 0 && (
-                      <span className="absolute top-0.5 right-0.5 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
-                        {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
-                      </span>
-                    )}
-                  </Link>
+                  {/* Discussions workspace — icon opens a recent/unread
+                      preview dropdown (mirrors NotificationDropdown) instead
+                      of only linking straight to /discussions, so users get
+                      at-a-glance visibility from any page. */}
+                  <ThreadsNavDropdown />
 
                   {/* Sidebar navigation panel trigger */}
                   <button
@@ -598,32 +585,10 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                   <span>Notifications</span>
                   <NotificationDropdown variant="dark" />
                 </div>
-                <Link
-                  to="/discussions"
-                  onClick={closeMobileMenu}
-                  className={`flex items-center space-x-3 px-3 py-3 rounded-md text-base font-medium transition-colors ${
-                    isActivePath('/discussions') || isActivePath('/threads')
-                      ? 'bg-white/20 text-white'
-                      : 'text-white/80 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  <span className="relative">
-                    <MessageSquare className="h-5 w-5" />
-                    {globalUnreadCount > 0 && (
-                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
-                        {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
-                      </span>
-                    )}
-                  </span>
-                  <span>
-                    Discussions
-                    {globalUnreadCount > 0 && (
-                      <span className="ml-2 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
-                        {globalUnreadCount}
-                      </span>
-                    )}
-                  </span>
-                </Link>
+                <div className="flex items-center justify-between px-3 py-1 rounded-md text-base font-medium text-white/80">
+                  <span>Discussions</span>
+                  <ThreadsNavDropdown variant="dark" />
+                </div>
                 <Link
                   to="/dashboard/select"
                   onClick={closeMobileMenu}

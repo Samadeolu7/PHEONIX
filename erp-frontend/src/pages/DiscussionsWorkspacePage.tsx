@@ -22,6 +22,7 @@ import {
   FileText,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { threadService } from '../services/threadService';
 import { useAuth } from '../contexts/AuthContext';
@@ -996,6 +997,8 @@ export default function DiscussionsWorkspacePage() {
   const { user } = useAuth();
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [openThreads, setOpenThreads] = useState<Thread[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   // Bumped whenever the open conversation is marked read — see Sidebar's
@@ -1030,6 +1033,18 @@ export default function DiscussionsWorkspacePage() {
     });
     setActiveId(thread.id);
   };
+
+  // Deep-link support: the nav bar's ThreadsNavDropdown navigates here with
+  // { state: { openThreadId } } when a recent thread has no resolvable
+  // per-record page to jump to instead. Opens that thread as a tab, once,
+  // then clears the state so it doesn't re-fire on back/forward navigation.
+  useEffect(() => {
+    const openThreadId = (location.state as { openThreadId?: number } | null)?.openThreadId;
+    if (!openThreadId) return;
+    navigate(location.pathname, { replace: true, state: null });
+    threadService.get(openThreadId).then(handleSelect).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const handleCloseTab = (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
