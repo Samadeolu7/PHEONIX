@@ -1277,13 +1277,37 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
 
             voucher_number = f'{month_prefix}-{new_num:04d}'
 
-            serializer.save(
+            # â”€â”€ Payee defaults to the requester themselves â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # The voucher form no longer collects a payee name/staff link at
+            # all - "I'm requesting petty cash" implies "I'm the one being
+            # paid" in the overwhelming common case. Per-line PettyCashVoucherLine.staff
+            # covers the case where a line is being paid to someone else (the
+            # "expense for everyone" multi-staff pattern). Only fall back to
+            # these defaults when the caller didn't already supply their own
+            # (e.g. a future non-staff-payee process, or admin/management
+            # commands) - never override an explicit choice.
+            from hr.models import Staff as _Staff
+            requester_staff = _Staff.objects.filter(
+                user=self.request.user, is_deleted=False
+            ).first()
+
+            extra_kwargs = dict(
                 fund=fund,
                 voucher_number=voucher_number,
                 requested_by=self.request.user,
                 owner=self.request.user,
                 branch=getattr(self.request.user, 'branch', None),
             )
+            if serializer.validated_data.get('payee_staff') is None and requester_staff is not None:
+                extra_kwargs['payee_staff'] = requester_staff
+            if not serializer.validated_data.get('payee_name'):
+                extra_kwargs['payee_name'] = (
+                    f"{requester_staff.first_name} {requester_staff.last_name}".strip()
+                    if requester_staff is not None
+                    else (self.request.user.get_full_name() or self.request.user.username)
+                )
+
+            serializer.save(**extra_kwargs)
     
     @action(detail=True, methods=['post'])
     def submit(self, request, pk=None):

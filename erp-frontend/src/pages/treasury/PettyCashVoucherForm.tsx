@@ -28,6 +28,7 @@ import {
 import { useExpenseCategories, useCreateExpenseCategory } from '../../hooks/useExpenseCategories';
 import { useExpenseAccounts } from '../../hooks/useAccountsSimple';
 import { useAllStaff } from '../../hooks/useStaff';
+import { useAuth } from '../../hooks/useAuth';
 import { CreatePettyCashVoucher } from '../../types/pettyCash';
 
 // ─── Line item types & helpers ────────────────────────────────────────────────
@@ -228,18 +229,17 @@ export const PettyCashVoucherForm: React.FC = () => {
 
   // ── Header state (applies to the whole voucher)
   const [fundId, setFundId] = useState(0);
-  const [payeeName, setPayeeName] = useState('');
   const [requestDate, setRequestDate] = useState(format(new Date(), 'yyyy-MM-dd'));
 
-  // ── Payee bank details (bank_transfer-mode funds only) — either an HR
-  // Staff link (auto-fills their bank details) or manually-typed fallback
-  // bank fields for non-staff payees (vendors, one-off recipients).
-  const [payeeStaffId, setPayeeStaffId] = useState<number | ''>('');
-  const [payeeBankName, setPayeeBankName] = useState('');
-  const [payeeBankAccountName, setPayeeBankAccountName] = useState('');
-  const [payeeBankAccountNumber, setPayeeBankAccountNumber] = useState('');
+  // ── Payee — the requester themselves by default (the backend auto-links
+  // this to the requester's own HR Staff record on create, auto-filling
+  // their bank details for bank-transfer mode). Per-line Payee overrides
+  // this for the "expense for everyone" multi-staff pattern. Non-staff
+  // payees (vendors, one-off recipients) are a different process, not this
+  // form — there's no manual entry path here.
+  const { user: currentUser } = useAuth();
   const { data: staffList = [] } = useAllStaff({ is_active: true });
-  const selectedStaff = payeeStaffId ? staffList.find(s => s.id === payeeStaffId) : undefined;
+  const myStaffProfile = staffList.find(s => s.user === currentUser?.id);
 
   // ── Line items (one row per expense)
   const [lineItems, setLineItems] = useState<LineItem[]>([emptyLineItem()]);
@@ -283,13 +283,8 @@ export const PettyCashVoucherForm: React.FC = () => {
   // ── Populate from existing voucher (edit mode)
   useEffect(() => {
     if (existingVoucher && isEditMode) {
-      setPayeeName(existingVoucher.payee_name);
       setRequestDate(existingVoucher.voucher_date ?? format(new Date(), 'yyyy-MM-dd'));
       setFundId(existingVoucher.fund);
-      setPayeeStaffId(existingVoucher.payee_staff ?? '');
-      setPayeeBankName(existingVoucher.payee_bank_name ?? '');
-      setPayeeBankAccountName(existingVoucher.payee_bank_account_name ?? '');
-      setPayeeBankAccountNumber(existingVoucher.payee_bank_account_number ?? '');
       if (existingVoucher.lines && existingVoucher.lines.length > 0) {
         setLineItems(
           existingVoucher.lines.map(line => ({
@@ -416,7 +411,6 @@ export const PettyCashVoucherForm: React.FC = () => {
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
 
-    if (!payeeName.trim()) newErrors.payee_name = 'Payee name is required';
     if (!requestDate) newErrors.request_date = 'Request date is required';
 
     if (lineItems.length === 0) {
@@ -451,6 +445,8 @@ export const PettyCashVoucherForm: React.FC = () => {
     const combinedPurpose = lineItems
       .map((item, i) => `${i + 1}. [${getCategoryLabel(item.category)}] ${item.description}`)
       .join('\n');
+    // payee_name/payee_staff are intentionally omitted — the backend
+    // auto-derives them from the requester's own HR Staff link.
     const payload: CreatePettyCashVoucher = {
       fund: fundId,
       lines: lineItems.map((item, i) => ({
@@ -461,24 +457,15 @@ export const PettyCashVoucherForm: React.FC = () => {
         staff: item.staffId ? parseInt(item.staffId) : null,
       })),
       purpose: combinedPurpose,
-      payee_name: payeeName,
       voucher_date: requestDate,
     };
-    if (isBankTransferMode) {
-      payload.payee_staff = payeeStaffId || null;
-      if (!payeeStaffId) {
-        payload.payee_bank_name = payeeBankName;
-        payload.payee_bank_account_name = payeeBankAccountName;
-        payload.payee_bank_account_number = payeeBankAccountNumber;
-      }
-    }
     return payload;
   };
 
   const handleSaveDraft = async () => {
-    if (!payeeName || lineItems.every(l => !l.amount)) {
+    if (lineItems.every(l => !l.amount)) {
       setErrors({
-        general: 'Payee name and at least one line item amount are required to save a draft',
+        general: 'At least one line item amount is required to save a draft',
       });
       return;
     }
@@ -666,7 +653,10 @@ export const PettyCashVoucherForm: React.FC = () => {
             </div>
           )}
 
-          {/* Request date + Payee name — side by side */}
+          {/* Request date + default payee — side by side. The payee is always
+              the requester (this form has no manual/non-staff payee entry —
+              that's a different process); per-line Payee overrides this for
+              expenses being paid to someone else. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -686,103 +676,34 @@ export const PettyCashVoucherForm: React.FC = () => {
               )}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Payee Name <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={payeeName}
-                onChange={e => setPayeeName(e.target.value)}
-                placeholder="Person / company receiving payment"
-                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.payee_name ? 'border-red-500' : 'border-gray-300'
-                }`}
-              />
-              {errors.payee_name && (
-                <p className="text-red-500 text-sm mt-1">{errors.payee_name}</p>
-              )}
+              <label className="block text-sm font-medium text-gray-700 mb-2">Default Payee</label>
+              <div className="w-full px-4 py-2 border border-gray-200 bg-gray-50 rounded-lg text-sm text-gray-800">
+                {myStaffProfile?.full_name ||
+                  `${currentUser?.first_name ?? ''} ${currentUser?.last_name ?? ''}`.trim() ||
+                  currentUser?.username ||
+                  'You'}{' '}
+                <span className="text-gray-400">(you, unless a line sets its own Payee)</span>
+              </div>
+              {isBankTransferMode &&
+                (myStaffProfile ? (
+                  myStaffProfile.bank_name || myStaffProfile.bank_account_number ? (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Bank: {myStaffProfile.bank_name || '—'} • Account:{' '}
+                      {myStaffProfile.bank_account_number || '—'}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-amber-700 mt-1">
+                      You have no bank details on file — add them via HR, or set a Payee on every
+                      line below.
+                    </p>
+                  )
+                ) : (
+                  <p className="text-xs text-amber-700 mt-1">
+                    No staff profile linked to your account — set a Payee on every line below.
+                  </p>
+                ))}
             </div>
           </div>
-
-          {/* Payee bank details — bank_transfer-mode funds only */}
-          {isBankTransferMode && (
-            <div className="border border-gray-200 rounded-lg p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-gray-800">Payee Bank Details</h3>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Link to Staff (optional — auto-fills bank details)
-                </label>
-                <select
-                  title="Payee staff member"
-                  value={payeeStaffId}
-                  onChange={e => setPayeeStaffId(e.target.value ? parseInt(e.target.value) : '')}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">Not a staff member — enter bank details manually</option>
-                  {staffList.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.full_name || `${s.first_name} ${s.last_name}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {selectedStaff ? (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                  {selectedStaff.bank_name || selectedStaff.bank_account_number ? (
-                    <>
-                      Bank: {selectedStaff.bank_name || '—'} • Account:{' '}
-                      {selectedStaff.bank_account_number || '—'}
-                    </>
-                  ) : (
-                    <span className="text-amber-700">
-                      This staff member has no bank details on file — add them via HR before
-                      disbursing.
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Bank Name
-                    </label>
-                    <input
-                      type="text"
-                      value={payeeBankName}
-                      onChange={e => setPayeeBankName(e.target.value)}
-                      placeholder="e.g., GT Bank"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Account Name
-                    </label>
-                    <input
-                      type="text"
-                      value={payeeBankAccountName}
-                      onChange={e => setPayeeBankAccountName(e.target.value)}
-                      placeholder="Name on the account"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Account Number
-                    </label>
-                    <input
-                      type="text"
-                      value={payeeBankAccountNumber}
-                      onChange={e => setPayeeBankAccountNumber(e.target.value)}
-                      placeholder="0123456789"
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
         {/* ── Expense line items table ── */}

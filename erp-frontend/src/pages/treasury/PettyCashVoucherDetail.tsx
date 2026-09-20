@@ -241,6 +241,32 @@ export const PettyCashVoucherDetail: React.FC = () => {
   // breakdown below is bank-transfer-specific.
   const linesHavePayees = (voucher.lines ?? []).some(l => l.staff_name);
   const hasLineRecipients = isBankTransferVoucher && linesHavePayees;
+  // Group lines by resolved payee (their own staff link, or the voucher's
+  // default payee when a line doesn't set one) and sum each payee's lines
+  // into a single total — so someone with two expense lines shows up once,
+  // with one amount to pay, not as two separate transfers to the same account.
+  const payeeBreakdown = (() => {
+    const groups = new Map<
+      string,
+      { name: string; bankName: string | null; accountNumber: string | null; total: number }
+    >();
+    for (const line of voucher.lines ?? []) {
+      const key = line.staff != null ? `staff-${line.staff}` : 'default';
+      const name = line.staff_name || voucher.payee_name;
+      const bankName = line.staff_name ? line.staff_bank_name : voucher.payee_display_bank_name;
+      const accountNumber = line.staff_name
+        ? line.staff_bank_account_number
+        : voucher.payee_display_bank_account_number;
+      const amount = parseFloat(line.amount || '0');
+      const existing = groups.get(key);
+      if (existing) {
+        existing.total += amount;
+      } else {
+        groups.set(key, { name, bankName, accountNumber, total: amount });
+      }
+    }
+    return Array.from(groups.values());
+  })();
   // Maker-checker for bank-transfer disbursement: the requester and approver
   // can't also be the one who executes the transfer. The backend enforces
   // this for real — this just hides the button rather than surfacing a 400.
@@ -767,27 +793,18 @@ export const PettyCashVoucherDetail: React.FC = () => {
                       Pay Each Of
                     </p>
                     <div className="space-y-2">
-                      {(voucher.lines ?? []).map(line => (
+                      {payeeBreakdown.map((payee, i) => (
                         <div
-                          key={line.id}
+                          key={i}
                           className="flex items-start justify-between border-t border-gray-200 pt-2 first:border-t-0 first:pt-0"
                         >
                           <div>
-                            <p className="font-medium text-gray-900">
-                              {line.staff_name || voucher.payee_name}
-                            </p>
-                            {(line.staff_name
-                              ? line.staff_bank_account_number
-                              : voucher.payee_display_bank_account_number) ? (
+                            <p className="font-medium text-gray-900">{payee.name}</p>
+                            {payee.accountNumber ? (
                               <p className="text-xs text-gray-600">
-                                {(line.staff_name
-                                  ? line.staff_bank_name
-                                  : voucher.payee_display_bank_name) || '—'}{' '}
-                                —{' '}
+                                {payee.bankName || '—'} —{' '}
                                 <span className="font-mono font-bold tracking-wider">
-                                  {line.staff_name
-                                    ? line.staff_bank_account_number
-                                    : voucher.payee_display_bank_account_number}
+                                  {payee.accountNumber}
                                 </span>
                               </p>
                             ) : (
@@ -795,7 +812,7 @@ export const PettyCashVoucherDetail: React.FC = () => {
                             )}
                           </div>
                           <span className="font-mono font-semibold text-gray-900 shrink-0 ml-4">
-                            ₦{parseFloat(line.amount).toLocaleString()}
+                            ₦{payee.total.toLocaleString()}
                           </span>
                         </div>
                       ))}

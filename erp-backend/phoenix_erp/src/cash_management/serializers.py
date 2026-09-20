@@ -718,6 +718,14 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
             required=False,
             allow_null=True,
         )
+        # Not sent by the voucher form any more — the view's perform_create
+        # auto-derives this from the requester's own HR Staff link (see
+        # PettyCashVoucherViewSet.perform_create). Keep it writable (blank
+        # allowed) for other callers (admin, management commands, the future
+        # non-staff-payee process) that still want to set it explicitly.
+        self.fields['payee_name'] = serializers.CharField(
+            required=False, allow_blank=True, max_length=200,
+        )
         # Same branch scoping for each line's expense_category and staff payee.
         if 'lines' in self.fields:
             self.fields['lines'].child.fields['expense_category'] = serializers.PrimaryKeyRelatedField(

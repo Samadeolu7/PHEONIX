@@ -229,7 +229,10 @@ export interface CreatePettyCashVoucher {
   lines?: CreatePettyCashVoucherLine[];
   amount?: string | number;
   expense_category?: number | null;
-  payee_name: string;
+  /** Auto-derived server-side from the requester's own HR Staff link — not
+   * sent by the voucher form. Per-line payees (see CreatePettyCashVoucherLine.staff)
+   * cover the case where a line is being paid to someone other than the requester. */
+  payee_name?: string;
   payee_phone?: string;
   payee_staff?: number | null;
   payee_bank_name?: string;

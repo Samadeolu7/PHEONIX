@@ -587,7 +587,7 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                 </div>
                 <div className="flex items-center justify-between px-3 py-1 rounded-md text-base font-medium text-white/80">
                   <span>Discussions</span>
-                  <ThreadsNavDropdown variant="dark" />
+                  <ThreadsNavDropdown variant="dark" onClick={closeMobileMenu} />
                 </div>
                 <Link
                   to="/dashboard/select"
