@@ -1209,10 +1209,22 @@ def ingest_reconciliation_transactions(bank_account, statement_file, parsed_tran
             existing.total_bank_transactions = len(candidates)
             existing.include_debits = include_debits
             existing.rerun_count = F('rerun_count') + 1
-            existing.save(update_fields=[
+            update_fields = [
                 'uploaded_by', 'statement_file', 'status',
                 'total_bank_transactions', 'include_debits', 'rerun_count', 'updated_at',
-            ])
+            ]
+            # Self-heal a reconciliation stamped with the wrong branch by
+            # the old uploader-branch logic above — otherwise a rerun keeps
+            # reusing the stale value forever and the mismatch resurfaces
+            # for this bank account on every subsequent upload. Only
+            # corrects when bank_account.branch is actually set — never
+            # blanks an existing (possibly still-useful) branch value for a
+            # legacy bank account with none.
+            correct_branch = bank_account.branch
+            if correct_branch is not None and existing.branch_id != correct_branch.id:
+                existing.branch = correct_branch
+                update_fields.append('branch')
+            existing.save(update_fields=update_fields)
             existing.refresh_from_db()
             rerun.append(existing)
 

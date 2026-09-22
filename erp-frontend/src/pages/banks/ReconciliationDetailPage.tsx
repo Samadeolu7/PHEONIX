@@ -816,6 +816,8 @@ const ReconciliationDetailPage: React.FC = () => {
         <PostToExpenseModal
           reconciliationId={recon.id}
           exception={postToExpenseException}
+          branchId={recon.branch}
+          branchName={recon.branch_name}
           onClose={() => setPostToExpenseException(null)}
           onSuccess={handlePostToExpenseSuccess}
           onError={showError}

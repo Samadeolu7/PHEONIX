@@ -7,6 +7,14 @@ import type { ReconciliationException } from '../../types/banks';
 interface PostToExpenseModalProps {
   reconciliationId: number;
   exception: ReconciliationException;
+  // The bank account's own branch (DailyReconciliation.branch) — the resulting
+  // BankPayment/JournalEntry is always posted under this branch, so the
+  // category picker below is restricted to it. Picking a category whose
+  // expense account belongs to a different branch fails at the GL posting
+  // step with "Account belongs to branch X, but this transaction is for
+  // branch Y" — filtering here catches it before submission instead.
+  branchId?: number | null;
+  branchName?: string | null;
   onClose: () => void;
   onSuccess: (updated: ReconciliationException) => void;
   onError: (message: string) => void;
@@ -29,11 +37,20 @@ function formatAmount(value: string | null): string {
 export const PostToExpenseModal: React.FC<PostToExpenseModalProps> = ({
   reconciliationId,
   exception,
+  branchId,
+  branchName,
   onClose,
   onSuccess,
   onError,
 }) => {
-  const { data: categories, isLoading: categoriesLoading } = useAllExpenseCategories();
+  // branchId is passed straight to the backend (?branch=<id>) so an
+  // elevated/global-scope user doesn't even fetch other branches' categories.
+  // When branchId is null/undefined (a legacy bank account with no branch
+  // set), the backend filter is skipped and everything comes back — the
+  // client-side filter below then still narrows to an exact null match, same
+  // as before this became a server-side filter.
+  const { data: categories, isLoading: categoriesLoading } = useAllExpenseCategories(branchId);
+  const branchCategories = categories?.filter((cat) => (cat.branch ?? null) === (branchId ?? null));
   const [categoryId, setCategoryId] = useState<string>('');
   const [payeeName, setPayeeName] = useState('');
   const [description, setDescription] = useState(exception.bank_narration || '');
@@ -101,12 +118,18 @@ export const PostToExpenseModal: React.FC<PostToExpenseModalProps> = ({
               <option value="">
                 {categoriesLoading ? 'Loading categories…' : 'Select a category'}
               </option>
-              {categories?.map((cat) => (
+              {branchCategories?.map((cat) => (
                 <option key={cat.id} value={cat.id}>
                   {cat.name}
                 </option>
               ))}
             </select>
+            {!categoriesLoading && branchCategories?.length === 0 && (
+              <p className="text-xs text-red-600 mt-1">
+                No expense category exists for {branchName ? `branch "${branchName}"` : 'this branch'}.
+                Create one in Administration before posting this exception to expense.
+              </p>
+            )}
           </div>
 
           <div>

@@ -20,6 +20,7 @@ export const expenseCategoryService = {
       params.append('expense_account', filters.expense_account.toString());
     if (filters?.prepaid_account)
       params.append('prepaid_account', filters.prepaid_account.toString());
+    if (filters?.branch) params.append('branch', filters.branch.toString());
     if (filters?.page) params.append('page', filters.page.toString());
     if (filters?.page_size) params.append('page_size', filters.page_size.toString());
 

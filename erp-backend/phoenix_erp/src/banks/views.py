@@ -1698,10 +1698,22 @@ class ResolveExceptionToExpenseView(APIView):
         # explicitly below — a mismatch the GL posting guard then rejects.
         expense = expense_serializer.save(branch=recon.branch, tenant=recon.tenant)
 
-        # branch=recon.branch (not request.user.branch) — this payment
-        # belongs to the bank account being reconciled, which may differ
-        # from an elevated (cross-branch) director's own branch. owner is
-        # the acting user, matching BankPaymentViewSet.perform_create.
+        # branch=recon.bank_account.branch (not recon.branch, and not
+        # request.user.branch) — this payment belongs to the branch that
+        # owns the bank account being reconciled. recon.branch is stamped
+        # at upload time from the *uploading* user's own branch, which can
+        # differ from the bank account's real branch (e.g. a cross-branch/
+        # regional officer or director uploading someone else's statement),
+        # and that mismatch propagates silently into the posted GL entry's
+        # branch until it hits TransactionEntry.clean()'s account/transaction
+        # branch check. bank_account.branch is the authoritative fact and
+        # doesn't drift — BankAccountViewSet.perform_create (via
+        # ScopedModelViewSet._resolve_create_scope) requires an elevated
+        # user to explicitly pick a branch before a bank account can even be
+        # created, so it's trustworthy where recon.branch isn't. Falling
+        # back to recon.branch only covers legacy/test bank accounts with
+        # no branch set at all. owner is the acting user, matching
+        # BankPaymentViewSet.perform_create.
         payment = BankPayment.objects.create(
             bank_account=recon.bank_account,
             amount=exc_obj.bank_amount,
@@ -1711,7 +1723,7 @@ class ResolveExceptionToExpenseView(APIView):
             expense=expense,
             status='pending',
             owner=request.user,
-            branch=recon.branch,
+            branch=recon.bank_account.branch or recon.branch,
             tenant=recon.tenant,
             created_by=request.user,
         )
@@ -2099,8 +2111,15 @@ def _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, resolution_notes)
     from .reconciliation_utils import get_or_create_bank_charges_category, recompute_reconciliation_counts
 
     recon = bank_exc.reconciliation
+    # bank_account.branch, not recon.branch — see the matching comment in
+    # ResolveExceptionToExpenseView.post() above: recon.branch is stamped
+    # from the uploading user's own branch at upload time and can drift
+    # from the bank account's real branch, which then posts the GL entry
+    # under the wrong branch and trips TransactionEntry.clean(). Fall back
+    # to recon.branch only if the bank account itself has no branch set
+    # (legacy data).
     category = get_or_create_bank_charges_category(
-        branch=recon.branch, tenant=recon.tenant, owner=request.user,
+        branch=recon.bank_account.branch or recon.branch, tenant=recon.tenant, owner=request.user,
     )
     description = (
         f"Bank charge on transfer — linked bank_only exception #{bank_exc.id} "
@@ -2138,7 +2157,7 @@ def _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, resolution_notes)
             expense=expense,
             status='pending',
             owner=request.user,
-            branch=recon.branch,
+            branch=recon.bank_account.branch or recon.branch,
             tenant=recon.tenant,
             created_by=request.user,
         )

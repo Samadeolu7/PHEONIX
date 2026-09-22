@@ -55,7 +55,13 @@ class ExpenseCategoryViewSet(ScopedModelViewSet):
     serializer_class = ExpenseCategorySerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['requires_approval', 'product']
+    # 'branch' lets callers like PostToExpenseModal (banks app) ask for only
+    # the categories valid for a specific reconciliation/bank account branch,
+    # instead of fetching all categories and filtering client-side — the
+    # category's expense_account must belong to the same branch as the
+    # transaction it's posted against (transactions.TransactionEntry.clean()),
+    # so a category from the wrong branch is never a valid choice there.
+    filterset_fields = ['requires_approval', 'product', 'branch']
     search_fields = ['name', 'code', 'description']
     ordering_fields = ['name', 'code', 'created_at']
     ordering = ['name']
