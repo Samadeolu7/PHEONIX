@@ -43,13 +43,13 @@ export const PostToExpenseModal: React.FC<PostToExpenseModalProps> = ({
   onSuccess,
   onError,
 }) => {
-  const { data: categories, isLoading: categoriesLoading } = useAllExpenseCategories();
-  // Restrict the picker to categories belonging to this reconciliation's own
-  // branch (matches DailyReconciliation.branch exactly, including the
-  // tenant-wide null/null case) — an elevated/global-scope user otherwise
-  // sees every branch's categories here with no indication which is which,
-  // making it easy to pick one whose expense account belongs to a different
-  // branch than the bank account being reconciled.
+  // branchId is passed straight to the backend (?branch=<id>) so an
+  // elevated/global-scope user doesn't even fetch other branches' categories.
+  // When branchId is null/undefined (a legacy bank account with no branch
+  // set), the backend filter is skipped and everything comes back — the
+  // client-side filter below then still narrows to an exact null match, same
+  // as before this became a server-side filter.
+  const { data: categories, isLoading: categoriesLoading } = useAllExpenseCategories(branchId);
   const branchCategories = categories?.filter((cat) => (cat.branch ?? null) === (branchId ?? null));
   const [categoryId, setCategoryId] = useState<string>('');
   const [payeeName, setPayeeName] = useState('');

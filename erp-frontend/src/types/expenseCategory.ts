@@ -56,6 +56,7 @@ export interface ExpenseCategoryFilters {
   requires_approval?: boolean;
   expense_account?: number;
   prepaid_account?: number;
+  branch?: number;
   page?: number;
   page_size?: number;
 }

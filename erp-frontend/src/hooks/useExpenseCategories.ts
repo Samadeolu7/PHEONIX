@@ -69,11 +69,16 @@ export const useDeleteExpenseCategory = () => {
   });
 };
 
-// Utility hook for getting all expense categories (for dropdowns)
-export const useAllExpenseCategories = () => {
+// Utility hook for getting all expense categories (for dropdowns).
+// Pass `branchId` to ask the backend to only return categories for that
+// branch (e.g. PostToExpenseModal, which must never offer a category whose
+// expense account belongs to a different branch than the reconciliation
+// being resolved — see ExpenseCategoryViewSet.filterset_fields).
+export const useAllExpenseCategories = (branchId?: number | null) => {
+  const filters = { page_size: 1000, ...(branchId ? { branch: branchId } : {}) };
   return useQuery({
-    queryKey: expenseCategoryKeys.list({ page_size: 1000 }),
-    queryFn: () => expenseCategoryService.getExpenseCategories({ page_size: 1000 }),
+    queryKey: expenseCategoryKeys.list(filters),
+    queryFn: () => expenseCategoryService.getExpenseCategories(filters),
     staleTime: 10 * 60 * 1000, // 10 minutes
     select: data => data.results,
   });
