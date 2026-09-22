@@ -1180,7 +1180,25 @@ def ingest_reconciliation_transactions(bank_account, statement_file, parsed_tran
                 total_bank_transactions=len(candidates),
                 include_debits=include_debits,
                 owner=user,
-                branch=getattr(user, 'branch', None),
+                # bank_account.branch, NOT getattr(user, 'branch', None) —
+                # this reconciliation (and every expense/payment/GL entry
+                # later resolved from its exceptions) belongs to the branch
+                # that owns the bank account being reconciled, not whichever
+                # branch the uploading officer's own profile happens to be
+                # tagged with. A cross-branch/regional officer or director
+                # uploading someone else's statement used to stamp the wrong
+                # branch on the reconciliation, which then propagated to
+                # BankPayment.branch and the posted JournalEntry.branch,
+                # tripping TransactionEntry.clean()'s account/transaction
+                # branch match check once the resolver picked the (correctly
+                # branch-scoped) GL account — see the branch-mismatch
+                # postings this was fixed for. A user needing to see their
+                # own upload for another branch's account should get a temp
+                # cross-branch grant (permissions.services.get_temp_branch_ids),
+                # same mechanism already used elsewhere for this. Falls back
+                # to the uploader's own branch only for a legacy/test bank
+                # account with no branch set at all.
+                branch=bank_account.branch or getattr(user, 'branch', None),
                 # Explicit, not left to TimeStampedModel.save()'s
                 # thread-local fallback — that fallback only fills in
                 # when the middleware-set thread-local happens to be
@@ -1200,10 +1218,22 @@ def ingest_reconciliation_transactions(bank_account, statement_file, parsed_tran
             existing.total_bank_transactions = len(candidates)
             existing.include_debits = include_debits
             existing.rerun_count = F('rerun_count') + 1
-            existing.save(update_fields=[
+            update_fields = [
                 'uploaded_by', 'statement_file', 'status',
                 'total_bank_transactions', 'include_debits', 'rerun_count', 'updated_at',
-            ])
+            ]
+            # Self-heal a reconciliation stamped with the wrong branch by
+            # the old uploader-branch logic above — otherwise a rerun keeps
+            # reusing the stale value forever and the mismatch resurfaces
+            # for this bank account on every subsequent upload. Only
+            # corrects when bank_account.branch is actually set — never
+            # blanks an existing (possibly still-useful) branch value for a
+            # legacy bank account with none.
+            correct_branch = bank_account.branch
+            if correct_branch is not None and existing.branch_id != correct_branch.id:
+                existing.branch = correct_branch
+                update_fields.append('branch')
+            existing.save(update_fields=update_fields)
             existing.refresh_from_db()
             rerun.append(existing)
 
