@@ -693,14 +693,22 @@ class PettyCashVoucherSerializer(serializers.ModelSerializer):
 
         # Scope expense_category to the current user's branch so that pks
         # from other tenants are never accepted (avoids "Invalid pk" errors).
-        # NOTE: owner is an audit field only â€” scope by branch like OwnerBranchManager.for_user().
+        # NOTE: owner is an audit field only â€” scope by branch like OwnerBranchManager.for_user(),
+        # which always includes NULL-branch records as tenant-wide. Staff/categories
+        # shown in the frontend's dropdowns come from that same for_user()-scoped
+        # endpoint, so excluding NULL-branch records here rejected valid selections
+        # with a confusing "Invalid pk" error.
         request = self.context.get('request')
         if request and hasattr(request, 'user') and request.user.is_authenticated:
             user = request.user
             branch = getattr(user, 'branch', None)
             if branch:
-                cat_qs = ExpenseCategory.objects.filter(branch=branch)
-                staff_qs = Staff.objects.filter(branch=branch)
+                cat_qs = ExpenseCategory.objects.filter(
+                    models.Q(branch=branch) | models.Q(branch__isnull=True)
+                )
+                staff_qs = Staff.objects.filter(
+                    models.Q(branch=branch) | models.Q(branch__isnull=True)
+                )
             else:
                 # No branch â€” fall back to all records (system admin scenario)
                 cat_qs = ExpenseCategory.objects.all()

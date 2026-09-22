@@ -433,12 +433,67 @@ export const PettyCashVoucherDetail: React.FC = () => {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t border-gray-200">
+                      <td colSpan={linesHavePayees ? 3 : 2} className="py-2 pr-3 text-right font-medium text-gray-500">
+                        Total
+                      </td>
+                      <td className="py-2 text-right font-bold text-gray-900">
+                        ${parseFloat(voucher.amount).toLocaleString()}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             ) : (
               <div className="mt-4 pt-4 border-t">
                 <p className="text-sm text-gray-600 mb-2">Description</p>
                 <p className="text-gray-900">{voucher.purpose}</p>
+              </div>
+            )}
+
+            {/* Per-payee bank details + totals, so whoever disburses this
+                voucher has everything they need right here instead of
+                having to open the Disburse dialog (or another page) to
+                find each recipient's account number. */}
+            {hasLineRecipients && (
+              <div className="mt-4 pt-4 border-t">
+                <p className="text-sm text-gray-600 mb-2">Pay Each Of</p>
+                <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm">
+                  <div className="space-y-2">
+                    {payeeBreakdown.map((payee, i) => (
+                      <div
+                        key={i}
+                        className="flex items-start justify-between border-t border-gray-200 pt-2 first:border-t-0 first:pt-0"
+                      >
+                        <div>
+                          <p className="font-medium text-gray-900">{payee.name}</p>
+                          {payee.accountNumber ? (
+                            <p className="text-xs text-gray-600">
+                              {payee.bankName || '—'} —{' '}
+                              <span className="font-mono font-bold tracking-wider">
+                                {payee.accountNumber}
+                              </span>
+                            </p>
+                          ) : (
+                            <p className="text-xs text-amber-700">No bank details on file</p>
+                          )}
+                        </div>
+                        <span className="font-mono font-semibold text-gray-900 shrink-0 ml-4">
+                          ${payee.total.toLocaleString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between border-t border-gray-300 mt-2 pt-2">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Total
+                    </span>
+                    <span className="font-mono font-bold text-gray-900">
+                      ${parseFloat(voucher.amount).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
           </div>
