@@ -51,7 +51,7 @@ class Command(BaseCommand):
 
         funds = (
             PettyCashFund.objects
-            .filter(setup_journal_entry__isnull=True)
+            .filter(setup_journal_entry__isnull=True, disbursement_mode='cash')
             .exclude(status='closed')
             .select_related('petty_cash_account', 'custodian', 'branch')
             .order_by('established_date', 'fund_code')

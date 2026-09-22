@@ -259,6 +259,7 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
 
     requested_by_name = serializers.SerializerMethodField()
     disbursed_by_name = serializers.SerializerMethodField()
+    rejected_by_name = serializers.SerializerMethodField()
 
     # Bank account details for disbursement page
     destination_bank_name = serializers.SerializerMethodField()
@@ -281,6 +282,7 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             'destination_bank_name', 'destination_account_number', 'destination_account_name',
             'journal_entry', 'steps',
             'disbursed_by', 'disbursed_by_name', 'disbursed_at',
+            'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
         read_only_fields = [
@@ -295,6 +297,7 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
             'cashier_account_name',
             'destination_bank_name', 'destination_account_number', 'destination_account_name',
             'disbursed_by', 'disbursed_by_name', 'disbursed_at',
+            'rejected_by', 'rejected_by_name', 'rejected_at', 'rejection_reason',
             'owner', 'branch', 'created_at', 'updated_at',
         ]
 
@@ -312,6 +315,11 @@ class SavingsWithdrawalRequestSerializer(TenantModelSerializer):
     def get_disbursed_by_name(self, obj):
         if obj.disbursed_by_id:
             return getattr(obj.disbursed_by, 'get_full_name', lambda: str(obj.disbursed_by))()
+        return None
+
+    def get_rejected_by_name(self, obj):
+        if obj.rejected_by_id:
+            return getattr(obj.rejected_by, 'get_full_name', lambda: str(obj.rejected_by))()
         return None
 
     def get_destination_bank_name(self, obj):
@@ -359,4 +367,12 @@ class WithdrawalApprovalActionSerializer(serializers.Serializer):
         allow_null=True,
         default=None,
         help_text="GL Account ID for the cashier account (required when payment_method='cash').",
+    )
+
+
+class WithdrawalRejectionSerializer(serializers.Serializer):
+    """Used by the reject-disburse action endpoint."""
+    comment = serializers.CharField(
+        required=True, allow_blank=False, trim_whitespace=True,
+        help_text="Reason for rejecting the withdrawal at the disbursement stage.",
     )

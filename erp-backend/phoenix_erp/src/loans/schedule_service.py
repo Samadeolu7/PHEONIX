@@ -205,7 +205,7 @@ class RepaymentScheduleService:
     """
 
     @classmethod
-    def generate(cls, loan, principal_override: Decimal = None) -> None:
+    def generate(cls, loan, principal_override: Decimal = None, start_number: int = 1) -> None:
         """
         Build and persist the full amortisation schedule for `loan`.
 
@@ -224,6 +224,14 @@ class RepaymentScheduleService:
                 Used by LoanAccount.restructure(), which amortises the current
                 outstanding_principal (the remaining balance), not the original
                 disbursed amount.
+            start_number: First installment_number to assign (default 1, the
+                normal disbursement-time case). LoanAccount.restructure() never
+                deletes the loan's prior schedule rows — it only flips their
+                status to 'restructured' so they remain as a historical record
+                — so a restructure must continue numbering past whatever
+                installment_number values are already taken, or the new rows
+                collide with the old ones on the (loan, installment_number)
+                unique constraint.
 
         Writes to:
             loan.number_of_installments
@@ -266,7 +274,7 @@ class RepaymentScheduleService:
         loan.save()
 
         # ── Persist schedule rows ─────────────────────────────────────────────
-        for i, (row, due_date) in enumerate(zip(rows, due_dates), start=1):
+        for i, (row, due_date) in enumerate(zip(rows, due_dates), start=start_number):
             LoanRepaymentSchedule.objects.create(
                 loan=loan,
                 installment_number=i,

@@ -147,6 +147,53 @@ class TestPayrollService(TestCase):
         self.assertEqual(payslip.staff, self.staff)
         self.assertEqual(payslip.gross_pay, Decimal('100000.00'))
     
+    def test_calculate_payroll_skips_colliding_payslip_number(self):
+        """
+        Regression test for a live production bug: Payslip.payslip_number
+        is unique across the WHOLE table (not scoped per tenant/branch),
+        but every HRConfig keeps its own independent counter starting at 1
+        with the same default 'PAY' prefix. A branch getting its own
+        HRConfig for the first time (or a second config row for a branch
+        that already had one under a different owner — which is exactly
+        what happened in production) would always collide on PAY000001 and
+        fail every single time, since the counter never advances past the
+        clash. get_next_payslip_number() must skip past any number that's
+        already taken.
+        """
+        # Simulate some other branch/config having already claimed
+        # PAY000001 — the number this payroll's own counter would try
+        # first, since both start fresh at payslip_current_number=1.
+        other_payroll = Payroll.objects.create(
+            reference_number='PAY-OTHER-001',
+            period_start=self.payroll.period_start,
+            period_end=self.payroll.period_end,
+            pay_date=self.payroll.pay_date,
+            status='draft',
+            owner=self.user,
+            branch=self.branch,
+        )
+        Payslip.objects.create(
+            payslip_number='PAY000001',
+            payroll=other_payroll,
+            staff=self.staff,
+            basic_salary=Decimal('0.00'),
+            gross_pay=Decimal('0.00'),
+            total_deductions=Decimal('0.00'),
+            net_pay=Decimal('0.00'),
+            owner=self.user,
+            branch=self.branch,
+        )
+
+        service = PayrollService(self.payroll)
+        service.calculate_payroll()
+
+        self.payroll.refresh_from_db()
+        self.assertEqual(self.payroll.status, 'calculated')
+        self.assertGreater(self.payroll.total_gross_pay, 0)
+
+        payslip = Payslip.objects.get(payroll=self.payroll)
+        self.assertNotEqual(payslip.payslip_number, 'PAY000001')
+
     def test_approve_payroll(self):
         """Test payroll approval"""
         # Calculate first

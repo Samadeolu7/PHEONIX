@@ -172,9 +172,10 @@ export const ThreadPanel: React.FC = () => {
           .markRead(selectedThreadId!)
           .then(() => {
             // Whole 'threads' prefix, not just ['threads','list'] — the
-            // global nav/dashboard badge lives at ['threads','widgetSummary']
-            // (ThreadWidget.tsx), a sibling key that a narrower invalidation
-            // here doesn't touch. That badge polls independently every 120s
+            // global nav badge lives at ['threads','widgetSummary']
+            // (ThreadsNavDropdown.tsx), a sibling key that a narrower
+            // invalidation here doesn't touch. That badge polls independently
+            // every 120s
             // now (see BADGE_POLL_MS-style comments), so a narrow
             // invalidation left it showing stale "unread" for up to 2
             // minutes after the thread was actually read.

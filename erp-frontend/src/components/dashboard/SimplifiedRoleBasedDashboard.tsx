@@ -4,8 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
 import { BRAND } from '../../constants/brand';
-import { ThreadWidget } from '../threads/ThreadWidget';
-import { DiscussionNotificationBadge } from '../threads/DiscussionNotificationBadge';
 import CashInflowForecastCard from './CashInflowForecastCard';
 import {
   Clock,
@@ -1171,7 +1169,6 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
                       {userName.split(' ')[0]}.
                     </p>
                   </div>
-                  <DiscussionNotificationBadge targetId="discussions-widget" />
                 </div>
                 <p className="text-sm mt-3" style={{ color: 'rgba(255,255,255,0.45)' }}>
                   {new Date().toLocaleDateString('en-NG', {
@@ -1683,11 +1680,6 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
               </div>
             );
           })}
-        </div>
-
-        {/* ── DISCUSSIONS WIDGET ───────────────────────────────────────── */}
-        <div id="discussions-widget" className="max-w-sm scroll-mt-20">
-          <ThreadWidget />
         </div>
       </div>
     </>

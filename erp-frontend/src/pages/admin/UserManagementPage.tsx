@@ -23,6 +23,7 @@ import {
   Dashboard,
   UserStatistics,
 } from '../../services/userManagementService';
+import { branchService, Branch } from '../../services/branchService';
 import { useToast } from '../../hooks/useToast';
 import { usePermission } from '@/hooks/usePermissions';
 import { useAuth } from '@/contexts/AuthContext';
@@ -49,6 +50,7 @@ const UserManagementPage: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [statistics, setStatistics] = useState<UserStatistics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,7 @@ const UserManagementPage: React.FC = () => {
     confirm_password: '',
     roles: [] as number[],
     assigned_dashboard: null as number | null,
+    branch: null as number | null,
     is_active_user: true,
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -148,8 +151,10 @@ const UserManagementPage: React.FC = () => {
       }
 
       promises.push(userManagementService.getAvailableDashboards());
+      promises.push(branchService.listBranches());
 
-      const [usersResponse, rolesResponse, dashboardsResponse] = await Promise.all(promises);
+      const [usersResponse, rolesResponse, dashboardsResponse, branchesResponse] =
+        await Promise.all(promises);
 
       const usersData = Array.isArray(usersResponse)
         ? usersResponse
@@ -163,9 +168,14 @@ const UserManagementPage: React.FC = () => {
         ? dashboardsResponse
         : dashboardsResponse?.results || dashboardsResponse?.data || [];
 
+      const branchesData = Array.isArray(branchesResponse)
+        ? branchesResponse
+        : (branchesResponse as any)?.results || [];
+
       setUsers(usersData);
       setRoles(rolesData);
       setDashboards(dashboardsData);
+      setBranches(branchesData);
 
       if (activeTab === 'statistics' && canViewStatistics) {
         const stats = await userManagementService.getUserStatistics();
@@ -195,6 +205,7 @@ const UserManagementPage: React.FC = () => {
       confirm_password: '',
       roles: [],
       assigned_dashboard: null,
+      branch: null,
       is_active_user: true,
     });
     setShowPassword(false);
@@ -213,6 +224,7 @@ const UserManagementPage: React.FC = () => {
       confirm_password: '',
       roles: user.roles,
       assigned_dashboard: user.assigned_dashboard,
+      branch: user.branch,
       is_active_user: user.is_active_user,
     });
     setShowPassword(false);
@@ -620,6 +632,17 @@ const UserManagementPage: React.FC = () => {
                       color: '#374151',
                     }}
                   >
+                    Branch
+                  </th>
+                  <th
+                    style={{
+                      padding: '0.75rem',
+                      textAlign: 'left',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      color: '#374151',
+                    }}
+                  >
                     Status
                   </th>
                   <th
@@ -669,6 +692,9 @@ const UserManagementPage: React.FC = () => {
                     </td>
                     <td style={{ padding: '0.75rem', fontSize: '0.875rem' }}>
                       {user.assigned_dashboard_name || 'Default'}
+                    </td>
+                    <td style={{ padding: '0.75rem', fontSize: '0.875rem' }}>
+                      {user.branch_name || <span style={{ color: '#9ca3af' }}>Unassigned</span>}
                     </td>
                     <td style={{ padding: '0.75rem' }}>
                       {user.is_active_user ? (
@@ -1089,6 +1115,19 @@ const UserManagementPage: React.FC = () => {
                   {viewingUser.assigned_dashboard_name || 'Default'}
                 </span>
               </div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  borderBottom: '1px solid #f3f4f6',
+                  paddingBottom: '0.75rem',
+                }}
+              >
+                <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>Branch</span>
+                <span style={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                  {viewingUser.branch_name || 'Unassigned'}
+                </span>
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 <span style={{ color: '#6b7280', fontSize: '0.875rem' }}>Roles</span>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem' }}>
@@ -1464,6 +1503,42 @@ const UserManagementPage: React.FC = () => {
                       No role selected — user will have no permissions
                     </p>
                   )}
+                </div>
+              )}
+              {isDirectorOrPrincipal && (
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: '0.875rem',
+                      fontWeight: 500,
+                      marginBottom: '0.25rem',
+                    }}
+                  >
+                    Branch
+                  </label>
+                  <select
+                    value={userForm.branch || ''}
+                    onChange={e =>
+                      setUserForm({
+                        ...userForm,
+                        branch: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                    style={{
+                      width: '100%',
+                      padding: '0.5rem',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '0.375rem',
+                    }}
+                  >
+                    <option value="">Unassigned</option>
+                    {branches.map(branch => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
               <div>

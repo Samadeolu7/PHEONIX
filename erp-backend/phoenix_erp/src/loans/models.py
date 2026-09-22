@@ -1095,10 +1095,12 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                    'journal_entry_id': str(journal_entry.pk)},
         )
 
-    def _generate_repayment_schedule(self, principal_override=None):
+    def _generate_repayment_schedule(self, principal_override=None, start_number=1):
         """Delegate schedule generation to RepaymentScheduleService."""
         from .schedule_service import RepaymentScheduleService
-        RepaymentScheduleService.generate(self, principal_override=principal_override)
+        RepaymentScheduleService.generate(
+            self, principal_override=principal_override, start_number=start_number
+        )
 
     def periods_late_for_installment(self, sched, as_of=None):
         """
@@ -1966,16 +1968,22 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         restructured_by=None,
         reason: str = '',
         notes: str = '',
+        new_rate: Decimal = None,
     ):
         """
         Restructure a loan onto a new term for its current outstanding
         principal. Same LoanAccount row throughout — no new loan is created.
 
-        The new interest rate is DERIVED, not supplied: it scales
+        The new interest rate is DERIVED by default, not supplied: it scales
         proportionally from the loan's current contracted rate/term to the
         new term. E.g. 12% over 6 months implies 2%/month; extending to 10
-        months implies 20%. That derived total interest, charged on
-        outstanding_principal, splits into two GL postings on approval:
+        months implies 20%. That works for restructures between comparable
+        term scales, but breaks down for a large scale change (e.g. a 2-day
+        loan stretched to 60 days implies a 10%/day rate, i.e. 600% over the
+        new term) — pass new_rate explicitly to bypass the derivation
+        entirely for cases like that. That derived (or supplied) total
+        interest, charged on outstanding_principal, splits into two GL
+        postings on approval:
           - the portion at the loan's CURRENT rate (12% in the example)
             books to the product's ordinary interest_income_account.
           - the incremental portion caused purely by the term extension (8%
@@ -2012,6 +2020,12 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             restructured_by: User authorising the restructure.
             reason: Short reason code/label.
             notes: Free-text notes.
+            new_rate: Explicit total interest rate (%) for the new term,
+                skipping proportional derivation entirely. Use when the
+                derived rate would be nonsensical (see above) or the business
+                has a specific target rate/amount in mind — e.g. pass the
+                loan's own old_rate to keep total interest unchanged while
+                only extending the term.
         """
         if self.status not in ('active', 'disbursed', 'defaulted', 'overdue'):
             raise ValidationError(
@@ -2032,11 +2046,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         from django.utils import timezone as _tz
         effective_date = effective_date or _tz.now().date()
 
-        # ── Derive the new rate proportionally from the CURRENT rate/term ──
+        # ── Derive the new rate proportionally from the CURRENT rate/term,
+        # unless an explicit new_rate override was supplied ──────────────
         old_rate = self.interest_rate
         old_term = Decimal(str(self.term_months))
-        rate_per_unit = old_rate / old_term
-        new_rate = (rate_per_unit * Decimal(str(new_term))).quantize(Decimal('0.01'))
+        if new_rate is not None:
+            new_rate = Decimal(str(new_rate)).quantize(Decimal('0.01'))
+        else:
+            rate_per_unit = old_rate / old_term
+            new_rate = (rate_per_unit * Decimal(str(new_term))).quantize(Decimal('0.01'))
 
         balance = self.outstanding_principal
         total_new_interest = (balance * new_rate / Decimal('100')).quantize(Decimal('0.01'))
@@ -2106,7 +2124,15 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         # Regenerate schedule for the OUTSTANDING balance, not the original
         # disbursed_amount (which stays fixed as the historical disbursement figure).
-        self._generate_repayment_schedule(principal_override=balance)
+        # The old (now 'restructured') rows above are kept, not deleted, as a
+        # historical record — so the new rows must continue installment_number
+        # past whatever's already taken, or they collide with the old ones on
+        # the (loan, installment_number) unique constraint.
+        from django.db.models import Max
+        max_existing_number = self.repayment_schedule.aggregate(m=Max('installment_number'))['m'] or 0
+        self._generate_repayment_schedule(
+            principal_override=balance, start_number=max_existing_number + 1
+        )
 
         new_schedules = list(self.repayment_schedule.filter(status='pending').order_by('due_date'))
         if new_schedules:

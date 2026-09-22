@@ -19,15 +19,47 @@ import {
   ChevronDown,
   Check,
   MessageSquare,
+  Search,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
 import { BRAND } from '../../constants/brand';
 import NotificationDropdown from '../notifications/NotificationDropdown';
+import ThreadsNavDropdown from '../threads/ThreadsNavDropdown';
 import { api } from '../../services/api';
 import { branchService, Branch } from '../../services/branchService';
 import { getRoleRank } from '../../types/roles';
-import { useThreadContext } from '../../contexts/ThreadContext';
+
+// ---------------------------------------------------------------------------
+// TransactionSearchLink — Ctrl/Cmd+K shortcut to the dedicated transaction
+// search page (find a GL transaction by reference number, e.g.
+// SVWDR-20260911-0125). A plain link rather than an inline expanding
+// popover, which crowded out the rest of the nav.
+// ---------------------------------------------------------------------------
+function TransactionSearchLink() {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        navigate('/transactions/search');
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [navigate]);
+
+  return (
+    <Link
+      to="/transactions/search"
+      className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+      title="Transaction Search (Ctrl/Cmd+K)"
+    >
+      <Search className="h-4 w-4" />
+    </Link>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // BranchSwitcher — visible to director/admin/operations/owner (any tenant
@@ -208,7 +240,6 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
 }) => {
   const { user, selectedRole, logout } = useAuth();
   const { hasAnyPageAccessInModule } = usePermission();
-  const { globalUnreadCount } = useThreadContext();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -395,23 +426,14 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                     <NotificationDropdown />
                   </div>
 
-                  {/* Discussions workspace */}
-                  <Link
-                    to="/discussions"
-                    className={`relative p-2 rounded-md transition-colors ${
-                      isActivePath('/discussions') || isActivePath('/threads')
-                        ? 'bg-white/20 text-white'
-                        : 'text-white/80 hover:text-white hover:bg-white/10'
-                    }`}
-                    title="Discussions"
-                  >
-                    <MessageSquare className="h-4 w-4" />
-                    {globalUnreadCount > 0 && (
-                      <span className="absolute top-0.5 right-0.5 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
-                        {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
-                      </span>
-                    )}
-                  </Link>
+                  {/* Transaction search — find a GL transaction by reference number */}
+                  <TransactionSearchLink />
+
+                  {/* Discussions workspace — icon opens a recent/unread
+                      preview dropdown (mirrors NotificationDropdown) instead
+                      of only linking straight to /discussions, so users get
+                      at-a-glance visibility from any page. */}
+                  <ThreadsNavDropdown />
 
                   {/* Sidebar navigation panel trigger */}
                   <button
@@ -544,6 +566,18 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                   <Clock className="h-5 w-5" />
                   <span>Pending Approvals</span>
                 </Link>
+                <Link
+                  to="/transactions/search"
+                  onClick={closeMobileMenu}
+                  className={`flex items-center space-x-3 px-3 py-3 rounded-md text-base font-medium transition-colors ${
+                    isActivePath('/transactions/search')
+                      ? 'bg-white/20 text-white'
+                      : 'text-white/80 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  <Search className="h-5 w-5" />
+                  <span>Transaction Search</span>
+                </Link>
                 {/* Notification bell — desktop-only block above (hidden lg:flex)
                     never showed this on mobile at all; the dark variant matches
                     this menu's background instead of the light navbar styling. */}
@@ -551,32 +585,10 @@ export const RoleBasedNavigation: React.FC<RoleBasedNavigationProps> = ({
                   <span>Notifications</span>
                   <NotificationDropdown variant="dark" />
                 </div>
-                <Link
-                  to="/discussions"
-                  onClick={closeMobileMenu}
-                  className={`flex items-center space-x-3 px-3 py-3 rounded-md text-base font-medium transition-colors ${
-                    isActivePath('/discussions') || isActivePath('/threads')
-                      ? 'bg-white/20 text-white'
-                      : 'text-white/80 hover:text-white hover:bg-white/10'
-                  }`}
-                >
-                  <span className="relative">
-                    <MessageSquare className="h-5 w-5" />
-                    {globalUnreadCount > 0 && (
-                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center">
-                        {globalUnreadCount > 99 ? '99+' : globalUnreadCount}
-                      </span>
-                    )}
-                  </span>
-                  <span>
-                    Discussions
-                    {globalUnreadCount > 0 && (
-                      <span className="ml-2 bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">
-                        {globalUnreadCount}
-                      </span>
-                    )}
-                  </span>
-                </Link>
+                <div className="flex items-center justify-between px-3 py-1 rounded-md text-base font-medium text-white/80">
+                  <span>Discussions</span>
+                  <ThreadsNavDropdown variant="dark" onClick={closeMobileMenu} />
+                </div>
                 <Link
                   to="/dashboard/select"
                   onClick={closeMobileMenu}

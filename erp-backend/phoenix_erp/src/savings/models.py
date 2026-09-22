@@ -974,6 +974,17 @@ class SavingsWithdrawalRequest(TimeStampedModel, BranchScopedModel, SoftDeleteMo
     )
     disbursed_at = models.DateTimeField(null=True, blank=True)
 
+    # Set whenever status becomes 'rejected' — either by an approver mid-chain
+    # (approve-step) or by the disburser at the fully-approved stage (reject-disburse).
+    rejected_by = models.ForeignKey(
+        'users.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='rejected_withdrawals',
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
 

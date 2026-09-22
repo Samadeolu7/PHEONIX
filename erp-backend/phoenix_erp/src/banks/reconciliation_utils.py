@@ -1180,25 +1180,16 @@ def ingest_reconciliation_transactions(bank_account, statement_file, parsed_tran
                 total_bank_transactions=len(candidates),
                 include_debits=include_debits,
                 owner=user,
-                # bank_account.branch, NOT getattr(user, 'branch', None) —
-                # this reconciliation (and every expense/payment/GL entry
-                # later resolved from its exceptions) belongs to the branch
-                # that owns the bank account being reconciled, not whichever
-                # branch the uploading officer's own profile happens to be
-                # tagged with. A cross-branch/regional officer or director
-                # uploading someone else's statement used to stamp the wrong
-                # branch on the reconciliation, which then propagated to
-                # BankPayment.branch and the posted JournalEntry.branch,
-                # tripping TransactionEntry.clean()'s account/transaction
-                # branch match check once the resolver picked the (correctly
-                # branch-scoped) GL account — see the branch-mismatch
-                # postings this was fixed for. A user needing to see their
-                # own upload for another branch's account should get a temp
-                # cross-branch grant (permissions.services.get_temp_branch_ids),
-                # same mechanism already used elsewhere for this. Falls back
-                # to the uploader's own branch only for a legacy/test bank
-                # account with no branch set at all.
-                branch=bank_account.branch or getattr(user, 'branch', None),
+                # bank_account.branch (not the uploader's own branch) — this
+                # reconciliation belongs to the bank account being uploaded
+                # for, which may differ from an elevated (cross-branch)
+                # director's own branch. Using the uploader's branch here
+                # produced reconciliations, BankPayments, and their downstream
+                # GL postings all tagged to the uploader's home branch even
+                # when the bank account itself belonged to a different one —
+                # see fix_reconciliation_branch_mismatch for the historical
+                # cleanup.
+                branch=getattr(bank_account, 'branch', None) or getattr(user, 'branch', None),
                 # Explicit, not left to TimeStampedModel.save()'s
                 # thread-local fallback — that fallback only fills in
                 # when the middleware-set thread-local happens to be

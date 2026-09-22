@@ -1625,35 +1625,24 @@ class ResolveExceptionToExpenseView(APIView):
         if not category_id:
             return Response({'detail': 'category is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Guard against the same branch-mismatch failure this view used to
-        # cause via a stale recon.branch (fixed above) resurfacing through a
-        # different door: a category picker that isn't filtered to this
-        # bank account's branch would let a user pick a category whose
-        # expense_account belongs to a different branch, which fails the
-        # same way at posting time (TransactionEntry.clean()) but much
-        # later and less clearly. Catch it here instead, up front.
+        # The resulting BankPayment/JournalEntry is always branch=recon.branch
+        # (below); an account can only receive postings from transactions in
+        # its own branch (transactions.TransactionEntry.clean()), so a
+        # category whose expense_account belongs to a different branch would
+        # pass validation here and then fail at approval/posting time with a
+        # confusing GL error. Catch it up front instead, while there's still
+        # a category picker in front of the user to fix it.
         from expenses.models import ExpenseCategory
-        category_obj = ExpenseCategory.objects.filter(pk=category_id).select_related('expense_account__branch').first()
-        if category_obj is None:
-            return Response({'detail': 'Category not found.'}, status=status.HTTP_400_BAD_REQUEST)
-        recon_branch = recon.bank_account.branch or recon.branch
-        # Check the category's actual GL expense_account branch — the field
-        # TransactionEntry.clean() will enforce at posting time — not just
-        # the category's own branch, in case the two were ever linked
-        # inconsistently by an admin.
-        expense_account_branch = category_obj.expense_account.branch
-        if getattr(expense_account_branch, 'id', None) != getattr(recon_branch, 'id', None):
+        category = get_object_or_404(ExpenseCategory, pk=category_id)
+        if category.expense_account.branch_id != recon.branch_id:
             return Response(
-                {
-                    'detail': (
-                        f'Category "{category_obj.name}"\'s expense account '
-                        f'"{category_obj.expense_account.name}" belongs to branch '
-                        f'"{expense_account_branch.name if expense_account_branch else "none"}", but this '
-                        f'reconciliation is for the bank account\'s branch '
-                        f'"{recon_branch.name if recon_branch else "none"}". '
-                        'Choose a category whose expense account belongs to that branch, or create one.'
-                    )
-                },
+                {'detail': (
+                    f'Category "{category.name}" posts to account '
+                    f'"{category.expense_account.name}", which belongs to branch '
+                    f'"{category.expense_account.branch}", but this reconciliation is for branch '
+                    f'"{recon.branch}". Choose a category whose account belongs to '
+                    f'"{recon.branch}".'
+                )},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1701,7 +1690,13 @@ class ResolveExceptionToExpenseView(APIView):
         # has_tenant_set_and_is_listable). Leaving it unset here would
         # silently produce a BankPayment/Expense invisible to their own
         # tenant-scoped viewsets, including the approver's own request.
-        expense = expense_serializer.save(tenant=recon.tenant)
+        # branch=recon.branch (not request.user.branch) — this expense
+        # belongs to the bank account being reconciled, which may differ
+        # from an elevated (cross-branch) director's own branch. Without
+        # this, ExpenseSerializer.create() defaults to request.user.branch,
+        # leaving the expense disagreeing with the BankPayment.branch set
+        # explicitly below — a mismatch the GL posting guard then rejects.
+        expense = expense_serializer.save(branch=recon.branch, tenant=recon.tenant)
 
         # branch=recon.bank_account.branch (not recon.branch, and not
         # request.user.branch) — this payment belongs to the branch that
@@ -2146,7 +2141,13 @@ def _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, resolution_notes)
             context={'request': request},
         )
         expense_serializer.is_valid(raise_exception=True)
-        expense = expense_serializer.save(tenant=recon.tenant)
+        # branch=recon.branch (not request.user.branch) — this expense
+        # belongs to the bank account being reconciled, which may differ
+        # from an elevated (cross-branch) director's own branch. Without
+        # this, ExpenseSerializer.create() defaults to request.user.branch,
+        # leaving the expense disagreeing with the BankPayment.branch set
+        # explicitly below — a mismatch the GL posting guard then rejects.
+        expense = expense_serializer.save(branch=recon.branch, tenant=recon.tenant)
 
         payment = BankPayment.objects.create(
             bank_account=recon.bank_account,

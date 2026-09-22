@@ -769,14 +769,18 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
     queryset = PettyCashFund.objects.all()
     serializer_class = PettyCashFundSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filter by branch (honors the topbar branch-switcher for elevated users)
+
+        # Filter by branch (honors the topbar branch-switcher for elevated users).
+        # NULL-branch funds are tenant-wide (e.g. auto-created before any branch
+        # was assigned) and must stay visible no matter which branch is selected -
+        # otherwise a fund that shows up on the dashboard (which doesn't apply this
+        # filter) 404s as "not found" the moment a specific branch is selected.
         branch = resolve_effective_branch(self.request)
         if branch:
-            queryset = queryset.filter(branch=branch)
+            queryset = queryset.filter(Q(branch=branch) | Q(branch__isnull=True))
         
         # Filter by status
         status = self.request.query_params.get('status')
@@ -976,13 +980,21 @@ class PettyCashFundViewSet(viewsets.ModelViewSet):
         from transactions.models import Transaction, TransactionEntry, TransactionSeries
         
         fund = self.get_object()
-        
+
         if fund.setup_journal_entry:
             return Response(
                 {'error': 'Fund already setup'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if fund.disbursement_mode == 'bank_transfer':
+            return Response(
+                {'error': "Bank-transfer funds don't need a till setup transfer - "
+                          "disbursement draws directly from the bank account chosen "
+                          "on each voucher."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         source_account_id = request.data.get('source_account')
         if not source_account_id:
             return Response(
@@ -1096,14 +1108,17 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
     queryset = PettyCashVoucher.objects.all()
     serializer_class = PettyCashVoucherSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filter by branch (honors the topbar branch-switcher for elevated users)
+
+        # Filter by branch (honors the topbar branch-switcher for elevated users).
+        # NULL-branch vouchers (inherited from a NULL-branch fund) are tenant-wide
+        # and must stay visible no matter which branch is selected - see the same
+        # fix on PettyCashFundViewSet.get_queryset() for why.
         branch = resolve_effective_branch(self.request)
         if branch:
-            queryset = queryset.filter(branch=branch)
+            queryset = queryset.filter(Q(branch=branch) | Q(branch__isnull=True))
         
         # Filter by fund
         fund_id = self.request.query_params.get('fund')
@@ -1262,13 +1277,37 @@ class PettyCashVoucherViewSet(viewsets.ModelViewSet):
 
             voucher_number = f'{month_prefix}-{new_num:04d}'
 
-            serializer.save(
+            # â”€â”€ Payee defaults to the requester themselves â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # The voucher form no longer collects a payee name/staff link at
+            # all - "I'm requesting petty cash" implies "I'm the one being
+            # paid" in the overwhelming common case. Per-line PettyCashVoucherLine.staff
+            # covers the case where a line is being paid to someone else (the
+            # "expense for everyone" multi-staff pattern). Only fall back to
+            # these defaults when the caller didn't already supply their own
+            # (e.g. a future non-staff-payee process, or admin/management
+            # commands) - never override an explicit choice.
+            from hr.models import Staff as _Staff
+            requester_staff = _Staff.objects.filter(
+                user=self.request.user, is_deleted=False
+            ).first()
+
+            extra_kwargs = dict(
                 fund=fund,
                 voucher_number=voucher_number,
                 requested_by=self.request.user,
                 owner=self.request.user,
                 branch=getattr(self.request.user, 'branch', None),
             )
+            if serializer.validated_data.get('payee_staff') is None and requester_staff is not None:
+                extra_kwargs['payee_staff'] = requester_staff
+            if not serializer.validated_data.get('payee_name'):
+                extra_kwargs['payee_name'] = (
+                    f"{requester_staff.first_name} {requester_staff.last_name}".strip()
+                    if requester_staff is not None
+                    else (self.request.user.get_full_name() or self.request.user.username)
+                )
+
+            serializer.save(**extra_kwargs)
     
     @action(detail=True, methods=['post'])
     def submit(self, request, pk=None):
@@ -1561,14 +1600,17 @@ class PettyCashReplenishmentViewSet(viewsets.ModelViewSet):
     queryset = PettyCashReplenishment.objects.all()
     serializer_class = PettyCashReplenishmentSerializer
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        
-        # Filter by branch (honors the topbar branch-switcher for elevated users)
+
+        # Filter by branch (honors the topbar branch-switcher for elevated users).
+        # NULL-branch replenishments (inherited from a NULL-branch fund) are
+        # tenant-wide and must stay visible no matter which branch is selected -
+        # see the same fix on PettyCashFundViewSet.get_queryset() for why.
         branch = resolve_effective_branch(self.request)
         if branch:
-            queryset = queryset.filter(branch=branch)
+            queryset = queryset.filter(Q(branch=branch) | Q(branch__isnull=True))
         
         # Filter by fund
         fund_id = self.request.query_params.get('fund')

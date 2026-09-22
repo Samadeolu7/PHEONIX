@@ -85,7 +85,21 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-const JournalVoucherDetailPage: React.FC = () => {
+interface JournalVoucherDetailPageProps {
+  /**
+   * When true, hides the Post/Approve and Reverse actions. Used when this
+   * page is reached as a generic "view this transaction" destination (global
+   * search, a savings/loan account's ledger row, an account ledger's other
+   * leg) rather than through the Journal Voucher management flow — a
+   * savings/loan/payroll-originated GL entry reversed here would bypass
+   * that module's own reversal side effects (e.g. restoring a withdrawal's
+   * status, savings balance flags), so those actions must stay confined to
+   * vouchers actually being managed via /accounting/journal-vouchers.
+   */
+  readOnly?: boolean;
+}
+
+const JournalVoucherDetailPage: React.FC<JournalVoucherDetailPageProps> = ({ readOnly = false }) => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { success, error: showError } = useToast();
@@ -146,7 +160,7 @@ const JournalVoucherDetailPage: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <button
-                onClick={() => navigate('/accounting/journal-vouchers')}
+                onClick={() => navigate(readOnly ? -1 : '/accounting/journal-vouchers')}
                 className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
               >
                 <ArrowLeft size={18} />
@@ -175,29 +189,33 @@ const JournalVoucherDetailPage: React.FC = () => {
                     </span>
                   )}
                 </h1>
-                <p className="text-xs text-gray-500 mt-0.5">Journal Voucher</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {readOnly ? 'Transaction' : 'Journal Voucher'}
+                </p>
               </div>
             </div>
 
-            {/* Action buttons */}
-            <div className="flex items-center gap-2">
-              {canUserApprove && !jv.approved && !jv.is_reversed && (
-                <button
-                  onClick={() => setModal('approve')}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
-                >
-                  <CheckCircle size={15} /> Post / Approve
-                </button>
-              )}
-              {jv.approved && !jv.is_reversed && !jv.is_reversal && (
-                <button
-                  onClick={() => setModal('reverse')}
-                  className="flex items-center gap-1.5 px-4 py-2 border border-red-200 text-red-600 bg-red-50 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
-                >
-                  <RotateCcw size={15} /> Reverse
-                </button>
-              )}
-            </div>
+            {/* Action buttons — hidden in read-only mode (see JournalVoucherDetailPageProps.readOnly) */}
+            {!readOnly && (
+              <div className="flex items-center gap-2">
+                {canUserApprove && !jv.approved && !jv.is_reversed && (
+                  <button
+                    onClick={() => setModal('approve')}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+                  >
+                    <CheckCircle size={15} /> Post / Approve
+                  </button>
+                )}
+                {jv.approved && !jv.is_reversed && !jv.is_reversal && (
+                  <button
+                    onClick={() => setModal('reverse')}
+                    className="flex items-center gap-1.5 px-4 py-2 border border-red-200 text-red-600 bg-red-50 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors"
+                  >
+                    <RotateCcw size={15} /> Reverse
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -329,7 +347,9 @@ const JournalVoucherDetailPage: React.FC = () => {
                 <tr key={entry.id} className="hover:bg-gray-50">
                   <td className="px-4 py-2.5">
                     <button
-                      onClick={() => navigate(`/accounts/${entry.account.id}/ledger`)}
+                      onClick={() =>
+                        navigate(`/accounts/${entry.account.id}/ledger?highlight=${jv.id}`)
+                      }
                       className="flex items-center gap-1.5 text-left hover:text-blue-600 transition-colors group"
                     >
                       <span className="font-mono text-xs text-gray-500 group-hover:text-blue-500">

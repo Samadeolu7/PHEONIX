@@ -53,6 +53,9 @@ COPY --from=builder /usr/local/bin/gunicorn \
 COPY --from=builder /usr/local/bin/celery \
     /usr/local/bin/celery
 
+COPY --from=builder /usr/local/bin/daphne \
+    /usr/local/bin/daphne
+
 RUN find /usr/local/lib/python3.11 \
     \( -name "__pycache__" -o -name "*.pyc" -o -name "*.pyo" \) \
     -exec rm -rf {} +

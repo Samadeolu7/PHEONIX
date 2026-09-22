@@ -45,6 +45,7 @@ import {
   useWithdrawals,
   useApproveWithdrawalStep,
   useDisburseWithdrawal,
+  useRejectWithdrawalDisbursement,
   useWithdrawalTiers,
   useCreateWithdrawalTier,
   useUpdateWithdrawalTier,
@@ -618,6 +619,93 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
   );
 }
 
+// ── Sub-component: Reject-at-disbursement modal ──────────────────────────────
+
+interface RejectModalProps {
+  withdrawal: SavingsWithdrawalRequest;
+  onDone: (updated: SavingsWithdrawalRequest) => void;
+  onClose: () => void;
+}
+
+function RejectModal({ withdrawal, onDone, onClose }: RejectModalProps) {
+  const [comment, setComment] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const rejectMutation = useRejectWithdrawalDisbursement({
+    onSuccess: (updated) => { onDone(updated); },
+    onError: (e) => { setError(e?.message ?? e?.detail ?? 'Rejection failed.'); },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!comment.trim()) { setError('Please explain why this withdrawal is being rejected.'); return; }
+    setError(null);
+    rejectMutation.mutate({ id: withdrawal.id, data: { comment: comment.trim() } });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="p-5 border-b border-gray-100 flex items-start justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-gray-900">Reject Withdrawal</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {withdrawal.account_number} — {withdrawal.client_name}
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded-full text-gray-400 hover:bg-gray-100">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 bg-red-50 border-b border-red-100">
+          <p className="text-xs text-red-600 font-medium uppercase tracking-wide">Withdrawal Amount</p>
+          <p className="text-2xl font-bold text-red-900">₦{fmt(withdrawal.amount)}</p>
+          <p className="text-xs text-red-700 mt-1">
+            This request is fully approved but has not been disbursed. Rejecting it will cancel the
+            request — no funds have moved yet.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {error && (
+            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Reason for rejection <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              value={comment}
+              onChange={e => setComment(e.target.value)}
+              rows={3}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
+              placeholder="Explain why this withdrawal is being rejected..."
+            />
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button
+              type="submit"
+              disabled={rejectMutation.isPending}
+              className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white text-sm py-2.5 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {rejectMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+              Confirm Rejection
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Sub-component: Withdrawal row with expandable steps ─────────────────────
 
 interface WithdrawalRowProps {
@@ -625,10 +713,11 @@ interface WithdrawalRowProps {
   onApprove?: (wr: SavingsWithdrawalRequest) => void;
   onCancel?: (wr: SavingsWithdrawalRequest) => void;
   onDisburse?: (wr: SavingsWithdrawalRequest) => void;
+  onReject?: (wr: SavingsWithdrawalRequest) => void;
   showApproveButton?: boolean;
 }
 
-function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, showApproveButton }: WithdrawalRowProps) {
+function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, onReject, showApproveButton }: WithdrawalRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
@@ -701,13 +790,22 @@ function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, showApproveButton 
               </button>
             )}
             {wr.status === 'fully_approved' && (
-              <button
-                onClick={() => onDisburse?.(wr)}
-                className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1 rounded-lg transition-colors"
-              >
-                <Landmark className="w-3 h-3 inline mr-1" />
-                Disburse
-              </button>
+              <>
+                <button
+                  onClick={() => onDisburse?.(wr)}
+                  className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-2.5 py-1 rounded-lg transition-colors"
+                >
+                  <Landmark className="w-3 h-3 inline mr-1" />
+                  Disburse
+                </button>
+                <button
+                  onClick={() => onReject?.(wr)}
+                  className="text-xs text-red-600 border border-red-200 px-2.5 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                >
+                  <XCircle className="w-3 h-3 inline mr-1" />
+                  Reject
+                </button>
+              </>
             )}
             <button
               onClick={() => setExpanded(v => !v)}
@@ -986,6 +1084,7 @@ export default function SavingsWithdrawalsPage() {
 
   const [approveTarget, setApproveTarget] = useState<SavingsWithdrawalRequest | null>(null);
   const [disburseTarget, setDisburseTarget] = useState<SavingsWithdrawalRequest | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<SavingsWithdrawalRequest | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [allPage, setAllPage] = useState(1);
   const [showTierForm, setShowTierForm] = useState(false);
@@ -1020,6 +1119,13 @@ export default function SavingsWithdrawalsPage() {
     },
   });
 
+  const rejectMutation = useRejectWithdrawalDisbursement({
+    onSuccess: () => {
+      loadPendingDisburse();
+      setRejectTarget(null);
+    },
+  });
+
   const createTierMutation = useCreateWithdrawalTier({
     onSuccess: () => {
       loadTiers();
@@ -1041,13 +1147,14 @@ export default function SavingsWithdrawalsPage() {
   useEffect(() => { if (activeTab === 'all') loadAll(); }, [activeTab, loadAll]);
   useEffect(() => { setAllPage(1); }, [statusFilter]);
 
-  // Called after approve/disburse/cancel actions complete
+  // Called after approve/disburse/reject/cancel actions complete
   const handleActionDone = () => {
     loadPending();
     loadPendingDisburse();
     loadAll();
     setApproveTarget(null);
     setDisburseTarget(null);
+    setRejectTarget(null);
   };
 
   const handleTierSaved = (_tier?: WithdrawalApprovalTier) => {
@@ -1274,12 +1381,20 @@ export default function SavingsWithdrawalsPage() {
                         <td className="px-4 py-3 text-xs text-gray-600">{wr.requested_by_name ?? '—'}</td>
                         <td className="px-4 py-3 text-xs text-gray-400">{new Date(wr.created_at).toLocaleDateString()}</td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => setDisburseTarget(wr)}
-                            className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
-                          >
-                            <Send className="w-3.5 h-3.5" /> Disburse
-                          </button>
+                          <div className="flex items-center gap-1.5 justify-end">
+                            <button
+                              onClick={() => setDisburseTarget(wr)}
+                              className="flex items-center gap-1.5 bg-teal-600 hover:bg-teal-700 text-white text-xs px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              <Send className="w-3.5 h-3.5" /> Disburse
+                            </button>
+                            <button
+                              onClick={() => setRejectTarget(wr)}
+                              className="flex items-center gap-1.5 text-red-600 border border-red-200 text-xs px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                            >
+                              <XCircle className="w-3.5 h-3.5" /> Reject
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1353,6 +1468,7 @@ export default function SavingsWithdrawalsPage() {
                         showApproveButton={false}
                         onCancel={handleActionDone}
                         onDisburse={setDisburseTarget}
+                        onReject={setRejectTarget}
                       />
                     ))}
                   </tbody>
@@ -1540,6 +1656,15 @@ export default function SavingsWithdrawalsPage() {
           withdrawal={disburseTarget}
           onDone={handleActionDone}
           onClose={() => setDisburseTarget(null)}
+        />
+      )}
+
+      {/* Reject-at-disbursement modal */}
+      {rejectTarget && (
+        <RejectModal
+          withdrawal={rejectTarget}
+          onDone={handleActionDone}
+          onClose={() => setRejectTarget(null)}
         />
       )}
     </div>

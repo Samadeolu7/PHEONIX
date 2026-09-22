@@ -7,7 +7,7 @@ export interface PettyCashFund {
   custodian_name: string;
   alternate_custodian: number | null;
   alternate_custodian_name: string | null;
-  petty_cash_account: number;
+  petty_cash_account: number | null;
   petty_cash_account_name: string;
   petty_cash_account_code: string;
   float_amount: string;
@@ -47,6 +47,13 @@ export interface PettyCashVoucherLine {
   description: string;
   amount: string;
   line_order: number;
+  /** Optional per-line reimbursement recipient — lets one voucher cover several
+   * staff at once, each with their own amount. Auto-fills bank details for
+   * bank-transfer disbursement, same as the voucher-level payee_staff. */
+  staff: number | null;
+  staff_name: string | null;
+  staff_bank_name: string | null;
+  staff_bank_account_number: string | null;
 }
 
 export interface PettyCashVoucher {
@@ -195,7 +202,7 @@ export interface CreatePettyCashFund {
   fund_code: string;
   custodian: number;
   alternate_custodian?: number | null;
-  petty_cash_account: number;
+  petty_cash_account: number | null;
   float_amount: string | number;
   replenishment_threshold: string | number;
   single_transaction_limit: string | number;
@@ -210,6 +217,8 @@ export interface CreatePettyCashVoucherLine {
   description: string;
   amount: string | number;
   line_order?: number;
+  /** Optional per-line reimbursement recipient — see PettyCashVoucherLine.staff. */
+  staff?: number | null;
 }
 
 export interface CreatePettyCashVoucher {
@@ -220,7 +229,10 @@ export interface CreatePettyCashVoucher {
   lines?: CreatePettyCashVoucherLine[];
   amount?: string | number;
   expense_category?: number | null;
-  payee_name: string;
+  /** Auto-derived server-side from the requester's own HR Staff link — not
+   * sent by the voucher form. Per-line payees (see CreatePettyCashVoucherLine.staff)
+   * cover the case where a line is being paid to someone other than the requester. */
+  payee_name?: string;
   payee_phone?: string;
   payee_staff?: number | null;
   payee_bank_name?: string;

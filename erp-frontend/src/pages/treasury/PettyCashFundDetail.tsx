@@ -358,7 +358,9 @@ export const PettyCashFundDetail: React.FC = () => {
           <div>
             <p className="text-sm text-gray-600">GL Account</p>
             <p className="font-medium">
-              {fund.petty_cash_account_name || `Account #${fund.petty_cash_account}`}
+              {fund.disbursement_mode === 'bank_transfer'
+                ? 'N/A — bank transfer uses the bank account chosen per voucher'
+                : fund.petty_cash_account_name || `Account #${fund.petty_cash_account}`}
             </p>
           </div>
           <div>
@@ -375,7 +377,18 @@ export const PettyCashFundDetail: React.FC = () => {
           </div>
         </div>
 
-        {/* Cashier till linkage */}
+        {/* Cashier till linkage - only relevant for the physical-till (cash) workflow.
+            Bank transfers disburse straight from a BankAccount chosen per voucher,
+            which already has its own GL account, so there's no till to wrap or link. */}
+        {fund.disbursement_mode === 'bank_transfer' ? (
+          <div className="mt-4 pt-4 border-t">
+            <p className="text-sm text-gray-600 mb-2">Cashier Till</p>
+            <p className="text-sm text-gray-500">
+              Not applicable in Bank Transfer mode — each voucher is disbursed straight from a
+              bank account chosen at disbursement time, which already has its own GL account.
+            </p>
+          </div>
+        ) : (
         <div className="mt-4 pt-4 border-t">
           <p className="text-sm text-gray-600 mb-2">Cashier Till</p>
           {fund.cashier_account ? (
@@ -433,6 +446,7 @@ export const PettyCashFundDetail: React.FC = () => {
             </div>
           )}
         </div>
+        )}
       </div>
 
       <LinkExistingCashierDialog
