@@ -46,7 +46,35 @@ const generateId = () => Math.random().toString(36).slice(2, 9);
 // ─── Error extraction ─────────────────────────────────────────────────────────
 // Voucher actions (submit/approve/etc.) return {"error": "..."}; serializer
 // validation on create/update returns DRF's field-keyed {"field": ["msg"]}
-// shape instead — surface whichever one the backend actually sent.
+// shape instead — surface whichever one the backend actually sent. The
+// `lines` field in particular nests per-row errors as an array of objects
+// (e.g. `{"lines": [{}, {"staff": ["Invalid pk \"12\" - object does not
+// exist."]}]}` for a bad Payee on row 2), so this recurses into arrays/
+// objects rather than giving up with the generic fallback the moment the
+// first-level value isn't a plain string.
+const findFirstErrorMessage = (value: unknown, path: string): string | null => {
+  if (typeof value === 'string') return path ? `${path}: ${value}` : value;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const found = findFirstErrorMessage(value[i], path && !path.includes('[') ? `${path}[${i + 1}]` : path);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, v] of Object.entries(value)) {
+      if (key === 'non_field_errors') {
+        const found = findFirstErrorMessage(v, path);
+        if (found) return found;
+        continue;
+      }
+      const found = findFirstErrorMessage(v, path ? `${path}.${key}` : key);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
 const extractErrorMessage = (err: any, fallback: string): string => {
   const data = err?.response?.data;
   if (!data) return err?.message || fallback;
@@ -59,13 +87,7 @@ const extractErrorMessage = (err: any, fallback: string): string => {
       ? data.non_field_errors.join(' ')
       : data.non_field_errors;
   }
-  for (const [field, value] of Object.entries(data)) {
-    const msg = Array.isArray(value) ? value[0] : value;
-    if (typeof msg === 'string') {
-      return field === 'non_field_errors' ? msg : `${field}: ${msg}`;
-    }
-  }
-  return fallback;
+  return findFirstErrorMessage(data, '') ?? fallback;
 };
 
 const emptyLineItem = (): LineItem => ({
