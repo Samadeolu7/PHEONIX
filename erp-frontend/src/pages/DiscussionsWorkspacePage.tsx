@@ -17,6 +17,7 @@ import {
   ChevronRight,
   ChevronLeft,
   UserPlus,
+  UserX,
   Reply,
   Paperclip,
   FileText,
@@ -327,7 +328,15 @@ function ConversationPane({
   const [replyTarget, setReplyTarget] = useState<ThreadMessageItem | null>(null);
   const [mentionedIds, setMentionedIds] = useState<Map<number, string>>(new Map());
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [showParticipants, setShowParticipants] = useState(false);
+  const [participantSearch, setParticipantSearch] = useState('');
+  const [participantResults, setParticipantResults] = useState<
+    { id: number; username: string; full_name: string }[]
+  >([]);
+  const [participantActionLoading, setParticipantActionLoading] = useState(false);
+  const [participantError, setParticipantError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const participantPopoverRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const prevCount = useRef(0);
@@ -346,6 +355,66 @@ function ConversationPane({
     }).catch(() => { if (!cancelled) setMentionSuggestions([]); });
     return () => { cancelled = true; };
   }, [mentionQuery]);
+
+  // Close the participant popover on an outside click, same pattern as
+  // NotificationDropdown/ThreadsNavDropdown.
+  useEffect(() => {
+    if (!showParticipants) return;
+    const handler = (e: MouseEvent) => {
+      if (participantPopoverRef.current && !participantPopoverRef.current.contains(e.target as Node)) {
+        setShowParticipants(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showParticipants]);
+
+  // Live-search staff to add as participants — mirrors the @mention search
+  // above, but scoped to the participant manager popover.
+  useEffect(() => {
+    if (!showParticipants) return;
+    let cancelled = false;
+    threadService.searchUsers(participantSearch || undefined).then(results => {
+      if (!cancelled) setParticipantResults(results);
+    }).catch(() => { if (!cancelled) setParticipantResults([]); });
+    return () => { cancelled = true; };
+  }, [participantSearch, showParticipants]);
+
+  // Neither addParticipant nor removeParticipant returns the full Thread, so
+  // pull a fresh copy after either action — updates this pane's own header
+  // (avatar stack/count) and, via onStatusChange, the sidebar/tab list too.
+  const refreshParticipants = async () => {
+    const updated = await threadService.get(local.id);
+    setLocal(updated);
+    onStatusChange(updated);
+  };
+
+  const handleAddParticipant = async (userId: number) => {
+    setParticipantActionLoading(true);
+    setParticipantError('');
+    try {
+      await threadService.addParticipant(local.id, userId);
+      await refreshParticipants();
+      setParticipantSearch('');
+    } catch {
+      setParticipantError('Failed to add participant.');
+    } finally {
+      setParticipantActionLoading(false);
+    }
+  };
+
+  const handleRemoveParticipant = async (participantId: number) => {
+    setParticipantActionLoading(true);
+    setParticipantError('');
+    try {
+      await threadService.removeParticipant(participantId);
+      await refreshParticipants();
+    } catch {
+      setParticipantError('Failed to remove participant.');
+    } finally {
+      setParticipantActionLoading(false);
+    }
+  };
 
   const handleDraftChange = (value: string) => {
     setDraft(value);
@@ -401,6 +470,9 @@ function ConversationPane({
     setReplyTarget(null);
     setMentionedIds(new Map());
     setMentionQuery(null);
+    setShowParticipants(false);
+    setParticipantSearch('');
+    setParticipantError('');
   }, [local.id]);
 
   useEffect(() => {
@@ -501,6 +573,7 @@ function ConversationPane({
   // it the same way ThreadPanel.tsx does.
   const isObserver = local.permissions?.is_observer ?? false;
   const isParticipant = local.permissions?.is_participant ?? false;
+  const canAddParticipants = local.permissions?.can_add_participants ?? false;
 
   // Group messages by calendar day
   const grouped: Array<{ date: string; items: ThreadMessageItem[] }> = [];
@@ -514,7 +587,10 @@ function ConversationPane({
   return (
     <div className="flex flex-col h-full overflow-hidden bg-white">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-gray-100 bg-white flex-shrink-0">
+      <div
+        ref={participantPopoverRef}
+        className="relative flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-gray-100 bg-white flex-shrink-0"
+      >
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {onBack && (
             <button
@@ -545,21 +621,28 @@ function ConversationPane({
                   {local.linked_record_repr.model}: {local.linked_record_repr.repr}
                 </span>
               )}
-              {/* Participant stack */}
-              <div className="flex -space-x-1.5">
-                {local.participants.slice(0, 6).map(p => (
-                  <UserAvatar key={p.id} name={p.user_info.full_name} size={5} />
-                ))}
-                {local.participants.length > 6 && (
-                  <div className="w-5 h-5 rounded-full bg-gray-200 text-gray-500 text-[8px] flex items-center justify-center border-2 border-white">
-                    +{local.participants.length - 6}
-                  </div>
-                )}
-              </div>
-              <span className="text-xs text-gray-400 flex items-center gap-1">
-                <Users className="w-3 h-3" />
-                {local.participants.length}
-              </span>
+              {/* Participant stack — click to manage/add participants */}
+              <button
+                type="button"
+                onClick={() => setShowParticipants(v => !v)}
+                title="Manage participants"
+                className="flex items-center gap-1.5 rounded-full pl-0.5 pr-2 py-0.5 hover:bg-gray-100 transition-colors"
+              >
+                <div className="flex -space-x-1.5">
+                  {local.participants.slice(0, 6).map(p => (
+                    <UserAvatar key={p.id} name={p.user_info.full_name} size={5} />
+                  ))}
+                  {local.participants.length > 6 && (
+                    <div className="w-5 h-5 rounded-full bg-gray-200 text-gray-500 text-[8px] flex items-center justify-center border-2 border-white">
+                      +{local.participants.length - 6}
+                    </div>
+                  )}
+                </div>
+                <span className="text-xs text-gray-400 flex items-center gap-1">
+                  <Users className="w-3 h-3" />
+                  {local.participants.length}
+                </span>
+              </button>
               {local.reason && (
                 <span className="text-[11px] bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full capitalize">
                   {local.reason}
@@ -571,6 +654,17 @@ function ConversationPane({
 
         {/* Action buttons */}
         <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+          {!isClosed && canAddParticipants && (
+            <button
+              type="button"
+              onClick={() => setShowParticipants(v => !v)}
+              title="Add people to this discussion"
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors font-medium"
+            >
+              <UserPlus className="w-3 h-3" />
+              Add people
+            </button>
+          )}
           {isParticipant && (
             <button
               type="button"
@@ -629,6 +723,78 @@ function ConversationPane({
             </button>
           )}
         </div>
+
+        {/* Participant manager popover */}
+        {showParticipants && (
+          <div className="absolute right-4 sm:right-6 top-full mt-1 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-gray-50">
+              <h3 className="text-sm font-semibold text-gray-900">
+                Participants ({local.participants.length})
+              </h3>
+              <button
+                onClick={() => setShowParticipants(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <ul className="max-h-40 overflow-y-auto divide-y divide-gray-50">
+              {local.participants.map(p => (
+                <li key={p.id} className="flex items-center justify-between gap-2 px-4 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <UserAvatar name={p.user_info.full_name} size={6} />
+                    <span className="text-xs text-gray-700 truncate">{p.user_info.full_name}</span>
+                  </div>
+                  <button
+                    onClick={() => handleRemoveParticipant(p.id)}
+                    disabled={participantActionLoading}
+                    title="Remove participant"
+                    className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 disabled:opacity-40 transition-colors flex-shrink-0"
+                  >
+                    <UserX className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            {canAddParticipants ? (
+              <div className="p-3 border-t border-gray-100 space-y-2">
+                <input
+                  type="text"
+                  placeholder="Search by name or username…"
+                  value={participantSearch}
+                  onChange={e => setParticipantSearch(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#0a1857]/40"
+                />
+                {participantSearch && participantResults.length > 0 && (
+                  <ul className="max-h-32 overflow-y-auto border border-gray-100 rounded-lg divide-y divide-gray-50">
+                    {participantResults
+                      .filter(u => !local.participants.some(p => p.user_info.id === u.id))
+                      .map(u => (
+                        <li key={u.id}>
+                          <button
+                            type="button"
+                            onClick={() => handleAddParticipant(u.id)}
+                            disabled={participantActionLoading}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40"
+                          >
+                            <span className="font-medium">{u.full_name}</span>{' '}
+                            <span className="text-gray-400">@{u.username}</span>
+                          </button>
+                        </li>
+                      ))}
+                  </ul>
+                )}
+                {participantError && <p className="text-xs text-red-600">{participantError}</p>}
+              </div>
+            ) : (
+              participantError && (
+                <p className="text-xs text-red-600 px-4 py-2">{participantError}</p>
+              )
+            )}
+          </div>
+        )}
       </div>
 
       {/* Closed banner */}
