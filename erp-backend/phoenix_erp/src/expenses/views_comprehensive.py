@@ -66,6 +66,26 @@ class ExpenseCategoryViewSet(ScopedModelViewSet):
     ordering_fields = ['name', 'code', 'created_at']
     ordering = ['name']
 
+    def get_queryset(self):
+        # ScopedModelViewSet.get_queryset() forces the queryset down to
+        # whatever branch the acting director currently has selected via
+        # the global branch switcher (X-Branch-ID) — the right default for
+        # "show me my own branch's data", but it runs before DjangoFilterBackend
+        # applies the explicit ?branch= param above, so the two intersect to
+        # nothing whenever a caller deliberately asks for a DIFFERENT branch
+        # than the director's own current selection (e.g. PostToExpenseModal
+        # asking for the reconciliation's own branch while the director is
+        # viewing a different branch in the topbar) — confirmed in production:
+        # a director on Ibafo's page got zero categories back for an
+        # Orimerunmu reconciliation's exception even though Orimerunmu had
+        # two perfectly valid ones. An explicit ?branch= here is exactly that
+        # kind of deliberate cross-branch lookup, so skip the override and let
+        # the query param (still gated by _scoped_queryset()'s own branch
+        # access control for non-elevated users) decide instead.
+        if self.request.query_params.get('branch'):
+            return self._scoped_queryset()
+        return super().get_queryset()
+
     @action(detail=True, methods=['get'])
     def budget_status(self, request, pk=None):
         """Get budget utilization status for this category"""
