@@ -279,8 +279,8 @@ const UserManagementPage: React.FC = () => {
     if (!canDeleteUser) return;
     if (!window.confirm('Are you sure you want to delete this user?')) return;
     try {
-      await userManagementService.deleteUser(userId);
-      toast.success('User deleted successfully');
+      const result = await userManagementService.deleteUser(userId);
+      toast.success(result?.detail || 'User deleted successfully');
       loadData();
     } catch (err: any) {
       toast.error(err.message || 'Failed to delete user');

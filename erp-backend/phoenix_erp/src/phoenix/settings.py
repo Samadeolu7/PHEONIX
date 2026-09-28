@@ -296,7 +296,7 @@ CORS_PREFLIGHT_MAX_AGE = 600
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'users.authentication.ActiveUserJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
@@ -350,7 +350,11 @@ SIMPLE_JWT = {
     'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
     'TOKEN_TYPE_CLAIM': 'token_type',
     'JTI_CLAIM': 'jti',
+    # Also require is_active_user, so deactivated/deleted staff can't log in or refresh
+    'USER_AUTHENTICATION_RULE': 'users.authentication.user_authentication_rule',
 }
+
+AUTHENTICATION_BACKENDS = ['users.authentication.ActiveUserModelBackend']
 
 # ==================================================
 # TEMPLATES CONFIGURATION

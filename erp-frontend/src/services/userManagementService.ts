@@ -104,8 +104,10 @@ class UserManagementService {
     return response;
   }
 
-  async deleteUser(userId: number): Promise<void> {
-    await api.delete(`/users/staff-users/${userId}/`);
+  // Resolves with { detail } when the backend deactivated the user instead
+  // (linked records block a hard delete); empty on a real delete.
+  async deleteUser(userId: number): Promise<{ detail?: string } | undefined> {
+    return api.delete(`/users/staff-users/${userId}/`);
   }
 
   async activateUser(userId: number): Promise<void> {
