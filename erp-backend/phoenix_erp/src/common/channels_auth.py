@@ -17,10 +17,10 @@ from channels.middleware import BaseMiddleware
 @database_sync_to_async
 def _get_user_from_token(raw_token):
     from django.contrib.auth.models import AnonymousUser
-    from rest_framework_simplejwt.authentication import JWTAuthentication
     from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+    from users.authentication import ActiveUserJWTAuthentication
 
-    authenticator = JWTAuthentication()
+    authenticator = ActiveUserJWTAuthentication()
     try:
         validated_token = authenticator.get_validated_token(raw_token.encode('utf-8'))
         return authenticator.get_user(validated_token)

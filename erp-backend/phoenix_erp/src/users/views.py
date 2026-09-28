@@ -3,7 +3,8 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.contrib.auth.models import Permission
-from django.db.models import Q, Count
+from django.db import IntegrityError, connection, transaction
+from django.db.models import Q, Count, ProtectedError, RestrictedError
 from .models import Tenant, Role, User
 from .serializers import TenantSerializer, RoleSerializer, UserSerializer, PasswordChangeSerializer
 from common.views import ScopedModelViewSet
@@ -173,6 +174,37 @@ class StaffUserViewSet(ScopedModelViewSet):
                 )
         return super().create(request, *args, **kwargs)
     
+    def destroy(self, request, *args, **kwargs):
+        """Hard-delete a user; if linked records block that, deactivate instead.
+
+        Either way the user can no longer sign in — previously a blocked
+        delete left the account fully active.
+        """
+        user = self.get_object()
+        if user.tenant != request.user.tenant:
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Tenant.owner is on_delete=CASCADE — deleting the owner wipes the tenant.
+        if user.is_owner():
+            return Response({'error': 'Cannot delete tenant owner'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_pk = user.pk
+        try:
+            with transaction.atomic():
+                user.delete()
+                # FK constraints are deferred on PostgreSQL; surface violations
+                # here instead of at request commit.
+                connection.check_constraints()
+        except (IntegrityError, ProtectedError, RestrictedError):
+            # delete() may have already cleared user.pk, so update by the saved pk.
+            User.objects.filter(pk=user_pk).update(is_active=False, is_active_user=False)
+            return Response({
+                'status': 'User deactivated',
+                'detail': 'This user has linked records and cannot be deleted, '
+                          'so the account was deactivated instead. They can no longer sign in.',
+            })
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         """Activate a user account"""
