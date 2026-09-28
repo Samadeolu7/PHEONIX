@@ -6,6 +6,7 @@ their own, and a hard delete blocked by linked records used to leave the
 account fully active. See users/authentication.py and
 StaffUserViewSet.destroy.
 """
+import secrets
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -21,6 +22,7 @@ User = get_user_model()
 
 LOGIN_URL = '/api/users/auth/login/'
 REFRESH_URL = '/api/users/auth/refresh/'
+PASSWORD = secrets.token_urlsafe(16)
 
 
 class InactiveUserLoginTests(TestCase):
@@ -31,17 +33,17 @@ class InactiveUserLoginTests(TestCase):
         self.tenant = Tenant.objects.create(name='Inactive Login Org', slug='inactive-login-org')
         self.branch = Branch.objects.create(name='Main', code='ILM', tenant=self.tenant)
         self.director = User.objects.create_user(
-            username='il_director', password='test123', tenant=self.tenant, branch=self.branch,
+            username='il_director', password=PASSWORD, tenant=self.tenant, branch=self.branch,
             is_superuser=True,
         )
         self.tenant.owner = self.director
         self.tenant.save(update_fields=['owner'])
         self.staff = User.objects.create_user(
-            username='il_staff', password='test123', tenant=self.tenant, branch=self.branch,
+            username='il_staff', password=PASSWORD, tenant=self.tenant, branch=self.branch,
         )
 
     def _login(self, username='il_staff'):
-        return self.client.post(LOGIN_URL, {'username': username, 'password': 'test123'}, format='json')
+        return self.client.post(LOGIN_URL, {'username': username, 'password': PASSWORD}, format='json')
 
     def test_active_user_can_login(self):
         self.assertEqual(self._login().status_code, 200)
