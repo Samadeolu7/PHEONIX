@@ -970,6 +970,7 @@ class ReconciliationBankTransactionSerializer(serializers.ModelSerializer):
 class DailyReconciliationSerializer(serializers.ModelSerializer):
     uploaded_by_name  = serializers.SerializerMethodField()
     bank_account_info = serializers.SerializerMethodField()
+    branch_name       = serializers.SerializerMethodField()
     exceptions        = ReconciliationExceptionSerializer(many=True, read_only=True)
 
     class Meta:
@@ -977,6 +978,7 @@ class DailyReconciliationSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'bank_account', 'bank_account_info',
+            'branch', 'branch_name',
             'reconciliation_date',
             'uploaded_by', 'uploaded_by_name', 'uploaded_at',
             'statement_file',
@@ -992,7 +994,7 @@ class DailyReconciliationSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'uploaded_by', 'uploaded_at', 'status',
+            'id', 'branch', 'uploaded_by', 'uploaded_at', 'status',
             'total_bank_transactions', 'matched_count',
             'unmatched_bank_count', 'unmatched_erp_count', 'include_debits',
             'error_detail', 'rerun_count', 'created_at', 'updated_at',
@@ -1010,6 +1012,9 @@ class DailyReconciliationSerializer(serializers.ModelSerializer):
             'account_name':   obj.bank_account.account_name,
             'bank_name':      obj.bank_account.bank.bank_name if obj.bank_account.bank_id else '',
         }
+
+    def get_branch_name(self, obj):
+        return obj.branch.name if obj.branch else None
 
 
 class DailyReconciliationListSerializer(serializers.ModelSerializer):
