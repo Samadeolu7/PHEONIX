@@ -15,6 +15,8 @@ import type {
   BulkLinkResolveBankChargeRequest,
   BulkLinkResolveBankChargePreview,
   BulkLinkResolveBankChargeResult,
+  BulkResolveSmallBankChargesPreview,
+  BulkResolveSmallBankChargesResult,
   BulkRerunReconciliationRequest,
   BulkRerunReconciliationResponse,
   BulkSecondResolveRequest,
@@ -258,6 +260,26 @@ export const reconciliationService = {
     data: Omit<BulkLinkResolveBankChargeRequest, 'dry_run'>
   ): Promise<BulkLinkResolveBankChargeResult> {
     return api.post(`${BASE_URL}/exceptions/bulk-link-resolve-bank-charge/`, { ...data, dry_run: false });
+  },
+
+  /**
+   * Every unresolved bank_only DEBIT exception at/below
+   * SMALL_BANK_CHARGE_MAX_AMOUNT with no payment already pending — stamp
+   * duty, SMS fees, VAT on charges, and similar bank-levied amounts the ERP
+   * never expects to record at all (no erp_only counterpart needed, unlike
+   * the fee-link pathway). Always call with dry_run: true first to preview
+   * what would be posted (count, total, the items themselves) — there's no
+   * per-item confirmation once the real run starts. Posts each to a draft
+   * Expense + pending BankPayment against the fixed "Bank Charges" category
+   * automatically; doesn't resolve any exception itself (same as the
+   * single-item Post to Expense action).
+   */
+  async bulkResolveSmallBankChargesPreview(): Promise<BulkResolveSmallBankChargesPreview> {
+    return api.post(`${BASE_URL}/exceptions/bulk-resolve-small-bank-charges/`, { dry_run: true });
+  },
+
+  async bulkResolveSmallBankCharges(): Promise<BulkResolveSmallBankChargesResult> {
+    return api.post(`${BASE_URL}/exceptions/bulk-resolve-small-bank-charges/`, { dry_run: false });
   },
 
   /**

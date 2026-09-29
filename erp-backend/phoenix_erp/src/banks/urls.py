@@ -22,6 +22,7 @@ from .views import (
     LinkResolveExceptionsView,
     LinkResolveBankChargeView,
     BulkLinkResolveBankChargeView,
+    BulkResolveSmallBankChargesView,
     LinkCandidatesView,
     SuggestedMatchesQueueView,
     BulkConfirmSuggestedMatchesView,
@@ -112,6 +113,11 @@ urlpatterns = [
         'exceptions/bulk-link-resolve-bank-charge/',
         BulkLinkResolveBankChargeView.as_view(),
         name='reconciliation-exceptions-bulk-link-resolve-bank-charge',
+    ),
+    path(
+        'exceptions/bulk-resolve-small-bank-charges/',
+        BulkResolveSmallBankChargesView.as_view(),
+        name='reconciliation-exceptions-bulk-resolve-small-bank-charges',
     ),
     path(
         'exceptions/<int:exc_id>/link-candidates/',

@@ -14,6 +14,13 @@ export const MIN_REASON_LENGTH = 10;
 // the server enforces this independently.
 export const FEE_LINK_MAX_AMOUNT = 75;
 
+// Matches banks/reconciliation_utils.py's SMALL_BANK_CHARGE_MAX_AMOUNT — a
+// bank_only DEBIT exception at/below this amount, with no erp_only
+// counterpart expected at all (stamp duty, SMS fees, VAT on charges), is
+// treated as a presumed bank charge by the bulk small-bank-charges queue.
+// UX pre-check only; the server enforces this independently.
+export const SMALL_BANK_CHARGE_MAX_AMOUNT = 500;
+
 /**
  * Bank - Physical banking institution
  */
@@ -550,6 +557,28 @@ export interface BulkLinkResolveBankChargeResult {
   ambiguous_bank_only_exception_ids: number[];
   unmatched_count: number;
   unmatched_bank_only_exception_ids: number[];
+}
+
+export interface SmallBankChargeItem {
+  exception_id: number;
+  amount: string;
+  narration: string;
+  date: string | null;
+  bank_account_name: string;
+}
+
+export interface BulkResolveSmallBankChargesPreview {
+  would_resolve_count: number;
+  would_resolve: SmallBankChargeItem[];
+  total_amount: string;
+}
+
+export interface BulkResolveSmallBankChargesResult {
+  resolved_count: number;
+  resolved: (SmallBankChargeItem & { payment_id: number })[];
+  total_amount: string;
+  failed_count: number;
+  failed: { exception_id: number; detail: string }[];
 }
 
 export interface BulkCleanUpStrandedPairsRequest {

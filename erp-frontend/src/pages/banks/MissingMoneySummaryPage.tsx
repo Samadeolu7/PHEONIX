@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, Banknote, MessageSquare, Sparkles, Users, X } from 'lucide-react';
+import { AlertTriangle, Banknote, MessageSquare, Receipt, Sparkles, Users, X } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   useMissingMoneySummary,
@@ -10,6 +10,7 @@ import {
 import { BulkLinkBankChargeModal } from '../../components/banks/BulkLinkBankChargeModal';
 import { CleanUpStrandedPairsModal } from '../../components/banks/CleanUpStrandedPairsModal';
 import { CreateOfficerEvidenceThreadsModal } from '../../components/banks/CreateOfficerEvidenceThreadsModal';
+import { BulkResolveSmallBankChargesModal } from '../../components/banks/BulkResolveSmallBankChargesModal';
 import { useToast } from '../../hooks/useToast';
 import type {
   MissingMoneyBankAccountRow,
@@ -76,6 +77,7 @@ const MissingMoneySummaryPage: React.FC = () => {
   const [bulkLinkTarget, setBulkLinkTarget] = useState<{ id: number; name: string } | null>(null);
   const [showCleanUpModal, setShowCleanUpModal] = useState(false);
   const [showEvidenceModal, setShowEvidenceModal] = useState(false);
+  const [showSmallChargesModal, setShowSmallChargesModal] = useState(false);
 
   const openOfficerDrilldown = (row: MissingMoneyOfficerRow) => {
     setDrilldown({
@@ -120,6 +122,13 @@ const MissingMoneySummaryPage: React.FC = () => {
           >
             <MessageSquare className="w-4 h-4" />
             Request Evidence From Officers
+          </button>
+          <button
+            onClick={() => setShowSmallChargesModal(true)}
+            className="flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-lg hover:bg-amber-100"
+          >
+            <Receipt className="w-4 h-4" />
+            Post Small Bank Charges
           </button>
         </div>
       </div>
@@ -374,6 +383,17 @@ const MissingMoneySummaryPage: React.FC = () => {
           onClose={() => setShowEvidenceModal(false)}
           onSuccess={() => {
             success('Evidence request threads created');
+            invalidateMissingMoney();
+          }}
+          onError={showError}
+        />
+      )}
+
+      {showSmallChargesModal && (
+        <BulkResolveSmallBankChargesModal
+          onClose={() => setShowSmallChargesModal(false)}
+          onSuccess={() => {
+            success('Small bank charges posted to expense — reloading summary');
             invalidateMissingMoney();
           }}
           onError={showError}

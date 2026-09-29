@@ -1646,93 +1646,116 @@ class ResolveExceptionToExpenseView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # The bank's own reference (not exc_obj.bank_transaction_id, which is
-        # Java's internal UUID for the line, nor bank_narration, which is
-        # free text) lives on the ReconciliationBankTransaction row that id
-        # points to — see its bank_ref field. Carried onto BankPayment.
-        # reference_number (the field meant for "bank slip, invoice ref,
-        # etc.") so it survives approval; Expense.payment_reference is
-        # deliberately NOT relied on for this — BankPayment.post_payment()
-        # overwrites it with the internal BPM-XXXX number at posting time
-        # regardless of what's set here, so it's only ever a transient
-        # pre-approval value, not where this should permanently live.
-        bank_ref = ''
-        if exc_obj.bank_transaction_id:
-            bank_tx = ReconciliationBankTransaction.objects.filter(
-                pk=exc_obj.bank_transaction_id
-            ).only('bank_ref').first()
-            if bank_tx:
-                bank_ref = bank_tx.bank_ref
-
-        from expenses.serializers import ExpenseSerializer
-
-        expense_serializer = ExpenseSerializer(
-            data={
-                'category': category_id,
-                'expense_date': exc_obj.bank_date,
-                'description': request.data.get('description') or exc_obj.bank_narration or 'Bank charge',
-                'amount': exc_obj.bank_amount,
-                'payee_name': request.data.get('payee_name', ''),
-                'payment_method': 'bank_transfer',
-                'payment_reference': bank_ref,
-                'bank_account': recon.bank_account_id,
-            },
-            context={'request': request},
-        )
         try:
-            expense_serializer.is_valid(raise_exception=True)
+            _post_exception_to_expense(
+                request, exc_obj, recon, category,
+                description=request.data.get('description'),
+                payee_name=request.data.get('payee_name', ''),
+            )
         except Exception as exc:
             return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        # tenant=recon.tenant explicitly — TimeStampedModel.save()'s thread-
-        # local fallback isn't reliably populated in time for a DRF-
-        # authenticated request (the exact bug already hit once for
-        # DailyReconciliation.tenant — see test_uploaded_reconciliation_
-        # has_tenant_set_and_is_listable). Leaving it unset here would
-        # silently produce a BankPayment/Expense invisible to their own
-        # tenant-scoped viewsets, including the approver's own request.
-        # branch=recon.branch (not request.user.branch) — this expense
-        # belongs to the bank account being reconciled, which may differ
-        # from an elevated (cross-branch) director's own branch. Without
-        # this, ExpenseSerializer.create() defaults to request.user.branch,
-        # leaving the expense disagreeing with the BankPayment.branch set
-        # explicitly below — a mismatch the GL posting guard then rejects.
-        expense = expense_serializer.save(branch=recon.branch, tenant=recon.tenant)
-
-        # branch=recon.bank_account.branch (not recon.branch, and not
-        # request.user.branch) — this payment belongs to the branch that
-        # owns the bank account being reconciled. recon.branch is stamped
-        # at upload time from the *uploading* user's own branch, which can
-        # differ from the bank account's real branch (e.g. a cross-branch/
-        # regional officer or director uploading someone else's statement),
-        # and that mismatch propagates silently into the posted GL entry's
-        # branch until it hits TransactionEntry.clean()'s account/transaction
-        # branch check. bank_account.branch is the authoritative fact and
-        # doesn't drift — BankAccountViewSet.perform_create (via
-        # ScopedModelViewSet._resolve_create_scope) requires an elevated
-        # user to explicitly pick a branch before a bank account can even be
-        # created, so it's trustworthy where recon.branch isn't. Falling
-        # back to recon.branch only covers legacy/test bank accounts with
-        # no branch set at all. owner is the acting user, matching
-        # BankPaymentViewSet.perform_create.
-        payment = BankPayment.objects.create(
-            bank_account=recon.bank_account,
-            amount=exc_obj.bank_amount,
-            description=expense.description,
-            reference_number=bank_ref,
-            payment_date=exc_obj.bank_date,
-            expense=expense,
-            status='pending',
-            owner=request.user,
-            branch=recon.bank_account.branch or recon.branch,
-            tenant=recon.tenant,
-            created_by=request.user,
-        )
-
-        exc_obj.pending_bank_payment = payment
-        exc_obj.save(update_fields=['pending_bank_payment'])
 
         serializer = ReconciliationExceptionSerializer(exc_obj)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+def _post_exception_to_expense(request, exc_obj, recon, category, description=None, payee_name=''):
+    """
+    The actual work behind ResolveExceptionToExpenseView (one exception,
+    category picked manually) and BulkResolveSmallBankChargesView (many
+    small presumed-bank-charge exceptions, category fixed to "Bank
+    Charges") — creates a draft Expense + pending BankPayment for exc_obj's
+    bank-side amount/date/narration and attaches it as exc_obj.
+    pending_bank_payment. Does NOT resolve the exception itself — that
+    happens automatically once the payment is approved+posted and a later
+    reconciliation rerun matches it (see ResolveExceptionToExpenseView's
+    docstring). Raises on failure (validation); the caller decides how to
+    report that (400 response for the single-exception view, a per-item
+    "failed" entry for the bulk view).
+
+    Returns the created BankPayment.
+    """
+    from expenses.serializers import ExpenseSerializer
+
+    # The bank's own reference (not exc_obj.bank_transaction_id, which is
+    # Java's internal UUID for the line, nor bank_narration, which is free
+    # text) lives on the ReconciliationBankTransaction row that id points
+    # to — see its bank_ref field. Carried onto BankPayment.reference_number
+    # (the field meant for "bank slip, invoice ref, etc.") so it survives
+    # approval; Expense.payment_reference is deliberately NOT relied on for
+    # this — BankPayment.post_payment() overwrites it with the internal
+    # BPM-XXXX number at posting time regardless of what's set here, so
+    # it's only ever a transient pre-approval value, not where this should
+    # permanently live.
+    bank_ref = ''
+    if exc_obj.bank_transaction_id:
+        bank_tx = ReconciliationBankTransaction.objects.filter(
+            pk=exc_obj.bank_transaction_id
+        ).only('bank_ref').first()
+        if bank_tx:
+            bank_ref = bank_tx.bank_ref
+
+    expense_serializer = ExpenseSerializer(
+        data={
+            'category': category.id,
+            'expense_date': exc_obj.bank_date,
+            'description': description or exc_obj.bank_narration or 'Bank charge',
+            'amount': exc_obj.bank_amount,
+            'payee_name': payee_name,
+            'payment_method': 'bank_transfer',
+            'payment_reference': bank_ref,
+            'bank_account': recon.bank_account_id,
+        },
+        context={'request': request},
+    )
+    expense_serializer.is_valid(raise_exception=True)
+    # tenant=recon.tenant explicitly — TimeStampedModel.save()'s thread-local
+    # fallback isn't reliably populated in time for a DRF-authenticated
+    # request (the exact bug already hit once for DailyReconciliation.tenant
+    # — see test_uploaded_reconciliation_has_tenant_set_and_is_listable).
+    # Leaving it unset here would silently produce a BankPayment/Expense
+    # invisible to their own tenant-scoped viewsets, including the
+    # approver's own request. branch=recon.branch (not request.user.branch)
+    # — this expense belongs to the bank account being reconciled, which
+    # may differ from an elevated (cross-branch) director's own branch.
+    # Without this, ExpenseSerializer.create() defaults to
+    # request.user.branch, leaving the expense disagreeing with the
+    # BankPayment.branch set explicitly below — a mismatch the GL posting
+    # guard then rejects.
+    expense = expense_serializer.save(branch=recon.branch, tenant=recon.tenant)
+
+    # branch=recon.bank_account.branch (not recon.branch, and not
+    # request.user.branch) — this payment belongs to the branch that owns
+    # the bank account being reconciled. recon.branch is stamped at upload
+    # time from the *uploading* user's own branch, which can differ from
+    # the bank account's real branch (e.g. a cross-branch/regional officer
+    # or director uploading someone else's statement), and that mismatch
+    # propagates silently into the posted GL entry's branch until it hits
+    # TransactionEntry.clean()'s account/transaction branch check.
+    # bank_account.branch is the authoritative fact and doesn't drift —
+    # BankAccountViewSet.perform_create (via ScopedModelViewSet.
+    # _resolve_create_scope) requires an elevated user to explicitly pick a
+    # branch before a bank account can even be created, so it's trustworthy
+    # where recon.branch isn't. Falling back to recon.branch only covers
+    # legacy/test bank accounts with no branch set at all. owner is the
+    # acting user, matching BankPaymentViewSet.perform_create.
+    payment = BankPayment.objects.create(
+        bank_account=recon.bank_account,
+        amount=exc_obj.bank_amount,
+        description=expense.description,
+        reference_number=bank_ref,
+        payment_date=exc_obj.bank_date,
+        expense=expense,
+        status='pending',
+        owner=request.user,
+        branch=recon.bank_account.branch or recon.branch,
+        tenant=recon.tenant,
+        created_by=request.user,
+    )
+
+    exc_obj.pending_bank_payment = payment
+    exc_obj.save(update_fields=['pending_bank_payment'])
+    return payment
 
 
 class LinkCandidatesView(generics.ListAPIView):
@@ -2254,6 +2277,104 @@ class BulkLinkResolveBankChargeView(APIView):
             'ambiguous_bank_only_exception_ids': [b.id for b in ambiguous],
             'unmatched_count': len(unmatched),
             'unmatched_bank_only_exception_ids': [b.id for b in unmatched],
+        }, status=status.HTTP_201_CREATED)
+
+
+class BulkResolveSmallBankChargesView(APIView):
+    """
+    POST /api/banks/exceptions/bulk-resolve-small-bank-charges/
+
+    Every unresolved bank_only DEBIT exception at or below
+    SMALL_BANK_CHARGE_MAX_AMOUNT (reconciliation_utils.py) with no payment
+    already pending — stamp duty, SMS alert fees, card maintenance fees,
+    VAT on charges, and similar bank-levied amounts the ERP never expects
+    to record at all (unlike the fee-link pathway's bank_only/erp_only
+    pairs, these have no erp_only counterpart to find; "small amount
+    alone" IS the signal — see find_small_bank_charges). One click posts
+    every one of them to a draft Expense + pending BankPayment against the
+    fixed "Bank Charges" category (get_or_create_bank_charges_category —
+    the same category the fee-link pathway uses), same as repeatedly using
+    ResolveExceptionToExpenseView one at a time but without picking a
+    category each time. Doesn't resolve any exception itself — same as
+    the single-item pathway, that happens once each payment is approved
+    and posted and a later rerun matches it.
+
+    Pass dry_run: true to preview what would be posted (count, total
+    amount, the exceptions themselves) before committing — recommended
+    first, since a lower threshold might still catch something that isn't
+    actually a charge (a small genuine payment the ERP just hasn't
+    recorded yet). Excluded amounts stay in the ordinary queue for the
+    per-row Resolve/Link/Post-to-Expense actions.
+
+    Branch manager or director may initiate (can_user_edit OR
+    can_user_approve) — same tier as the single-item pathway; the real
+    control point is each BankPayment's own approval step, unchanged.
+
+    Request body:
+      dry_run  (bool, optional, default false)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        allowed = (
+            can_user_edit(request.user, module=self.permission_module, page=self.permission_page)
+            or can_user_approve(request.user, module=self.permission_module, page=self.permission_page)
+        )
+        if not allowed:
+            return Response(
+                {'detail': 'Only branch managers or directors may bulk-post small bank charges to expense.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .reconciliation_utils import find_small_bank_charges, get_or_create_bank_charges_category
+
+        dry_run = bool(request.data.get('dry_run', False))
+
+        scoped_qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user),
+        )
+        exceptions = find_small_bank_charges(scoped_qs)
+
+        def item_payload(exc):
+            return {
+                'exception_id': exc.id,
+                'amount': str(exc.bank_amount),
+                'narration': exc.bank_narration,
+                'date': exc.bank_date,
+                'bank_account_name': str(exc.reconciliation.bank_account),
+            }
+
+        if dry_run:
+            total = sum((exc.bank_amount for exc in exceptions), Decimal('0'))
+            return Response({
+                'would_resolve_count': len(exceptions),
+                'would_resolve': [item_payload(exc) for exc in exceptions],
+                'total_amount': str(total),
+            })
+
+        resolved, failed = [], []
+        total = Decimal('0')
+        for exc_obj in exceptions:
+            try:
+                recon = exc_obj.reconciliation
+                category = get_or_create_bank_charges_category(
+                    branch=recon.bank_account.branch or recon.branch, tenant=recon.tenant, owner=request.user,
+                )
+                payment = _post_exception_to_expense(request, exc_obj, recon, category)
+            except Exception as exc:
+                failed.append({'exception_id': exc_obj.id, 'detail': _error_message(exc)})
+                continue
+            resolved.append({**item_payload(exc_obj), 'payment_id': payment.id})
+            total += exc_obj.bank_amount
+
+        return Response({
+            'resolved_count': len(resolved),
+            'resolved': resolved,
+            'total_amount': str(total),
+            'failed_count': len(failed),
+            'failed': failed,
         }, status=status.HTTP_201_CREATED)
 
 

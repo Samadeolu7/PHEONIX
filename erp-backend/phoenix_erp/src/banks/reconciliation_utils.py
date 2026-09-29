@@ -830,6 +830,40 @@ def find_suggested_matches(scoped_qs):
     return safe_pairs, review_needed
 
 
+# Threshold for the bulk "small bank charges" queue (BulkResolveSmallBankChargesView)
+# — a bank_only DEBIT exception at/below this amount, with NO erp_only
+# counterpart expected at all (stamp duty, SMS alert fees, card maintenance
+# fees, VAT on charges — the bank levies these directly, nothing is ever
+# recorded on the ERP side for them), is treated as a presumed bank charge
+# and offered for one-click bulk posting to the fixed "Bank Charges"
+# category. Deliberately a plain amount cut-off rather than narration
+# matching — these charges' narrations vary by bank and change over time,
+# while their amounts are reliably small. Distinct from FEE_LINK_MAX_AMOUNT
+# (the difference between a bank_only and its erp_only pair in the fee-link
+# pathway) — this constant is about a bank_only's OWN absolute amount, with
+# no counterpart involved.
+SMALL_BANK_CHARGE_MAX_AMOUNT = Decimal('500.00')
+
+
+def find_small_bank_charges(scoped_qs):
+    """
+    Every unresolved bank_only DEBIT exception in `scoped_qs` at or below
+    SMALL_BANK_CHARGE_MAX_AMOUNT with no payment already pending against it
+    — presumed bank charges/stamp duties/levies for BulkResolveSmallBankChargesView.
+    Unlike find_bank_charge_pairs/find_suggested_matches, this never looks
+    for an erp_only counterpart: these charges are never expected to have
+    one at all, so "small amount" is the only signal, not "small amount AND
+    an otherwise-unmatched nearby ERP entry".
+    """
+    return list(
+        scoped_qs.filter(
+            exception_type='bank_only', direction='DEBIT', resolved=False,
+            pending_bank_payment__isnull=True,
+            bank_amount__lte=SMALL_BANK_CHARGE_MAX_AMOUNT,
+        ).select_related('reconciliation', 'reconciliation__bank_account').order_by('bank_date')
+    )
+
+
 def find_stranded_resolved_pairs(scoped_qs):
     """
     Finds bank_only/erp_only exception pairs where one side was resolved
