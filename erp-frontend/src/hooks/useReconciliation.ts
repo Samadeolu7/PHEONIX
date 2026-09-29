@@ -6,7 +6,9 @@ import type {
   OfficerReconciliationRiskFilters,
   ManualOverridesReportFilters,
   MissingMoneySummaryFilters,
+  BulkConfirmSuggestedMatchesRequest,
   BulkRerunReconciliationRequest,
+  BulkSecondResolveRequest,
   RerunReconciliationRequest,
   ResolveExceptionRequest,
   SecondResolveExceptionRequest,
@@ -36,6 +38,8 @@ export const reconciliationKeys = {
     [...reconciliationKeys.reports(), 'missing-money', 'officer', id] as const,
   missingMoneyByBankAccount: (id: number) =>
     [...reconciliationKeys.reports(), 'missing-money', 'bank-account', id] as const,
+  suggestedMatches: () => [...reconciliationKeys.reports(), 'suggested-matches'] as const,
+  secondApprovalQueue: () => [...reconciliationKeys.reports(), 'second-approval-queue'] as const,
   branches: () => [...reconciliationKeys.all, 'branches'] as const,
 };
 
@@ -146,6 +150,24 @@ export const useMissingMoneyByBankAccount = (bankAccountId: number, enabled = tr
     queryFn: () => reconciliationService.getMissingMoneyByBankAccount(bankAccountId),
     enabled,
     staleTime: 60_000,
+  });
+};
+
+export const useSuggestedMatchesQueue = () => {
+  return useQuery({
+    queryKey: reconciliationKeys.suggestedMatches(),
+    queryFn: () => reconciliationService.getSuggestedMatches(),
+    staleTime: 60_000,
+    refetchInterval: REPORT_POLL_MS,
+  });
+};
+
+export const useSecondApprovalQueue = () => {
+  return useQuery({
+    queryKey: reconciliationKeys.secondApprovalQueue(),
+    queryFn: () => reconciliationService.getSecondApprovalQueue(),
+    staleTime: 60_000,
+    refetchInterval: REPORT_POLL_MS,
   });
 };
 
@@ -272,6 +294,32 @@ export const useResolveExceptionToExpense = () => {
       reconciliationService.resolveExceptionToExpense(reconciliationId, exceptionId, data),
     onSuccess: (_result, { reconciliationId }) => {
       queryClient.invalidateQueries({ queryKey: reconciliationKeys.detail(reconciliationId) });
+      queryClient.invalidateQueries({ queryKey: reconciliationKeys.lists() });
+    },
+  });
+};
+
+export const useBulkConfirmSuggestedMatches = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: BulkConfirmSuggestedMatchesRequest) =>
+      reconciliationService.bulkConfirmSuggestedMatches(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: reconciliationKeys.suggestedMatches() });
+      queryClient.invalidateQueries({ queryKey: reconciliationKeys.lists() });
+    },
+  });
+};
+
+export const useBulkSecondResolveExceptions = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: BulkSecondResolveRequest) =>
+      reconciliationService.bulkSecondResolveExceptions(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: reconciliationKeys.secondApprovalQueue() });
       queryClient.invalidateQueries({ queryKey: reconciliationKeys.lists() });
     },
   });

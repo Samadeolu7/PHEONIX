@@ -8,6 +8,8 @@ import type {
   BulkCleanUpStrandedPairsRequest,
   BulkCleanUpStrandedPairsPreview,
   BulkCleanUpStrandedPairsResult,
+  BulkConfirmSuggestedMatchesRequest,
+  BulkConfirmSuggestedMatchesResult,
   BulkCreateOfficerEvidenceThreadsPreview,
   BulkCreateOfficerEvidenceThreadsResult,
   BulkLinkResolveBankChargeRequest,
@@ -15,6 +17,8 @@ import type {
   BulkLinkResolveBankChargeResult,
   BulkRerunReconciliationRequest,
   BulkRerunReconciliationResponse,
+  BulkSecondResolveRequest,
+  BulkSecondResolveResult,
   DailyReconciliation,
   LinkResolveBankChargeRequest,
   LinkResolveBankChargeResponse,
@@ -33,7 +37,9 @@ import type {
   ResolveExceptionToExpenseRequest,
   RerunReconciliationRequest,
   ResolveExceptionRequest,
+  SecondApprovalQueue,
   SecondResolveExceptionRequest,
+  SuggestedMatchesQueue,
   UnmatchTransactionRequest,
   UnresolveExceptionRequest,
   UnresolveExceptionResponse,
@@ -349,6 +355,61 @@ export const reconciliationService = {
   async getMissingMoneyByBankAccount(bankAccountId: number): Promise<ReconciliationException[]> {
     const res = await api.get(`${BASE_URL}/reports/missing-money-summary/bank-account/${bankAccountId}/`);
     return Array.isArray(res) ? res : (res?.results ?? []);
+  },
+
+  /**
+   * Cross-reconciliation triage queue: every unresolved bank_only/erp_only
+   * exception that already has a linkable candidate, split into
+   * safe_matches (both sides agree there's only one possible partner — but
+   * still just a suggestion, the UI must still require an explicit per-row
+   * tick, never a select-all, since same-amount coincidences do happen) and
+   * review_needed (1+ candidates but ambiguous, or an internal ERP-movement
+   * pairing — the officer must eyeball the candidate list and pick one).
+   */
+  async getSuggestedMatches(): Promise<SuggestedMatchesQueue> {
+    return api.get(`${BASE_URL}/exceptions/suggested-matches/`);
+  },
+
+  /**
+   * Confirms and resolves several pairs found via getSuggestedMatches in
+   * one request. Every pair is re-validated exactly like linkResolveExceptions
+   * /linkResolveBankCharge would for a single pair (a stale queue — something
+   * else resolved one side in the meantime — fails just that item, not the
+   * whole batch). No per-item resolution_notes: each confirmed pair gets a
+   * system-generated note describing what matched, since the safeguard here
+   * is the frontend requiring an explicit tick per row before it's ever
+   * included in `confirmations`, not typing another note.
+   */
+  async bulkConfirmSuggestedMatches(
+    data: BulkConfirmSuggestedMatchesRequest
+  ): Promise<BulkConfirmSuggestedMatchesResult> {
+    return api.post(`${BASE_URL}/exceptions/bulk-confirm-suggested-matches/`, data);
+  },
+
+  /**
+   * Every exception across the user's visible reconciliations currently
+   * awaiting a second director's confirmation (awaiting_second_resolution)
+   * — a first director already resolved it and recorded resolution_notes,
+   * but it's above the dual-approval threshold and isn't a perfect match.
+   */
+  async getSecondApprovalQueue(): Promise<SecondApprovalQueue> {
+    return api.get(`${BASE_URL}/exceptions/awaiting-second-approval/`);
+  },
+
+  /**
+   * Provides the second, confirming approval on several exceptions at once
+   * with ONE shared resolution_notes for the whole batch. Safe to allow
+   * select-all here (unlike the Suggested Matches queue): there's no fresh
+   * matching/pairing judgment call being made, only a maker-checker sign-off
+   * on a decision the first director already made and documented. Each
+   * exception is still individually re-validated server-side (director-only,
+   * second approver must differ from that row's own first resolver) — a row
+   * that fails that check fails just that row, not the whole batch.
+   */
+  async bulkSecondResolveExceptions(
+    data: BulkSecondResolveRequest
+  ): Promise<BulkSecondResolveResult> {
+    return api.post(`${BASE_URL}/exceptions/bulk-second-resolve/`, data);
   },
 
   /**

@@ -23,6 +23,10 @@ from .views import (
     LinkResolveBankChargeView,
     BulkLinkResolveBankChargeView,
     LinkCandidatesView,
+    SuggestedMatchesQueueView,
+    BulkConfirmSuggestedMatchesView,
+    SecondApprovalQueueView,
+    BulkSecondResolveExceptionsView,
     UnresolveExceptionView,
     BulkCleanUpStrandedPairsView,
     BulkCreateOfficerEvidenceThreadsView,
@@ -113,6 +117,26 @@ urlpatterns = [
         'exceptions/<int:exc_id>/link-candidates/',
         LinkCandidatesView.as_view(),
         name='reconciliation-exception-link-candidates',
+    ),
+    path(
+        'exceptions/suggested-matches/',
+        SuggestedMatchesQueueView.as_view(),
+        name='reconciliation-exceptions-suggested-matches',
+    ),
+    path(
+        'exceptions/bulk-confirm-suggested-matches/',
+        BulkConfirmSuggestedMatchesView.as_view(),
+        name='reconciliation-exceptions-bulk-confirm-suggested-matches',
+    ),
+    path(
+        'exceptions/awaiting-second-approval/',
+        SecondApprovalQueueView.as_view(),
+        name='reconciliation-exceptions-awaiting-second-approval',
+    ),
+    path(
+        'exceptions/bulk-second-resolve/',
+        BulkSecondResolveExceptionsView.as_view(),
+        name='reconciliation-exceptions-bulk-second-resolve',
     ),
     path(
         'exceptions/<int:exc_id>/unresolve/',

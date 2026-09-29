@@ -634,6 +634,65 @@ export interface BulkCreateOfficerEvidenceThreadsResult {
   failed: { officer_id: number; detail: string }[];
 }
 
+// ── Suggested Matches queue (bulk triage, per-row tick required) ─────────────
+
+export interface SuggestedMatchPair {
+  exception: ReconciliationException;
+  candidate: ReconciliationException;
+  fee_amount: string | null;
+  is_fee_pattern: boolean;
+}
+
+export interface SuggestedMatchReviewItem {
+  exception: ReconciliationException;
+  candidates: ReconciliationException[];
+}
+
+export interface SuggestedMatchesQueue {
+  /** Exception and its one candidate agree there's no other option — still
+   * just a suggestion (same-amount coincidences happen), so the UI must
+   * still require an explicit per-row tick before confirming any of these. */
+  safe_matches: SuggestedMatchPair[];
+  /** 1+ candidates but not mutually unique, or an internal ERP-movement
+   * pairing — the officer must eyeball the candidate list and pick one. */
+  review_needed: SuggestedMatchReviewItem[];
+}
+
+export interface SuggestedMatchConfirmation {
+  exception_a_id: number;
+  exception_b_id: number;
+}
+
+export interface BulkConfirmSuggestedMatchesRequest {
+  confirmations: SuggestedMatchConfirmation[];
+}
+
+export interface BulkConfirmSuggestedMatchesResult {
+  resolved_count: number;
+  resolved: (SuggestedMatchConfirmation & { payment_id?: number })[];
+  failed_count: number;
+  failed: (SuggestedMatchConfirmation & { detail: string })[];
+}
+
+// ── Second director approval queue (select-all + one shared comment) ────────
+
+export interface SecondApprovalQueue {
+  count: number;
+  results: ReconciliationException[];
+}
+
+export interface BulkSecondResolveRequest {
+  exception_ids: number[];
+  resolution_notes: string;
+}
+
+export interface BulkSecondResolveResult {
+  resolved_count: number;
+  resolved_exception_ids: number[];
+  failed_count: number;
+  failed: { exception_id: number; detail: string }[];
+}
+
 export interface DailyReconciliation {
   id: number;
   bank_account: number;

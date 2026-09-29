@@ -525,6 +525,8 @@ const ReconciliationDetailPage = lazy(() => import('./pages/banks/Reconciliation
 const OfficerReconciliationRiskPage = lazy(() => import('./pages/banks/OfficerReconciliationRiskPage'));
 const ManualOverridesReportPage = lazy(() => import('./pages/banks/ManualOverridesReportPage'));
 const MissingMoneySummaryPage = lazy(() => import('./pages/banks/MissingMoneySummaryPage'));
+const SuggestedMatchesQueuePage = lazy(() => import('./pages/banks/SuggestedMatchesQueuePage'));
+const SecondApprovalQueuePage = lazy(() => import('./pages/banks/SecondApprovalQueuePage'));
 const PaymentTracePage = lazy(() => import('./pages/banks/PaymentTracePage'));
 
 // Budget pages
@@ -3982,6 +3984,22 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
                                       <MissingMoneySummaryPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/reconciliations/suggested-matches"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
+                                      <SuggestedMatchesQueuePage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/banks/reconciliations/second-approval"
+                                  element={
+                                    <ProtectedRoute requiredPermission="bank-list" module="banks" page="bank-statement-reconciliation">
+                                      <SecondApprovalQueuePage />
                                     </ProtectedRoute>
                                   }
                                 />

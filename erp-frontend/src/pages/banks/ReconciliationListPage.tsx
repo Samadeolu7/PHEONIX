@@ -10,6 +10,8 @@ import {
   ShieldAlert,
   ClipboardList,
   RefreshCw,
+  Link2,
+  UserCheck,
   X,
 } from 'lucide-react';
 import {
@@ -111,6 +113,20 @@ const ReconciliationListPage: React.FC = () => {
         >
           <AlertTriangle className="w-4 h-4 text-red-500" />
           Missing Money Summary
+        </button>
+        <button
+          onClick={() => navigate('/banks/reconciliations/suggested-matches')}
+          className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+        >
+          <Link2 className="w-4 h-4 text-green-500" />
+          Suggested Matches
+        </button>
+        <button
+          onClick={() => navigate('/banks/reconciliations/second-approval')}
+          className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+        >
+          <UserCheck className="w-4 h-4 text-purple-500" />
+          Second Approval Queue
         </button>
         <button
           onClick={() => navigate('/banks/reconciliations/officer-risk-report')}

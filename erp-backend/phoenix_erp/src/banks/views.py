@@ -1761,70 +1761,13 @@ class LinkCandidatesView(generics.ListAPIView):
     permission_page = 'bank-reconciliation-exceptions'
 
     def get_queryset(self):
-        source = get_object_or_404(
-            ReconciliationException.objects.filter(
-                reconciliation__in=DailyReconciliation.objects.for_user(self.request.user),
-            ),
-            pk=self.kwargs['exc_id'],
-        )
-
-        amount = source.resolve_amount
-        if amount is None or source.exception_type not in ('bank_only', 'erp_only'):
-            return ReconciliationException.objects.none()
-
-        # NOT filtered to the source's own bank account here — the
-        # opposite-direction erp_only branch below may span accounts (the
-        # phantom inter-bank transfer case). Every other branch re-applies
-        # the same-account restriction itself.
-        qs = ReconciliationException.objects.filter(
+        scoped_qs = ReconciliationException.objects.filter(
             reconciliation__in=DailyReconciliation.objects.for_user(self.request.user),
-            resolved=False,
-        ).exclude(pk=source.pk).select_related('reconciliation', 'reconciliation__bank_account')
+        )
+        source = get_object_or_404(scoped_qs, pk=self.kwargs['exc_id'])
 
-        from .reconciliation_utils import FEE_LINK_MAX_AMOUNT
-
-        same_account = Q(reconciliation__bank_account_id=source.reconciliation.bank_account_id)
-
-        if source.exception_type == 'bank_only':
-            opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
-            same_direction_erp_only = same_account & Q(exception_type='erp_only', direction=source.direction)
-            if source.direction == 'DEBIT':
-                # Widened from exact match to include the bank-charge-fee
-                # case: erp_only amount up to FEE_LINK_MAX_AMOUNT lower than
-                # this bank_only exception's amount.
-                same_direction_erp_only &= Q(
-                    erp_amount__lte=amount, erp_amount__gte=amount - FEE_LINK_MAX_AMOUNT,
-                )
-            else:
-                same_direction_erp_only &= Q(erp_amount=amount)
-            qs = qs.filter(
-                (same_account & Q(exception_type='bank_only', direction=opposite, bank_amount=amount))
-                | same_direction_erp_only
-            )
-        else:  # erp_only — a same-direction bank_only, or an opposite-direction erp_only
-            opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
-            bank_only_same_direction = same_account & Q(
-                exception_type='bank_only', direction=source.direction,
-            )
-            if source.direction == 'DEBIT':
-                bank_only_same_direction &= Q(
-                    bank_amount__gte=amount, bank_amount__lte=amount + FEE_LINK_MAX_AMOUNT,
-                )
-            else:
-                bank_only_same_direction &= Q(bank_amount=amount)
-            # Opposite-direction erp_only candidates deliberately span ALL
-            # the user's visible bank accounts, not just the source's own:
-            # same-account is the internal-movement case (petty-cash relink
-            # netting to zero on one GL), cross-account is the phantom
-            # inter-bank transfer case (recorded transfer neither of whose
-            # legs reached its bank — link-resolving that pair also posts
-            # counter entries; see LinkResolveExceptionsView).
-            qs = qs.filter(
-                bank_only_same_direction
-                | Q(exception_type='erp_only', direction=opposite, erp_amount=amount)
-            )
-
-        return qs.order_by('-is_high_priority', '-created_at')
+        from .reconciliation_utils import find_link_candidates
+        return find_link_candidates(source, scoped_qs)
 
 
 class LinkResolveExceptionsView(APIView):
@@ -1920,58 +1863,77 @@ class LinkResolveExceptionsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        now = tz.now()
         from django.core.exceptions import ValidationError as DjangoValidationError
-        from django.db import transaction as db_transaction
 
-        from .reconciliation_utils import phantom_transfer_transactions, recompute_reconciliation_counts
-
-        # A cross-account erp_only pair is a phantom inter-bank transfer:
-        # both legs recorded in the ERP, neither seen by its bank — each
-        # bank GL is misstated by the amount, so resolving the exceptions
-        # alone would freeze both GLs out of step with the real banks
-        # forever. The recorded transaction(s) must also be reversed
-        # (counter entries via the audited Transaction.reverse path), and
-        # that only happens when the pair verifiably has the transfer
-        # shape — see phantom_transfer_transactions for the checks.
-        reversal_refs = []
-        with db_transaction.atomic():
-            if both_erp_only and cross_account:
-                try:
-                    txns_to_reverse = phantom_transfer_transactions(exc_a, exc_b)
-                    for txn in txns_to_reverse:
-                        txn.reverse(request.user, reason=(
-                            f'Phantom inter-bank transfer — neither leg appears in its bank statement '
-                            f'(link-resolved exceptions #{exc_a.id}/#{exc_b.id}). {resolution_notes}'
-                        ))
-                        reversal_refs.append(txn.reversal_transaction.reference_number)
-                except DjangoValidationError as exc:
-                    detail = '; '.join(exc.messages) if hasattr(exc, 'messages') else str(exc)
-                    return Response({'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
-
-            final_notes = resolution_notes
-            if reversal_refs:
-                final_notes = (
-                    f'{resolution_notes} | Counter entries posted: {", ".join(reversal_refs)} '
-                    f'(phantom transfer reversed — neither leg reached its bank).'
-                )
-
-            for exc, other in ((exc_a, exc_b), (exc_b, exc_a)):
-                exc.resolved = True
-                exc.resolved_by = request.user
-                exc.resolved_at = now
-                exc.resolution_notes = final_notes
-                exc.netted_with = other
-                exc.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with'])
-
-            for recon in {exc_a.reconciliation, exc_b.reconciliation}:
-                recompute_reconciliation_counts(recon)
+        try:
+            result = _link_and_resolve_pair(request, exc_a, exc_b, resolution_notes, both_erp_only, cross_account)
+        except DjangoValidationError as exc:
+            return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
             'exception_a': ReconciliationExceptionSerializer(exc_a).data,
             'exception_b': ReconciliationExceptionSerializer(exc_b).data,
-            'reversal_references': reversal_refs,
+            'reversal_references': result['reversal_refs'],
         })
+
+
+def _link_and_resolve_pair(request, exc_a, exc_b, resolution_notes, both_erp_only, cross_account):
+    """
+    The actual work behind LinkResolveExceptionsView (one pair, picked
+    manually) and BulkConfirmSuggestedMatchesView (many pairs from
+    find_suggested_matches) — atomically links and resolves an exact-
+    amount-match pair. Caller has already validated is_valid_exception_pairing,
+    same-bank-account-unless-phantom-transfer, and exact resolve_amount
+    equality; `both_erp_only`/`cross_account` are passed in rather than
+    recomputed since the caller already needed them for its own validation.
+
+    A cross-account erp_only pair is a phantom inter-bank transfer: both
+    legs recorded in the ERP, neither seen by its bank — each bank GL is
+    misstated by the amount, so resolving the exceptions alone would freeze
+    both GLs out of step with the real banks forever. The recorded
+    transaction(s) must also be reversed (counter entries via the audited
+    Transaction.reverse path), and that only happens when the pair
+    verifiably has the transfer shape — see phantom_transfer_transactions
+    for the checks. Raises DjangoValidationError if it doesn't; the caller
+    decides how to report that (400 response for the single-pair view, a
+    per-pair "failed" entry for the bulk view).
+
+    Returns {'reversal_refs': [...]}.
+    """
+    from django.db import transaction as db_transaction
+    from .reconciliation_utils import phantom_transfer_transactions, recompute_reconciliation_counts
+
+    now = tz.now()
+    reversal_refs = []
+    with db_transaction.atomic():
+        if both_erp_only and cross_account:
+            txns_to_reverse = phantom_transfer_transactions(exc_a, exc_b)
+            for txn in txns_to_reverse:
+                txn.reverse(request.user, reason=(
+                    f'Phantom inter-bank transfer — neither leg appears in its bank statement '
+                    f'(link-resolved exceptions #{exc_a.id}/#{exc_b.id}). {resolution_notes}'
+                ))
+                reversal_refs.append(txn.reversal_transaction.reference_number)
+
+        final_notes = resolution_notes
+        if reversal_refs:
+            final_notes = (
+                f'{resolution_notes} | Counter entries posted: {", ".join(reversal_refs)} '
+                f'(phantom transfer reversed — neither leg reached its bank).'
+            )
+
+        for exc, other in ((exc_a, exc_b), (exc_b, exc_a)):
+            exc.resolved = True
+            exc.resolved_by = request.user
+            exc.resolved_at = now
+            exc.resolution_notes = final_notes
+            exc.netted_with = other
+            exc.save(update_fields=['resolved', 'resolved_by', 'resolved_at', 'resolution_notes', 'netted_with'])
+
+        for recon in {exc_a.reconciliation, exc_b.reconciliation}:
+            recompute_reconciliation_counts(recon)
+
+    return {'reversal_refs': reversal_refs}
 
 
 class LinkResolveBankChargeView(APIView):
@@ -2293,6 +2255,292 @@ class BulkLinkResolveBankChargeView(APIView):
             'unmatched_count': len(unmatched),
             'unmatched_bank_only_exception_ids': [b.id for b in unmatched],
         }, status=status.HTTP_201_CREATED)
+
+
+class SuggestedMatchesQueueView(APIView):
+    """
+    GET /api/banks/exceptions/suggested-matches/
+
+    Cross-reconciliation triage queue (find_suggested_matches,
+    reconciliation_utils.py): every unresolved bank_only/erp_only exception
+    that already has a linkable candidate, so an officer doesn't have to
+    open each one individually via the per-row Link picker to discover it.
+
+    Split into two tiers — see find_suggested_matches for the exact
+    "mutual uniqueness" rule:
+      safe_matches   — exc and its one candidate agree there's no other
+                        option. Still just a suggestion, not an auto-
+                        resolve: same-amount coincidences do happen, so the
+                        frontend must still require an explicit per-row
+                        tick before calling bulk-confirm-suggested-matches/
+                        for any of these — this endpoint only lists them,
+                        it never resolves anything.
+      review_needed  — 1+ candidates but not mutually unique (or an
+                        erp_only+erp_only internal-movement pairing, which
+                        can trigger a phantom-transfer GL reversal and so
+                        always needs a human to pick a side).
+
+    Read-only, so no can_user_approve gate here — same as LinkCandidatesView
+    (the director-only checks live on the confirm/link endpoints, which are
+    where anything actually changes state).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get(self, request):
+        from .reconciliation_utils import find_suggested_matches
+
+        scoped_qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user),
+        )
+        safe_pairs, review_needed = find_suggested_matches(scoped_qs)
+
+        return Response({
+            'safe_matches': [
+                {
+                    'exception': ReconciliationExceptionSerializer(item['exception']).data,
+                    'candidate': ReconciliationExceptionSerializer(item['candidate']).data,
+                    'fee_amount': str(item['fee_amount']) if item['fee_amount'] is not None else None,
+                    'is_fee_pattern': item['is_fee_pattern'],
+                }
+                for item in safe_pairs
+            ],
+            'review_needed': [
+                {
+                    'exception': ReconciliationExceptionSerializer(item['exception']).data,
+                    'candidates': ReconciliationExceptionSerializer(item['candidates'], many=True).data,
+                }
+                for item in review_needed
+            ],
+        })
+
+
+class BulkConfirmSuggestedMatchesView(APIView):
+    """
+    POST /api/banks/exceptions/bulk-confirm-suggested-matches/
+
+    Confirms and resolves several pairs found via SuggestedMatchesQueueView
+    in one request — the batch equivalent of using the per-row Link picker
+    repeatedly. Deliberately requires the frontend to send back the exact
+    pair it wants confirmed (exception_a_id/exception_b_id) for every item,
+    whether that pair came from the "safe" tier (one candidate, agreed both
+    ways) or the "review needed" tier (the officer eyeballed several
+    candidates and picked one) — this endpoint does not re-derive or trust
+    "safe" from the queue itself, it re-validates every pair exactly like
+    LinkResolveExceptionsView/LinkResolveBankChargeView would for a single
+    pair, so a stale queue (something else resolved one side in the
+    meantime) fails that one item rather than corrupting data.
+
+    No per-item resolution_notes — the whole point of this queue is fewer
+    clicks for matches the system already found, not a place to type
+    another 10-character note per row. Each confirmed pair instead gets a
+    system-generated note describing exactly what matched (same amount, or
+    the bank-charge-fee shape) so the audit trail still says something
+    concrete, not just "bulk confirmed". The real safeguard against
+    rubber-stamping is on the frontend: no "select all" for this queue, an
+    explicit tick per row is required before it's included here at all.
+
+    Director-only (can_user_approve) — same tier as every other link/bulk
+    pathway.
+
+    Request body:
+      confirmations  (list, required) — [{exception_a_id, exception_b_id}, ...]
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        if not can_user_approve(request.user, module=self.permission_module, page=self.permission_page):
+            return Response(
+                {'detail': 'Only directors may confirm suggested matches.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        from .reconciliation_utils import is_valid_exception_pairing, bank_charge_fee, FEE_LINK_MAX_AMOUNT
+
+        confirmations = request.data.get('confirmations')
+        if not confirmations or not isinstance(confirmations, list):
+            return Response(
+                {'detail': 'confirmations is required and must be a non-empty list.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        scoped_qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user),
+        ).select_related('reconciliation', 'reconciliation__bank_account')
+
+        resolved, failed = [], []
+        for item in confirmations:
+            a_id = item.get('exception_a_id')
+            b_id = item.get('exception_b_id')
+            try:
+                if not a_id or not b_id or a_id == b_id:
+                    raise ValueError('exception_a_id and exception_b_id are required and must differ.')
+                exc_a = scoped_qs.get(pk=a_id)
+                exc_b = scoped_qs.get(pk=b_id)
+                for exc in (exc_a, exc_b):
+                    if exc.resolved:
+                        raise ValueError(f'Exception #{exc.id} is already resolved.')
+
+                fee = bank_charge_fee(exc_a, exc_b)
+                if fee is not None and fee <= FEE_LINK_MAX_AMOUNT:
+                    bank_exc, erp_exc = (exc_a, exc_b) if exc_a.exception_type == 'bank_only' else (exc_b, exc_a)
+                    if bank_exc.pending_bank_payment_id:
+                        raise ValueError(
+                            f'A payment is already pending for exception #{bank_exc.id}.'
+                        )
+                    notes = (
+                        f'Confirmed via Suggested Matches queue — bank charge fee ₦{fee} between '
+                        f'exception #{bank_exc.id} and #{erp_exc.id}.'
+                    )
+                    payment = _resolve_bank_charge_pair(request, bank_exc, erp_exc, fee, notes)
+                    resolved.append({
+                        'exception_a_id': exc_a.id, 'exception_b_id': exc_b.id, 'payment_id': payment.id,
+                    })
+                    continue
+
+                if not is_valid_exception_pairing(exc_a, exc_b):
+                    raise ValueError('These two exceptions cannot be linked together.')
+                if exc_a.resolve_amount != exc_b.resolve_amount:
+                    raise ValueError('The two exceptions must have exactly the same amount to be linked.')
+                both_erp_only = {exc_a.exception_type, exc_b.exception_type} == {'erp_only'}
+                cross_account = exc_a.reconciliation.bank_account_id != exc_b.reconciliation.bank_account_id
+                if cross_account and not both_erp_only:
+                    raise ValueError('Both exceptions must belong to the same bank account.')
+
+                notes = (
+                    f'Confirmed via Suggested Matches queue — matching amount ₦{exc_a.resolve_amount} '
+                    f'between exception #{exc_a.id} and #{exc_b.id}.'
+                )
+                _link_and_resolve_pair(request, exc_a, exc_b, notes, both_erp_only, cross_account)
+                resolved.append({'exception_a_id': exc_a.id, 'exception_b_id': exc_b.id})
+            except Exception as exc:
+                failed.append({'exception_a_id': a_id, 'exception_b_id': b_id, 'detail': _error_message(exc)})
+
+        return Response({
+            'resolved_count': len(resolved),
+            'resolved': resolved,
+            'failed_count': len(failed),
+            'failed': failed,
+        })
+
+
+class SecondApprovalQueueView(APIView):
+    """
+    GET /api/banks/exceptions/awaiting-second-approval/
+
+    Every exception across the user's visible reconciliations currently
+    awaiting-second-resolution (ReconciliationException.awaiting_second_
+    resolution) — a first director has already resolved it and recorded
+    resolution_notes, but it sits above RECONCILIATION_EXCEPTION_DUAL_
+    APPROVAL_THRESHOLD and isn't a perfect match, so a second, different
+    director must confirm before it actually closes (see
+    requires_dual_approval_to_resolve). Lets a director clear this queue in
+    one pass instead of hunting for these one reconciliation at a time.
+
+    Unlike SuggestedMatchesQueueView, this doesn't need a per-row "prove
+    you looked" safeguard against false-positive matching — there's no
+    matching decision being made here at all, the pairing/amount/category
+    judgment call already happened at first resolution and is preserved
+    verbatim in each row's resolution_notes for the second director to
+    read. The second approval is a maker-checker sign-off on a decision
+    already made and documented, not a fresh judgment call, so the bulk
+    endpoint allows select-all with one shared comment rather than a
+    forced per-row tick.
+
+    Read-only; no can_user_approve gate here, same reasoning as
+    SuggestedMatchesQueueView (state only changes via the confirm endpoint).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def get(self, request):
+        candidates = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user),
+            resolved=False, resolved_by__isnull=False, second_resolved_by__isnull=True,
+        ).select_related('reconciliation', 'reconciliation__bank_account', 'resolved_by').order_by('resolved_at')
+
+        awaiting = [exc for exc in candidates if exc.awaiting_second_resolution]
+        return Response({
+            'count': len(awaiting),
+            'results': ReconciliationExceptionSerializer(awaiting, many=True).data,
+        })
+
+
+class BulkSecondResolveExceptionsView(APIView):
+    """
+    POST /api/banks/exceptions/bulk-second-resolve/
+
+    Provides the second, confirming approval on several exceptions at once
+    — the batch equivalent of using SecondResolveExceptionView repeatedly.
+    One resolution_notes shared across the whole batch (see
+    SecondApprovalQueueView's docstring for why this is safe to allow
+    select-all + one comment here, unlike the Suggested Matches queue).
+
+    Every one of check_exception_second_resolution_authority's rules still
+    applies per exception — director-only, and the second approver must be
+    a different director from that row's own first resolver — so a batch
+    that includes a row this same user first-resolved fails just that row,
+    not the whole request.
+
+    Request body:
+      exception_ids     (list of int, required)
+      resolution_notes  (str, required) — applied to every exception in the batch
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def post(self, request):
+        from .reconciliation_utils import reason_too_short, MIN_REASON_LENGTH
+
+        exception_ids = request.data.get('exception_ids')
+        if not exception_ids or not isinstance(exception_ids, list):
+            return Response(
+                {'detail': 'exception_ids is required and must be a non-empty list.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        resolution_notes = request.data.get('resolution_notes', '')
+        if reason_too_short(resolution_notes):
+            return Response(
+                {'detail': f'resolution_notes is required (at least {MIN_REASON_LENGTH} characters) '
+                           f'for the second approval.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        scoped_qs = ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(request.user),
+        )
+
+        resolved, failed = [], []
+        for exc_id in exception_ids:
+            try:
+                exc_obj = scoped_qs.get(pk=exc_id)
+                if exc_obj.resolved:
+                    raise ValueError('Exception is already resolved.')
+                if not exc_obj.resolved_by_id:
+                    raise ValueError('This exception has not been through a first resolution yet.')
+                if not exc_obj.requires_dual_approval_to_resolve:
+                    raise ValueError('This exception does not require a second approval.')
+                error_message = check_exception_second_resolution_authority(exc_obj, request.user)
+                if error_message:
+                    raise ValueError(error_message)
+
+                resolve_exception_second(exc_obj, request.user, resolution_notes)
+                resolved.append(exc_obj.id)
+            except Exception as exc:
+                failed.append({'exception_id': exc_id, 'detail': _error_message(exc)})
+
+        return Response({
+            'resolved_count': len(resolved),
+            'resolved_exception_ids': resolved,
+            'failed_count': len(failed),
+            'failed': failed,
+        })
 
 
 class UnresolveExceptionView(APIView):

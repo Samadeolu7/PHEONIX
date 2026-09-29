@@ -13,7 +13,7 @@ import difflib
 import re
 from decimal import Decimal
 
-from django.db.models import F
+from django.db.models import F, Q
 
 from .tasks import run_pool_reconciliation_match
 
@@ -464,6 +464,77 @@ def is_valid_exception_pairing(exc_a, exc_b):
     return False
 
 
+def find_link_candidates(source, scoped_qs):
+    """
+    Valid linkable partners for `source` — the shared query behind
+    LinkCandidatesView (one exception, picked manually) and
+    find_suggested_matches (every unresolved exception, triaged in bulk).
+    `scoped_qs` is a caller-supplied ReconciliationException queryset
+    already filtered to the requesting user's visible reconciliations
+    (DailyReconciliation.objects.for_user()), so this never needs its own
+    authorization check.
+
+    See is_valid_exception_pairing and bank_charge_fee for the exact rules
+    encoded here: bank_only+bank_only (opposite direction — a compensating
+    transfer), bank_only+erp_only same direction+exact amount (a missed
+    auto-match), or bank_only+erp_only same DEBIT direction+bank_only up to
+    FEE_LINK_MAX_AMOUNT higher (a bank charge). erp_only+erp_only and
+    amount_diff are never returned here — not filtered to the source's own
+    bank account either: the opposite-direction erp_only branch may span
+    accounts (the phantom inter-bank transfer case), every other branch
+    re-applies the same-account restriction itself.
+    """
+    amount = source.resolve_amount
+    if amount is None or source.exception_type not in ('bank_only', 'erp_only'):
+        return scoped_qs.none()
+
+    qs = scoped_qs.filter(resolved=False).exclude(pk=source.pk).select_related(
+        'reconciliation', 'reconciliation__bank_account',
+    )
+    same_account = Q(reconciliation__bank_account_id=source.reconciliation.bank_account_id)
+
+    if source.exception_type == 'bank_only':
+        opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
+        same_direction_erp_only = same_account & Q(exception_type='erp_only', direction=source.direction)
+        if source.direction == 'DEBIT':
+            # Widened from exact match to include the bank-charge-fee case:
+            # erp_only amount up to FEE_LINK_MAX_AMOUNT lower than this
+            # bank_only exception's amount.
+            same_direction_erp_only &= Q(
+                erp_amount__lte=amount, erp_amount__gte=amount - FEE_LINK_MAX_AMOUNT,
+            )
+        else:
+            same_direction_erp_only &= Q(erp_amount=amount)
+        qs = qs.filter(
+            (same_account & Q(exception_type='bank_only', direction=opposite, bank_amount=amount))
+            | same_direction_erp_only
+        )
+    else:  # erp_only — a same-direction bank_only, or an opposite-direction erp_only
+        opposite = 'DEBIT' if source.direction == 'CREDIT' else 'CREDIT'
+        bank_only_same_direction = same_account & Q(
+            exception_type='bank_only', direction=source.direction,
+        )
+        if source.direction == 'DEBIT':
+            bank_only_same_direction &= Q(
+                bank_amount__gte=amount, bank_amount__lte=amount + FEE_LINK_MAX_AMOUNT,
+            )
+        else:
+            bank_only_same_direction &= Q(bank_amount=amount)
+        # Opposite-direction erp_only candidates deliberately span ALL the
+        # user's visible bank accounts, not just the source's own: same-
+        # account is the internal-movement case (petty-cash relink netting
+        # to zero on one GL), cross-account is the phantom inter-bank
+        # transfer case (recorded transfer neither of whose legs reached
+        # its bank — link-resolving that pair also posts counter entries;
+        # see LinkResolveExceptionsView).
+        qs = qs.filter(
+            bank_only_same_direction
+            | Q(exception_type='erp_only', direction=opposite, erp_amount=amount)
+        )
+
+    return qs.order_by('-is_high_priority', '-created_at')
+
+
 def phantom_transfer_transactions(exc_a, exc_b):
     """
     For a CROSS-bank-account erp_only+erp_only opposite-direction pair — a
@@ -680,6 +751,83 @@ def find_bank_charge_pairs(bank_account_id, scoped_qs):
             ambiguous.append(bank_exc)
 
     return pairs, ambiguous, unmatched
+
+
+def find_suggested_matches(scoped_qs):
+    """
+    Cross-reconciliation "Suggested Matches" triage queue: every unresolved
+    bank_only/erp_only exception in `scoped_qs` that has at least one
+    linkable candidate (find_link_candidates, applied to every exception at
+    once instead of one at a time). Used by SuggestedMatchesQueueView so an
+    officer doesn't have to open each exception individually to discover it
+    already has an obvious partner.
+
+    Splits into two tiers, same "mutual uniqueness" test as
+    find_bank_charge_pairs (generalized beyond the DEBIT-only bank-charge
+    case to every pairing shape is_valid_exception_pairing allows):
+
+      safe_pairs    — `exc` has exactly one candidate AND that candidate's
+                       own candidate list is exactly `[exc]` back. Both
+                       sides independently agree there is only one possible
+                       partner. This is the "obviously safe" tier from the
+                       product discussion — but "obvious" still isn't
+                       "certain" (two unrelated transactions can coincide on
+                       amount), so the caller must still require an explicit
+                       per-row confirmation before resolving; this function
+                       only narrows the queue, it never resolves anything
+                       itself.
+      review_needed — `exc` has 1+ candidates but isn't mutually unique
+                       (its one candidate has other options too, or it has
+                       several itself), OR the pairing is erp_only+erp_only
+                       (an internal ERP movement — resolving it can also
+                       trigger a phantom-transfer GL reversal, see
+                       phantom_transfer_transactions, so it always needs a
+                       human to pick, never the "safe" tier regardless of
+                       uniqueness).
+
+    Each exception appears at most once across both tiers — never once per
+    side of a pair — using `seen` to skip an exception already placed into
+    safe_pairs as someone else's confirmed partner.
+    """
+    unresolved = list(
+        scoped_qs.filter(resolved=False, exception_type__in=('bank_only', 'erp_only'))
+        .select_related('reconciliation', 'reconciliation__bank_account')
+        .order_by('id')
+    )
+
+    candidates_by_id = {exc.id: list(find_link_candidates(exc, scoped_qs)) for exc in unresolved}
+
+    seen = set()
+    safe_pairs = []
+    review_needed = []
+    for exc in unresolved:
+        if exc.id in seen:
+            continue
+        candidates = candidates_by_id[exc.id]
+        if not candidates:
+            continue
+
+        both_erp_only = exc.exception_type == 'erp_only' and len(candidates) == 1 and candidates[0].exception_type == 'erp_only'
+        if len(candidates) == 1 and not both_erp_only:
+            partner = candidates[0]
+            partner_candidates = candidates_by_id.get(partner.id, [])
+            mutually_unique = len(partner_candidates) == 1 and partner_candidates[0].id == exc.id
+            if mutually_unique:
+                fee = bank_charge_fee(exc, partner)
+                is_fee_pattern = fee is not None and fee <= FEE_LINK_MAX_AMOUNT
+                safe_pairs.append({
+                    'exception': exc,
+                    'candidate': partner,
+                    'fee_amount': fee if is_fee_pattern else None,
+                    'is_fee_pattern': is_fee_pattern,
+                })
+                seen.add(exc.id)
+                seen.add(partner.id)
+                continue
+
+        review_needed.append({'exception': exc, 'candidates': candidates})
+
+    return safe_pairs, review_needed
 
 
 def find_stranded_resolved_pairs(scoped_qs):
