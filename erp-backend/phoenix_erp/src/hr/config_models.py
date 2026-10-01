@@ -11,6 +11,48 @@ from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
 
 
+# Namespace for the Postgres advisory lock that serialises staff ID allocation.
+STAFF_ID_LOCK_NAMESPACE = 4720
+
+
+def lock_staff_ids(tenant_id):
+    """
+    Serialise staff ID allocation for a tenant until the current transaction ends.
+
+    The HRConfig row lock only covers one branch's counter; staff IDs must be
+    unique across the whole tenant, so two branches (or an import and the
+    auto-generator) need a shared lock. Must be called inside a transaction.
+    """
+    from django.db import connection
+    if connection.vendor != 'postgresql':
+        return
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(%s, %s)",
+            [STAFF_ID_LOCK_NAMESPACE, tenant_id or 0],
+        )
+
+
+def staff_id_in_use(staff_id, tenant_id, branch_id=None, exclude_pk=None):
+    """
+    True if another staff member in the tenant already holds this staff ID.
+
+    Soft-deleted staff count too: their IDs still appear on historical
+    payslips and must not be reissued. Staff in the same branch are checked
+    regardless of tenant to cover legacy rows saved without one.
+    """
+    from django.db.models import Q
+    from hr.models import Staff
+
+    scope = Q(tenant_id=tenant_id)
+    if branch_id:
+        scope |= Q(branch_id=branch_id)
+    qs = Staff.all_objects.all_tenants().filter(scope, staff_id=staff_id)
+    if exclude_pk:
+        qs = qs.exclude(pk=exclude_pk)
+    return qs.exists()
+
+
 class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """
     Branch-level HR configuration
@@ -317,15 +359,29 @@ class HRConfig(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     def get_next_staff_id(self):
         """
         Generate next staff ID using branch-configured prefix and sequential counter.
-        Thread-safe via select_for_update pattern.
+
+        Every HRConfig keeps its own counter, and IDs can also be set outside
+        the counter (spreadsheet import, admin), so the counter alone cannot
+        guarantee uniqueness. Any ID already held by a staff member in the
+        tenant - including soft-deleted ones - is skipped.
 
         Example: prefix=MML, padding=3, current=1  →  MML001
         """
         from django.db import transaction as db_transaction
         with db_transaction.atomic():
-            # Re-fetch with a row lock to avoid race conditions
-            config = HRConfig.objects.select_for_update().get(pk=self.pk)
+            # Re-fetch with a row lock to avoid race conditions. Bypass the
+            # thread-local tenant filter: the lookup is by primary key.
+            config = HRConfig.all_objects.all_tenants().select_for_update().get(pk=self.pk)
+            tenant_id = config.tenant_id
+            if tenant_id is None and config.branch_id:
+                tenant_id = config.branch.tenant_id
+            lock_staff_ids(tenant_id)
+
             staff_id = f"{config.staff_id_prefix}{str(config.staff_id_current_number).zfill(config.staff_id_padding)}"
+            while staff_id_in_use(staff_id, tenant_id, branch_id=config.branch_id):
+                config.staff_id_current_number += 1
+                staff_id = f"{config.staff_id_prefix}{str(config.staff_id_current_number).zfill(config.staff_id_padding)}"
+
             config.staff_id_current_number += 1
             config.save(update_fields=['staff_id_current_number'])
         return staff_id

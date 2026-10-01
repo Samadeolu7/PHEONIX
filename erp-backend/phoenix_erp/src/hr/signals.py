@@ -18,19 +18,28 @@ logger = logging.getLogger(__name__)
 
 
 @receiver(pre_save, sender='hr.Staff')
-def auto_assign_staff_id(sender, instance, **kwargs):
+def auto_assign_staff_id(sender, instance, raw=False, update_fields=None, **kwargs):
     """
     Auto-generate a branch-scoped staff ID before first save.
 
     Uses HRConfig.get_next_staff_id() which reads the configurable prefix and
     pads the sequential counter (e.g. prefix=MML, padding=3 → MML001).
+
+    A manually supplied ID (import, admin, scripts) is kept, but rejected if
+    another staff member already holds it.
     """
+    if raw:
+        return
+
     if instance.pk:
-        # Existing record – do not regenerate ID
+        # Existing record – do not regenerate ID, only guard a changed one
+        if update_fields is None or 'staff_id' in update_fields:
+            instance.validate_staff_id_unique()
         return
 
     if instance.staff_id:
-        # Already provided manually – respect it
+        # Already provided manually – respect it, as long as it is free
+        instance.validate_staff_id_unique()
         return
 
     if not instance.branch:

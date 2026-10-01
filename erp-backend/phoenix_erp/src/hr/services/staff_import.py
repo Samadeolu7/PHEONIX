@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction as db_transaction
 
 from hr.models import SalaryComponent, Staff, StaffPayInfo
@@ -389,6 +390,15 @@ class StaffImportService:
                 name=full_name,
                 status='created' if created else 'updated',
                 staff_id=staff.pk,
+            )
+
+        except DjangoValidationError as exc:
+            # e.g. the sheet's staff ID already belongs to another staff member
+            return RowResult(
+                row_number=row_number,
+                name=full_name,
+                status='error',
+                message='; '.join(exc.messages),
             )
 
         except Exception as exc:

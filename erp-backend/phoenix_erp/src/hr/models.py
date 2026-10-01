@@ -134,6 +134,44 @@ class Staff(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """
         return self.staff_id if self.staff_id else str(self.pk)
 
+    def clean(self):
+        super().clean()
+        self.validate_staff_id_unique()
+
+    def validate_staff_id_unique(self):
+        """
+        Reject a staff ID that another staff member in the tenant already holds.
+
+        Only runs when the ID is new or has changed, so records that already
+        share an ID (pre-dating this check) stay editable until they are
+        repaired with `fix_duplicate_staff_ids`.
+        """
+        from django.core.exceptions import ValidationError
+        from hr.config_models import lock_staff_ids, staff_id_in_use
+
+        if not self.staff_id:
+            return
+
+        if self.pk:
+            current = (
+                Staff.all_objects.all_tenants()
+                .filter(pk=self.pk)
+                .values_list('staff_id', flat=True)
+                .first()
+            )
+            if current == self.staff_id:
+                return
+
+        tenant_id = self.tenant_id
+        if tenant_id is None and self.branch_id:
+            tenant_id = self.branch.tenant_id
+
+        lock_staff_ids(tenant_id)
+        if staff_id_in_use(self.staff_id, tenant_id, branch_id=self.branch_id, exclude_pk=self.pk):
+            raise ValidationError({
+                'staff_id': f"Staff ID '{self.staff_id}' is already assigned to another staff member."
+            })
+
 class SalaryComponent(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     """
     Defines a pay component: earning or deduction.
