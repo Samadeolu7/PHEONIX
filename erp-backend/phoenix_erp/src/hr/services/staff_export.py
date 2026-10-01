@@ -121,9 +121,21 @@ class StaffPayrollExportService:
         ws = wb.active
         ws.title = "Payroll"
 
-        num_cols   = len(COLUMNS)
-        col_keys   = [c[1] for c in COLUMNS]
-        col_labels = [c[0] for c in COLUMNS]
+        staff_list = list(
+            self.staff_qs
+            .prefetch_related('pay_info__component')
+            .order_by('last_name', 'first_name')
+        )
+
+        # Components outside the fixed template (anything a user created)
+        # get their own column, so the sheet matches the payslip.
+        columns, extra_earning_keys, extra_deduct_keys = self._build_columns(staff_list)
+        earning_keys = _EARNING_KEYS | extra_earning_keys
+        deduct_keys  = _DEDUCT_KEYS | extra_deduct_keys
+
+        num_cols   = len(columns)
+        col_keys   = [c[1] for c in columns]
+        col_labels = [c[0] for c in columns]
 
         # ── Styles ───────────────────────────────────────────────────────
         header_fill  = PatternFill("solid", fgColor="1F3864")   # dark navy
@@ -197,12 +209,12 @@ class StaffPayrollExportService:
                 cell.fill = pct_fill
 
         # ── Row 6: =N= / column sub-labels ──────────────────────────────
-        n_row = ['=N=' if k in (_EARNING_KEYS | _DEDUCT_KEYS | {'gross_salary', 'net_pay'}) else '' for k in col_keys]
+        n_row = ['=N=' if k in (earning_keys | deduct_keys | {'gross_salary', 'net_pay'}) else '' for k in col_keys]
         # Override text columns with their sub-labels
         for label_key, label_text in [
             ('paye_pin',        'PAYE PIN'),
             ('pension_number',  'PENSION (PEN number)'),
-            ('fpa',             'PFA'),
+            ('pfa',             'PFA'),
             ('bank_name',       'Bank'),
             ('bank_account_number', 'Account Number'),
         ]:
@@ -215,9 +227,9 @@ class StaffPayrollExportService:
             cell.alignment = center
             cell.font      = Font(size=9, color="595959")
             cell.border    = border
-            if key in _DEDUCT_KEYS or key in ('total_deductions',):
+            if key in deduct_keys or key in ('total_deductions',):
                 cell.fill = deduct_fill
-            elif key in _EARNING_KEYS or key in ('gross_salary', 'net_pay'):
+            elif key in earning_keys or key in ('gross_salary', 'net_pay'):
                 cell.fill = earn_fill
             else:
                 cell.fill = sub_fill
@@ -228,12 +240,6 @@ class StaffPayrollExportService:
         # ── Data rows ────────────────────────────────────────────────────
         from hr.models import StaffPayInfo, SalaryComponent
         from hr.config_models import HRConfig
-
-        staff_list = list(
-            self.staff_qs
-            .prefetch_related('pay_info__component')
-            .order_by('last_name', 'first_name')
-        )
 
         # Load branch HR config once for PAYE/pension auto-calculation
         hr_config = None
@@ -264,7 +270,7 @@ class StaffPayrollExportService:
         number_fmt = '#,##0.00'
 
         for row_num, staff in enumerate(staff_list, start=7):
-            pay_map, taxable_income, pensionable_income, other_deductions_total = self._build_pay_map(staff)
+            pay_map, taxable_income, pensionable_income = self._build_pay_map(staff)
 
             # Active IOU transparency for this month.
             staff_ious = ious_by_staff_id.get(staff.id, [])
@@ -275,7 +281,7 @@ class StaffPayrollExportService:
             iou_balance = sum(iou.balance_remaining for iou in staff_ious)
 
             # Calculate gross earnings from earning components
-            gross = sum(pay_map.get(k, Decimal('0')) for k in _EARNING_KEYS)
+            gross = sum(pay_map.get(k, Decimal('0')) for k in earning_keys)
 
             # Auto-calculate pension on pensionable base (Basic + Housing + Transport)
             # If pensionable_income is 0 (e.g. no is_pensionable flags set), fall back to
@@ -292,8 +298,7 @@ class StaffPayrollExportService:
                 pay_map['paye_deduct'] = hr_config.calculate_tax(taxable_income, pension_for_tax)
 
             total_deduct = (
-                sum(pay_map.get(k, Decimal('0')) for k in _DEDUCT_KEYS)
-                + other_deductions_total
+                sum(pay_map.get(k, Decimal('0')) for k in deduct_keys)
                 + iou_monthly
             )
             net = gross - total_deduct
@@ -304,8 +309,6 @@ class StaffPayrollExportService:
                     row_data.append(f"{staff.first_name} {staff.last_name}".strip())
                 elif key == 'gross_salary':
                     row_data.append(gross)
-                elif key == 'other_deductions':
-                    row_data.append(other_deductions_total if other_deductions_total else '')
                 elif key == 'staff_iou_monthly':
                     row_data.append(iou_monthly if iou_monthly else '')
                 elif key == 'staff_iou_balance':
@@ -318,7 +321,7 @@ class StaffPayrollExportService:
                     row_data.append(staff.paye_pin or '')
                 elif key == 'pension_number':
                     row_data.append(staff.pension_number or '')
-                elif key == 'fpa':
+                elif key == 'pfa':
                     row_data.append(staff.pension_provider or '')
                 elif key == 'bank_name':
                     row_data.append(staff.bank_name or '')
@@ -338,10 +341,10 @@ class StaffPayrollExportService:
                 cell = ws.cell(row=row_num, column=col_idx)
                 cell.border    = border
                 cell.alignment = left if key == 'name' else right
-                if key in _EARNING_KEYS or key in ('gross_salary',):
+                if key in earning_keys or key in ('gross_salary',):
                     cell.number_format = number_fmt
                     cell.fill          = row_fill_earn
-                elif key in _DEDUCT_KEYS or key in ('other_deductions', 'staff_iou_monthly', 'total_deductions'):
+                elif key in deduct_keys or key in ('other_deductions', 'staff_iou_monthly', 'total_deductions'):
                     cell.number_format = number_fmt
                     cell.fill          = row_fill_deduct
                 elif key in ('staff_iou_balance',):
@@ -366,7 +369,7 @@ class StaffPayrollExportService:
                     continue
                 cell = ws.cell(row=total_row_num, column=col_idx)
                 cell.border = border
-                if key in (_EARNING_KEYS | _DEDUCT_KEYS | {'other_deductions', 'staff_iou_monthly', 'gross_salary', 'total_deductions', 'net_pay'}):
+                if key in (earning_keys | deduct_keys | {'other_deductions', 'staff_iou_monthly', 'gross_salary', 'total_deductions', 'net_pay'}):
                     # SUM formula over the data rows
                     col_letter = get_column_letter(col_idx)
                     cell.value         = f"=SUM({col_letter}7:{col_letter}{total_row_num - 1})"
@@ -380,7 +383,7 @@ class StaffPayrollExportService:
             'name':               28,
             'paye_pin':           18,
             'pension_number':     22,
-            'fpa':                20,
+            'pfa':                20,
             'bank_name':          20,
             'bank_account_number': 20,
         }
@@ -402,9 +405,45 @@ class StaffPayrollExportService:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _build_pay_map(self, staff) -> tuple[dict[str, Decimal], Decimal, Decimal, Decimal]:
+    @staticmethod
+    def _extra_key(component) -> str:
+        """Column key for a component that is not part of the fixed template."""
+        return f"extra:{component.component_type}:{component.name.lower().strip()}"
+
+    def _build_columns(self, staff_list) -> tuple[list[tuple[str, str]], set[str], set[str]]:
         """
-        Return (pay_map, taxable_income, pensionable_income, other_deductions_total)
+        Return (columns, extra_earning_keys, extra_deduct_keys).
+
+        Starts from the fixed template and adds one column per assigned
+        component it does not know about: earnings before Gross Salary,
+        deductions in place of the catch-all 'Other Deductions' column.
+        """
+        extra_earn: dict[str, str] = {}
+        extra_deduct: dict[str, str] = {}
+        for staff in staff_list:
+            for pay_info in staff.pay_info.all():
+                comp = pay_info.component
+                if comp.name.lower().strip() in _COMPONENT_NAME_MAP:
+                    continue
+                target = extra_deduct if comp.component_type == 'DEDUCTION' else extra_earn
+                target.setdefault(self._extra_key(comp), comp.name.strip())
+
+        earn_cols   = sorted(((label, key) for key, label in extra_earn.items()), key=lambda c: c[0].lower())
+        deduct_cols = sorted(((label, key) for key, label in extra_deduct.items()), key=lambda c: c[0].lower())
+
+        columns: list[tuple[str, str]] = []
+        for label, key in COLUMNS:
+            if key == 'gross_salary':
+                columns.extend(earn_cols)
+            if key == 'other_deductions':
+                columns.extend(deduct_cols)
+                continue
+            columns.append((label, key))
+        return columns, set(extra_earn), set(extra_deduct)
+
+    def _build_pay_map(self, staff) -> tuple[dict[str, Decimal], Decimal, Decimal]:
+        """
+        Return (pay_map, taxable_income, pensionable_income)
         for all recurring pay components of a staff.
         taxable_income    = sum of EARNING components where is_taxable=True.
         pensionable_income = sum of EARNING components where is_pensionable=True
@@ -413,22 +452,18 @@ class StaffPayrollExportService:
         pay_map: dict[str, Decimal] = {}
         taxable_income = Decimal('0')
         pensionable_income = Decimal('0')
-        other_deductions_total = Decimal('0')
         for pay_info in staff.pay_info.all():
             comp     = pay_info.component
             name_key = comp.name.lower().strip()
-            col_key  = _COMPONENT_NAME_MAP.get(name_key)
-            if col_key:
-                pay_map[col_key] = pay_map.get(col_key, Decimal('0')) + pay_info.amount
-            elif comp.component_type == 'DEDUCTION':
-                # Surface deductions that are not part of the legacy fixed template.
-                other_deductions_total += pay_info.amount
+            # Components outside the legacy fixed template get their own column.
+            col_key  = _COMPONENT_NAME_MAP.get(name_key) or self._extra_key(comp)
+            pay_map[col_key] = pay_map.get(col_key, Decimal('0')) + pay_info.amount
             if comp.component_type == 'EARNING':
                 if comp.is_taxable:
                     taxable_income += pay_info.amount
                 if comp.is_pensionable:
                     pensionable_income += pay_info.amount
-        return pay_map, taxable_income, pensionable_income, other_deductions_total
+        return pay_map, taxable_income, pensionable_income
 
     @staticmethod
     def _resolve_payroll_month(period_label: str):
