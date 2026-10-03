@@ -127,9 +127,16 @@ class StaffPayrollExportService:
             .order_by('last_name', 'first_name')
         )
 
+        # Resolve the payroll month represented by this export heading so
+        # IOU deductions and one-time requests match that month's payslips.
+        payroll_month = self._resolve_payroll_month(self.period_label)
+        one_time_by_staff_id = self._load_one_time_requests(staff_list, payroll_month)
+
         # Components outside the fixed template (anything a user created)
         # get their own column, so the sheet matches the payslip.
-        columns, extra_earning_keys, extra_deduct_keys = self._build_columns(staff_list)
+        columns, extra_earning_keys, extra_deduct_keys = self._build_columns(
+            staff_list, one_time_by_staff_id
+        )
         earning_keys = _EARNING_KEYS | extra_earning_keys
         deduct_keys  = _DEDUCT_KEYS | extra_deduct_keys
 
@@ -249,10 +256,6 @@ class StaffPayrollExportService:
             except Exception:
                 pass
 
-        # Resolve the payroll month represented by this export heading so
-        # IOU monthly deductions respect each IOU's configured start_month.
-        payroll_month = self._resolve_payroll_month(self.period_label)
-
         # Preload active IOUs for all staff once to avoid N+1 queries.
         ious_by_staff_id: dict[int, list] = {}
         if staff_list:
@@ -270,7 +273,9 @@ class StaffPayrollExportService:
         number_fmt = '#,##0.00'
 
         for row_num, staff in enumerate(staff_list, start=7):
-            pay_map, taxable_income, pensionable_income = self._build_pay_map(staff)
+            pay_map, taxable_income, pensionable_income = self._build_pay_map(
+                staff, one_time_by_staff_id.get(staff.id, [])
+            )
 
             # Active IOU transparency for this month.
             staff_ious = ious_by_staff_id.get(staff.id, [])
@@ -410,14 +415,45 @@ class StaffPayrollExportService:
         """Column key for a component that is not part of the fixed template."""
         return f"extra:{component.component_type}:{component.name.lower().strip()}"
 
-    def _build_columns(self, staff_list) -> tuple[list[tuple[str, str]], set[str], set[str]]:
+    @staticmethod
+    def _one_time_key(component) -> str:
+        """Column key for an approved one-time bonus/deduction request."""
+        return f"one_time:{component.component_type}:{component.name.lower().strip()}"
+
+    @staticmethod
+    def _load_one_time_requests(staff_list, payroll_month) -> dict[int, list]:
+        """
+        Approved one-time bonus/deduction requests for the payroll month,
+        grouped by staff id. Mirrors PayrollService, except it also keeps
+        requests already applied to a payroll run so a post-run export still
+        matches the payslips.
+        """
+        if not staff_list:
+            return {}
+        from hr.models import BonusDeductionRequest
+
+        requests_qs = BonusDeductionRequest.objects.filter(
+            staff_id__in=[s.id for s in staff_list],
+            for_month=payroll_month,
+            status=BonusDeductionRequest.APPROVED,
+            is_deleted=False,
+        ).select_related('component')
+        by_staff: dict[int, list] = {}
+        for req in requests_qs:
+            by_staff.setdefault(req.staff_id, []).append(req)
+        return by_staff
+
+    def _build_columns(self, staff_list, one_time_by_staff_id=None) -> tuple[list[tuple[str, str]], set[str], set[str]]:
         """
         Return (columns, extra_earning_keys, extra_deduct_keys).
 
         Starts from the fixed template and adds one column per assigned
         component it does not know about: earnings before Gross Salary,
         deductions in place of the catch-all 'Other Deductions' column.
+        Approved one-time requests get their own "<Name> (One-time)" column,
+        labelled as on the payslip, so they are not mistaken for recurring pay.
         """
+        one_time_by_staff_id = one_time_by_staff_id or {}
         extra_earn: dict[str, str] = {}
         extra_deduct: dict[str, str] = {}
         for staff in staff_list:
@@ -427,6 +463,10 @@ class StaffPayrollExportService:
                     continue
                 target = extra_deduct if comp.component_type == 'DEDUCTION' else extra_earn
                 target.setdefault(self._extra_key(comp), comp.name.strip())
+            for req in one_time_by_staff_id.get(staff.id, []):
+                comp = req.component
+                target = extra_deduct if comp.component_type == 'DEDUCTION' else extra_earn
+                target.setdefault(self._one_time_key(comp), f"{comp.name.strip()} (One-time)")
 
         earn_cols   = sorted(((label, key) for key, label in extra_earn.items()), key=lambda c: c[0].lower())
         deduct_cols = sorted(((label, key) for key, label in extra_deduct.items()), key=lambda c: c[0].lower())
@@ -441,10 +481,11 @@ class StaffPayrollExportService:
             columns.append((label, key))
         return columns, set(extra_earn), set(extra_deduct)
 
-    def _build_pay_map(self, staff) -> tuple[dict[str, Decimal], Decimal, Decimal]:
+    def _build_pay_map(self, staff, one_time_requests=()) -> tuple[dict[str, Decimal], Decimal, Decimal]:
         """
         Return (pay_map, taxable_income, pensionable_income)
-        for all recurring pay components of a staff.
+        for all recurring pay components of a staff plus their approved
+        one-time requests for the month.
         taxable_income    = sum of EARNING components where is_taxable=True.
         pensionable_income = sum of EARNING components where is_pensionable=True
                              (Basic Salary + Housing Allowance + Transport Allowance).
@@ -463,6 +504,15 @@ class StaffPayrollExportService:
                     taxable_income += pay_info.amount
                 if comp.is_pensionable:
                     pensionable_income += pay_info.amount
+        for req in one_time_requests:
+            comp    = req.component
+            col_key = self._one_time_key(comp)
+            pay_map[col_key] = pay_map.get(col_key, Decimal('0')) + req.amount
+            if comp.component_type == 'EARNING':
+                if comp.is_taxable:
+                    taxable_income += req.amount
+                if comp.is_pensionable:
+                    pensionable_income += req.amount
         return pay_map, taxable_income, pensionable_income
 
     @staticmethod

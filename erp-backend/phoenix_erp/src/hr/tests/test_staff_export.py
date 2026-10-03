@@ -3,14 +3,16 @@
 The payroll Excel export must show every component assigned to staff,
 not only the ones in the legacy fixed template.
 """
+from datetime import date
 from decimal import Decimal
 
 import openpyxl
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from branches.models import Branch
 from common.managers import set_current_tenant
-from hr.models import SalaryComponent, Staff, StaffPayInfo
+from hr.models import BonusDeductionRequest, SalaryComponent, Staff, StaffPayInfo
 from hr.services.staff_export import StaffPayrollExportService
 from users.models import Tenant
 
@@ -73,3 +75,34 @@ class StaffPayrollExportTests(TestCase):
             "Entertain.", "Utility", "Lunch", "Leav Allow.", "Gross Salary",
         ])
         self.assertEqual(row["PFA"], "Stanbic IBTC")
+
+    def test_approved_one_time_requests_for_the_month_are_exported(self):
+        self._assign("Basic Salary", "EARNING", "100000")
+        user = get_user_model().objects.create_user(
+            username="export-user", email="export@test.com", password="x",
+            tenant=self.tenant, branch=self.branch,
+        )
+        fine = SalaryComponent.objects.create(
+            name="Lateness Fine", component_type="DEDUCTION", default_amount=Decimal("0"),
+            branch=self.branch, tenant=self.tenant,
+        )
+
+        def request(ref, month, status):
+            BonusDeductionRequest.objects.create(
+                reference_number=ref, staff=self.staff, component=fine,
+                amount=Decimal("2500"), reason="Late", for_month=month, status=status,
+                requested_by=user, owner=user, branch=self.branch, tenant=self.tenant,
+            )
+
+        request("BDR-EXP-1", date(2026, 3, 1), BonusDeductionRequest.APPROVED)
+        request("BDR-EXP-2", date(2026, 3, 1), BonusDeductionRequest.PENDING)
+        request("BDR-EXP-3", date(2026, 4, 1), BonusDeductionRequest.APPROVED)
+
+        headers, row = self._export()
+
+        # Only the approved March request counts, under its payslip label.
+        self.assertEqual(row["Lateness Fine (One-time)"], 2500)
+        self.assertNotIn("Lateness Fine", headers)
+        self.assertLess(headers.index("Lateness Fine (One-time)"), headers.index("Total Deductions"))
+        self.assertEqual(row["Net Pay"], row["Gross Salary"] - row["Total Deductions"])
+        self.assertGreaterEqual(row["Total Deductions"], 2500)
