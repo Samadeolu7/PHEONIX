@@ -699,16 +699,40 @@ class ThreadMessageViewSet(ScopedModelViewSet):
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-        page = request.query_params.get('page', 1)
+        page_param = request.query_params.get('page')
+        after_id = request.query_params.get('after')
         page_size = request.query_params.get('page_size', self.PAGE_SIZE)
         try:
-            page = int(page)
             page_size = min(int(page_size), 200)
         except (ValueError, TypeError):
-            page = 1
             page_size = self.PAGE_SIZE
 
         paginator = Paginator(queryset, page_size)
+
+        if page_param is not None:
+            # Caller explicitly asked for a page — respect it (history
+            # scroll-back, if/when the UI grows one).
+            try:
+                page = int(page_param)
+            except (ValueError, TypeError):
+                page = 1
+        elif after_id:
+            # Incremental poll: get_queryset() already narrowed this to
+            # pk__gt=after_id, so "page 1" of that is the next batch of
+            # unseen messages, oldest-of-the-unseen first — correct order
+            # to append.
+            page = 1
+        else:
+            # No cursor at all (initial load / a dumb poll that just calls
+            # listMessages() again) — messages are ordered oldest-first, so
+            # naive "page 1" was always the oldest PAGE_SIZE messages ever
+            # posted in the thread. Once a thread passed 100 messages, every
+            # newer message (including one the viewer just sent) fell on a
+            # page nothing ever requested, and a subsequent poll's page-1
+            # response would overwrite local state and make it vanish again.
+            # The most recent page is what "no cursor" should mean instead.
+            page = paginator.num_pages or 1
+
         try:
             page_obj = paginator.page(page)
         except Exception:

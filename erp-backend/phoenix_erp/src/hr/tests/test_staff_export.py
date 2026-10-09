@@ -40,7 +40,7 @@ class StaffPayrollExportTests(TestCase):
         )
 
     def _export(self):
-        buffer = StaffPayrollExportService(Staff.objects.all(), period_label="MARCH 2026").generate()
+        buffer = StaffPayrollExportService(Staff.objects.filter(pk=self.staff.pk), period_label="MARCH 2026").generate()
         ws = openpyxl.load_workbook(buffer).active
         headers = [c.value for c in ws[3]]
         row = {h: c.value for h, c in zip(headers, ws[7])}
