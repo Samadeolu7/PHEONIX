@@ -168,7 +168,12 @@ class BankPaymentViewSet(ScopedModelViewSet):
             if tenant:
                 qs = qs.filter(tenant=tenant)
 
-            branch = getattr(user, 'branch', None)
+            # resolve_effective_branch: elevated (global-role/owner) users get
+            # None (all branches) unless they pick one via X-Branch-ID, instead
+            # of being pinned to their home branch — otherwise a director
+            # approving for another branch never sees its pending payments.
+            from common.views import resolve_effective_branch
+            branch = resolve_effective_branch(self.request)
             if branch:
                 # Include exact branch match OR null-branch records that belong
                 # to the same tenant (records created before branch was injected)
