@@ -3766,14 +3766,18 @@ class LoanDisbursementCorrection(TimeStampedModel, BranchScopedModel, SoftDelete
                 "This automated correction only handles loans with no repayment history yet — "
                 "contact accounting for a manual adjustment."
             )
-        # Re-check the window at execute time too, not just at request time —
-        # approvals can take days, and the window setting itself could change
-        # in between. Money only actually moves here.
-        if not self.is_within_correction_window:
+        # The window gates when a correction may be REQUESTED (see clean()),
+        # not how long approvers have to act on it. Re-checking against today
+        # here meant any request still awaiting director sign-off after the
+        # window lapsed could never be executed. Re-check as of the date the
+        # request was filed instead.
+        requested_on = timezone.localtime(self.created_at).date() if self.created_at else timezone.localdate()
+        anchor = loan.original_disbursement_date
+        if anchor and requested_on > anchor + timedelta(days=settings.LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS):
             raise ValidationError(
-                f"The {settings.LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS}-day correction window for "
-                f"loan {loan.loan_number} (disbursed {loan.original_disbursement_date}) has passed. "
-                "This request can no longer be executed — reject it and use write-off/restructure instead."
+                f"This request was filed after the {settings.LOAN_DISBURSEMENT_CORRECTION_WINDOW_DAYS}-day correction "
+                f"window for loan {loan.loan_number} (disbursed {anchor}) had passed. "
+                "Reject it and use write-off/restructure instead."
             )
         if not loan.disbursement_journal_entry_id:
             raise ValidationError(f"Loan {loan.loan_number} has no disbursement journal entry to reverse.")
