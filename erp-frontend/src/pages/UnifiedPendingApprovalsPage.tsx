@@ -548,6 +548,16 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
         queryFn: () => loanService.listRestructureRequests({ status: 'pending' }),
         staleTime: 30_000,
       },
+      // 25 – Loan Disbursement Corrections (pending 1st approval + awaiting 2nd approval)
+      {
+        queryKey: ['pending-approvals-loan-disbursement-corrections'],
+        queryFn: () =>
+          Promise.all([
+            loanService.listDisbursementCorrections({ status: 'pending' }),
+            loanService.listDisbursementCorrections({ status: 'awaiting_second_approval' }),
+          ]).then(([pending, awaitingSecond]) => [...pending, ...awaitingSecond]),
+        staleTime: 30_000,
+      },
     ],
   });
 
@@ -577,6 +587,7 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
     pettyCashVoucherReversalsQ,
     loanRepaymentReversalsQ,
     loanRestructuresQ,
+    loanDisbursementCorrectionsQ,
   ] = results;
 
   // Invalidate helper – re-run all queries
@@ -982,6 +993,28 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
     ),
   }));
 
+  const loanDisbursementCorrectionItems: ApprovalItem[] = (
+    Array.isArray(loanDisbursementCorrectionsQ.data) ? loanDisbursementCorrectionsQ.data : []
+  ).map((r: any) => ({
+    id: r.id,
+    title: `${r.original_loan_number || `Loan #${r.original_loan}`} — ${
+      r.status === 'awaiting_second_approval' ? '2nd Approval (executes)' : '1st Approval'
+    }`,
+    subtitle: `${r.wrong_client_name} → ${r.correct_client_name} · ${r.reason}`,
+    amount: fmt(r.disbursed_amount),
+    date: fmtDate(r.requested_at),
+    urgency: r.status === 'awaiting_second_approval' ? 'high' : 'normal',
+    viewPath: `/loans/disbursement-corrections`,
+    requireApproveNote: true,
+    onApprove: act((notes: string) =>
+      (r.status === 'awaiting_second_approval'
+        ? loanService.secondApproveCorrection(r.id, notes)
+        : loanService.firstApproveCorrection(r.id, notes)
+      ).then(() => {})
+    ),
+    onReject: act((reason: string) => loanService.rejectCorrection(r.id, reason).then(() => {})),
+  }));
+
   const loanRestructureItems: ApprovalItem[] = (
     Array.isArray(loanRestructuresQ.data) ? loanRestructuresQ.data : []
   ).map((r: any) => ({
@@ -1252,6 +1285,16 @@ const UnifiedPendingApprovalsPage: React.FC = () => {
       isLoading: loanRestructuresQ.isLoading,
       isError: loanRestructuresQ.isError && !isForbidden(loanRestructuresQ),
       isForbidden: isForbidden(loanRestructuresQ),
+    },
+    {
+      id: 'loan-disbursement-corrections',
+      label: 'Loan Disbursement Corrections',
+      icon: <RotateCcw className="w-4 h-4" />,
+      color: 'bg-red-700',
+      items: loanDisbursementCorrectionItems,
+      isLoading: loanDisbursementCorrectionsQ.isLoading,
+      isError: loanDisbursementCorrectionsQ.isError && !isForbidden(loanDisbursementCorrectionsQ),
+      isForbidden: isForbidden(loanDisbursementCorrectionsQ),
     },
   ];
 
