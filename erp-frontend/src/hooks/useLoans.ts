@@ -406,13 +406,20 @@ export const useUpdateLoan = (
   });
 };
 
+/** Variables: a loan id, or { id, overrideReason } when a director overrides a liquidity block. */
+export type ApproveLoanVars = number | { id: number; overrideReason?: string };
+
 export const useApproveLoan = (
-  options?: Omit<UseMutationOptions<LoanAccount, Error, number>, 'mutationFn'>
+  options?: Omit<UseMutationOptions<LoanAccount, Error, ApproveLoanVars>, 'mutationFn'>
 ) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id) => loanService.approveLoan(id),
-    onSuccess: (_data, id) => {
+    mutationFn: (vars) =>
+      typeof vars === 'number'
+        ? loanService.approveLoan(vars)
+        : loanService.approveLoan(vars.id, vars.overrideReason),
+    onSuccess: (_data, vars) => {
+      const id = typeof vars === 'number' ? vars : vars.id;
       queryClient.invalidateQueries({ queryKey: loanKeys.accountDetail(id) });
       queryClient.invalidateQueries({ queryKey: loanKeys.accountLists() });
     },
@@ -587,7 +594,7 @@ export const useExecuteDisbursement = (
 export const useDisburseLoan = (
   options?: Omit<UseMutationOptions<LoanDisbursement, Error, {
     id: number;
-    data: { disbursement_account: number; notes?: string };
+    data: Parameters<typeof loanService.disburseLoan>[1];
   }>, 'mutationFn'>
 ) => {
   const queryClient = useQueryClient();

@@ -59,6 +59,7 @@ MODULES = [
     ('common',          'System',           'Settings',         31),
     ('widgets',         'Widgets',          'Grid',             32),
     ('interbranch',     'Inter-Branch Transfers', 'Repeat',     33),
+    ('bank-borrowings', 'Bank Borrowings',  'Landmark',         34),
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -212,6 +213,9 @@ PAGES = [
     ('notifications', 'notifications', 'Notifications',      'list',   1),
     # interbranch
     ('interbranch', 'transfers',       'Inter-Branch Transfers', 'list', 1),
+    # bank-borrowings
+    ('bank-borrowings', 'borrowings',       'Bank Borrowings',        'list', 1),
+    ('bank-borrowings', 'branch-liquidity', 'Branch Cash Forecast',   'list', 2),
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────

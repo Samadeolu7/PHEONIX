@@ -1,0 +1,264 @@
+"""
+Per-branch, day-by-day cash forecast used by the loan liquidity gate.
+
+    closing(d) = cash today + expected repayments up to d - committed outflows up to d
+
+A branch may lend down to zero, but not into money committed to upcoming obligations:
+    available_today = max(0, min over the look-ahead window of closing(d))
+
+All money values are Decimal. The functions here only read data.
+"""
+from collections import defaultdict
+from datetime import timedelta
+from decimal import Decimal
+
+from django.db.models import Sum
+
+ZERO = Decimal('0.00')
+
+# Loan statuses whose repayment schedule rows are expected to bring cash in.
+COLLECTING_STATUSES = ('active', 'disbursed', 'defaulted')
+# Statuses counted when measuring history (paid-off loans were collected too).
+HISTORY_STATUSES = ('active', 'disbursed', 'defaulted', 'paid_off')
+
+OUT_SAVINGS = 'savings_withdrawal'
+OUT_LOAN = 'approved_loan'
+OUT_BORROWING_SHARE = 'bank_loan_share'
+OUT_BORROWING_INSTALMENT = 'bank_loan_instalment'
+
+
+def branch_cash(branch):
+    """Cash + bank balance of a branch from its GL accounts (petty cash excluded)."""
+    from banks.models import BankAccount
+    from cash_management.models import CashierAccount
+
+    account_ids = set()
+    total = ZERO
+    for acct in BankAccount.objects.filter(branch=branch, gl_account__isnull=False).select_related('gl_account'):
+        if acct.gl_account_id not in account_ids:
+            account_ids.add(acct.gl_account_id)
+            total += acct.gl_account.balance or ZERO
+    for cashier in CashierAccount.objects.filter(
+            branch=branch, is_active=True, account__isnull=False).select_related('account'):
+        if cashier.account_id not in account_ids:
+            account_ids.add(cashier.account_id)
+            total += cashier.account.balance or ZERO
+    return total
+
+
+def collection_rate(branch, today, window_days):
+    """
+    Cash collected on loan repayments / cash scheduled to be due, over the last window_days.
+    Returns (rate 0..1, collected, scheduled). With no scheduled history the rate is 0 (conservative).
+    """
+    from loans.models import LoanRepaymentSchedule
+    from transactions.models import Transaction, TransactionEntry
+
+    start = today - timedelta(days=window_days)
+    scheduled = LoanRepaymentSchedule.objects.filter(
+        branch=branch, due_date__gt=start, due_date__lte=today, loan__status__in=HISTORY_STATUSES,
+    ).aggregate(t=Sum('total_due'))['t'] or ZERO
+
+    collected = TransactionEntry.objects.filter(
+        transaction__series__code='LNPMT',
+        transaction__branch=branch,
+        transaction__date__gt=start,
+        transaction__date__lte=today,
+        transaction__is_reversed=False,
+        transaction__is_reversal=False,
+        side=TransactionEntry.DEBIT,
+        account__account_type='ASSET',
+    ).aggregate(t=Sum('amount'))['t'] or ZERO
+
+    if scheduled <= 0:
+        return ZERO, collected, scheduled
+    return min(Decimal('1'), collected / scheduled), collected, scheduled
+
+
+def _clamp_day(d, today):
+    return today if d < today else d
+
+
+def _outflow_events(branch, today, end, exclude_loan_pk=None):
+    """Committed outflows as a list of dicts {day, type, description, amount, overdue}."""
+    from loans.models import LoanAccount
+    from savings.models import SavingsWithdrawalRequest
+    from treasury.models import BorrowingContribution, BorrowingInstalment, BankBorrowing
+
+    events = []
+
+    # 1. Savings withdrawals not yet paid out (reserve from payout_due_date, or today if already late).
+    open_statuses = (
+        SavingsWithdrawalRequest.STATUS_PENDING,
+        SavingsWithdrawalRequest.STATUS_PARTIAL,
+        SavingsWithdrawalRequest.STATUS_APPROVED,
+    )
+    for wr in SavingsWithdrawalRequest.objects.filter(branch=branch, status__in=open_statuses).select_related(
+            'savings_account__client'):
+        due = wr.payout_due_date or wr.created_at.date()
+        if due > end:
+            continue
+        client = getattr(wr.savings_account, 'client', None)
+        who = getattr(client, 'full_name', None) or wr.savings_account.account_number
+        events.append({
+            'day': _clamp_day(due, today), 'type': OUT_SAVINGS, 'amount': wr.amount,
+            'overdue': due < today,
+            'description': f"Savings payout to {who} (due {due:%d %b})",
+        })
+
+    # 2. Loans approved but not yet paid out compete for the same cash right now.
+    pending_loans = LoanAccount.objects.filter(branch=branch, status='approved').exclude(
+        disbursement_request__status__in=('rejected', 'cancelled'))
+    if exclude_loan_pk:
+        pending_loans = pending_loans.exclude(pk=exclude_loan_pk)
+    for loan in pending_loans.select_related('client'):
+        events.append({
+            'day': today, 'type': OUT_LOAN, 'amount': loan.approved_amount or loan.requested_amount,
+            'overdue': False,
+            'description': f"Approved loan {loan.loan_number} awaiting disbursement",
+        })
+
+    # 3. Bank borrowings.
+    active = BankBorrowing.objects.filter(status=BankBorrowing.STATUS_ACTIVE)
+    # 3a. Branch is the debit branch: the instalment leaves its account.
+    for inst in BorrowingInstalment.objects.filter(
+            borrowing__in=active.filter(debit_branch=branch), status=BorrowingInstalment.STATUS_PENDING,
+            due_date__lte=end).select_related('borrowing'):
+        events.append({
+            'day': _clamp_day(inst.due_date, today), 'type': OUT_BORROWING_INSTALMENT, 'amount': inst.total_due,
+            'overdue': inst.due_date < today,
+            'description': f"{inst.borrowing.lender_name} instalment {inst.number} (due {inst.due_date:%d %b})",
+        })
+    # 3b. Branch owes a share to the debit branch.
+    for c in BorrowingContribution.objects.filter(
+            branch=branch, status=BorrowingContribution.STATUS_PENDING, instalment__borrowing__in=active,
+            due_date__lte=end).select_related('instalment__borrowing'):
+        events.append({
+            'day': _clamp_day(c.due_date, today), 'type': OUT_BORROWING_SHARE, 'amount': c.amount,
+            'overdue': c.due_date < today,
+            'description': f"Share of {c.instalment.borrowing.lender_name} instalment "
+                           f"{c.instalment.number} to send by {c.due_date:%d %b}",
+        })
+    return events
+
+
+def _debit_branch_share_inflows(branch, today, end):
+    """The debit branch counts other branches' unsent shares as inflows on their due dates (never overdue ones)."""
+    from treasury.models import BorrowingContribution, BankBorrowing
+
+    out = []
+    for c in BorrowingContribution.objects.filter(
+            instalment__borrowing__debit_branch=branch,
+            instalment__borrowing__status=BankBorrowing.STATUS_ACTIVE,
+            status=BorrowingContribution.STATUS_PENDING,
+            due_date__gte=today, due_date__lte=end).select_related('branch'):
+        out.append((c.due_date, c.amount))
+    return out
+
+
+def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
+    """
+    Build the day-by-day forecast for `branch`.
+
+    Returns a dict:
+      cash_now, collection_rate, collected, scheduled, expected_inflows_total, lookahead_days,
+      days: [{date, opening, inflow, outflow, closing, outflows:[...]}],
+      available_today, _closing (list used by helpers)
+    """
+    from django.utils import timezone
+    from loans.models import LoanRepaymentSchedule
+    from treasury.models import TreasurySettings
+
+    today = today or timezone.localdate()
+    cfg = TreasurySettings.get_for(getattr(branch, 'tenant', None))
+    horizon = int(days if days is not None else cfg.lookahead_days)
+    end = today + timedelta(days=horizon)
+
+    cash = branch_cash(branch)
+    rate, collected, scheduled = collection_rate(branch, today, cfg.collection_rate_window_days)
+
+    inflow_by_day = defaultdict(lambda: ZERO)
+    due_rows = LoanRepaymentSchedule.objects.filter(
+        branch=branch, due_date__gte=today, due_date__lte=end, loan__status__in=COLLECTING_STATUSES,
+    ).values('due_date').annotate(due=Sum('total_due'), paid=Sum('total_paid'))
+    for row in due_rows:
+        remaining = (row['due'] or ZERO) - (row['paid'] or ZERO)
+        if remaining > 0:
+            inflow_by_day[row['due_date']] += (remaining * rate).quantize(Decimal('0.01'))
+    for day, amount in _debit_branch_share_inflows(branch, today, end):
+        inflow_by_day[day] += amount
+
+    events = _outflow_events(branch, today, end, exclude_loan_pk=exclude_loan_pk)
+    out_by_day = defaultdict(list)
+    for ev in events:
+        out_by_day[ev['day']].append(ev)
+
+    rows = []
+    balance = cash
+    closing_list = []
+    for i in range(horizon + 1):
+        d = today + timedelta(days=i)
+        inflow = inflow_by_day.get(d, ZERO)
+        day_events = out_by_day.get(d, [])
+        outflow = sum((e['amount'] for e in day_events), ZERO)
+        opening = balance
+        balance = opening + inflow - outflow
+        closing_list.append(balance)
+        rows.append({
+            'date': d, 'opening': opening, 'inflow': inflow, 'outflow': outflow, 'closing': balance,
+            'outflows': day_events,
+        })
+
+    lowest = min(closing_list) if closing_list else cash
+    return {
+        'branch_id': branch.pk, 'branch_name': branch.name,
+        'today': today, 'lookahead_days': horizon,
+        'cash_now': cash,
+        'collection_rate': rate, 'collected': collected, 'scheduled': scheduled,
+        'expected_inflows_total': sum(inflow_by_day.values(), ZERO),
+        'committed_outflows_total': sum((e['amount'] for e in events), ZERO),
+        'days': rows,
+        'available_today': max(ZERO, lowest),
+        '_closing': closing_list,
+    }
+
+
+def earliest_date_for(forecast, amount):
+    """
+    First date on which `amount` could be paid out without any later day dipping below zero
+    (min of the closing balances from that day onward >= amount). None if never within the window.
+    """
+    closing = forecast['_closing']
+    today = forecast['today']
+    suffix_min = [None] * len(closing)
+    running = None
+    for i in range(len(closing) - 1, -1, -1):
+        running = closing[i] if running is None else min(running, closing[i])
+        suffix_min[i] = running
+    for i, m in enumerate(suffix_min):
+        if m >= amount:
+            return today + timedelta(days=i)
+    return None
+
+
+def impact_of(forecast, amount, max_items=10):
+    """
+    Which obligations would be left short if `amount` leaves the branch today.
+    Only days that carry an obligation are listed. Returns (breaches, worst_shortfall).
+    """
+    breaches = []
+    worst = ZERO
+    for row in forecast['days']:
+        shortfall = amount - row['closing']
+        if shortfall > worst:
+            worst = shortfall
+        if shortfall > 0 and row['outflows']:
+            breaches.append({
+                'date': row['date'],
+                'shortfall': shortfall,
+                'obligations': [
+                    {'type': e['type'], 'description': e['description'], 'amount': e['amount'],
+                     'overdue': e['overdue']} for e in row['outflows']
+                ],
+            })
+    return breaches[:max_items], max(worst, ZERO)

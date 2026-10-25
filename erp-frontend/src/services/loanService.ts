@@ -569,8 +569,12 @@ export const loanService = {
     return Array.isArray(res) ? res : (res?.results ?? []);
   },
 
-  async approveLoan(id: number): Promise<LoanAccount> {
-    return api.post(`${BASE}/accounts/${id}/approve/`);
+  /**
+   * Approve a pending loan. If the branch's uncommitted cash can't fund it the API answers 409
+   * (see asLiquidityGate in types/treasury); a director retries with an override_reason.
+   */
+  async approveLoan(id: number, overrideReason?: string): Promise<LoanAccount> {
+    return api.post(`${BASE}/accounts/${id}/approve/`, overrideReason ? { override_reason: overrideReason } : undefined);
   },
 
   async rejectLoan(id: number, reason: string): Promise<LoanAccount> {
@@ -825,7 +829,13 @@ export const loanService = {
 
   async disburseLoan(
     id: number,
-    data: { disbursement_account: number; notes?: string }
+    data: {
+      disbursement_account: number;
+      notes?: string;
+      /** Director confirms they've seen the liquidity impact (required when the gate asks for it). */
+      acknowledge_impact?: boolean;
+      liquidity_note?: string;
+    }
   ): Promise<LoanDisbursement> {
     return api.post(`${BASE}/disbursements/${id}/disburse/`, data);
   },

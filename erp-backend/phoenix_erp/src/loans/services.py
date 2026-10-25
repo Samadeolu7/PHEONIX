@@ -381,7 +381,8 @@ class DisbursementService:
 
     @staticmethod
     @db_transaction.atomic
-    def execute(disbursement, bank_account_id: int, disbursed_by_user, notes: str = ''):
+    def execute(disbursement, bank_account_id: int, disbursed_by_user, notes: str = '',
+                acknowledge_impact: bool = False, liquidity_note: str = ''):
         """
         Execute an approved disbursement.
 
@@ -420,6 +421,24 @@ class DisbursementService:
             )
 
         gl_account = bank_account.gl_account
+
+        # Liquidity gate (treasury app): a loan approved under a director override, or one the branch
+        # can no longer afford, must be disbursed by a different director who acknowledges the impact.
+        # The branch lock is held until this transaction ends, so the cash can't be double-spent.
+        from treasury.services import gate as liquidity_gate
+        _loan = disbursement.loan
+        with liquidity_gate.branch_liquidity_lock(_loan.branch):
+            try:
+                with db_transaction.atomic():  # savepoint: a DB error in the gate can't poison this transaction
+                    liquidity_gate.enforce_disbursement(
+                        _loan, disbursed_by_user,
+                        acknowledge_impact=acknowledge_impact, note=liquidity_note,
+                    )
+            except liquidity_gate.LiquidityBlocked:
+                raise
+            except Exception:
+                # A bug in the forecast must not stop all disbursements; log loudly and let it through.
+                logger.exception("Liquidity gate failed for loan %s; allowing disbursement", _loan.loan_number)
 
         if notes:
             disbursement.notes = notes

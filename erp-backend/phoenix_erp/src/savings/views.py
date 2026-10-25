@@ -874,6 +874,13 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
             except Exception:
                 return Response({'detail': 'destination_bank_account not found.'}, status=400)
 
+        client_requested_on = None
+        if data.get('client_requested_on'):
+            from django.utils.dateparse import parse_date
+            client_requested_on = parse_date(str(data['client_requested_on']))
+            if client_requested_on is None:
+                return Response({'detail': 'client_requested_on must be a date (YYYY-MM-DD).'}, status=400)
+
         try:
             wr = initiate_withdrawal(
                 savings_account=savings_account,
@@ -882,6 +889,7 @@ class SavingsWithdrawalRequestViewSet(ScopedModelViewSet):
                 description=data.get('description', ''),
                 cashier_account=cashier_account,
                 destination_bank_account=destination_bank,
+                client_requested_on=client_requested_on,
             )
         except Exception as exc:
             return Response({'detail': str(exc)}, status=400)

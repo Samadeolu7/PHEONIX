@@ -18,6 +18,7 @@ import {
   Receipt,
   PieChart,
   Wallet,
+  Landmark,
   BookOpen,
   UserPlus,
   Plus,
@@ -96,6 +97,20 @@ export const navigationModules: NavigationModule[] = [
         title: 'Inter-Branch Transfers',
         path: '/accounting/interbranch-transfers',
         icon: GitBranch,
+        isNew: true,
+      },
+      {
+        id: 'bank-borrowings',
+        title: 'Bank Borrowings',
+        path: '/treasury/borrowings',
+        icon: Landmark,
+        isNew: true,
+      },
+      {
+        id: 'branch-liquidity',
+        title: 'Branch Cash Forecast',
+        path: '/treasury/liquidity',
+        icon: Wallet,
         isNew: true,
       },
       // Receivables Management

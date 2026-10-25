@@ -6,6 +6,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { LoanApprovalLiquidityDialog } from '../../components/treasury/LoanApprovalLiquidityDialog';
+import { asLiquidityGate, type LiquidityGatePayload } from '../../types/bankBorrowing';
+import { useLoanLiquidityCheck } from '../../hooks/useBankBorrowings';
 import {
   AlertCircle,
   ArrowLeft,
@@ -1474,6 +1477,9 @@ export default function LoanAccountDetailPage() {
   const { data: repaymentReversals = [] } = useLoanRepaymentReversals({ loan: loanId });
   const { data: repaymentAllocations = [] } = useLoanRepaymentAllocations({ loan: loanId });
   const approveLoanMutation = useApproveLoan();
+  const [liquidityGate, setLiquidityGate] = useState<LiquidityGatePayload | null>(null);
+  // Warn before anyone clicks Approve when the branch can't fund this loan from uncommitted cash.
+  const { data: approvalLiquidity } = useLoanLiquidityCheck(loanId, 'approval', loan?.status === 'pending');
   const rejectLoanMutation = useRejectLoan();
   const requestDisbursementMutation = useRequestDisbursement();
   const deleteGuarantorMutation = useDeleteGuarantor();
@@ -1520,16 +1526,40 @@ export default function LoanAccountDetailPage() {
 
   const error = loanError ? ((loanError as any)?.response?.data?.detail || loanError.message || 'Failed to load loan details.') : null;
 
+  function reportApproveError(e: unknown) {
+    // The branch can't fund this loan without touching cash committed to upcoming payments:
+    // show why (and let a director override) instead of a bare error toast.
+    const gate = asLiquidityGate(e);
+    if (gate) {
+      setLiquidityGate(gate);
+      return;
+    }
+    const data = (e as any)?.response?.data;
+    const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Approval failed.';
+    toast.error(msg);
+  }
+
   async function handleApprove() {
     if (!loan) return;
     if (!window.confirm('Approve this loan application?')) return;
-    approveLoanMutation.mutate(loan.id, {
-      onError: (e: unknown) => {
-        const data = (e as any)?.response?.data;
-        const msg = data?.detail || (Array.isArray(data?.non_field_errors) ? data.non_field_errors.join(', ') : '') || (typeof data === 'string' ? data : '') || (e as Error)?.message || 'Approval failed.';
-        toast.error(msg);
+    approveLoanMutation.mutate(loan.id, { onError: reportApproveError });
+  }
+
+  function handleLiquidityOverride(reason: string) {
+    if (!loan) return;
+    approveLoanMutation.mutate(
+      { id: loan.id, overrideReason: reason },
+      {
+        onSuccess: () => {
+          setLiquidityGate(null);
+          toast.success('Loan approved under director override. A different director must disburse it.');
+        },
+        onError: (e: unknown) => {
+          setLiquidityGate(null);
+          reportApproveError(e);
+        },
       },
-    });
+    );
   }
 
   async function handleReject() {
@@ -1779,6 +1809,16 @@ export default function LoanAccountDetailPage() {
               const guarantorsMissing = minRequired > 0 && guarantors.length < minRequired;
               return (
                 <div className="flex items-center gap-2">
+                  {approvalLiquidity && !approvalLiquidity.assessment.ok && (
+                    <span
+                      title={approvalLiquidity.assessment.advice.join(' ')}
+                      className="flex items-center gap-1 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 border border-amber-200"
+                    >
+                      <AlertCircle size={13} />
+                      Branch can lend ₦{Number(approvalLiquidity.assessment.available_today).toLocaleString('en-NG')} today
+                      {approvalLiquidity.is_director ? ' — approving needs your override' : ' — needs a director to approve'}
+                    </span>
+                  )}
                   {guarantorsMissing && (
                     <span className="flex items-center gap-1 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 border border-amber-200">
                       <AlertCircle size={13} />
@@ -1795,6 +1835,12 @@ export default function LoanAccountDetailPage() {
                     {approveLoanMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : null}
                     Approve
                   </button>
+                  <LoanApprovalLiquidityDialog
+                    gate={liquidityGate}
+                    isSubmitting={approveLoanMutation.isPending}
+                    onClose={() => setLiquidityGate(null)}
+                    onOverride={handleLiquidityOverride}
+                  />
                   <button
                     type="button"
                     onClick={handleReject}

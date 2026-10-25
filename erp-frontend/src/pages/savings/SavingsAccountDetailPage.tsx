@@ -30,6 +30,7 @@ import type { SavingsAccount } from '../../services/savingsService';
 import api from '../../services/api';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
+import { useTreasurySettings } from '../../hooks/useBankBorrowings';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -274,8 +275,18 @@ interface WithdrawModalProps {
 function WithdrawModal({ account, onClose, onSuccess }: WithdrawModalProps) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const [askedOn, setAskedOn] = useState(() => new Date().toISOString().split('T')[0]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  // Smart Savers have a notice period between the client asking and the payout deadline.
+  const { data: treasurySettings } = useTreasurySettings();
+  const noticeDays = account.smart_savings_active ? (treasurySettings?.smart_savings_notice_days ?? 14) : 0;
+  const payoutDue = (() => {
+    const d = new Date(`${askedOn}T00:00:00`);
+    d.setDate(d.getDate() + noticeDays);
+    return d.toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' });
+  })();
 
   const withdrawMutation = useInitiateWithdrawal({
     onSuccess: () => {
@@ -299,6 +310,7 @@ function WithdrawModal({ account, onClose, onSuccess }: WithdrawModalProps) {
       savings_account: account.id,
       amount,
       description: description || 'Withdrawal',
+      client_requested_on: askedOn,
     });
   }
 
@@ -340,6 +352,23 @@ function WithdrawModal({ account, onClose, onSuccess }: WithdrawModalProps) {
                 placeholder="0.00"
                 required
               />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Date the client asked</label>
+              <input
+                type="date"
+                max={new Date().toISOString().split('T')[0]}
+                value={askedOn}
+                onChange={e => setAskedOn(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+                required
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                {account.smart_savings_active
+                  ? `Smart Saver: ${noticeDays}-day notice, so this must be paid out by ${payoutDue}.`
+                  : 'Regular savings: no notice period, payout is due as soon as it is approved.'}
+                {' '}Use the day the client really asked, even if you are keying it in later.
+              </p>
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Reason</label>

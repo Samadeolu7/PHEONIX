@@ -517,6 +517,10 @@ const BankTransferFormPage = lazy(() => import('./pages/banks/BankTransferFormPa
 const TransferApprovalPage = lazy(() => import('./pages/banks/TransferApprovalPage'));
 const InterbranchTransferListPage = lazy(() => import('./pages/accounting/InterbranchTransferListPage'));
 const InterbranchTransferFormPage = lazy(() => import('./pages/accounting/InterbranchTransferFormPage'));
+const BorrowingListPage = lazy(() => import('./pages/treasury/BorrowingListPage'));
+const BorrowingFormPage = lazy(() => import('./pages/treasury/BorrowingFormPage'));
+const BorrowingDetailPage = lazy(() => import('./pages/treasury/BorrowingDetailPage'));
+const BranchLiquidityPage = lazy(() => import('./pages/treasury/BranchLiquidityPage'));
 const BankPaymentListPage = lazy(() => import('./pages/banks/BankPaymentListPage'));
 const BankPaymentFormPage = lazy(() => import('./pages/banks/BankPaymentFormPage'));
 const ReconciliationListPage = lazy(() => import('./pages/banks/ReconciliationListPage'));
@@ -1614,6 +1618,40 @@ function App() {
                                   element={
                                     <ProtectedRoute module="interbranch" page="transfers" action="create">
                                       <InterbranchTransferFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Bank borrowings + per-branch liquidity forecast */}
+                                <Route
+                                  path="/treasury/borrowings"
+                                  element={
+                                    <ProtectedRoute module="bank-borrowings" page="borrowings">
+                                      <BorrowingListPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/treasury/borrowings/new"
+                                  element={
+                                    <ProtectedRoute module="bank-borrowings" page="borrowings">
+                                      <BorrowingFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/treasury/borrowings/:id"
+                                  element={
+                                    <ProtectedRoute module="bank-borrowings" page="borrowings">
+                                      <BorrowingDetailPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/treasury/liquidity"
+                                  element={
+                                    <ProtectedRoute module="bank-borrowings" page="branch-liquidity">
+                                      <BranchLiquidityPage />
                                     </ProtectedRoute>
                                   }
                                 />

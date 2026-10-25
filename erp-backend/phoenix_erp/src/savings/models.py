@@ -985,6 +985,20 @@ class SavingsWithdrawalRequest(TimeStampedModel, BranchScopedModel, SoftDeleteMo
     rejected_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True)
 
+    # Payout notice tracking. client_requested_on is the day the client actually asked
+    # (staff sometimes key the request in later); payout_due_date is the deadline by
+    # which the money must be paid out (client_requested_on + the Smart Savings notice
+    # period for Smart Savers, otherwise the same day). The treasury forecast reserves
+    # cash for open requests from this date.
+    client_requested_on = models.DateField(
+        null=True, blank=True,
+        help_text="Date the client asked for the withdrawal (defaults to the date the request was created).",
+    )
+    payout_due_date = models.DateField(
+        null=True, blank=True, db_index=True,
+        help_text="Deadline for paying this out (Smart Savers: request date + notice period).",
+    )
+
     objects = OwnerBranchManager()
     all_objects = OwnerBranchManager(include_deleted=True)
 

@@ -10,6 +10,13 @@ from rest_framework.response import Response
 
 logger = logging.getLogger(__name__)
 
+
+def _truthy(value) -> bool:
+    """Interpret a JSON/form flag (True, 'true', '1', 'yes') as a boolean."""
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(value)
+
 from common.serializers import IsTenantUser
 from common.views import ScopedModelViewSet
 from common.approval_permissions import can_user_approve
@@ -637,10 +644,39 @@ class LoanAccountViewSet(ScopedModelViewSet):
         except Exception:
             pass
 
+        # Liquidity gate: don't let this loan eat into cash the branch has committed to
+        # upcoming payouts (savings withdrawals, bank-loan instalments/shares). A director
+        # may override with a reason after seeing the impact. See treasury/services/gate.py.
+        from treasury.models import LiquidityDecision
+        from treasury.services import gate as liquidity_gate
+        gate_result = None
         try:
-            loan.approve(request.user)
+            with liquidity_gate.branch_liquidity_lock(loan.branch):
+                try:
+                    from django.db import transaction as _gate_tx
+                    with _gate_tx.atomic():  # savepoint: a DB error in the gate can't poison the request
+                        gate_result = liquidity_gate.evaluate_approval(
+                            loan, request.user, request.data.get('override_reason', ''))
+                except Exception:
+                    # A bug in the forecast must not stop all lending; log loudly and let it through.
+                    logger.exception("Liquidity gate failed for loan %s; allowing approval", loan.loan_number)
+                    gate_result = liquidity_gate.GateResult(True)
+                if gate_result.allowed:
+                    loan.approve(request.user)
+                    if gate_result.outcome:
+                        liquidity_gate.record_decision(
+                            loan, LiquidityDecision.STAGE_APPROVAL, gate_result.outcome,
+                            request.user, gate_result.reason, gate_result.assessment)
         except ValidationError as exc:
             return Response({'detail': str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not gate_result.allowed:
+            # Returned (not raised) so the audit row below is committed with the request.
+            if gate_result.code == liquidity_gate.CODE_BLOCKED:
+                liquidity_gate.record_decision(
+                    loan, LiquidityDecision.STAGE_APPROVAL, LiquidityDecision.OUTCOME_BLOCKED,
+                    request.user, '', gate_result.assessment)
+            return Response(gate_result.payload(), status=status.HTTP_409_CONFLICT)
 
         # Post any fees configured to trigger at approval
         from .services import apply_loan_fees
@@ -2191,6 +2227,19 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
     permission_page = 'loan-disbursements'
     officer_client_lookup = 'loan__client__assigned_officer'
 
+    @staticmethod
+    def _record_liquidity_block(loan, blocked, user):
+        """Persist an audit row when a non-director (or the same director) was stopped at disbursement."""
+        from treasury.models import LiquidityDecision
+        from treasury.services import gate as liquidity_gate
+        if blocked.code in (liquidity_gate.CODE_DIRECTOR_REQUIRED, liquidity_gate.CODE_SAME_DIRECTOR):
+            try:
+                liquidity_gate.record_decision(
+                    loan, LiquidityDecision.STAGE_DISBURSEMENT, LiquidityDecision.OUTCOME_BLOCKED,
+                    user, blocked.message, blocked.assessment)
+            except Exception:
+                logger.exception("Could not record liquidity block for loan %s", loan.loan_number)
+
     def get_queryset(self):
         qs = LoanDisbursement.all_objects.select_related(
             'loan', 'loan__client', 'requested_by', 'approved_by',
@@ -2261,13 +2310,19 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
             )
 
         from .services import DisbursementService, apply_loan_fees
+        from treasury.services.gate import LiquidityBlocked
         try:
             DisbursementService.execute(
                 disbursement=disbursement,
                 bank_account_id=disbursement_account_id,
                 disbursed_by_user=request.user,
                 notes=notes,
+                acknowledge_impact=_truthy(request.data.get('acknowledge_impact')),
+                liquidity_note=request.data.get('liquidity_note', ''),
             )
+        except LiquidityBlocked as lb:
+            self._record_liquidity_block(disbursement.loan, lb, request.user)
+            return Response(lb.payload(), status=status.HTTP_409_CONFLICT)
         except ValidationError as exc:
             msg = exc.message if hasattr(exc, 'message') else str(exc)
             return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
@@ -2334,6 +2389,7 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
 
         from .services import DisbursementService, apply_loan_fees
         from django.db import transaction as _dbtx
+        from treasury.services.gate import LiquidityBlocked
 
         try:
             with _dbtx.atomic():
@@ -2345,7 +2401,12 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
                     bank_account_id=int(disbursement_account_id),
                     disbursed_by_user=request.user,
                     notes=request.data.get('notes', ''),
+                    acknowledge_impact=_truthy(request.data.get('acknowledge_impact')),
+                    liquidity_note=request.data.get('liquidity_note', ''),
                 )
+        except LiquidityBlocked as lb:
+            self._record_liquidity_block(disbursement.loan, lb, request.user)
+            return Response(lb.payload(), status=status.HTTP_409_CONFLICT)
         except ValidationError as exc:
             msg = exc.message if hasattr(exc, 'message') else str(exc)
             return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)

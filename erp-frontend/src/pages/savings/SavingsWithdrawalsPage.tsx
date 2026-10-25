@@ -10,6 +10,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
+import { PayoutDeadlineBadge } from '../../components/savings/PayoutDeadlineBadge';
 import {
   AlertCircle,
   Loader2,
@@ -760,6 +761,7 @@ function WithdrawalRow({ wr, onApprove, onCancel, onDisburse, onReject, showAppr
           <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${STATUS_STYLES[wr.status]}`}>
             {STATUS_LABELS[wr.status]}
           </span>
+          <div><PayoutDeadlineBadge dueDate={wr.payout_due_date} status={wr.status} /></div>
         </td>
         <td className="px-4 py-3 text-xs text-gray-500">
           {wr.approvals_received}/{wr.required_approvals}
@@ -1372,7 +1374,10 @@ export default function SavingsWithdrawalsPage() {
                             <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">No bank details</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-sm font-medium text-gray-800">₦{fmt(wr.amount)}</td>
+                        <td className="px-4 py-3 text-right text-sm font-medium text-gray-800">
+                          ₦{fmt(wr.amount)}
+                          <div><PayoutDeadlineBadge dueDate={wr.payout_due_date} status={wr.status} /></div>
+                        </td>
                         <td className="px-4 py-3 text-center">
                           <span className="text-xs text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full">
                             {wr.approvals_received}/{wr.required_approvals} approved

@@ -382,8 +382,16 @@ class FinancialAuditLog(models.Model):
     CLIENT_REGISTRATION_FEE = 'client_registration_fee'
     CLIENT_REACTIVATION_FEE = 'client_reactivation_fee'
     LOAN_PENALTY_ACCRUAL = 'loan_penalty_accrual'
+    BORROWING_RECEIVE = 'borrowing_receive'
+    BORROWING_CONTRIBUTION = 'borrowing_contribution'
+    BORROWING_INSTALMENT = 'borrowing_instalment'
+    LIQUIDITY_OVERRIDE = 'liquidity_override'
 
     EVENT_CHOICES = [
+        (BORROWING_RECEIVE, 'Bank Borrowing Received'),
+        (BORROWING_CONTRIBUTION, 'Bank Borrowing Branch Share Sent'),
+        (BORROWING_INSTALMENT, 'Bank Borrowing Instalment Paid'),
+        (LIQUIDITY_OVERRIDE, 'Liquidity Block Overridden / Acknowledged'),
         (LOAN_APPROVE,      'Loan Approved'),
         (LOAN_DISBURSE,     'Loan Disbursed'),
         (LOAN_REPAY,        'Loan Repayment'),

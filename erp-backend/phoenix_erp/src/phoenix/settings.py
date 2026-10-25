@@ -206,6 +206,7 @@ INSTALLED_APPS = [
     'budgets',  # Budget management and variance reporting
     'banks',  # Bank management system
     'interbranch',  # Inter-branch transfers
+    'treasury',  # Bank borrowings + per-branch liquidity gate
     'internal_api',  # Internal endpoints consumed by Java microservices
     'permissions',  # Granular scope-aware permission system
     'threads',  # Contextual page-anchored discussion threads
@@ -720,6 +721,16 @@ CELERY_BEAT_SCHEDULE = {
     'escalate-aging-reconciliation-exceptions': {
         'task': 'banks.tasks.escalate_aging_reconciliation_exceptions',
         'schedule': crontab(hour=9, minute=5),
+        'options': {
+            'expires': 3600,
+        }
+    },
+
+    # ── Treasury: daily digest of upcoming branch shares / bank instalments / savings
+    # payouts, and blocked loans that can now be approved. 07:00 UTC = 08:00 WAT. ──
+    'daily-liquidity-watch': {
+        'task': 'treasury.tasks.daily_liquidity_watch',
+        'schedule': crontab(hour=7, minute=0),
         'options': {
             'expires': 3600,
         }

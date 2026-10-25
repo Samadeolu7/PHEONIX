@@ -418,6 +418,7 @@ def initiate_withdrawal(
     description: str = '',
     cashier_account=None,
     destination_bank_account=None,
+    client_requested_on=None,
 ) -> SavingsWithdrawalRequest:
     """
     Create a SavingsWithdrawalRequest and pre-populate the approval steps.
@@ -481,8 +482,31 @@ def initiate_withdrawal(
     else:
         required_approvals = tier.required_approvers
 
+    # ── Payout deadline ──────────────────────────────────────────────────────
+    # Smart Savers have a notice period between the client's request and payout.
+    from datetime import timedelta
+    from django.utils import timezone as _tz
+    today = _tz.localdate()
+    if client_requested_on is None:
+        client_requested_on = today
+    if client_requested_on > today:
+        raise ValidationError("The date the client asked for the withdrawal cannot be in the future.")
+    smart = getattr(savings_account, 'smart_account', None)
+    if smart is not None and smart.is_active:
+        try:
+            from treasury.models import TreasurySettings
+            notice_days = TreasurySettings.get_for(
+                getattr(savings_account, 'tenant', None)).smart_savings_notice_days
+        except Exception:
+            notice_days = 14
+        payout_due_date = client_requested_on + timedelta(days=notice_days)
+    else:
+        payout_due_date = client_requested_on
+
     # ── Create the request ───────────────────────────────────────────────────
     wr = SavingsWithdrawalRequest.objects.create(
+        client_requested_on=client_requested_on,
+        payout_due_date=payout_due_date,
         savings_account=savings_account,
         requested_by=requested_by,
         amount=amount,

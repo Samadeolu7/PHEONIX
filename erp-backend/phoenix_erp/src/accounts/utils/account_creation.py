@@ -735,6 +735,12 @@ SYSTEM_ACCOUNTS = {
         'name': 'Development Levy Payable', 'account_type': 'LIABILITY',
         'parent_name': 'Payroll Liabilities',
     },
+    # Interest charged on bank borrowings (treasury app). 5502 is Bank Charges, so 5501 is free.
+    'interest_on_borrowings': {
+        'parent_code': '5500', 'child_suffix': '001',
+        'name': 'Interest on Borrowings', 'account_type': 'EXPENSE',
+        'parent_name': 'Finance Costs',
+    },
     # NOTE: Staff IOU / Salary Advance is intentionally NOT a SYSTEM_ACCOUNTS
     # entry — each staff member gets their own dedicated child account
     # instead of sharing one pooled account. See

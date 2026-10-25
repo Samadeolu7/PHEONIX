@@ -68,6 +68,7 @@ urlpatterns = [
     path('api/budgets/', include('budgets.urls')),  # Budget management and variance reporting
     path('api/banks/', include('banks.urls')),  # Bank management system
     path('api/interbranch/', include('interbranch.urls')),  # Inter-branch transfers
+    path('api/treasury/', include('treasury.urls')),  # Bank borrowings + liquidity gate
     path('api/internal/', include('internal_api.urls', namespace='internal_api')),  # Java microservice internal endpoints
     path('api/', include('dashboards.urls')),
     path('api/analytics/', include('analytics.urls', namespace='analytics')),  # School dashboard analytics

@@ -16,6 +16,9 @@ import { bankService } from '../../services/bankService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../hooks/useToast';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
+import { LiquidityImpactPanel } from '../../components/treasury/LiquidityImpactPanel';
+import { useLoanLiquidityCheck } from '../../hooks/useBankBorrowings';
+import { asLiquidityGate } from '../../types/bankBorrowing';
 import {
   useLoanDisbursements,
   useApproveDisbursement,
@@ -86,6 +89,8 @@ const LoanDisbursementPage: React.FC = () => {
   const [selectedBankAccount, setSelectedBankAccount] = useState<number | ''>('');
   const [disburseNotes, setDisburseNotes] = useState('');
   const [copied, setCopied] = useState(false);
+  const [ackImpact, setAckImpact] = useState(false);
+  const [ackNote, setAckNote] = useState('');
 
   // React Query hooks
   const { data: disbList = [], isLoading: loading } = useLoanDisbursements({ loan: Number(loanId) });
@@ -94,6 +99,15 @@ const LoanDisbursementPage: React.FC = () => {
   const rejectDisbursementMutation = useRejectDisbursement();
 
   const disbursement = disbList.length > 0 ? disbList[0] : null;
+
+  // Liquidity gate: if the loan was approved under a director override, or the branch can no longer
+  // fund it, a (different) director must see the impact and acknowledge it before releasing the cash.
+  const { data: liquidity, refetch: refetchLiquidity } = useLoanLiquidityCheck(
+    Number(loanId), 'disbursement', disbursement?.status === 'approved'
+  );
+  const liquidityNeedsAttention = !!liquidity && (!liquidity.assessment.ok || !!liquidity.override);
+  const overriddenByMe = !!liquidity?.override && liquidity.override.by_id === user?.id;
+  const liquidityBlocksMe = liquidityNeedsAttention && (!liquidity?.is_director || overriddenByMe);
 
   const copyAccountNumber = (value: string) => {
     navigator.clipboard.writeText(value).then(() => {
@@ -128,10 +142,26 @@ const LoanDisbursementPage: React.FC = () => {
       return;
     }
     disburseLoanMutation.mutate(
-      { id: disbursement.id, data: { disbursement_account: Number(selectedBankAccount), notes: disburseNotes } },
+      {
+        id: disbursement.id,
+        data: {
+          disbursement_account: Number(selectedBankAccount),
+          notes: disburseNotes,
+          acknowledge_impact: liquidityNeedsAttention ? ackImpact : undefined,
+          liquidity_note: liquidityNeedsAttention ? ackNote : undefined,
+        },
+      },
       {
         onSuccess: () => success('Loan disbursed successfully'),
-        onError: (err: any) => showError(extractApiError(err, 'Failed to disburse loan. Please try again.')),
+        onError: (err: any) => {
+          const gate = asLiquidityGate(err);
+          if (gate) {
+            showError(gate.detail);
+            refetchLiquidity();
+            return;
+          }
+          showError(extractApiError(err, 'Failed to disburse loan. Please try again.'));
+        },
       }
     );
   };
@@ -404,6 +434,42 @@ const LoanDisbursementPage: React.FC = () => {
             </div>
           </div>
 
+          {liquidityNeedsAttention && liquidity && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50/60 p-4 space-y-3">
+              <p className="font-semibold text-amber-900 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" /> Review the effect on {liquidity.assessment.branch_name}&apos;s upcoming payments
+              </p>
+              <LiquidityImpactPanel assessment={liquidity.assessment} stage="disbursement" />
+              {liquidityBlocksMe ? (
+                <p className="text-sm font-medium text-amber-900">
+                  {overriddenByMe
+                    ? 'You overrode this loan at approval, so a different director must disburse it.'
+                    : 'A director must disburse this loan.'}
+                </p>
+              ) : (
+                <div className="space-y-2 border-t border-amber-200 pt-3">
+                  <label className="flex items-start gap-2 text-sm text-gray-900">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={ackImpact}
+                      onChange={(e) => setAckImpact(e.target.checked)}
+                    />
+                    <span>I have reviewed this impact and accept it. I will make sure the cash is in place for the payments above.</span>
+                  </label>
+                  <textarea
+                    title="Note on how the shortfall will be covered"
+                    className="w-full border border-gray-200 rounded-lg p-2 text-sm"
+                    rows={2}
+                    placeholder="Optional: how will the shortfall be covered?"
+                    value={ackNote}
+                    onChange={(e) => setAckNote(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -438,7 +504,10 @@ const LoanDisbursementPage: React.FC = () => {
               <button
                 type="button"
                 onClick={handleDisburse}
-                disabled={disburseLoanMutation.isPending || !selectedBankAccount}
+                disabled={
+                  disburseLoanMutation.isPending || !selectedBankAccount ||
+                  (liquidityNeedsAttention && (liquidityBlocksMe || !ackImpact))
+                }
                 className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50"
               >
                 {disburseLoanMutation.isPending

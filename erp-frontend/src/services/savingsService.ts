@@ -307,6 +307,10 @@ export interface SavingsWithdrawalRequest {
   required_approvals: number;
   approvals_received: number;
   description: string;
+  /** Date the client asked for the money (may be earlier than created_at when keyed in late). */
+  client_requested_on?: string | null;
+  /** Deadline for paying this out (Smart Savers: request date + notice period). */
+  payout_due_date?: string | null;
   destination_bank_account: number | null;
   destination_bank_name?: string | null;
   destination_account_number?: string | null;
@@ -329,6 +333,8 @@ export interface InitiateWithdrawalData {
   savings_account: number;
   amount: string;
   description?: string;
+  /** Day the client actually asked (YYYY-MM-DD). Defaults to today on the server. */
+  client_requested_on?: string;
   cashier_account?: number | null;
   destination_bank_account?: number | null;
 }
