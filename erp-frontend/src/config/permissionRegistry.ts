@@ -137,7 +137,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
     name: 'Bank Borrowings',
     icon: 'Landmark',
     color: '#0d9488',
-    description: 'Loans taken from banks, each branch's share of repayments, and the per-branch cash forecast behind the lending check',
+    description: "Loans taken from banks, each branch's share of repayments, and the per-branch cash forecast behind the lending check",
     pages: [
       { code: 'borrowings', title: 'Bank Borrowings', description: 'Record bank loans, share them between branches, send branch shares and record instalments', paths: ['/treasury/borrowings', '/treasury/borrowings/new', '/treasury/borrowings/:id'] },
       { code: 'branch-liquidity', title: 'Branch Cash Forecast', description: 'What a branch can safely lend after committed payments', paths: ['/treasury/liquidity'] },
