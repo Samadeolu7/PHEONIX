@@ -14,6 +14,8 @@ import {
   BookOpen,
   CalendarDays,
   ClipboardCheck,
+  Landmark,
+  Gauge,
 } from 'lucide-react';
 
 interface SectionCard {
@@ -108,6 +110,30 @@ const SECTIONS: Section[] = [
         description: 'Reconcile system balances against bank statements',
         path: '/treasury/bank-reconciliation',
         icon: BookOpen,
+      },
+    ],
+  },
+  {
+    title: 'Bank Borrowings & Lending Cash',
+    color: 'text-teal-800',
+    bgColor: 'bg-teal-50',
+    borderColor: 'border-teal-200',
+    iconBg: 'bg-teal-100 group-hover:bg-teal-200',
+    iconColor: 'text-teal-600',
+    cards: [
+      {
+        title: 'Bank Borrowings',
+        description: 'Loans from banks: split between branches, branch shares, and instalments (directors)',
+        path: '/treasury/borrowings',
+        icon: Landmark,
+        badge: 'New',
+      },
+      {
+        title: 'Branch Cash Forecast',
+        description: 'What each branch can safely lend today after savings payouts and bank-loan payments',
+        path: '/treasury/liquidity',
+        icon: Gauge,
+        badge: 'New',
       },
     ],
   },
