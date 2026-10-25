@@ -103,7 +103,7 @@ export const LiquidityImpactPanel: React.FC<Props> = ({ assessment: a, stage }) 
       <p className="text-xs text-gray-500">
         Based on {a.branch_name}&apos;s cash and bank balance {naira(a.cash_now)}, {naira(a.committed_outflows_total)} of
         committed payments in the next {a.lookahead_days} days, and {naira(a.expected_inflows_total)} of expected
-        repayments (collection rate {rate}% over recent months).
+        repayments (counting {rate}% of what is due, based on how well this branch has collected recently).
       </p>
 
       {a.override && (

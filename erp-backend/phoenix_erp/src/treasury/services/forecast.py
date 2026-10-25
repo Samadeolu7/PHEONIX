@@ -13,6 +13,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Sum
+from django.db.models.functions import Least
 
 ZERO = Decimal('0.00')
 
@@ -46,33 +47,32 @@ def branch_cash(branch):
     return total
 
 
+# Instalments that fell due in the last few days are mostly "not paid yet" simply because clients
+# pay a few days late; leaving them out stops that from dragging the measured rate down.
+COLLECTION_GRACE_DAYS = 7
+
+
 def collection_rate(branch, today, window_days):
     """
-    Cash collected on loan repayments / cash scheduled to be due, over the last window_days.
-    Returns (rate 0..1, collected, scheduled). With no scheduled history the rate is 0 (conservative).
+    Share of instalments that fell due in the window which have actually been paid.
+
+    Like-for-like: only instalments due in (today - grace - window, today - grace] are looked at, and for each
+    one the amount paid (capped at what was due) is compared with what was due. Catch-up payments on older
+    arrears and prepayments therefore cannot inflate the rate (the old cash-in / due-in ratio could).
+    Returns (rate 0..1, paid, due). With no history the rate is 0 (conservative).
     """
     from loans.models import LoanRepaymentSchedule
-    from transactions.models import Transaction, TransactionEntry
 
-    start = today - timedelta(days=window_days)
-    scheduled = LoanRepaymentSchedule.objects.filter(
-        branch=branch, due_date__gt=start, due_date__lte=today, loan__status__in=HISTORY_STATUSES,
-    ).aggregate(t=Sum('total_due'))['t'] or ZERO
-
-    collected = TransactionEntry.objects.filter(
-        transaction__series__code='LNPMT',
-        transaction__branch=branch,
-        transaction__date__gt=start,
-        transaction__date__lte=today,
-        transaction__is_reversed=False,
-        transaction__is_reversal=False,
-        side=TransactionEntry.DEBIT,
-        account__account_type='ASSET',
-    ).aggregate(t=Sum('amount'))['t'] or ZERO
-
-    if scheduled <= 0:
-        return ZERO, collected, scheduled
-    return min(Decimal('1'), collected / scheduled), collected, scheduled
+    end = today - timedelta(days=COLLECTION_GRACE_DAYS)
+    start = end - timedelta(days=window_days)
+    agg = LoanRepaymentSchedule.objects.filter(
+        branch=branch, due_date__gt=start, due_date__lte=end, loan__status__in=HISTORY_STATUSES,
+    ).aggregate(due=Sum('total_due'), paid=Sum(Least('total_paid', 'total_due')))
+    due = agg['due'] or ZERO
+    paid = agg['paid'] or ZERO
+    if due <= 0:
+        return ZERO, paid, due
+    return min(Decimal('1'), paid / due), paid, due
 
 
 def _clamp_day(d, today):
@@ -175,7 +175,9 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
     end = today + timedelta(days=horizon)
 
     cash = branch_cash(branch)
-    rate, collected, scheduled = collection_rate(branch, today, cfg.collection_rate_window_days)
+    measured_rate, collected, scheduled = collection_rate(branch, today, cfg.collection_rate_window_days)
+    # Safety haircut: never assume more than the configured share of expected repayments arrives.
+    rate = min(measured_rate, Decimal(cfg.max_collection_rate_pct) / Decimal('100'))
 
     inflow_by_day = defaultdict(lambda: ZERO)
     due_rows = LoanRepaymentSchedule.objects.filter(
@@ -214,7 +216,8 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
         'branch_id': branch.pk, 'branch_name': branch.name,
         'today': today, 'lookahead_days': horizon,
         'cash_now': cash,
-        'collection_rate': rate, 'collected': collected, 'scheduled': scheduled,
+        'collection_rate': rate, 'measured_collection_rate': measured_rate,
+        'collected': collected, 'scheduled': scheduled,
         'expected_inflows_total': sum(inflow_by_day.values(), ZERO),
         'committed_outflows_total': sum((e['amount'] for e in events), ZERO),
         'days': rows,

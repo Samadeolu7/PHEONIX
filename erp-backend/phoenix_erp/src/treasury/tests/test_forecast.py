@@ -110,3 +110,59 @@ class BranchForecastTests(TestCase):
             f = branch_forecast(self.env['ikeja'])
         self.assertEqual(f['collection_rate'], D('0.5'))
         self.assertEqual(f['expected_inflows_total'], D('0'))  # no schedule rows in this tenant
+
+
+class CollectionRateTests(TestCase):
+    """Rate is like-for-like on instalments due in the window, with a grace period and an adjustable cap."""
+
+    def setUp(self):
+        from treasury.tests.helpers import make_pending_loan
+        self.env = make_env("cr")
+        make_bank_account(self.env, self.env['ikeja'], "9001")
+        self.loan = make_pending_loan(self.env, self.env['ikeja'])
+        self.loan.status = 'active'
+        self.loan.save()
+        self.today = timezone.localdate()
+        self.n = 0
+
+    def tearDown(self):
+        set_current_tenant(None)
+
+    def _row(self, days_ago, due, paid):
+        from loans.models import LoanRepaymentSchedule
+        self.n += 1
+        return LoanRepaymentSchedule.objects.create(
+            loan=self.loan, installment_number=self.n, due_date=self.today - timedelta(days=days_ago),
+            principal_due=D(due), interest_due=D('0'), total_due=D(due), total_paid=D(paid),
+            tenant=self.env['tenant'], owner=self.env['owner'], branch=self.env['ikeja'])
+
+    def test_rate_is_paid_over_due_for_instalments_in_window(self):
+        from treasury.services.forecast import collection_rate
+        self._row(30, '100', '100')
+        self._row(20, '100', '0')
+        rate, paid, due = collection_rate(self.env['ikeja'], self.today, 90)
+        self.assertEqual((rate, paid, due), (D('0.5'), D('100'), D('200')))
+
+    def test_overpayment_and_old_arrears_cannot_push_the_rate_above_what_was_due(self):
+        from treasury.services.forecast import collection_rate
+        self._row(30, '100', '250')   # overpaid: only the 100 due counts
+        self._row(20, '100', '0')
+        self.assertEqual(collection_rate(self.env['ikeja'], self.today, 90)[0], D('0.5'))
+
+    def test_instalments_due_in_the_last_week_are_ignored(self):
+        from treasury.services.forecast import collection_rate
+        self._row(3, '100', '0')      # due 3 days ago, not paid yet: inside the grace period
+        self.assertEqual(collection_rate(self.env['ikeja'], self.today, 90)[0], D('0'))
+        self._row(30, '100', '100')
+        self.assertEqual(collection_rate(self.env['ikeja'], self.today, 90)[0], D('1'))
+
+    def test_forecast_applies_the_cap_but_reports_the_measured_rate(self):
+        self._row(30, '100', '100')   # measured 100%
+        f = branch_forecast(self.env['ikeja'])
+        self.assertEqual(f['measured_collection_rate'], D('1'))
+        self.assertEqual(f['collection_rate'], D('0.9'))   # default cap 90%
+        from treasury.models import TreasurySettings
+        row = TreasurySettings.get_for(self.env['tenant'])
+        row.max_collection_rate_pct = 60
+        row.save()
+        self.assertEqual(branch_forecast(self.env['ikeja'])['collection_rate'], D('0.6'))

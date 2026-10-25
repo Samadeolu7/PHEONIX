@@ -13,6 +13,7 @@ const SETTING_FIELDS: { key: keyof TreasurySettings; label: string; hint: string
   { key: 'lookahead_days', label: 'Look-ahead window (days)', hint: 'How far ahead the lending check reserves cash.', min: 7, max: 180 },
   { key: 'smart_savings_notice_days', label: 'Smart Saver notice (days)', hint: 'From the client asking to the payout deadline.', min: 0, max: 90 },
   { key: 'collection_rate_window_days', label: 'Collection history (days)', hint: "Period used to measure each branch's collection rate.", min: 14, max: 365 },
+  { key: 'max_collection_rate_pct', label: 'Collection rate cap (%)', hint: 'Safety limit: never assume a branch collects more than this share of expected repayments.', min: 0, max: 100 },
   { key: 'default_contribution_lead_days', label: 'Branch share lead time (days)', hint: 'Suggested default for new bank borrowings.', min: 0, max: 60 },
 ];
 
@@ -75,6 +76,7 @@ const BranchLiquidityPage: React.FC = () => {
   const { data: f, isLoading, error } = useBranchForecast(branchId, undefined, branchId !== undefined);
   const interesting = (f?.days ?? []).filter((d, i) => i === 0 || Number(d.inflow) > 0 || d.outflows.length > 0);
   const rate = Math.round(Number(f?.collection_rate ?? 0) * 100);
+  const measured = Math.round(Number(f?.measured_collection_rate ?? f?.collection_rate ?? 0) * 100);
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -107,7 +109,7 @@ const BranchLiquidityPage: React.FC = () => {
               ['Can lend today', naira(f.available_today), 'text-green-700'],
               ['Cash and bank now', naira(f.cash_now), 'text-gray-900'],
               [`Committed payments (${f.lookahead_days} days)`, naira(f.committed_outflows_total), 'text-red-700'],
-              [`Expected repayments (at ${rate}% collection)`, naira(f.expected_inflows_total), 'text-blue-700'],
+              [`Expected repayments (counting ${rate}% of what is due)`, naira(f.expected_inflows_total), 'text-blue-700'],
             ].map(([label, value, color]) => (
               <div key={label} className="bg-white rounded-lg shadow p-4">
                 <p className="text-xs text-gray-500">{label}</p>
@@ -148,8 +150,8 @@ const BranchLiquidityPage: React.FC = () => {
               </table>
             </div>
             <p className="text-xs text-gray-500 mt-3">
-              Expected repayments count only schedule rows not yet overdue, scaled by this branch&apos;s collection rate
-              over recent months. The closing balance can dip below zero on a day with no money to cover that day&apos;s
+              Expected repayments count only schedule rows not yet overdue, scaled by this branch&apos;s collection rate:
+              {` ${measured}% of instalments due in recent months were paid`}{measured > rate ? `, capped at ${rate}% for safety` : ''}. The closing balance can dip below zero on a day with no money to cover that day&apos;s
               payments, which is exactly what the lending check protects against.
             </p>
           </section>

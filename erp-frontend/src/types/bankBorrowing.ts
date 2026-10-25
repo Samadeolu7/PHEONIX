@@ -185,6 +185,8 @@ export interface BranchForecast {
   lookahead_days: number;
   cash_now: string;
   collection_rate: string;
+  /** Measured rate before the safety cap is applied. */
+  measured_collection_rate?: string;
   collected: string;
   scheduled: string;
   expected_inflows_total: string;
@@ -208,6 +210,7 @@ export interface TreasurySettings {
   smart_savings_notice_days: number;
   collection_rate_window_days: number;
   default_contribution_lead_days: number;
+  max_collection_rate_pct: number;
 }
 
 /** Narrow an unknown thrown API error to the gate payload, when it is one. */

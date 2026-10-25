@@ -14,6 +14,8 @@ class TreasurySettings(TimeStampedModel, SoftDeleteModel):
         default=14, help_text="Days between a Smart Saver's withdrawal request and the payout deadline.")
     collection_rate_window_days = models.PositiveSmallIntegerField(
         default=90, help_text="History window used to measure each branch's collection rate.")
+    max_collection_rate_pct = models.PositiveSmallIntegerField(
+        default=90, help_text="Safety cap: never assume a branch collects more than this % of expected repayments.")
     default_contribution_lead_days = models.PositiveSmallIntegerField(
         default=3, help_text="Suggested days before a bank instalment that branches send their share.")
 
