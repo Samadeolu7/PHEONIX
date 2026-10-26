@@ -33,6 +33,40 @@ def _when(due, today):
     return f"due {due:%d %b}"
 
 
+def _shortfall_lines(today):
+    """[(tenant_id, branch, line)] for every branch whose forecast dips below zero before an obligation."""
+    from branches.models import Branch
+    from treasury.services.forecast import branch_forecast
+
+    forecasts = []
+    for branch in Branch.all_objects.filter(is_active=True, is_deleted=False).select_related('owner'):
+        try:
+            forecasts.append((branch, branch_forecast(branch, today=today)))
+        except Exception:
+            logger.exception("Shortfall check failed for branch %s", branch.pk)
+
+    spare_by_tenant = {}
+    for branch, f in forecasts:
+        if f['available_today'] > 0:
+            spare_by_tenant.setdefault(branch.tenant_id, []).append((branch.name, f['available_today']))
+
+    lines = []
+    for branch, f in forecasts:
+        first_short = next((row for row in f['days'] if row['closing'] < 0), None)
+        if first_short is None:
+            continue
+        lowest = min(f['days'], key=lambda r: r['closing'])
+        dues = '; '.join(o['description'] for o in first_short['outflows'][:3]) or 'committed payments'
+        donors = [f"{name} ({_naira(amount)} spare)" for name, amount in spare_by_tenant.get(branch.tenant_id, [])
+                  if name != branch.name][:3]
+        donor_text = f" Branches with spare cash today: {', '.join(donors)}." if donors else ""
+        lines.append((branch.tenant_id, branch, (
+            f"SHORTFALL WARNING: {branch.name} is forecast to be {_naira(-first_short['closing'])} short on "
+            f"{first_short['date']:%d %b} ({dues}). Lowest point {_naira(-lowest['closing'])} short on "
+            f"{lowest['date']:%d %b}. Move cash in or chase collections before then.{donor_text}")))
+    return lines
+
+
 def collect_alerts(today=None):
     """Return {tenant_id: {'owner':..., 'branch':..., 'lines': [...]}} (pure read; used by the task and tests)."""
     from loans.models import LoanAccount
@@ -88,6 +122,14 @@ def collect_alerts(today=None):
         add(wr, wr.branch, f"Savings payout: {_naira(wr.amount)} to {who} at "
                            f"{wr.branch.name if wr.branch else '?'} ({_when(wr.payout_due_date, today)}, "
                            f"status: {wr.get_status_display()})")
+
+    # Early warning: money is only set aside as late as the forecast allows, so if collections run slower
+    # than expected a branch can drift towards a shortfall. Re-check every branch daily (with no new
+    # lending) and warn while there is still time to move cash in or chase collections.
+    for line_tenant, branch, line in _shortfall_lines(today):
+        out[line_tenant]['owner'] = out[line_tenant]['owner'] or branch.owner
+        out[line_tenant]['branch'] = out[line_tenant]['branch'] or branch
+        out[line_tenant]['lines'].insert(0, line)
 
     since = timezone.now() - timedelta(days=BLOCKED_LOAN_LOOKBACK_DAYS)
     seen = set()

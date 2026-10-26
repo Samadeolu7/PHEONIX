@@ -257,6 +257,16 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
         inflow_by_day[day] += amount
 
     events = _outflow_events(branch, today, end, exclude_loan_pk=exclude_loan_pk)
+    # Safety margin: each obligation must be fully covered `reserve_buffer_days` before it is due, so it is
+    # placed that many days earlier on the timeline (never before today). Repayments expected in those last
+    # few days are then not relied on for it. Money is still only held back from the point that expected
+    # repayments can no longer cover the obligation in time ("save up as late as possible").
+    buffer = timedelta(days=int(cfg.reserve_buffer_days or 0))
+    for ev in events:
+        ev['due_day'] = ev['day']
+        ev['day'] = max(today, ev['day'] - buffer)
+        if ev['day'] != ev['due_day']:
+            ev['description'] += f" - must be ready by {ev['day']:%d %b}"
     out_by_day = defaultdict(list)
     for ev in events:
         out_by_day[ev['day']].append(ev)
@@ -280,7 +290,7 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
     lowest = min(closing_list) if closing_list else cash
     return {
         'branch_id': branch.pk, 'branch_name': branch.name,
-        'today': today, 'lookahead_days': horizon,
+        'today': today, 'lookahead_days': horizon, 'reserve_buffer_days': int(cfg.reserve_buffer_days or 0),
         'cash_now': cash,
         'collection_rate': rate, 'measured_collection_rate': measured_rate,
         'collected': collected, 'scheduled': scheduled,

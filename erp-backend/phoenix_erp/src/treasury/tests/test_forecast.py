@@ -223,3 +223,88 @@ class ArrearsRecoveryTests(CollectionRateTests):
         self._row(150, '10', '0')                     # 10 still owed today
         f = branch_forecast(self.env['ikeja'])
         self.assertLessEqual(f['expected_recovery_total'], f['arrears_outstanding'])
+
+
+class ReserveBufferTests(TestCase):
+    """Money must be ready `reserve_buffer_days` before an obligation is due; until then the branch can lend it."""
+
+    def setUp(self):
+        from treasury.models import TreasurySettings
+        from treasury.tests.helpers import make_pending_loan
+        self.env = make_env("buf")
+        self.today = timezone.localdate()
+        self.hq_bank = make_bank_account(self.env, self.env['hq'], "9101")
+        self.ik_bank = make_bank_account(self.env, self.env['ikeja'], "9102")
+        # Ikeja owes one 1,000,000 share, due in 7 days (instalment in 10, 3-day lead).
+        make_borrowing(self.env, self.hq_bank, self.ik_bank, principal='1000000.00', rate='0', tenor=1,
+                       first_due=self.today + timedelta(days=10))
+        # 300,000 of repayments fall due in 6 days.
+        loan = make_pending_loan(self.env, self.env['ikeja'])
+        loan.status = 'active'
+        loan.save()
+        from loans.models import LoanRepaymentSchedule
+        LoanRepaymentSchedule.objects.create(
+            loan=loan, installment_number=1, due_date=self.today + timedelta(days=6),
+            principal_due=D('300000'), interest_due=D('0'), total_due=D('300000'), total_paid=D('0'),
+            tenant=self.env['tenant'], owner=self.env['owner'], branch=self.env['ikeja'])
+        self.settings = TreasurySettings.get_for(self.env['tenant'])
+        self.settings.max_collection_rate_pct = 100
+        self.settings.include_arrears_recovery = False
+        self.settings.save()
+
+    def tearDown(self):
+        set_current_tenant(None)
+
+    def _forecast(self, buffer_days):
+        self.settings.reserve_buffer_days = buffer_days
+        self.settings.save()
+        with mock.patch('treasury.services.forecast.collection_rate', return_value=(D('1'), D('1'), D('1'))):
+            return branch_forecast(self.env['ikeja'])
+
+    def test_without_buffer_repayments_arriving_before_the_due_date_free_up_cash(self):
+        f = self._forecast(0)
+        # 1,000,000 cash; +300,000 on day 6; -1,000,000 on day 7 -> 300,000 can be lent today.
+        self.assertEqual(f['available_today'], D('300000.00'))
+
+    def test_two_day_buffer_does_not_rely_on_repayments_in_the_last_two_days(self):
+        f = self._forecast(2)
+        # The share must be ready on day 5, before the day-6 repayments arrive -> nothing to spare today.
+        self.assertEqual(f['available_today'], D('0.00'))
+        day5 = f['days'][5]
+        self.assertEqual(len(day5['outflows']), 1)
+        self.assertEqual(day5['outflows'][0]['due_day'], self.today + timedelta(days=7))
+        self.assertIn('must be ready by', day5['outflows'][0]['description'])
+
+    def test_buffer_never_moves_an_obligation_before_today(self):
+        self.settings.reserve_buffer_days = 14
+        self.settings.save()
+        f = branch_forecast(self.env['ikeja'])
+        self.assertEqual(len(f['days'][0]['outflows']), 1)   # pulled to today, not into the past
+
+
+class ShortfallWarningTests(TestCase):
+    def setUp(self):
+        self.env = make_env("sfw")
+        self.hq_bank = make_bank_account(self.env, self.env['hq'], "9201")
+        self.ik_bank = make_bank_account(self.env, self.env['ikeja'], "9202")
+        make_borrowing(self.env, self.hq_bank, self.ik_bank, principal='1000000.00', rate='0', tenor=1,
+                       first_due=timezone.localdate() + timedelta(days=10))
+
+    def tearDown(self):
+        set_current_tenant(None)
+
+    def test_daily_watch_warns_when_a_branch_is_heading_for_a_shortfall_and_names_donor_branches(self):
+        from treasury.tasks import collect_alerts
+        set_balance(self.ik_bank.gl_account, '600000')    # owes 1,000,000 in 7 days, has 600,000
+        set_balance(self.hq_bank.gl_account, '900000')    # HQ has spare cash (its inflow share covers its instalment)
+        lines = [l for b in collect_alerts(timezone.localdate()).values() for l in b['lines']]
+        warning = next(l for l in lines if l.startswith('SHORTFALL WARNING'))
+        self.assertIn('Ikeja', warning)
+        self.assertIn('400,000.00 short', warning)
+        self.assertIn('HQ', warning)                       # suggested source of cash
+
+    def test_no_warning_when_the_branch_can_cover_everything(self):
+        from treasury.tasks import collect_alerts
+        set_balance(self.ik_bank.gl_account, '1000000')
+        lines = [l for b in collect_alerts(timezone.localdate()).values() for l in b['lines']]
+        self.assertFalse([l for l in lines if l.startswith('SHORTFALL WARNING')])

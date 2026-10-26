@@ -14,6 +14,9 @@ class TreasurySettings(TimeStampedModel, SoftDeleteModel):
         default=14, help_text="Days between a Smart Saver's withdrawal request and the payout deadline.")
     collection_rate_window_days = models.PositiveSmallIntegerField(
         default=90, help_text="History window used to measure each branch's collection rate.")
+    reserve_buffer_days = models.PositiveSmallIntegerField(
+        default=0, help_text="Optional safety margin: cover each obligation this many days before it is due. "
+                             "0 = money only has to be there on the due date (no lending is held back early).")
     include_arrears_recovery = models.BooleanField(
         default=True, help_text="Count expected recovery of overdue instalments, at each branch's recent recovery rate.")
     max_collection_rate_pct = models.PositiveSmallIntegerField(

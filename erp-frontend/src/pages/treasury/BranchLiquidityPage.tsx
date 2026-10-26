@@ -10,11 +10,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { formatDay, naira } from './treasuryFormat';
 
 const SETTING_FIELDS: { key: keyof TreasurySettings; label: string; hint: string; min: number; max: number }[] = [
-  { key: 'lookahead_days', label: 'Look-ahead window (days)', hint: 'How far ahead the lending check reserves cash.', min: 7, max: 180 },
-  { key: 'smart_savings_notice_days', label: 'Smart Saver notice (days)', hint: 'From the client asking to the payout deadline.', min: 0, max: 90 },
-  { key: 'collection_rate_window_days', label: 'Collection history (days)', hint: "Period used to measure each branch's collection rate.", min: 14, max: 365 },
-  { key: 'max_collection_rate_pct', label: 'Collection rate cap (%)', hint: 'Safety limit: never assume a branch collects more than this share of expected repayments.', min: 0, max: 100 },
-  { key: 'default_contribution_lead_days', label: 'Branch share lead time (days)', hint: 'Suggested default for new bank borrowings.', min: 0, max: 60 },
+  { key: 'lookahead_days', label: 'Look-ahead (days)', hint: 'How far ahead to check upcoming payments.', min: 7, max: 180 },
+  { key: 'reserve_buffer_days', label: 'Days to spare', hint: 'Have money ready this many days early. 0 = on the due date. Higher is safer but lends less.', min: 0, max: 14 },
+  { key: 'max_collection_rate_pct', label: 'Collection cap (%)', hint: 'Never count more than this % of expected repayments.', min: 0, max: 100 },
+  { key: 'collection_rate_window_days', label: 'History (days)', hint: 'Past period used to measure collection and recovery.', min: 14, max: 365 },
+  { key: 'smart_savings_notice_days', label: 'Smart Saver notice (days)', hint: 'Days from request to payout deadline.', min: 0, max: 90 },
+  { key: 'default_contribution_lead_days', label: 'Share lead time (days)', hint: 'Default days before an instalment that branches send their share.', min: 0, max: 60 },
 ];
 
 const SettingsCard: React.FC = () => {
@@ -29,8 +30,8 @@ const SettingsCard: React.FC = () => {
   return (
     <section className="bg-white rounded-lg shadow p-6">
       <h2 className="text-lg font-semibold text-gray-900 mb-1">Lending check settings</h2>
-      <p className="text-sm text-gray-600 mb-4">Applies to every branch. Only directors can change these.</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <p className="text-sm text-gray-600 mb-4">Applies to all branches. Directors only.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {SETTING_FIELDS.map((f) => (
           <label key={f.key} className="block text-sm">
             <span className="font-medium text-gray-700">{f.label}</span>
@@ -47,8 +48,7 @@ const SettingsCard: React.FC = () => {
         <span>
           Count recovery of old debt
           <span className="block text-xs text-gray-500">
-            Expect part of each branch&apos;s overdue instalments to come back, at the rate the branch has actually
-            been recovering them. Untick to ignore old debt entirely (more cautious).
+            Expect overdue loans back at each branch&apos;s recent recovery rate. Untick to ignore them (safer).
           </span>
         </span>
       </label>
@@ -117,6 +117,16 @@ const BranchLiquidityPage: React.FC = () => {
 
       {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">Could not load the forecast.</div>}
       {isLoading && <p className="text-gray-500">Calculating…</p>}
+
+      {f && (() => {
+        const short = f.days.find((d) => Number(d.closing) < 0);
+        return short ? (
+          <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg text-sm">
+            <strong>Shortfall ahead:</strong> {naira(-Number(short.closing))} short on {formatDay(short.date)}.
+            Move cash in from another branch or chase collections before then.
+          </div>
+        ) : null;
+      })()}
 
       {f && (
         <>

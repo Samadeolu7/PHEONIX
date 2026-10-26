@@ -142,6 +142,7 @@ def assess_amount(branch, amount, exclude_loan_pk=None) -> dict:
         'recovery_rate': f['recovery_rate'],
         'committed_outflows_total': f['committed_outflows_total'],
         'lookahead_days': f['lookahead_days'],
+        'reserve_buffer_days': f['reserve_buffer_days'],
         'advice': advice,
     }
 

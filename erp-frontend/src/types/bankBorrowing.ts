@@ -187,6 +187,7 @@ export interface BranchForecast {
   branch_name: string;
   today: string;
   lookahead_days: number;
+  reserve_buffer_days?: number;
   cash_now: string;
   collection_rate: string;
   /** Measured rate before the safety cap is applied. */
@@ -226,6 +227,8 @@ export interface TreasurySettings {
   default_contribution_lead_days: number;
   max_collection_rate_pct: number;
   include_arrears_recovery: boolean;
+  /** Days before the due date that each obligation must be fully covered (0 = on the due date). */
+  reserve_buffer_days: number;
 }
 
 /** Narrow an unknown thrown API error to the gate payload, when it is one. */

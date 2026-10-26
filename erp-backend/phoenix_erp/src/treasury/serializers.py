@@ -16,13 +16,14 @@ class TreasurySettingsSerializer(serializers.ModelSerializer):
     default_contribution_lead_days = serializers.IntegerField(min_value=0, max_value=60, required=False)
     max_collection_rate_pct = serializers.IntegerField(min_value=0, max_value=100, required=False)
     include_arrears_recovery = serializers.BooleanField(required=False)
+    reserve_buffer_days = serializers.IntegerField(min_value=0, max_value=14, required=False)
 
     class Meta:
         model = TreasurySettings
         fields = [
             'lookahead_days', 'smart_savings_notice_days',
             'collection_rate_window_days', 'default_contribution_lead_days', 'max_collection_rate_pct',
-            'include_arrears_recovery',
+            'include_arrears_recovery', 'reserve_buffer_days',
         ]
 
 
