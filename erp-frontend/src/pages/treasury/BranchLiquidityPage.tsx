@@ -23,6 +23,7 @@ const SettingsCard: React.FC = () => {
   const [draft, setDraft] = useState<Partial<TreasurySettings>>({});
   if (!data) return null;
   const value = (k: keyof TreasurySettings) => (draft[k] ?? data[k]) as number;
+  const includeRecovery = (draft.include_arrears_recovery ?? data.include_arrears_recovery) as boolean;
   const dirty = Object.keys(draft).length > 0;
 
   return (
@@ -40,6 +41,17 @@ const SettingsCard: React.FC = () => {
           </label>
         ))}
       </div>
+      <label className="mt-4 flex items-start gap-2 text-sm text-gray-800">
+        <input type="checkbox" className="mt-1" checked={includeRecovery}
+          onChange={(e) => setDraft((d) => ({ ...d, include_arrears_recovery: e.target.checked }))} />
+        <span>
+          Count recovery of old debt
+          <span className="block text-xs text-gray-500">
+            Expect part of each branch&apos;s overdue instalments to come back, at the rate the branch has actually
+            been recovering them. Untick to ignore old debt entirely (more cautious).
+          </span>
+        </span>
+      </label>
       <div className="mt-4 flex gap-2">
         <button type="button" disabled={!dirty || save.isPending}
           onClick={async () => {
@@ -77,6 +89,10 @@ const BranchLiquidityPage: React.FC = () => {
   const interesting = (f?.days ?? []).filter((d, i) => i === 0 || Number(d.inflow) > 0 || d.outflows.length > 0);
   const rate = Math.round(Number(f?.collection_rate ?? 0) * 100);
   const measured = Math.round(Number(f?.measured_collection_rate ?? f?.collection_rate ?? 0) * 100);
+  const recRate = Math.round(Number(f?.recovery_rate ?? 0) * 1000) / 10;
+  const recMeasured = Math.round(Number(f?.measured_recovery_rate ?? 0) * 1000) / 10;
+  const sharesIn = Number(f?.expected_inflows_total ?? 0) - Number(f?.expected_scheduled_total ?? 0)
+    - Number(f?.expected_recovery_total ?? 0);
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -109,7 +125,7 @@ const BranchLiquidityPage: React.FC = () => {
               ['Can lend today', naira(f.available_today), 'text-green-700'],
               ['Cash and bank now', naira(f.cash_now), 'text-gray-900'],
               [`Committed payments (${f.lookahead_days} days)`, naira(f.committed_outflows_total), 'text-red-700'],
-              [`Expected repayments (counting ${rate}% of what is due)`, naira(f.expected_inflows_total), 'text-blue-700'],
+              [`Expected money in (${f.lookahead_days} days)`, naira(f.expected_inflows_total), 'text-blue-700'],
             ].map(([label, value, color]) => (
               <div key={label} className="bg-white rounded-lg shadow p-4">
                 <p className="text-xs text-gray-500">{label}</p>
@@ -117,6 +133,36 @@ const BranchLiquidityPage: React.FC = () => {
               </div>
             ))}
           </div>
+
+          <section className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-3">Where the expected money comes from</h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="text-gray-500">Repayments falling due</p>
+                <p className="text-lg font-semibold text-blue-700">{naira(f.expected_scheduled_total)}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Counting {rate}% of what falls due: {measured}% of instalments due in recent months were paid
+                  {measured > rate ? `, capped at ${rate}% for safety` : ''}.
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="text-gray-500">Recovery of old debt</p>
+                <p className="text-lg font-semibold text-blue-700">{naira(f.expected_recovery_total)}</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {Number(f.arrears_outstanding ?? 0) > 0
+                    ? <>{naira(f.arrears_outstanding)} is overdue today. Over recent months this branch recovered
+                      {' '}{recMeasured}% of its old debt ({naira(f.recovered_in_window)} of {naira(f.arrears_at_window_start)})
+                      {recMeasured > recRate ? `, capped at ${recRate}%` : ''}; that pace is assumed to continue.</>
+                    : 'No overdue instalments, or recovery is switched off in the settings below.'}
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="text-gray-500">Shares from other branches</p>
+                <p className="text-lg font-semibold text-blue-700">{naira(sharesIn > 0.004 ? sharesIn : 0)}</p>
+                <p className="text-xs text-gray-500 mt-1">Bank-loan shares other branches still have to send this branch.</p>
+              </div>
+            </div>
+          </section>
 
           <section className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-3">Day by day</h2>
@@ -150,9 +196,10 @@ const BranchLiquidityPage: React.FC = () => {
               </table>
             </div>
             <p className="text-xs text-gray-500 mt-3">
-              Expected repayments count only schedule rows not yet overdue, scaled by this branch&apos;s collection rate:
-              {` ${measured}% of instalments due in recent months were paid`}{measured > rate ? `, capped at ${rate}% for safety` : ''}. The closing balance can dip below zero on a day with no money to cover that day&apos;s
-              payments, which is exactly what the lending check protects against.
+              &quot;Expected in&quot; is repayments falling due that day (at the collection rate), an even daily share of
+              expected old-debt recovery, and any bank-loan shares due from other branches. The closing balance can dip
+              below zero on a day with no money to cover that day&apos;s payments, which is exactly what the lending
+              check protects against.
             </p>
           </section>
         </>

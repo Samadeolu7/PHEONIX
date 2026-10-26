@@ -13,7 +13,8 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Sum
-from django.db.models.functions import Least
+from django.db.models import F, Value
+from django.db.models.functions import Greatest, Least
 
 ZERO = Decimal('0.00')
 
@@ -73,6 +74,49 @@ def collection_rate(branch, today, window_days):
     if due <= 0:
         return ZERO, paid, due
     return min(Decimal('1'), paid / due), paid, due
+
+
+def _overdue_remaining(qs):
+    """Sum of what is still unpaid on schedule rows (never negative per row)."""
+    return qs.aggregate(
+        t=Sum(Greatest(F('total_due') - F('total_paid'), Value(ZERO)))
+    )['t'] or ZERO
+
+
+def arrears_outstanding(branch, today):
+    """Unpaid amount on instalments already past their due date (loans still collecting)."""
+    from loans.models import LoanRepaymentSchedule
+    return _overdue_remaining(LoanRepaymentSchedule.objects.filter(
+        branch=branch, due_date__lt=today, loan__status__in=COLLECTING_STATUSES))
+
+
+def recovery_rate(branch, today, window_days):
+    """
+    How much of the branch's old debt it actually recovers: of the arrears outstanding at the start of the
+    window, the share paid during the window. Returns (rate 0..1, recovered, arrears_at_start).
+
+    Arrears at the start are rebuilt backwards from today's paid amounts:
+        arrears_then = unpaid now + paid since the window started
+    so payments made before allocation tracking existed (legacy) can't make old, settled instalments look
+    like unpaid debt. Only non-reversed payments count.
+    """
+    from loans.models import LoanRepaymentAllocation, LoanRepaymentSchedule
+
+    start = today - timedelta(days=window_days)
+    rows = LoanRepaymentSchedule.objects.filter(
+        branch=branch, due_date__lte=start, loan__status__in=HISTORY_STATUSES)
+    unpaid_now = _overdue_remaining(rows)
+    agg = LoanRepaymentAllocation.objects.filter(
+        schedule__in=rows,
+        journal_entry__date__gt=start, journal_entry__date__lte=today,
+        journal_entry__is_reversed=False, journal_entry__is_reversal=False,
+    ).aggregate(p=Sum('principal_applied'), i=Sum('interest_applied'),
+                f=Sum('fees_applied'), n=Sum('penalty_applied'))
+    recovered = sum((agg[k] or ZERO for k in ('p', 'i', 'f', 'n')), ZERO)
+    arrears_then = unpaid_now + recovered
+    if arrears_then <= 0:
+        return ZERO, recovered, arrears_then
+    return min(Decimal('1'), recovered / arrears_then), recovered, arrears_then
 
 
 def _clamp_day(d, today):
@@ -187,6 +231,28 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
         remaining = (row['due'] or ZERO) - (row['paid'] or ZERO)
         if remaining > 0:
             inflow_by_day[row['due_date']] += (remaining * rate).quantize(Decimal('0.01'))
+    expected_scheduled = sum(inflow_by_day.values(), ZERO)
+
+    # Recovery of old debt: today's arrears x the branch's recent recovery rate, spread evenly over the
+    # window (a rate measured over `window` days, so per day = arrears x rate / window). Same safety cap.
+    arrears = recovery = measured_recovery = ZERO
+    recovered_hist = arrears_hist = ZERO
+    if cfg.include_arrears_recovery:
+        arrears = arrears_outstanding(branch, today)
+        measured_recovery, recovered_hist, arrears_hist = recovery_rate(
+            branch, today, cfg.collection_rate_window_days)
+        rec_rate = min(measured_recovery, Decimal(cfg.max_collection_rate_pct) / Decimal('100'))
+        if arrears > 0 and rec_rate > 0:
+            per_day = (arrears * rec_rate / Decimal(cfg.collection_rate_window_days)).quantize(Decimal('0.01'))
+            budget = arrears  # never expect back more than is actually owed
+            for i in range(1, horizon + 1):   # from tomorrow: today's cash already reflects today's receipts
+                amount = min(per_day, budget)
+                if amount <= 0:
+                    break
+                inflow_by_day[today + timedelta(days=i)] += amount
+                recovery += amount
+                budget -= amount
+
     for day, amount in _debit_branch_share_inflows(branch, today, end):
         inflow_by_day[day] += amount
 
@@ -219,6 +285,13 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
         'collection_rate': rate, 'measured_collection_rate': measured_rate,
         'collected': collected, 'scheduled': scheduled,
         'expected_inflows_total': sum(inflow_by_day.values(), ZERO),
+        'expected_scheduled_total': expected_scheduled,
+        'expected_recovery_total': recovery,
+        'arrears_outstanding': arrears,
+        'recovery_rate': min(measured_recovery, Decimal(cfg.max_collection_rate_pct) / Decimal('100')),
+        'measured_recovery_rate': measured_recovery,
+        'recovered_in_window': recovered_hist,
+        'arrears_at_window_start': arrears_hist,
         'committed_outflows_total': sum((e['amount'] for e in events), ZERO),
         'days': rows,
         'available_today': max(ZERO, lowest),

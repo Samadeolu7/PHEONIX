@@ -139,6 +139,10 @@ export interface LiquidityAssessment {
   cash_now?: string;
   collection_rate?: string;
   expected_inflows_total?: string;
+  expected_scheduled_total?: string;
+  expected_recovery_total?: string;
+  arrears_outstanding?: string;
+  recovery_rate?: string;
   committed_outflows_total?: string;
   lookahead_days: number;
   advice: string[];
@@ -187,6 +191,16 @@ export interface BranchForecast {
   collection_rate: string;
   /** Measured rate before the safety cap is applied. */
   measured_collection_rate?: string;
+  /** Expected money in, split by source. */
+  expected_scheduled_total?: string;
+  expected_recovery_total?: string;
+  /** Unpaid amount on instalments already overdue today. */
+  arrears_outstanding?: string;
+  /** Share of old arrears recovered over the history window (capped / as measured). */
+  recovery_rate?: string;
+  measured_recovery_rate?: string;
+  recovered_in_window?: string;
+  arrears_at_window_start?: string;
   collected: string;
   scheduled: string;
   expected_inflows_total: string;
@@ -211,6 +225,7 @@ export interface TreasurySettings {
   collection_rate_window_days: number;
   default_contribution_lead_days: number;
   max_collection_rate_pct: number;
+  include_arrears_recovery: boolean;
 }
 
 /** Narrow an unknown thrown API error to the gate payload, when it is one. */

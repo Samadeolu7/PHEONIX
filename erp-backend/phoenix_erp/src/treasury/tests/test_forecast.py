@@ -166,3 +166,60 @@ class CollectionRateTests(TestCase):
         row.max_collection_rate_pct = 60
         row.save()
         self.assertEqual(branch_forecast(self.env['ikeja'])['collection_rate'], D('0.6'))
+
+
+class ArrearsRecoveryTests(CollectionRateTests):
+    """Old debt the branch is recovering counts as expected cash, at its own recent recovery rate."""
+
+    def _pay(self, row, days_ago, amount, reversed_=False):
+        from loans.models import LoanRepaymentAllocation
+        from transactions.models import Transaction, TransactionSeries
+        series, _ = TransactionSeries.objects.get_or_create(code='LNPMT', defaults={'description': 'Loan payment'})
+        txn = Transaction.objects.create(
+            series=series, date=self.today - timedelta(days=days_ago), description='test payment',
+            branch=self.env['ikeja'], owner=self.env['owner'], tenant=self.env['tenant'])
+        if reversed_:
+            Transaction.objects.filter(pk=txn.pk).update(is_reversed=True)
+        return LoanRepaymentAllocation.objects.create(
+            loan=self.loan, schedule=row, journal_entry=txn, principal_applied=D(amount),
+            tenant=self.env['tenant'], owner=self.env['owner'])
+
+    def test_recovery_rate_rebuilds_old_arrears_backwards(self):
+        from treasury.services.forecast import recovery_rate
+        # Due 120 days ago: 1000 due, 400 paid so far, of which 100 came in during the last 90 days
+        # (the other 300 was paid long ago, e.g. before allocations were tracked).
+        row = self._row(120, '1000', '400')
+        self._pay(row, 30, '100')
+        self._pay(row, 20, '500', reversed_=True)  # reversed payments never count
+        rate, recovered, arrears_then = recovery_rate(self.env['ikeja'], self.today, 90)
+        self.assertEqual(recovered, D('100'))
+        self.assertEqual(arrears_then, D('700'))      # 600 unpaid now + 100 recovered since
+        self.assertEqual(rate, D('100') / D('700'))
+
+    def test_forecast_adds_expected_recovery_spread_over_the_window(self):
+        row = self._row(120, '1000', '400')
+        self._pay(row, 30, '100')
+        self._row(2, '50', '0')                       # freshly overdue, also part of today's arrears
+        f = branch_forecast(self.env['ikeja'])
+        self.assertEqual(f['arrears_outstanding'], D('650'))
+        per_day = (D('650') * (D('100') / D('700')) / D('90')).quantize(D('0.01'))
+        self.assertEqual(f['expected_recovery_total'], per_day * 45)
+        self.assertEqual(f['days'][0]['inflow'], D('0'))       # nothing assumed for today itself
+        self.assertEqual(f['days'][1]['inflow'], per_day)
+
+    def test_recovery_can_be_switched_off(self):
+        from treasury.models import TreasurySettings
+        row = self._row(120, '1000', '400')
+        self._pay(row, 30, '100')
+        s = TreasurySettings.get_for(self.env['tenant'])
+        s.include_arrears_recovery = False
+        s.save()
+        f = branch_forecast(self.env['ikeja'])
+        self.assertEqual(f['expected_recovery_total'], D('0'))
+
+    def test_never_expects_back_more_than_is_owed(self):
+        row = self._row(120, '100', '0')
+        self._pay(row, 10, '100')                     # recovered fully -> measured rate 100%, capped 90%
+        self._row(150, '10', '0')                     # 10 still owed today
+        f = branch_forecast(self.env['ikeja'])
+        self.assertLessEqual(f['expected_recovery_total'], f['arrears_outstanding'])
