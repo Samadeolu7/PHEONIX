@@ -121,7 +121,8 @@ export const branchService = {
         is_active: filters?.is_active !== false, // Default to active branches only
       });
 
-      const branches = response.results || [];
+      // The API may answer with a plain list or a paginated { results } object.
+      const branches: Branch[] = Array.isArray(response) ? response : (response?.results ?? []);
       return branches.map((branch: Branch) => ({
         id: branch.id,
         name: branch.name,
@@ -129,15 +130,9 @@ export const branchService = {
         is_active: branch.is_active,
       }));
     } catch (error) {
+      // Never invent branches: showing fake ones lets people pick, and post against, branches that don't exist.
       console.error('Error fetching branch options:', error);
-      // Return demo data as fallback for development
-      return [
-        { id: 1, name: 'Main Branch', code: 'MAIN', is_active: true },
-        { id: 2, name: 'Downtown Branch', code: 'DOWN', is_active: true },
-        { id: 3, name: 'Uptown Branch', code: 'UP', is_active: true },
-        { id: 4, name: 'East Branch', code: 'EAST', is_active: true },
-        { id: 5, name: 'West Branch', code: 'WEST', is_active: false },
-      ];
+      throw error;
     }
   },
 };

@@ -12,7 +12,7 @@ const field = 'w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 f
 
 const BorrowingFormPage: React.FC = () => {
   const navigate = useNavigate();
-  const { data: branches = [] } = useBranchOptions();
+  const { data: branches = [], isError: branchesFailed } = useBranchOptions();
   // All branches' accounts at once (the normal bank-account list follows the branch switcher).
   const { data: bankAccounts = [] } = useBankAccountChoices();
   const createBorrowing = useCreateBorrowing();
@@ -116,6 +116,7 @@ const BorrowingFormPage: React.FC = () => {
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        {branchesFailed && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">Could not load your branches. Refresh the page before saving.</div>}
         {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">{error}</div>}
 
         <section className="bg-white rounded-lg shadow p-6 grid grid-cols-1 md:grid-cols-2 gap-4">

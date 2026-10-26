@@ -74,7 +74,7 @@ const SettingsCard: React.FC = () => {
 
 const BranchLiquidityPage: React.FC = () => {
   const { user, isDirectorPlus: isDirector } = useAuth();
-  const { data: branches = [] } = useBranchOptions();
+  const { data: branches = [], isError: branchesFailed } = useBranchOptions();
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
 
   // Directors pick any branch; everyone else is limited to their own (the API enforces this too).
@@ -115,6 +115,7 @@ const BranchLiquidityPage: React.FC = () => {
         </div>
       </div>
 
+      {branchesFailed && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">Could not load your branches. Refresh the page; if it persists, contact support.</div>}
       {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">Could not load the forecast.</div>}
       {isLoading && <p className="text-gray-500">Calculating…</p>}
 
