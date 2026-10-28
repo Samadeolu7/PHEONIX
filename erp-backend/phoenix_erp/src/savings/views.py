@@ -254,6 +254,18 @@ class SavingsAccountViewSet(ScopedModelViewSet):
         action_type = request.data.get('action', 'activate')
 
         if action_type == 'activate':
+            if account.status in ('closed', 'frozen'):
+                return Response(
+                    {'detail': f'Cannot enrol a {account.status} account in Smart Savings.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            existing = getattr(account, 'smart_account', None)
+            if existing is not None and existing.is_active:
+                # Re-activating would silently restart the cycle and lose the client's progress.
+                return Response(
+                    {'detail': 'This account is already in Smart Savings.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             today = timezone.localdate()
             opening_balance = account.current_balance
 
@@ -292,6 +304,71 @@ class SavingsAccountViewSet(ScopedModelViewSet):
                 {'detail': 'action must be "activate" or "deactivate".'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+    @action(detail=False, methods=['get'], url_path='smart-savers')
+    def smart_savers(self, request):
+        """
+        Every account that has Smart Savings (active or not), within the caller's usual scope.
+        Query: ?cycle_state=active|inactive|matured  &search=... (not 'status': that filters the account itself)
+        """
+        from decimal import Decimal
+        from .models import (
+            SMART_SAVINGS_CYCLE_MONTHS, SMART_SAVINGS_INTEREST_RATE, SavingsWithdrawalRequest,
+        )
+
+        today = timezone.localdate()
+        qs = self.filter_queryset(self.get_queryset()).filter(smart_account__isnull=False).select_related(
+            'smart_account', 'client', 'product', 'product__savings_product_config', 'branch')
+
+        wanted = request.query_params.get('cycle_state')
+        if wanted == 'active':
+            qs = qs.filter(smart_account__is_active=True)
+        elif wanted == 'inactive':
+            qs = qs.filter(smart_account__is_active=False)
+
+        open_statuses = (SavingsWithdrawalRequest.STATUS_PENDING, SavingsWithdrawalRequest.STATUS_PARTIAL,
+                         SavingsWithdrawalRequest.STATUS_APPROVED)
+        open_by_account = {}
+        for wr in SavingsWithdrawalRequest.objects.filter(savings_account__in=qs, status__in=open_statuses):
+            open_by_account.setdefault(wr.savings_account_id, []).append(wr)
+
+        rows = []
+        for acct in qs:
+            smart = acct.smart_account
+            cfg = getattr(acct.product, 'savings_product_config', None)
+            maturity = smart.maturity_date
+            matured = smart.is_active and today >= maturity
+            if wanted == 'matured' and not matured:
+                continue
+            opening = smart.opening_balance or Decimal('0.00')
+            pending = open_by_account.get(acct.id, [])
+            rows.append({
+                'id': acct.id,
+                'smart_id': smart.id,
+                'account_number': acct.account_number,
+                'client_name': acct.client.full_name,
+                'client_phone': getattr(acct.client, 'phone_primary', None),
+                'branch_name': acct.branch.name if acct.branch else None,
+                'balance': acct.current_balance,
+                'is_active': smart.is_active,
+                'start_date': smart.start_date,
+                'maturity_date': maturity,
+                'days_to_maturity': (maturity - today).days,
+                'matured': matured,
+                'opening_balance': opening,
+                'expected_interest': (opening * SMART_SAVINGS_INTEREST_RATE).quantize(Decimal('0.01')),
+                'last_interest_date': smart.last_interest_date,
+                'penalty_rate': cfg.cycle_break_penalty_rate if cfg and cfg.has_savings_cycle else None,
+                'open_withdrawals': len(pending),
+                'open_withdrawal_amount': sum((w.amount for w in pending), Decimal('0.00')),
+                'earliest_payout_due': min((w.payout_due_date for w in pending if w.payout_due_date), default=None),
+            })
+        rows.sort(key=lambda r: (not r['is_active'], r['maturity_date']))
+        return Response({
+            'cycle_months': SMART_SAVINGS_CYCLE_MONTHS,
+            'interest_rate_pct': SMART_SAVINGS_INTEREST_RATE * 100,
+            'results': rows,
+        })
 
     @action(detail=True, methods=['get'], url_path='smart-savings')
     def smart_savings_detail(self, request, pk=None):

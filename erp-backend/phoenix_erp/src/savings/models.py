@@ -516,6 +516,12 @@ class InterestAccrual(TimeStampedModel, SoftDeleteModel):
 # Smart Savings
 # ---------------------------------------------------------------------------
 
+# Smart Savings terms (applied by tasks.apply_smart_savings_interest): interest on the opening balance
+# at the end of each cycle.
+SMART_SAVINGS_CYCLE_MONTHS = 3
+SMART_SAVINGS_INTEREST_RATE = Decimal('0.06')
+
+
 class SmartSavingsAccount(TimeStampedModel, SoftDeleteModel):
     """
     Opt-in 3-month cycle savings feature.

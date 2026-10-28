@@ -121,7 +121,7 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
         TransactionEntry as JournalEntryLine,
         TransactionSeries,
     )
-    from .models import SmartSavingsAccount, SmartSavingsEvent
+    from .models import SMART_SAVINGS_INTEREST_RATE, SmartSavingsAccount, SmartSavingsEvent
 
     today = timezone.localdate()
 
@@ -213,7 +213,7 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
                     manual_jv_skipped += 1
                     continue
 
-                interest = (base_balance * Decimal('0.06')).quantize(
+                interest = (base_balance * SMART_SAVINGS_INTEREST_RATE).quantize(
                     Decimal('0.01'), rounding=ROUND_HALF_UP
                 )
 
