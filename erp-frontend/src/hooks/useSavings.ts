@@ -12,6 +12,7 @@ import {
   generateAccountSchedule,
   getSmartSavings,
   toggleSmartSavings,
+  getSmartSavers,
   getSavingsCollectionSheet,
   markContributionPaid,
   generateScheduleForMonth,
@@ -69,6 +70,7 @@ export const savingsKeys = {
   schedule: (accountId: number, year?: number, month?: number) =>
     [...savingsKeys.all, 'schedule', accountId, year, month] as const,
   smartSavings: (accountId: number) => [...savingsKeys.all, 'smartSavings', accountId] as const,
+  smartSavers: (params?: Record<string, unknown>) => [...savingsKeys.all, 'smartSavers', params] as const,
   products: () => [...savingsKeys.all, 'products'] as const,
   collections: (params?: Record<string, unknown>) => [...savingsKeys.all, 'collections', params] as const,
   policies: () => [...savingsKeys.all, 'policies'] as const,
@@ -100,6 +102,13 @@ export const useSavingsAccounts = (
     ...options,
   });
 };
+
+export const useSmartSavers = (params?: { cycle_state?: 'active' | 'inactive' | 'matured'; search?: string }) =>
+  useQuery({
+    queryKey: savingsKeys.smartSavers(params),
+    queryFn: () => getSmartSavers(params),
+    staleTime: 0,
+  });
 
 export const useSavingsAccount = (
   id: number | null,
@@ -517,6 +526,8 @@ export const useToggleSmartSavings = (
     onSuccess: (_data, { accountId }) => {
       queryClient.invalidateQueries({ queryKey: savingsKeys.smartSavings(accountId) });
       queryClient.invalidateQueries({ queryKey: savingsKeys.accountDetail(accountId) });
+      queryClient.invalidateQueries({ queryKey: [...savingsKeys.all, 'smartSavers'] });
+      queryClient.invalidateQueries({ queryKey: savingsKeys.accounts() });
     },
     ...options,
   });

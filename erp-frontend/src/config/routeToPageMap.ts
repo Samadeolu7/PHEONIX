@@ -426,6 +426,7 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/savings/products': { module: 'products', page: 'products', action: 'view' },
   '/savings/products/:id/config': { module: 'products', page: 'products', action: 'edit' },
   '/savings/withdrawals': { module: 'savings', page: 'savings-withdrawals', action: 'edit' },
+  '/savings/smart-savings': { module: 'savings', page: 'savings-accounts', action: 'edit' },
   '/settings/role-navigation': { module: 'dashboards', page: 'dashboards', action: 'view' },
   '/treasury': { module: 'cash-management', page: 'summary', action: 'view' },
   '/treasury/bank-reconciliation': { module: 'cash-management', page: 'bank-reconciliation', action: 'edit' },

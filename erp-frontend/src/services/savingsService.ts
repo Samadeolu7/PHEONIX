@@ -139,6 +139,40 @@ export const generateAccountSchedule = (
 export const getSmartSavings = (accountId: number): Promise<SmartSavingsAccount> =>
   api.get(`${BASE_ACCOUNTS}/${accountId}/smart-savings/`);
 
+export interface SmartSaverRow {
+  id: number;            // savings account id
+  smart_id: number;
+  account_number: string;
+  client_name: string;
+  client_phone: string | null;
+  branch_name: string | null;
+  balance: string;
+  is_active: boolean;
+  start_date: string;
+  maturity_date: string;
+  days_to_maturity: number;
+  matured: boolean;       // active and past its maturity date (interest due)
+  opening_balance: string;
+  expected_interest: string;
+  last_interest_date: string | null;
+  /** Early-withdrawal penalty (% of balance); null when the product has no penalty configured. */
+  penalty_rate: string | null;
+  open_withdrawals: number;
+  open_withdrawal_amount: string;
+  earliest_payout_due: string | null;
+}
+
+export interface SmartSaversResponse {
+  cycle_months: number;
+  interest_rate_pct: number | string;
+  results: SmartSaverRow[];
+}
+
+export const getSmartSavers = (params?: {
+  cycle_state?: 'active' | 'inactive' | 'matured';
+  search?: string;
+}): Promise<SmartSaversResponse> => api.get(`${BASE_ACCOUNTS}/smart-savers/`, { params });
+
 export const toggleSmartSavings = (
   accountId: number,
   action: 'activate' | 'deactivate'

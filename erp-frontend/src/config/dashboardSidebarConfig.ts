@@ -277,6 +277,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('New Savings Account', '/savings/accounts/create'),
         leaf('Receipt Savings', '/savings/collection'),
         leaf('Savings Withdrawal', '/savings/withdrawals'),
+        leaf('Smart Savings', '/savings/smart-savings'),
         leaf('Receipt Combined', '/savings/combined-receipt'),
         leaf('Receipt Group Combined', '/savings/group-combined-receipt'),
       ]),

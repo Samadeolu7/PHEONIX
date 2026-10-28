@@ -31,6 +31,7 @@ import api from '../../services/api';
 import { BankAccount } from '../../types/banks';
 import { bankService } from '../../services/bankService';
 import { useTreasurySettings } from '../../hooks/useBankBorrowings';
+import { SmartSavingsControl } from '../../components/savings/SmartSavingsControl';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -552,6 +553,15 @@ export default function SavingsAccountDetailPage() {
             >
               <RefreshCw size={16} />
             </button>
+            {account.status === 'active' && (
+              <SmartSavingsControl
+                accountId={account.id}
+                accountNumber={account.account_number}
+                clientName={account.client_name}
+                balance={account.current_balance}
+                active={!!account.smart_savings_active}
+              />
+            )}
             {account.status === 'active' && (
               <>
                 <button

@@ -568,6 +568,7 @@ const SavingsProductConfigPage = lazy(() => import('./pages/savings/SavingsProdu
 const SavingsProductContributionsPage = lazy(() => import('./pages/savings/SavingsProductContributionsPage'));
 const SavingsContributionsHubPage = lazy(() => import('./pages/savings/SavingsContributionsHubPage'));
 const SavingsWithdrawalsPage = lazy(() => import('./pages/savings/SavingsWithdrawalsPage'));
+const SmartSavingsPage = lazy(() => import('./pages/savings/SmartSavingsPage'));
 
 // Loan Accounts list page
 const LoanAccountsPage = lazy(() => import('./pages/loans/LoanAccountsPage'));
@@ -4172,6 +4173,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-withdrawals" action="edit">
                                       <SavingsWithdrawalsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Smart Savings — enrol accounts, track cycles and maturity */}
+                                <Route
+                                  path="/savings/smart-savings"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-accounts" action="edit">
+                                      <SmartSavingsPage />
                                     </ProtectedRoute>
                                   }
                                 />
