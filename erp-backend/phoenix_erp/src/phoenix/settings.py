@@ -735,6 +735,16 @@ CELERY_BEAT_SCHEDULE = {
             'expires': 3600,
         }
     },
+
+    # ── Expenses: release auto-amortizing prepayments (e.g. rent) to expense,
+    # one journal per passed month-end. Daily @ 02:30 UTC (03:30 WAT). ──
+    'post-due-prepaid-amortizations': {
+        'task': 'expenses.tasks.post_due_prepaid_amortizations',
+        'schedule': crontab(hour=2, minute=30),
+        'options': {
+            'expires': 7200,
+        }
+    },
 }
 
 # ==================================================

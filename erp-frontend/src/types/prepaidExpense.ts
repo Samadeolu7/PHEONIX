@@ -23,6 +23,10 @@ export interface PrepaidExpense {
   status: 'active' | 'partially_consumed' | 'fully_consumed' | 'expired';
   is_posted: boolean;
   posted_at: string | null;
+  auto_amortize?: boolean;
+  amortization_start_date?: string | null;
+  amortization_months?: number | null;
+  monthly_amortization_amount?: string | null;
   branch: number | null;
   owner: number | null;
   created_at: string;
@@ -42,6 +46,9 @@ export interface CreatePrepaidExpense {
   supplier?: number;
   supplier_name?: string;
   supplier_invoice?: string;
+  auto_amortize?: boolean;
+  amortization_start_date?: string | null;
+  amortization_months?: number | null;
 }
 
 export interface UpdatePrepaidExpense {
@@ -57,6 +64,9 @@ export interface UpdatePrepaidExpense {
   supplier?: number;
   supplier_name?: string;
   supplier_invoice?: string;
+  auto_amortize?: boolean;
+  amortization_start_date?: string | null;
+  amortization_months?: number | null;
 }
 
 export interface PrepaidExpenseListResponse {

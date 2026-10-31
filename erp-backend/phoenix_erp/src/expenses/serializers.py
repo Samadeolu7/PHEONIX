@@ -254,7 +254,30 @@ class PrepaidExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
     supplier_name_display = serializers.CharField(source='supplier.name', read_only=True)
     accounts_payable_id = serializers.IntegerField(source='accounts_payable.id', read_only=True)
-    
+    monthly_amortization_amount = serializers.SerializerMethodField(read_only=True)
+
+    def get_monthly_amortization_amount(self, obj):
+        if not (obj.auto_amortize and obj.amortization_months):
+            return None
+        from expenses.services.prepaid_amortization import scheduled_cumulative
+        return str(scheduled_cumulative(obj.total_amount, obj.amortization_months, 1))
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        inst = self.instance
+        auto = attrs.get('auto_amortize', getattr(inst, 'auto_amortize', False))
+        if auto:
+            start = attrs.get('amortization_start_date', getattr(inst, 'amortization_start_date', None))
+            months = attrs.get('amortization_months', getattr(inst, 'amortization_months', None))
+            errors = {}
+            if not start:
+                errors['amortization_start_date'] = 'Required when monthly auto-release is on.'
+            if not months or months < 1:
+                errors['amortization_months'] = 'Must be at least 1 when monthly auto-release is on.'
+            if errors:
+                raise serializers.ValidationError(errors)
+        return attrs
+
     class Meta:
         model = PrepaidExpense
         fields = [
@@ -268,6 +291,8 @@ class PrepaidExpenseSerializer(serializers.ModelSerializer):
             'journal_entry',
             'created_resource',
             'status', 'is_posted', 'posted_at',
+            'auto_amortize', 'amortization_start_date', 'amortization_months',
+            'monthly_amortization_amount',
             'branch', 'owner', 'created_at', 'updated_at'
         ]
         read_only_fields = [

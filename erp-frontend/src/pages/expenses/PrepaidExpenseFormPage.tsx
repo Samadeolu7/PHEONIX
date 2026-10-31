@@ -52,6 +52,9 @@ const PrepaidExpenseFormPage: React.FC = () => {
         unit_cost: existingExpense.unit_cost,
         supplier_name: existingExpense.supplier_name,
         supplier_invoice: existingExpense.supplier_invoice,
+        auto_amortize: existingExpense.auto_amortize ?? false,
+        amortization_start_date: existingExpense.amortization_start_date ?? null,
+        amortization_months: existingExpense.amortization_months ?? null,
       });
 
       // Find and set the selected category
@@ -156,6 +159,13 @@ const PrepaidExpenseFormPage: React.FC = () => {
     // Numeric validations
     if (formData.total_amount && (isNaN(parseFloat(formData.total_amount)) || parseFloat(formData.total_amount) <= 0)) {
       newErrors.total_amount = ['Total amount must be greater than 0'];
+    }
+
+    if (formData.auto_amortize) {
+      if (!formData.amortization_start_date)
+        newErrors.amortization_start_date = ['Start month is required'];
+      if (!formData.amortization_months || formData.amortization_months < 1)
+        newErrors.amortization_months = ['Number of months must be at least 1'];
     }
 
     // Measurable validations
@@ -392,6 +402,95 @@ const PrepaidExpenseFormPage: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* Monthly auto-release (time-based, e.g. rent paid in advance) */}
+        {!formData.measurable && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Monthly Auto-Release</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              For prepayments that cover a period of time, such as rent paid for a year. The
+              system posts a journal at each month-end moving one month's share from the prepaid
+              account to the expense account
+              {selectedCategory
+                ? ` (Dr ${selectedCategory.expense_account_name || 'expense account'} / Cr ${
+                    selectedCategory.prepaid_account_name || 'prepaid account'
+                  })`
+                : ''}
+              .
+            </p>
+            <label className="flex items-center gap-2 mb-4">
+              <input
+                type="checkbox"
+                checked={!!formData.auto_amortize}
+                onChange={e => handleInputChange('auto_amortize', e.target.checked)}
+              />
+              <span className="text-sm font-medium text-gray-700">Release to expense monthly</span>
+            </label>
+            {formData.auto_amortize && (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Start Month *
+                    </label>
+                    <input
+                      type="date"
+                      aria-label="Amortization start date"
+                      value={formData.amortization_start_date || ''}
+                      onChange={e => handleInputChange('amortization_start_date', e.target.value)}
+                      className={`w-full border rounded-md px-3 py-2 ${
+                        errors.amortization_start_date ? 'border-red-300' : 'border-gray-300'
+                      }`}
+                    />
+                    {errors.amortization_start_date && (
+                      <p className="mt-1 text-sm text-red-600">{errors.amortization_start_date[0]}</p>
+                    )}
+                    <p className="mt-1 text-xs text-gray-500">
+                      The month this date falls in is the first month charged.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Number of Months *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      aria-label="Number of months"
+                      value={formData.amortization_months ?? ''}
+                      onChange={e =>
+                        handleInputChange(
+                          'amortization_months',
+                          e.target.value ? parseInt(e.target.value, 10) : null
+                        )
+                      }
+                      className={`w-full border rounded-md px-3 py-2 ${
+                        errors.amortization_months ? 'border-red-300' : 'border-gray-300'
+                      }`}
+                      placeholder="e.g. 12"
+                    />
+                    {errors.amortization_months && (
+                      <p className="mt-1 text-sm text-red-600">{errors.amortization_months[0]}</p>
+                    )}
+                  </div>
+                </div>
+                {formData.total_amount && formData.amortization_months ? (
+                  <div className="mt-4 bg-green-50 border border-green-200 rounded-md p-3 text-sm text-green-800">
+                    About ₦
+                    {(parseFloat(formData.total_amount) / formData.amortization_months).toLocaleString(
+                      'en-NG',
+                      { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                    )}{' '}
+                    per month for {formData.amortization_months} month
+                    {formData.amortization_months === 1 ? '' : 's'}. Months already past are
+                    caught up the next morning.
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        )}
 
         {/* Unit Information (only if measurable) */}
         {formData.measurable && (

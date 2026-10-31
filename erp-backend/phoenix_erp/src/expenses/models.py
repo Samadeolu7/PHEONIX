@@ -439,6 +439,26 @@ class PrepaidExpense(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     is_posted = models.BooleanField(default=False)
     posted_at = models.DateTimeField(null=True, blank=True)
 
+    # Automatic monthly release (e.g. rent paid a year in advance).
+    # When on, a daily job posts Dr category.expense_account / Cr
+    # category.prepaid_account for every month-end that has passed, spreading
+    # total_amount evenly over amortization_months. The month containing
+    # amortization_start_date is month 1. See services/prepaid_amortization.py.
+    auto_amortize = models.BooleanField(
+        default=False,
+        help_text="Release this prepayment to expense automatically every month"
+    )
+    amortization_start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="First month covered by the prepayment (e.g. rent start date)"
+    )
+    amortization_months = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Number of months the prepayment covers (e.g. 12 for a year's rent)"
+    )
+
     # When the prepaid is backed by a supplier, the initial journal entry
     # creates an AP record (Dr Prepaid Asset / Cr Accounts Payable).
     # This FK links back to that AP so the payment status can be tracked.
