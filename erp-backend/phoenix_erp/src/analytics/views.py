@@ -1997,7 +1997,7 @@ def _restrict_staff_to_scope(staff_qs, user):
 
 class RecoveryTargetsView(APIView):
     """
-    GET  /api/analytics/recovery-targets/?month=YYYY-MM&as_of=YYYY-MM-DD&format=json|csv
+    GET  /api/analytics/recovery-targets/?month=YYYY-MM&as_of=YYYY-MM-DD&export=csv
     POST /api/analytics/recovery-targets/  {month, targets: [{staff_id, target_amount, notes?}]}
 
     Monthly recovery target tracker per credit officer: target (manager-set,
@@ -2165,7 +2165,9 @@ class RecoveryTargetsView(APIView):
             'unassigned_recovered_mtd': None if narrow else str(unassigned_mtd),
         }
 
-        fmt = request.query_params.get('format', 'json')
+        # 'export' rather than 'format': DRF reserves ?format= for renderer
+        # selection and 404s on a value no renderer handles.
+        fmt = request.query_params.get('export', 'json')
         if fmt == 'csv':
             headers = ['name', 'branch_name', 'target', 'recovered_today', 'recovered_mtd',
                        'balance', 'pct_achieved', 'expected_to_date', 'required_daily', 'status']

@@ -72,7 +72,7 @@ export const recoveryTargetService = {
   },
 
   async downloadCsv(month: string): Promise<void> {
-    const blob = await api.getBlob(BASE, { params: { month, format: 'csv' } });
+    const blob = await api.getBlob(BASE, { params: { month, export: 'csv' } });
     triggerDownload(blob, `recovery-targets-${month}.csv`);
   },
 };

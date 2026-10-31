@@ -158,7 +158,7 @@ class RecoveryTargetsViewTestCase(TestCase):
 
     def test_csv_export(self):
         self._target(self.dominion, '1200000')
-        res = self.api.get(URL, {'format': 'csv'})
+        res = self.api.get(URL, {'export': 'csv'})
         self.assertEqual(res.status_code, 200)
         self.assertIn('Dominion Akinfenwa', res.content.decode())
 
@@ -167,9 +167,13 @@ class RecoveryTargetsViewTestCase(TestCase):
         user = User.objects.create_user(username=f'off{staff.pk}', password='pass')
         user.tenant, user.branch = self.tenant, self.branch
         user.save()
-        Staff.objects.filter(user=user).exclude(pk=staff.pk).delete()
-        staff.user = user
-        staff.save()
+        # The auto_create_staff_profile signal may already have made a stub
+        # Staff for this user (soft-delete wouldn't free the unique user FK).
+        stub = Staff.all_objects.filter(user=user).exclude(pk=staff.pk).first()
+        if stub:
+            Staff.all_objects.filter(pk=stub.pk).update(user=None)
+        Staff.all_objects.filter(pk=staff.pk).update(user=user)
+        user.refresh_from_db()
         api = APIClient()
         api.force_authenticate(user=user)
         perm = EffectivePermission(can_view=True, can_edit=can_edit, scope='assigned_clients')
