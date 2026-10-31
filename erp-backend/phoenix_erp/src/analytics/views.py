@@ -1949,3 +1949,321 @@ class DisbursementByProductView(APIView):
         })
 
 
+
+
+# ---------------------------------------------------------------------------
+# Officer recovery targets
+# ---------------------------------------------------------------------------
+
+def _parse_month(raw, today):
+    """'YYYY-MM' -> first day of that month; falls back to the current month."""
+    try:
+        year, month = (int(p) for p in (raw or '').split('-')[:2])
+        return datetime.date(year, month, 1)
+    except (TypeError, ValueError):
+        return today.replace(day=1)
+
+
+def _can_set_recovery_targets(user):
+    """Directors, or anyone with edit rights on Loan Reports at branch-or-wider scope.
+    A credit officer limited to their own clients can see their target but not set it."""
+    from common.views import is_elevated_user
+    if is_elevated_user(user):
+        return True
+    from permissions.services import PermissionResolver
+    perm = PermissionResolver.resolve(user, module='loans', page='loan-reports')
+    return bool(perm.can_edit and perm.scope in ('own_branch', 'global'))
+
+
+def _restrict_staff_to_scope(staff_qs, user):
+    """Officer-level users see only their own row (plus direct reports for ajo_group scope),
+    mirroring _apply_officer_scope for the client-linked data. Returns (qs, is_narrow)."""
+    if _is_global_user(user):
+        return staff_qs, False
+    from permissions.services import PermissionResolver
+    scope = PermissionResolver.resolve(user, module='loans', page='loan-reports').scope
+    if scope in ('own_branch', 'global'):
+        return staff_qs, False
+    try:
+        staff = user.staff_profile
+    except Exception:
+        staff = None
+    if not staff:
+        return staff_qs.none(), True
+    if scope == 'ajo_group':
+        return staff_qs.filter(Q(pk=staff.pk) | Q(reports_to=staff)), True
+    return staff_qs.filter(pk=staff.pk), True
+
+
+class RecoveryTargetsView(APIView):
+    """
+    GET  /api/analytics/recovery-targets/?month=YYYY-MM&as_of=YYYY-MM-DD&format=json|csv
+    POST /api/analytics/recovery-targets/  {month, targets: [{staff_id, target_amount, notes?}]}
+
+    Monthly recovery target tracker per credit officer: target (manager-set,
+    OfficerRecoveryTarget), recovered on the as-of day, recovered month-to-
+    date, balance to target, and pace against the share of the month already
+    elapsed ("halfway through the month should be 50% of target").
+
+    Recovered = every loan repayment applied to the officer's portfolio
+    (principal + interest + fees + penalty from LoanRepaymentAllocation),
+    dated by the payment transaction, excluding reversed payments. Money that
+    spilled over into savings is not counted. Attribution uses each client's
+    CURRENT assigned officer, so reassigning a client mid-month moves that
+    client's earlier collections to the new officer.
+
+    POST sets/updates targets for the month; a blank/null target_amount
+    removes that officer's target.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from loans.models import LoanAccount, LoanRepaymentAllocation
+        from hr.models import Staff
+        from .models import OfficerRecoveryTarget
+        import calendar
+
+        user = request.user
+        today = timezone.localdate()
+        branch = _get_director_branch(request)
+        req_tenant = getattr(request, 'tenant', None)
+
+        month_start = _parse_month(request.query_params.get('month'), today)
+        days_in_month = calendar.monthrange(month_start.year, month_start.month)[1]
+        month_end = month_start.replace(day=days_in_month)
+
+        if month_start > today:
+            as_of = None  # future month - nothing recovered yet
+        else:
+            as_of = min(today, month_end)
+            raw_as_of = request.query_params.get('as_of')
+            if raw_as_of:
+                try:
+                    as_of = min(max(datetime.date.fromisoformat(raw_as_of), month_start), month_end, today)
+                except ValueError:
+                    pass
+        days_elapsed = as_of.day if as_of else 0
+
+        def scope_qs(qs):
+            if req_tenant and not getattr(user, 'tenant', None):
+                qs = qs.filter(tenant=req_tenant)
+            return _scoped(qs, branch)
+
+        loan_qs = _apply_officer_scope(
+            scope_qs(LoanAccount.objects.for_user(user)), user,
+            client_lookup='client__assigned_officer', module='loans', page='loan-reports',
+        )
+
+        # officer_id -> {date -> amount}
+        daily = {}
+        if as_of:
+            alloc_rows = (
+                LoanRepaymentAllocation.objects.filter(
+                    loan_id__in=loan_qs.values('id'),
+                    journal_entry__date__range=(month_start, as_of),
+                    journal_entry__is_reversed=False,
+                    journal_entry__is_reversal=False,
+                    journal_entry__is_deleted=False,
+                )
+                .values('loan__client__assigned_officer', 'journal_entry__date')
+                .annotate(p=Sum('principal_applied'), i=Sum('interest_applied'),
+                          f=Sum('fees_applied'), n=Sum('penalty_applied'))
+            )
+            for r in alloc_rows:
+                amt = sum((r[k] or Decimal('0.00') for k in ('p', 'i', 'f', 'n')), Decimal('0.00'))
+                by_day = daily.setdefault(r['loan__client__assigned_officer'], {})
+                day = r['journal_entry__date']
+                by_day[day] = by_day.get(day, Decimal('0.00')) + amt
+
+        staff_qs, narrow = _restrict_staff_to_scope(scope_qs(Staff.objects.for_user(user)), user)
+
+        prev_month_start = (month_start - datetime.timedelta(days=1)).replace(day=1)
+        target_qs = OfficerRecoveryTarget.objects.for_user(user).filter(
+            month__in=[month_start, prev_month_start], staff__in=staff_qs,
+        )
+        targets, prev_targets = {}, {}
+        for t in target_qs:
+            (targets if t.month == month_start else prev_targets)[t.staff_id] = t
+
+        collected_ids = {sid for sid in daily if sid is not None}
+        officer_ids = set(targets) | collected_ids | set(
+            staff_qs.filter(assigned_clients__is_deleted=False).values_list('pk', flat=True)
+        )
+        officers = staff_qs.filter(pk__in=officer_ids).select_related('branch')
+
+        remaining_days = days_in_month - days_elapsed
+        two = Decimal('0.01')
+        tot = {k: Decimal('0.00') for k in ('target', 'today', 'mtd', 'balance', 'expected')}
+
+        rows = []
+        for staff in officers:
+            by_day = daily.get(staff.pk, {})
+            mtd = sum(by_day.values(), Decimal('0.00'))
+            today_amt = by_day.get(as_of, Decimal('0.00')) if as_of else Decimal('0.00')
+            t = targets.get(staff.pk)
+            prev = prev_targets.get(staff.pk)
+            row = {
+                'staff_id': staff.pk,
+                'name': f"{staff.first_name} {staff.last_name}".strip(),
+                'position': staff.position,
+                'branch_name': staff.branch.name if staff.branch else '',
+                'target': str(t.target_amount) if t else None,
+                'notes': t.notes if t else '',
+                'previous_target': str(prev.target_amount) if prev else None,
+                'recovered_today': str(today_amt),
+                'recovered_mtd': str(mtd),
+                'daily': [{'date': str(d), 'amount': str(a)} for d, a in sorted(by_day.items())],
+                'balance': None, 'pct_achieved': None, 'expected_to_date': None,
+                'pace_gap': None, 'required_daily': None, 'status': 'no_target',
+            }
+            tot['today'] += today_amt
+            tot['mtd'] += mtd
+            if t and t.target_amount > 0:
+                target = t.target_amount
+                expected = (target * days_elapsed / days_in_month).quantize(two)
+                balance = max(target - mtd, Decimal('0.00'))
+                pct = (mtd / target * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+                if mtd >= target:
+                    status_ = 'achieved'
+                elif mtd >= expected:
+                    status_ = 'on_pace'
+                elif mtd >= expected * Decimal('0.8'):
+                    status_ = 'slightly_behind'
+                else:
+                    status_ = 'behind'
+                row.update({
+                    'balance': str(balance),
+                    'pct_achieved': str(pct),
+                    'expected_to_date': str(expected),
+                    'pace_gap': str(mtd - expected),
+                    'required_daily': (
+                        str((balance / remaining_days).quantize(two))
+                        if remaining_days > 0 and balance > 0 else None
+                    ),
+                    'status': status_,
+                })
+                tot['target'] += target
+                tot['balance'] += balance
+                tot['expected'] += expected
+            rows.append(row)
+
+        rows.sort(key=lambda r: (r['target'] is None, -Decimal(r['pct_achieved'] or '0'), r['name']))
+
+        unassigned_mtd = sum(daily.get(None, {}).values(), Decimal('0.00'))
+        totals = {
+            'target': str(tot['target']),
+            'recovered_today': str(tot['today']),
+            'recovered_mtd': str(tot['mtd']),
+            'balance': str(tot['balance']),
+            'expected_to_date': str(tot['expected']),
+            'pct_achieved': (
+                str((tot['mtd'] / tot['target'] * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP))
+                if tot['target'] > 0 else None
+            ),
+            # Repayments on clients with no assigned officer - shown so the branch total
+            # reconciles with other collection reports. Hidden from officer-scoped users.
+            'unassigned_recovered_mtd': None if narrow else str(unassigned_mtd),
+        }
+
+        fmt = request.query_params.get('format', 'json')
+        if fmt == 'csv':
+            headers = ['name', 'branch_name', 'target', 'recovered_today', 'recovered_mtd',
+                       'balance', 'pct_achieved', 'expected_to_date', 'required_daily', 'status']
+            return _csv_response(
+                f'recovery-targets-{month_start:%Y-%m}.csv', headers,
+                [[r[h] if r[h] is not None else '' for h in headers] for r in rows],
+            )
+        if fmt != 'json':
+            return Response({'success': False, 'error': f"Unsupported format '{fmt}'"}, status=400)
+
+        return Response({
+            'success': True,
+            'month': f'{month_start:%Y-%m}',
+            'as_of': str(as_of) if as_of else None,
+            'days_in_month': days_in_month,
+            'days_elapsed': days_elapsed,
+            'pct_month_elapsed': str(
+                (Decimal(days_elapsed) / days_in_month * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+            ),
+            'can_set_targets': _can_set_recovery_targets(user),
+            'officers': rows,
+            'totals': totals,
+        })
+
+    def post(self, request):
+        from decimal import InvalidOperation
+        from django.db import transaction as db_transaction
+        from hr.models import Staff
+        from .models import OfficerRecoveryTarget
+
+        user = request.user
+        if not _can_set_recovery_targets(user):
+            return Response(
+                {'success': False, 'error': 'You do not have permission to set recovery targets.'}, status=403)
+
+        month_raw = request.data.get('month')
+        if not month_raw:
+            return Response({'success': False, 'error': 'month (YYYY-MM) is required.'}, status=400)
+        month_start = _parse_month(month_raw, timezone.localdate())
+        items = request.data.get('targets')
+        if not isinstance(items, list) or not items:
+            return Response({'success': False, 'error': 'targets must be a non-empty list.'}, status=400)
+
+        requested_ids = []
+        for i in items:
+            if isinstance(i, dict):
+                try:
+                    requested_ids.append(int(i.get('staff_id')))
+                except (TypeError, ValueError):
+                    pass
+        allowed_staff = {s.pk: s for s in Staff.objects.for_user(user).filter(pk__in=requested_ids)}
+
+        errors, parsed = [], []
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                errors.append({'index': idx, 'error': 'Each target must be an object.'})
+                continue
+            try:
+                staff = allowed_staff.get(int(item.get('staff_id')))
+            except (TypeError, ValueError):
+                staff = None
+            if staff is None:
+                errors.append({'index': idx, 'error': f"Officer {item.get('staff_id')} not found."})
+                continue
+            raw = item.get('target_amount')
+            amount = None
+            if raw not in (None, ''):
+                try:
+                    amount = Decimal(str(raw).replace(',', '')).quantize(Decimal('0.01'))
+                except (InvalidOperation, ValueError):
+                    errors.append({'index': idx, 'error': f'Invalid amount for {staff}.'})
+                    continue
+                if amount < 0:
+                    errors.append({'index': idx, 'error': f'Target for {staff} cannot be negative.'})
+                    continue
+            parsed.append((staff, amount, str(item.get('notes') or '')[:255]))
+        if errors:
+            return Response({'success': False, 'errors': errors}, status=400)
+
+        saved = removed = 0
+        with db_transaction.atomic():
+            for staff, amount, notes in parsed:
+                existing = OfficerRecoveryTarget.all_objects.filter(staff=staff, month=month_start).first()
+                if amount is None:
+                    if existing:
+                        existing.delete()
+                        removed += 1
+                    continue
+                if existing is None:
+                    existing = OfficerRecoveryTarget(
+                        staff=staff, month=month_start, tenant=staff.tenant, branch=staff.branch,
+                        owner=user, created_by=user,
+                    )
+                existing.target_amount = amount
+                existing.notes = notes
+                existing.is_deleted = False
+                existing.updated_by = user
+                existing.save()
+                saved += 1
+
+        return Response({'success': True, 'month': f'{month_start:%Y-%m}', 'saved': saved, 'removed': removed})

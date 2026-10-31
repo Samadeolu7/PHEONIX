@@ -1403,6 +1403,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'recovery-targets',
+    title: '🎯 Recovery Targets',
+    description:
+      'Monthly recovery target per officer vs. actual repayments — today, cumulative, balance and pace',
+    path: '/reports/recovery-targets',
+    icon: BarChart3,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'client-services',
+    category: 'Loan Reports',
+    isNew: true,
+  },
+  {
     id: 'staff-performance-report',
     title: '📈 Staff Performance Report',
     description:
@@ -2202,6 +2214,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     title: '🧾 Daily Collection Report',
     description: 'Group / officer / customer collection sheet — savings and loan repayment collections',
     path: '/reports/daily-collection-report',
+    icon: BarChart3,
+    requiredPermission: 'loan-accounts-view',
+    moduleId: 'loans',
+    category: 'Reports',
+    isNew: true,
+  },
+  {
+    id: 'loans-mod-recovery-targets',
+    title: '🎯 Recovery Targets',
+    description:
+      'Monthly recovery target per officer vs. actual repayments — today, cumulative, balance and pace',
+    path: '/reports/recovery-targets',
     icon: BarChart3,
     requiredPermission: 'loan-accounts-view',
     moduleId: 'loans',

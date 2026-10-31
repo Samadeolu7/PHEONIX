@@ -619,6 +619,7 @@ const RemittanceReportPage = lazy(() => import('./pages/reports/loans/Remittance
 const DisbursementMasterRollPage = lazy(() => import('./pages/reports/DisbursementMasterRollPage'));
 const DisbursementByProductPage = lazy(() => import('./pages/reports/DisbursementByProductPage'));
 const DailyCollectionReportPage = lazy(() => import('./pages/reports/DailyCollectionReportPage'));
+const RecoveryTargetsPage = lazy(() => import('./pages/reports/RecoveryTargetsPage'));
 const GroupReportPage = lazy(() => import('./pages/reports/GroupReportPage'));
 const SavingsProductReportPage = lazy(() => import('./pages/reports/SavingsProductReportPage'));
 const DailyContributionReportPage = lazy(
@@ -4515,6 +4516,14 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
                                       <DailyCollectionReportPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
+                                  path="/reports/recovery-targets"
+                                  element={
+                                    <ProtectedRoute requiredPermission="loan-accounts-view" module="loans" page="loan-reports" action="view">
+                                      <RecoveryTargetsPage />
                                     </ProtectedRoute>
                                   }
                                 />

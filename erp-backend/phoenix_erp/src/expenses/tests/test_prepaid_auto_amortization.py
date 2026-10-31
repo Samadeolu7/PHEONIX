@@ -12,7 +12,7 @@ from expenses.services.prepaid_amortization import (
     due_period_ends, plan_due_amortizations, post_due_amortizations,
     scheduled_cumulative,
 )
-from expenses.tests.test_expenses import ExpenseAccountingTest
+from expenses.tests import test_expenses as _base  # module import: avoids re-running its tests here
 from transactions.models import Transaction, TransactionEntry
 
 
@@ -43,7 +43,7 @@ class ScheduleMathTests(SimpleTestCase):
 
 class AutoAmortizationTests(TestCase):
     def setUp(self):
-        ExpenseAccountingTest.setUp(self)
+        _base.ExpenseAccountingTest.setUp(self)
         self.prepaid = PrepaidExpense.objects.create(
             reference_number='PREP-RENT-1',
             category=self.category,
@@ -79,7 +79,7 @@ class AutoAmortizationTests(TestCase):
         self.prepaid.refresh_from_db()
         self.assertEqual(self.prepaid.consumed_amount, Decimal('200000.00'))
         self.assertEqual(self.prepaid.remaining_amount, Decimal('1000000.00'))
-        ExpenseAccountingTest.verify_trial_balance(self, 'unbalanced after auto-amortization')
+        _base.ExpenseAccountingTest.verify_trial_balance(self, 'unbalanced after auto-amortization')
 
     def test_rerun_same_day_posts_nothing(self):
         post_due_amortizations(self.prepaid.pk, date(2026, 3, 15))

@@ -319,6 +319,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Disbursement Master Roll', '/reports/disbursement-master-roll'),
         leaf('Disbursement by Product', '/reports/disbursement-by-product'),
         leaf('Daily Collection Report', '/reports/daily-collection-report'),
+        leaf('Recovery Targets', '/reports/recovery-targets'),
         leaf('Staff Performance Report', '/reports/staff-performance'),
       ]),
     ]),
@@ -343,6 +344,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Disbursement Master Roll', '/reports/disbursement-master-roll'),
         leaf('Disbursement by Product', '/reports/disbursement-by-product'),
         leaf('Daily Collection Report', '/reports/daily-collection-report'),
+        leaf('Recovery Targets', '/reports/recovery-targets'),
         leaf('Staff Performance Report', '/reports/staff-performance'),
       ]),
       grp('btn-reports-savings', 'SAVINGS', 'file-text', [
