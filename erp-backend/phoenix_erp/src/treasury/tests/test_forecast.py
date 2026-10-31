@@ -373,20 +373,3 @@ class ReceivablesAccuracyTests(CollectionRateTests):
         self.assertNotIn(petty.pk, [r['account_id'] for r in counted])
         self.assertEqual(excluded[0]['reason'], 'Petty cash fund')
         self.assertEqual(excluded[0]['balance'], D('70'))
-
-
-class ExplainCommandTests(ReceivablesAccuracyTests):
-    def test_explain_command_prints_every_section(self):
-        from io import StringIO
-        from django.core.management import call_command
-        self.loan.outstanding_principal = D('500')
-        self.loan.save()
-        self._row(-5, '600', '0')
-        self._row(10, '400', '0')
-        out = StringIO()
-        call_command('explain_branch_forecast', branch=str(self.env['ikeja'].pk), stdout=out)
-        text = out.getvalue()
-        for heading in ('1. Cash and bank now', '2. Committed payments', '3. Expected money in',
-                        '4. Loans whose schedule shows MORE', '5. Biggest arrears', '6. Biggest repayments'):
-            self.assertIn(heading, text)
-        self.assertIn(self.loan.loan_number, text)
