@@ -121,6 +121,7 @@ class CollectionRateTests(TestCase):
         make_bank_account(self.env, self.env['ikeja'], "9001")
         self.loan = make_pending_loan(self.env, self.env['ikeja'])
         self.loan.status = 'active'
+        self.loan.outstanding_principal = D('10000000')   # real balance well above any test schedule
         self.loan.save()
         self.today = timezone.localdate()
         self.n = 0
@@ -241,6 +242,7 @@ class ReserveBufferTests(TestCase):
         # 300,000 of repayments fall due in 6 days.
         loan = make_pending_loan(self.env, self.env['ikeja'])
         loan.status = 'active'
+        loan.outstanding_principal = D('300000')
         loan.save()
         from loans.models import LoanRepaymentSchedule
         LoanRepaymentSchedule.objects.create(
@@ -308,3 +310,83 @@ class ShortfallWarningTests(TestCase):
         set_balance(self.ik_bank.gl_account, '1000000')
         lines = [l for b in collect_alerts(timezone.localdate()).values() for l in b['lines']]
         self.assertFalse([l for l in lines if l.startswith('SHORTFALL WARNING')])
+
+
+class ReceivablesAccuracyTests(CollectionRateTests):
+    """Review fixes: loan balance is the ceiling, loan branch wins, overpayments don't offset, petty cash excluded."""
+
+    def test_schedule_showing_more_than_the_loan_owes_is_scaled_down(self):
+        from treasury.services.forecast import loan_receivables
+        self.loan.outstanding_principal = D('500')
+        self.loan.save()
+        self._row(-5, '600', '0')     # future instalment
+        self._row(10, '400', '0')     # overdue instalment; schedule says 1,000 unpaid, loan owes 500
+        arrears, future, excess, scaled = loan_receivables(self.env['ikeja'], self.today, self.today + timedelta(days=45))
+        self.assertEqual(excess, D('500.00'))
+        self.assertEqual(scaled, 1)
+        self.assertEqual(arrears, D('200.00'))                                # 400 x 0.5
+        self.assertEqual(future[self.today + timedelta(days=5)], D('300'))    # 600 x 0.5
+
+    def test_settled_loan_with_stale_unpaid_rows_brings_in_nothing(self):
+        from treasury.services.forecast import loan_receivables
+        self.loan.outstanding_principal = D('0')
+        self.loan.save()
+        self._row(-5, '600', '0')
+        arrears, future, _, _ = loan_receivables(self.env['ikeja'], self.today, self.today + timedelta(days=45))
+        self.assertEqual((arrears, sum(future.values(), D('0'))), (D('0.00'), D('0')))
+
+    def test_rows_count_under_the_loans_branch_even_if_the_row_says_otherwise(self):
+        from treasury.services.forecast import loan_receivables
+        row = self._row(-3, '100', '0')
+        type(row).objects.filter(pk=row.pk).update(branch=self.env['hq'])   # stale/odd row branch
+        _, future, _, _ = loan_receivables(self.env['ikeja'], self.today, self.today + timedelta(days=45))
+        self.assertEqual(future[self.today + timedelta(days=3)], D('100'))
+        _, hq_future, _, _ = loan_receivables(self.env['hq'], self.today, self.today + timedelta(days=45))
+        self.assertEqual(sum(hq_future.values(), D('0')), D('0'))
+
+    def test_an_overpaid_instalment_does_not_hide_another_due_the_same_day(self):
+        from treasury.services.forecast import loan_receivables
+        self._row(-4, '100', '300')   # overpaid
+        self._row(-4, '100', '0')     # same day, unpaid
+        _, future, _, _ = loan_receivables(self.env['ikeja'], self.today, self.today + timedelta(days=45))
+        self.assertEqual(future[self.today + timedelta(days=4)], D('100'))
+
+    def test_petty_cash_fund_and_unlinked_cash_accounts_are_listed_but_not_counted(self):
+        from accounts.models import Account
+        from cash_management.models import PettyCashFund
+        from treasury.services.forecast import cash_breakdown
+        from treasury.tests.helpers import set_balance
+        bank = make_bank_account(self.env, self.env['ikeja'], "9301")
+        set_balance(bank.gl_account, '1000')
+        parent = bank.gl_account.parent
+        petty = Account.objects.create(name="Petty Cash", code=str(int(parent.code) + 50), account_type=Account.ASSET,
+                                       account_level=Account.LEVEL_CHILD, parent=parent, owner=self.env['owner'],
+                                       created_by=self.env['owner'], branch=self.env['ikeja'])
+        set_balance(petty, '70')
+        PettyCashFund.objects.create(fund_name="Ikeja petty", fund_code="PC-IK", custodian=self.env['owner'],
+                                     petty_cash_account=petty, float_amount=D('100'), replenishment_threshold=D('20'),
+                                     single_transaction_limit=D('50'),
+                                     owner=self.env['owner'], branch=self.env['ikeja'], tenant=self.env['tenant'])
+        total, counted, excluded = cash_breakdown(self.env['ikeja'])
+        self.assertEqual(total, D('1000'))
+        self.assertIn(bank.gl_account_id, [r['account_id'] for r in counted])
+        self.assertNotIn(petty.pk, [r['account_id'] for r in counted])
+        self.assertEqual(excluded[0]['reason'], 'Petty cash fund')
+        self.assertEqual(excluded[0]['balance'], D('70'))
+
+
+class ExplainCommandTests(ReceivablesAccuracyTests):
+    def test_explain_command_prints_every_section(self):
+        from io import StringIO
+        from django.core.management import call_command
+        self.loan.outstanding_principal = D('500')
+        self.loan.save()
+        self._row(-5, '600', '0')
+        self._row(10, '400', '0')
+        out = StringIO()
+        call_command('explain_branch_forecast', branch=str(self.env['ikeja'].pk), stdout=out)
+        text = out.getvalue()
+        for heading in ('1. Cash and bank now', '2. Committed payments', '3. Expected money in',
+                        '4. Loans whose schedule shows MORE', '5. Biggest arrears', '6. Biggest repayments'):
+            self.assertIn(heading, text)
+        self.assertIn(self.loan.loan_number, text)

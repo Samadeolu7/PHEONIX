@@ -6,8 +6,16 @@ import { toast } from 'sonner';
 import { useBranchForecast, useTreasurySettings, useUpdateTreasurySettings } from '../../hooks/useBankBorrowings';
 import type { TreasurySettings } from '../../types/bankBorrowing';
 import { apiErrorMessage } from './treasuryFormat';
+import { InfoButton, InfoLine } from '../../components/treasury/InfoButton';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatDay, naira } from './treasuryFormat';
+
+const OUTFLOW_LABELS: Record<string, string> = {
+  savings_withdrawal: 'Savings payouts',
+  approved_loan: 'Approved loans not yet paid out',
+  bank_loan_share: 'Bank-loan shares to send',
+  bank_loan_instalment: 'Bank-loan instalments',
+};
 
 const SETTING_FIELDS: { key: keyof TreasurySettings; label: string; hint: string; min: number; max: number }[] = [
   { key: 'lookahead_days', label: 'Look-ahead (days)', hint: 'How far ahead to check upcoming payments.', min: 7, max: 180 },
@@ -93,6 +101,16 @@ const BranchLiquidityPage: React.FC = () => {
   const recMeasured = Math.round(Number(f?.measured_recovery_rate ?? 0) * 1000) / 10;
   const sharesIn = Number(f?.expected_inflows_total ?? 0) - Number(f?.expected_scheduled_total ?? 0)
     - Number(f?.expected_recovery_total ?? 0);
+  const lowest = f?.days.reduce((lo, d) => (Number(d.closing) < Number(lo.closing) ? d : lo), f.days[0]);
+  const outflowGroups = (f?.days ?? []).flatMap((d) => d.outflows).reduce<Record<string, { n: number; total: number }>>(
+    (acc, o) => {
+      const g = acc[o.type] ?? { n: 0, total: 0 };
+      acc[o.type] = { n: g.n + 1, total: g.total + Number(o.amount) };
+      return acc;
+    }, {});
+  const staleApprovals = (f?.days ?? []).flatMap((d) => d.outflows)
+    .filter((o) => o.type === 'approved_loan' && (o.age_days ?? 0) > 30);
+  const scheduleDue = rate > 0 ? Number(f?.expected_scheduled_total ?? 0) / (rate / 100) : 0;
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -132,24 +150,82 @@ const BranchLiquidityPage: React.FC = () => {
       {f && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              ['Can lend today', naira(f.available_today), 'text-green-700'],
-              ['Cash and bank now', naira(f.cash_now), 'text-gray-900'],
-              [`Committed payments (${f.lookahead_days} days)`, naira(f.committed_outflows_total), 'text-red-700'],
-              [`Expected money in (${f.lookahead_days} days)`, naira(f.expected_inflows_total), 'text-blue-700'],
-            ].map(([label, value, color]) => (
-              <div key={label} className="bg-white rounded-lg shadow p-4">
-                <p className="text-xs text-gray-500">{label}</p>
-                <p className={`text-xl font-semibold mt-1 ${color}`}>{value}</p>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-xs text-gray-500 flex items-center gap-1">Can lend today
+                <InfoButton title="Can lend today">
+                  <p>The lowest the balance gets over the next {f.lookahead_days} days, after adding expected money in and taking out committed payments. Lending more would leave a payment short.</p>
+                  {lowest && <InfoLine label={`Lowest point (${formatDay(lowest.date)})`} value={naira(lowest.closing)} strong />}
+                  {Number(f.reserve_buffer_days ?? 0) > 0 && <p className="text-gray-500">Payments must be covered {f.reserve_buffer_days} day(s) before they are due (Days to spare setting).</p>}
+                </InfoButton>
               </div>
-            ))}
+              <p className="text-xl font-semibold mt-1 text-green-700">{naira(f.available_today)}</p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-xs text-gray-500 flex items-center gap-1">Cash and bank now
+                <InfoButton title="Cash and bank now">
+                  <p>Ledger balances of this branch&apos;s bank accounts and cashier tills.</p>
+                  {(f.cash_accounts ?? []).map((a) => (
+                    <InfoLine key={a.account_id} label={`${a.name} (${a.code})`} value={naira(a.balance)} />
+                  ))}
+                  <InfoLine label="Total" value={naira(f.cash_now)} strong />
+                  {(f.cash_accounts_excluded ?? []).length > 0 && (
+                    <>
+                      <p className="font-medium text-gray-900 pt-2">Not counted</p>
+                      {(f.cash_accounts_excluded ?? []).map((a) => (
+                        <InfoLine key={a.account_id} muted label={`${a.name} (${a.code}) — ${a.reason}`} value={naira(a.balance)} />
+                      ))}
+                    </>
+                  )}
+                  <p className="text-gray-500">If this differs from the bank statement or till count, the ledger needs reconciling.</p>
+                </InfoButton>
+              </div>
+              <p className="text-xl font-semibold mt-1 text-gray-900">{naira(f.cash_now)}</p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-xs text-gray-500 flex items-center gap-1">Committed payments ({f.lookahead_days} days)
+                <InfoButton title="Committed payments">
+                  <p>Money that must leave this branch in the next {f.lookahead_days} days.</p>
+                  {Object.entries(outflowGroups).map(([type, g]) => (
+                    <InfoLine key={type} label={`${OUTFLOW_LABELS[type] ?? type} (${g.n})`} value={naira(g.total)} />
+                  ))}
+                  <InfoLine label="Total" value={naira(f.committed_outflows_total)} strong />
+                  {staleApprovals.length > 0 && (
+                    <p className="text-amber-700">{staleApprovals.length} approved loan(s) are over 30 days old and still hold cash back. Disburse or reject them if they are not going ahead.</p>
+                  )}
+                  <p className="text-gray-500">Open withdrawal requests count until completed or cancelled. Overdue items count today.</p>
+                </InfoButton>
+              </div>
+              <p className="text-xl font-semibold mt-1 text-red-700">{naira(f.committed_outflows_total)}</p>
+            </div>
+            <div className="bg-white rounded-lg shadow p-4">
+              <div className="text-xs text-gray-500 flex items-center gap-1">Expected money in ({f.lookahead_days} days)
+                <InfoButton title="Expected money in">
+                  <InfoLine label="Repayments falling due" value={naira(f.expected_scheduled_total)} />
+                  <InfoLine label="Recovery of old debt" value={naira(f.expected_recovery_total)} />
+                  <InfoLine label="Shares from other branches" value={naira(sharesIn > 0.004 ? sharesIn : 0)} />
+                  <InfoLine label="Total" value={naira(f.expected_inflows_total)} strong />
+                  <p className="text-gray-500">Each part has its own ⓘ below.</p>
+                </InfoButton>
+              </div>
+              <p className="text-xl font-semibold mt-1 text-blue-700">{naira(f.expected_inflows_total)}</p>
+            </div>
           </div>
 
           <section className="bg-white rounded-lg shadow p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-3">Where the expected money comes from</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div className="rounded-lg border border-gray-200 p-4">
-                <p className="text-gray-500">Repayments falling due</p>
+                <div className="text-gray-500 flex items-center gap-1">Repayments falling due
+                  <InfoButton title="Repayments falling due">
+                    <InfoLine label={`Unpaid instalments due in ${f.lookahead_days} days`} value={naira(scheduleDue)} />
+                    <InfoLine label="× collection rate used" value={`${rate}%`} />
+                    <InfoLine label="Expected" value={naira(f.expected_scheduled_total)} strong />
+                    <p>Collection rate: of instalments due in recent months (ignoring the last 7 days), {naira(f.collected)} of {naira(f.scheduled)} was paid = {measured}%{measured > rate ? `, capped at ${rate}%` : ''}.</p>
+                    {Number(f.schedule_excess ?? 0) > 0 && (
+                      <p className="text-amber-700">{naira(f.schedule_excess)} on {f.loans_with_schedule_excess} loan(s) was ignored: their schedules show more unpaid than the loan actually owes.</p>
+                    )}
+                  </InfoButton>
+                </div>
                 <p className="text-lg font-semibold text-blue-700">{naira(f.expected_scheduled_total)}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   Counting {rate}% of what falls due: {measured}% of instalments due in recent months were paid
@@ -157,7 +233,15 @@ const BranchLiquidityPage: React.FC = () => {
                 </p>
               </div>
               <div className="rounded-lg border border-gray-200 p-4">
-                <p className="text-gray-500">Recovery of old debt</p>
+                <div className="text-gray-500 flex items-center gap-1">Recovery of old debt
+                  <InfoButton title="Recovery of old debt">
+                    <InfoLine label="Overdue today" value={naira(f.arrears_outstanding)} />
+                    <InfoLine label="× recovery rate used" value={`${recRate}%`} />
+                    <InfoLine label={`Spread over ${f.lookahead_days} days (from tomorrow)`} value={naira(f.expected_recovery_total)} strong />
+                    <p>Recovery rate: of debt overdue at the start of the history period, {naira(f.recovered_in_window)} of {naira(f.arrears_at_window_start)} has been paid since = {recMeasured}%{recMeasured > recRate ? `, capped at ${recRate}%` : ''}.</p>
+                    <p className="text-gray-500">Overdue amounts never exceed what each loan actually owes.</p>
+                  </InfoButton>
+                </div>
                 <p className="text-lg font-semibold text-blue-700">{naira(f.expected_recovery_total)}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   {Number(f.arrears_outstanding ?? 0) > 0
@@ -168,7 +252,11 @@ const BranchLiquidityPage: React.FC = () => {
                 </p>
               </div>
               <div className="rounded-lg border border-gray-200 p-4">
-                <p className="text-gray-500">Shares from other branches</p>
+                <div className="text-gray-500 flex items-center gap-1">Shares from other branches
+                  <InfoButton title="Shares from other branches">
+                    <p>Only for the branch the bank debits: bank-loan shares other branches still have to send, counted on their send-by date. Late shares are not counted until they arrive.</p>
+                  </InfoButton>
+                </div>
                 <p className="text-lg font-semibold text-blue-700">{naira(sharesIn > 0.004 ? sharesIn : 0)}</p>
                 <p className="text-xs text-gray-500 mt-1">Bank-loan shares other branches still have to send this branch.</p>
               </div>

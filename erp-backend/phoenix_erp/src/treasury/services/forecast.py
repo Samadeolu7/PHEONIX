@@ -29,23 +29,53 @@ OUT_BORROWING_SHARE = 'bank_loan_share'
 OUT_BORROWING_INSTALMENT = 'bank_loan_instalment'
 
 
-def branch_cash(branch):
-    """Cash + bank balance of a branch from its GL accounts (petty cash excluded)."""
-    from banks.models import BankAccount
-    from cash_management.models import CashierAccount
+def cash_breakdown(branch):
+    """
+    Cash + bank the branch can actually lend, from its GL balances, plus a list of what was counted and
+    what was deliberately left out (so a person can check the figure against the bank and the tills).
 
-    account_ids = set()
-    total = ZERO
-    for acct in BankAccount.objects.filter(branch=branch, gl_account__isnull=False).select_related('gl_account'):
-        if acct.gl_account_id not in account_ids:
-            account_ids.add(acct.gl_account_id)
-            total += acct.gl_account.balance or ZERO
-    for cashier in CashierAccount.objects.filter(
+    Counted:  each bank account's GL account and each active cashier till's GL account in the branch.
+    Excluded: petty cash funds (not lending money), and any other Cash & Cash Equivalents (1100) account
+              in the branch that is not linked to a bank account or till (listed so it can be reviewed).
+    """
+    from accounts.models import Account
+    from banks.models import BankAccount
+    from cash_management.models import CashierAccount, PettyCashFund
+
+    petty_ids = set(PettyCashFund.objects.filter(petty_cash_account__isnull=False)
+                    .values_list('petty_cash_account_id', flat=True))
+    counted, excluded, seen = [], [], set()
+
+    def _add(acct, kind):
+        if acct.pk in seen:
+            return
+        seen.add(acct.pk)
+        row = {'account_id': acct.pk, 'code': acct.code, 'name': acct.name, 'kind': kind,
+               'balance': acct.balance or ZERO}
+        if acct.pk in petty_ids:
+            excluded.append({**row, 'reason': 'Petty cash fund'})
+        else:
+            counted.append(row)
+
+    for bank in BankAccount.objects.filter(branch=branch, gl_account__isnull=False).select_related('gl_account'):
+        _add(bank.gl_account, 'bank')
+    for till in CashierAccount.objects.filter(
             branch=branch, is_active=True, account__isnull=False).select_related('account'):
-        if cashier.account_id not in account_ids:
-            account_ids.add(cashier.account_id)
-            total += cashier.account.balance or ZERO
-    return total
+        _add(till.account, 'till')
+    # Other cash-type accounts in the branch that nothing links to: shown, not counted.
+    for acct in Account.objects.filter(branch=branch, parent__code='1100').exclude(pk__in=seen):
+        if (acct.balance or ZERO) != 0:
+            excluded.append({'account_id': acct.pk, 'code': acct.code, 'name': acct.name, 'kind': 'other',
+                             'balance': acct.balance or ZERO,
+                             'reason': 'Petty cash fund' if acct.pk in petty_ids
+                             else 'Not linked to a bank account or till'})
+    total = sum((r['balance'] for r in counted), ZERO)
+    return total, counted, excluded
+
+
+def branch_cash(branch):
+    """Cash + bank balance the branch can lend (see cash_breakdown)."""
+    return cash_breakdown(branch)[0]
 
 
 # Instalments that fell due in the last few days are mostly "not paid yet" simply because clients
@@ -67,7 +97,7 @@ def collection_rate(branch, today, window_days):
     end = today - timedelta(days=COLLECTION_GRACE_DAYS)
     start = end - timedelta(days=window_days)
     agg = LoanRepaymentSchedule.objects.filter(
-        branch=branch, due_date__gt=start, due_date__lte=end, loan__status__in=HISTORY_STATUSES,
+        loan__branch=branch, due_date__gt=start, due_date__lte=end, loan__status__in=HISTORY_STATUSES,
     ).aggregate(due=Sum('total_due'), paid=Sum(Least('total_paid', 'total_due')))
     due = agg['due'] or ZERO
     paid = agg['paid'] or ZERO
@@ -83,11 +113,60 @@ def _overdue_remaining(qs):
     )['t'] or ZERO
 
 
+def loan_receivables(branch, today, end):
+    """
+    What the branch's live loans still owe: arrears (instalments already overdue) and instalments falling
+    due each day up to `end`.
+
+    The loan's own balance (outstanding principal + interest + fees + penalties, kept in line with the
+    ledger) is the ceiling: where a loan's schedule shows more unpaid than the loan actually owes (old
+    imports, stale rows), every unpaid row of that loan is scaled down to match. Schedules are never scaled
+    up. Rows are assigned by the LOAN's branch, and an overpaid row never offsets another client's row.
+
+    Returns (arrears, future_by_day {date: amount}, schedule_excess, loans_scaled).
+    """
+    from loans.models import LoanAccount, LoanRepaymentSchedule
+
+    owed_by_loan = {}
+    for row in LoanAccount.objects.filter(branch=branch, status__in=COLLECTING_STATUSES).values(
+            'pk', 'outstanding_principal', 'outstanding_interest', 'outstanding_fees', 'outstanding_penalties'):
+        owed_by_loan[row['pk']] = sum(
+            (row[k] or ZERO for k in ('outstanding_principal', 'outstanding_interest',
+                                      'outstanding_fees', 'outstanding_penalties')), ZERO)
+
+    rows = (LoanRepaymentSchedule.objects
+            .filter(loan_id__in=list(owed_by_loan))
+            .annotate(unpaid=Greatest(F('total_due') - F('total_paid'), Value(ZERO)))
+            .filter(unpaid__gt=0)
+            .values_list('loan_id', 'due_date', 'unpaid'))
+    per_loan = defaultdict(list)
+    for loan_id, due_date, unpaid in rows:
+        per_loan[loan_id].append((due_date, unpaid))
+
+    arrears = ZERO
+    future = defaultdict(lambda: ZERO)
+    excess = ZERO
+    scaled = 0
+    for loan_id, items in per_loan.items():
+        schedule_unpaid = sum((u for _, u in items), ZERO)
+        owed = max(owed_by_loan.get(loan_id, ZERO), ZERO)
+        factor = Decimal('1')
+        if schedule_unpaid > owed:
+            factor = owed / schedule_unpaid
+            excess += schedule_unpaid - owed
+            scaled += 1
+        for due_date, unpaid in items:
+            amount = unpaid * factor
+            if due_date < today:
+                arrears += amount
+            elif due_date <= end:
+                future[due_date] += amount
+    return arrears.quantize(Decimal('0.01')), future, excess.quantize(Decimal('0.01')), scaled
+
+
 def arrears_outstanding(branch, today):
-    """Unpaid amount on instalments already past their due date (loans still collecting)."""
-    from loans.models import LoanRepaymentSchedule
-    return _overdue_remaining(LoanRepaymentSchedule.objects.filter(
-        branch=branch, due_date__lt=today, loan__status__in=COLLECTING_STATUSES))
+    """Overdue amount still owed on the branch's live loans (capped by each loan's real balance)."""
+    return loan_receivables(branch, today, today)[0]
 
 
 def recovery_rate(branch, today, window_days):
@@ -104,7 +183,7 @@ def recovery_rate(branch, today, window_days):
 
     start = today - timedelta(days=window_days)
     rows = LoanRepaymentSchedule.objects.filter(
-        branch=branch, due_date__lte=start, loan__status__in=HISTORY_STATUSES)
+        loan__branch=branch, due_date__lte=start, loan__status__in=HISTORY_STATUSES)
     unpaid_now = _overdue_remaining(rows)
     agg = LoanRepaymentAllocation.objects.filter(
         schedule__in=rows,
@@ -156,10 +235,14 @@ def _outflow_events(branch, today, end, exclude_loan_pk=None):
     if exclude_loan_pk:
         pending_loans = pending_loans.exclude(pk=exclude_loan_pk)
     for loan in pending_loans.select_related('client'):
+        age = (today - loan.approval_date).days if loan.approval_date else None
+        age_text = ''
+        if age is not None:
+            age_text = f", approved {age} day{'' if age == 1 else 's'} ago"
         events.append({
             'day': today, 'type': OUT_LOAN, 'amount': loan.approved_amount or loan.requested_amount,
-            'overdue': False,
-            'description': f"Approved loan {loan.loan_number} awaiting disbursement",
+            'overdue': False, 'loan_id': loan.pk, 'age_days': age,
+            'description': f"Approved loan {loan.loan_number} awaiting disbursement{age_text}",
         })
 
     # 3. Bank borrowings.
@@ -210,7 +293,6 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
       available_today, _closing (list used by helpers)
     """
     from django.utils import timezone
-    from loans.models import LoanRepaymentSchedule
     from treasury.models import TreasurySettings
 
     today = today or timezone.localdate()
@@ -218,19 +300,16 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
     horizon = int(days if days is not None else cfg.lookahead_days)
     end = today + timedelta(days=horizon)
 
-    cash = branch_cash(branch)
+    cash, cash_counted, cash_excluded = cash_breakdown(branch)
+    arrears_all, future_due, schedule_excess, loans_scaled = loan_receivables(branch, today, end)
     measured_rate, collected, scheduled = collection_rate(branch, today, cfg.collection_rate_window_days)
     # Safety haircut: never assume more than the configured share of expected repayments arrives.
     rate = min(measured_rate, Decimal(cfg.max_collection_rate_pct) / Decimal('100'))
 
     inflow_by_day = defaultdict(lambda: ZERO)
-    due_rows = LoanRepaymentSchedule.objects.filter(
-        branch=branch, due_date__gte=today, due_date__lte=end, loan__status__in=COLLECTING_STATUSES,
-    ).values('due_date').annotate(due=Sum('total_due'), paid=Sum('total_paid'))
-    for row in due_rows:
-        remaining = (row['due'] or ZERO) - (row['paid'] or ZERO)
+    for due_date, remaining in future_due.items():
         if remaining > 0:
-            inflow_by_day[row['due_date']] += (remaining * rate).quantize(Decimal('0.01'))
+            inflow_by_day[due_date] += (remaining * rate).quantize(Decimal('0.01'))
     expected_scheduled = sum(inflow_by_day.values(), ZERO)
 
     # Recovery of old debt: today's arrears x the branch's recent recovery rate, spread evenly over the
@@ -238,7 +317,7 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
     arrears = recovery = measured_recovery = ZERO
     recovered_hist = arrears_hist = ZERO
     if cfg.include_arrears_recovery:
-        arrears = arrears_outstanding(branch, today)
+        arrears = arrears_all
         measured_recovery, recovered_hist, arrears_hist = recovery_rate(
             branch, today, cfg.collection_rate_window_days)
         rec_rate = min(measured_recovery, Decimal(cfg.max_collection_rate_pct) / Decimal('100'))
@@ -292,6 +371,10 @@ def branch_forecast(branch, today=None, days=None, exclude_loan_pk=None):
         'branch_id': branch.pk, 'branch_name': branch.name,
         'today': today, 'lookahead_days': horizon, 'reserve_buffer_days': int(cfg.reserve_buffer_days or 0),
         'cash_now': cash,
+        'cash_accounts': cash_counted,
+        'cash_accounts_excluded': cash_excluded,
+        'schedule_excess': schedule_excess,
+        'loans_with_schedule_excess': loans_scaled,
         'collection_rate': rate, 'measured_collection_rate': measured_rate,
         'collected': collected, 'scheduled': scheduled,
         'expected_inflows_total': sum(inflow_by_day.values(), ZERO),

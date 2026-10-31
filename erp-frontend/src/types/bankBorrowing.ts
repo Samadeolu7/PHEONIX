@@ -116,6 +116,17 @@ export interface LiquidityObligation {
   description: string;
   amount: string;
   overdue: boolean;
+  /** Approved loans only: days since approval. */
+  age_days?: number | null;
+}
+
+export interface CashAccountLine {
+  account_id: number;
+  code: string;
+  name: string;
+  kind: 'bank' | 'till' | 'other';
+  balance: string;
+  reason?: string;
 }
 
 export interface LiquidityBreach {
@@ -202,6 +213,12 @@ export interface BranchForecast {
   measured_recovery_rate?: string;
   recovered_in_window?: string;
   arrears_at_window_start?: string;
+  /** Accounts that make up cash_now, and cash-type accounts deliberately left out. */
+  cash_accounts?: CashAccountLine[];
+  cash_accounts_excluded?: CashAccountLine[];
+  /** Unpaid schedule amounts ignored because they exceed what the loans actually owe. */
+  schedule_excess?: string;
+  loans_with_schedule_excess?: number;
   collected: string;
   scheduled: string;
   expected_inflows_total: string;

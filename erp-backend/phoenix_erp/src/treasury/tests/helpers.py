@@ -35,7 +35,8 @@ def make_env(tag):
 
 
 def make_bank_account(env, branch, number):
-    bank = Bank.objects.create(bank_name="GTB", branch=branch, owner=env['owner'], tenant=env['tenant'])
+    bank, _ = Bank.objects.get_or_create(bank_name="GTB", branch_name='', branch=branch,
+                                         defaults={'owner': env['owner'], 'tenant': env['tenant']})
     return BankAccount.objects.create(
         bank=bank, account_number=number, account_name=f"{branch.name} {number}",
         account_manager=env['owner'], branch=branch, owner=env['owner'], tenant=env['tenant'],
