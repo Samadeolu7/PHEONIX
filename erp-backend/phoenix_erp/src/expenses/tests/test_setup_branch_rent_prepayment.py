@@ -20,7 +20,7 @@ class SetupBranchRentPrepaymentTests(TestCase):
     def setUp(self):
         _base.ExpenseAccountingTest.setUp(self)
         self.series, _ = TransactionSeries.objects.get_or_create(code='JV', defaults={'description': 'JV'})
-        mk = dict(owner=self.user, branch=self.branch, created_by=self.user, account_level='PARENT')
+        mk = dict(owner=self.user, branch=self.branch, created_by=self.user, account_level='CHILD')
         self.rent_prepaid = Account.objects.create(
             name='Rent Prepayment', code='1360', account_type='ASSET', category=self.asset_category, **mk)
         self.rent_expense = Account.objects.create(
@@ -74,6 +74,18 @@ class SetupBranchRentPrepaymentTests(TestCase):
         self.assertEqual(cat.prepaid_account, self.rent_prepaid)
         self.assertEqual(cat.expense_account, self.rent_expense)
         _base.ExpenseAccountingTest.verify_trial_balance(self, 'unbalanced after rent setup')
+
+    def test_ignores_current_assets_parent_and_empty_duplicate(self):
+        # Seen live on Orimerunmu: "Prepayments and Other Current Assets" (cuRRENT)
+        # plus a second, empty "Rent Prepaid" account.
+        mk = dict(owner=self.user, branch=self.branch, created_by=self.user,
+                  account_type='ASSET', category=self.asset_category)
+        Account.objects.create(name='Prepayments and Other Current Assets', code='1130',
+                               account_level='PARENT', **mk)
+        Account.objects.create(name='Rent Prepaid', code='1131', account_level='CHILD', **mk)
+        out = self._run()
+        self.assertIn(f'id={self.rent_prepaid.id}', out)
+        self.assertIn('2026-10-31  100,000.00', out)
 
     def test_cannot_set_up_twice(self):
         self._run('--commit')

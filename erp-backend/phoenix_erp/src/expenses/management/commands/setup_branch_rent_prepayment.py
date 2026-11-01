@@ -23,6 +23,7 @@ covered by manual JVs are not posted again: the schedule only posts
 
 Overrides: --prepaid-account-id, --expense-account-id, --months.
 """
+import re
 from collections import Counter
 from datetime import date
 from decimal import Decimal
@@ -63,13 +64,28 @@ class Command(BaseCommand):
     def _sum(self, qs):
         return qs.aggregate(s=Sum('amount'))['s'] or ZERO
 
+    def _balance(self, account):
+        e = self._posted_entries(account)
+        return (self._sum(e.filter(side=TransactionEntry.DEBIT))
+                - self._sum(e.filter(side=TransactionEntry.CREDIT)))
+
     def _pick_one(self, qs, what, flag):
-        items = list(qs)
+        # "rent" as a word: plain icontains also matches "cuRRENT", "paRENT".
+        items = [a for a in qs
+                 if a.account_level != 'PARENT' and re.search(r'\brent\b', a.name, re.I)]
         if len(items) == 1:
             return items[0]
         if not items:
             raise CommandError(f'No {what} found on this branch. Pass {flag}.')
-        listing = '\n'.join(f'  id={a.id} {a.code} {a.name} ({a.account_level})' for a in items)
+        balances = {a.id: self._balance(a) for a in items}
+        with_money = [a for a in items if balances[a.id] != 0]
+        if len(with_money) == 1:
+            self.stdout.write(
+                f"  ({len(items)} possible {what}s; using the only one with a balance)")
+            return with_money[0]
+        listing = '\n'.join(
+            f'  id={a.id} {a.code} {a.name} ({a.account_level}) balance {balances[a.id]:,.2f}'
+            for a in items)
         raise CommandError(f'More than one {what} found; pass {flag}:\n{listing}')
 
     # ── main ───────────────────────────────────────────────────────────────
