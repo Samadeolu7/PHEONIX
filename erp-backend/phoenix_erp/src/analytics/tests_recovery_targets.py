@@ -206,14 +206,15 @@ class RecoveryTargetsViewTestCase(TestCase):
         self.assertEqual(D(self._row(self.api.get(URL).data, self.dominion)['recovered_mtd']), D('10000'))
 
     def test_payment_after_arrear_cleared_is_not_recovery(self):
-        if self.today.day < 3:
-            self.skipTest('needs two distinct days inside the current month')
+        # Uses last month so two distinct days are always available.
+        last_month = (self.month - datetime.timedelta(days=1)).replace(day=1)
         loan = self._fresh_loan('LN-C4')
-        old = self._sched(loan, self.today - datetime.timedelta(days=60), '10000')
-        current = self._sched(loan, self.today, '5000')
-        self._pay(loan, self.month, '10000', row=old)      # clears the default
-        self._pay(loan, self.today, '5000', row=current)   # ordinary on-time payment
-        self.assertEqual(D(self._row(self.api.get(URL).data, self.dominion)['recovered_mtd']), D('10000'))
+        old = self._sched(loan, last_month - datetime.timedelta(days=60), '10000')
+        current = self._sched(loan, last_month + datetime.timedelta(days=10), '5000')
+        self._pay(loan, last_month, '10000', row=old)          # clears the default
+        self._pay(loan, current.due_date, '5000', row=current)  # ordinary on-time payment
+        data = self.api.get(URL, {'month': f'{last_month:%Y-%m}'}).data
+        self.assertEqual(D(self._row(data, self.dominion)['recovered_mtd']), D('10000'))
 
     def test_penny_leftover_does_not_make_a_loan_defaulted(self):
         loan = self._fresh_loan('LN-C5')
