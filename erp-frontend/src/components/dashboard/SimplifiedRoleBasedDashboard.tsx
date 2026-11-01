@@ -5,6 +5,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { usePermission } from '@/hooks/usePermissions';
 import { BRAND } from '../../constants/brand';
 import CashInflowForecastCard from './CashInflowForecastCard';
+import MyRecoveryTargetCard from './MyRecoveryTargetCard';
+import TeamRecoveryTargetsCard from './TeamRecoveryTargetsCard';
 import {
   Clock,
   User,
@@ -1256,6 +1258,18 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
               <CashInflowForecastCard variant="compact" />
             </div>
           )}
+
+          {/* Team recovery summary — Branch Manager / Principal / Director; links to the full page */}
+          {isSuperUser && (
+            <div className="px-7 pb-5 empty:hidden">
+              <TeamRecoveryTargetsCard />
+            </div>
+          )}
+
+          {/* Recovery target — any role; renders nothing unless the user has a target this month */}
+          <div className="px-7 pb-5 empty:hidden">
+            <MyRecoveryTargetCard />
+          </div>
 
           {/* Gold accent line */}
           <div

@@ -63,11 +63,42 @@ export interface TargetInput {
   notes?: string;
 }
 
+export type RecoveryFocus = 'daily' | 'weekly' | 'monthly' | 'achieved';
+
+/** The signed-in officer's own position, for the role-based dashboard card. */
+export interface MyRecoveryTarget {
+  has_target: boolean;
+  month?: string;
+  as_of?: string;
+  /** Which goal to show: the first one (day → week → month) not yet met. */
+  focus?: RecoveryFocus;
+  focus_target?: string;
+  focus_recovered?: string;
+  shortfall?: string;
+  above_target?: string;
+  target?: string;
+  daily_target?: string;
+  weekly_target?: string;
+  week_start?: string;
+  week_end?: string;
+  recovered_today?: string;
+  recovered_week?: string;
+  recovered_mtd?: string;
+  month_remaining?: string;
+  days_left?: number;
+  required_daily?: string;
+  min_days_overdue?: number;
+}
+
 const BASE = '/analytics/recovery-targets/';
 
 export const recoveryTargetService = {
   async get(month: string, asOf?: string): Promise<RecoveryTargetsResponse> {
     return api.get(BASE, { params: { month, as_of: asOf || undefined } });
+  },
+
+  async mine(): Promise<MyRecoveryTarget> {
+    return api.get(`${BASE}mine/`);
   },
 
   async save(month: string, targets: TargetInput[]): Promise<{ saved: number; removed: number }> {

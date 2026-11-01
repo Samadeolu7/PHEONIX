@@ -2339,3 +2339,106 @@ class RecoveryTargetsView(APIView):
                 saved += 1
 
         return Response({'success': True, 'month': f'{month_start:%Y-%m}', 'saved': saved, 'removed': removed})
+
+
+def my_recovery_focus(staff, user, today):
+    """
+    The single "how far behind am I" figure for an officer's dashboard card.
+
+    Escalates so a target-holder never sees a comfortable all-green state:
+      1. today's recovery below the daily target      -> show today's shortfall
+      2. else this week's below the weekly target     -> show the week's shortfall
+      3. else the month's target not yet reached      -> show what's left this month
+      4. else                                         -> achieved (amount above target)
+
+    daily target  = monthly target / calendar days in the month (same basis as the
+                    Recovery Targets page's pace marker).
+    weekly target = daily target x days of this Monday-Sunday week that fall in the
+                    month - the WHOLE week, not prorated, so meeting it means the
+                    officer is genuinely ahead.
+
+    Returns None when the officer has no target this month.
+    """
+    import calendar
+    from loans.models import LoanAccount
+    from .models import OfficerRecoveryTarget
+
+    month_start = today.replace(day=1)
+    t = OfficerRecoveryTarget.objects.filter(staff=staff, month=month_start).first()
+    if t is None or t.target_amount <= 0:
+        return None
+
+    two = Decimal('0.01')
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
+    month_end = month_start.replace(day=days_in_month)
+    week_start = max(today - datetime.timedelta(days=today.weekday()), month_start)
+    week_end = min(today + datetime.timedelta(days=6 - today.weekday()), month_end)
+
+    loan_qs = LoanAccount.objects.filter(client__assigned_officer=staff)
+    if getattr(user, 'tenant', None):
+        loan_qs = loan_qs.filter(tenant=user.tenant)
+
+    mtd = week = day = Decimal('0.00')
+    for _officer, d, amt in _recovery_payments(loan_qs, month_start, today):
+        mtd += amt
+        if d >= week_start:
+            week += amt
+        if d == today:
+            day += amt
+
+    target = t.target_amount
+    daily_target = (target / days_in_month).quantize(two)
+    weekly_target = (target * ((week_end - week_start).days + 1) / days_in_month).quantize(two)
+    days_left = (month_end - today).days + 1  # including today
+    month_left = max(target - mtd, Decimal('0.00'))
+
+    if day < daily_target:
+        focus, goal, done = 'daily', daily_target, day
+    elif week < weekly_target:
+        focus, goal, done = 'weekly', weekly_target, week
+    elif mtd < target:
+        focus, goal, done = 'monthly', target, mtd
+    else:
+        focus, goal, done = 'achieved', target, mtd
+
+    return {
+        'has_target': True,
+        'month': f'{month_start:%Y-%m}',
+        'as_of': str(today),
+        'focus': focus,
+        'focus_target': str(goal),
+        'focus_recovered': str(done),
+        'shortfall': str(max(goal - done, Decimal('0.00'))),
+        'above_target': str(max(mtd - target, Decimal('0.00'))),
+        'target': str(target),
+        'daily_target': str(daily_target),
+        'weekly_target': str(weekly_target),
+        'week_start': str(week_start),
+        'week_end': str(week_end),
+        'recovered_today': str(day),
+        'recovered_week': str(week),
+        'recovered_mtd': str(mtd),
+        'month_remaining': str(month_left),
+        'days_left': days_left,
+        'required_daily': str((month_left / days_left).quantize(two)) if month_left > 0 else '0.00',
+        'min_days_overdue': RECOVERY_MIN_DAYS_OVERDUE,
+    }
+
+
+class MyRecoveryTargetView(APIView):
+    """
+    GET /api/analytics/recovery-targets/mine/
+
+    The signed-in user's own recovery position for the role-based dashboard
+    card - see my_recovery_focus. {"has_target": false} when the user has no
+    staff profile or no target this month, so the card simply hides.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            staff = request.user.staff_profile
+        except Exception:
+            staff = None
+        data = my_recovery_focus(staff, request.user, timezone.localdate()) if staff else None
+        return Response(data or {'has_target': False})

@@ -27,7 +27,9 @@ D = Decimal
 URL = '/api/analytics/recovery-targets/'
 
 
-class RecoveryTargetsViewTestCase(TestCase):
+class _RecoveryBase(TestCase):
+    """Shared fixtures/helpers only - no tests, so subclasses don't re-run them."""
+
     def setUp(self):
         self.owner, self.tenant, self.branch = _make_env('rectgtadmin')
         self.api = APIClient()
@@ -121,6 +123,8 @@ class RecoveryTargetsViewTestCase(TestCase):
     def _row(self, data, staff):
         return next(r for r in data['officers'] if r['staff_id'] == staff.pk)
 
+
+class RecoveryTargetsViewTestCase(_RecoveryBase):
     # ── GET ──────────────────────────────────────────────────────────────────
     def test_computes_today_cumulative_and_balance_from_repayments(self):
         self._target(self.dominion, '1200000')
@@ -287,3 +291,112 @@ class RecoveryTargetsViewTestCase(TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertEqual(len(res.data['errors']), 2)
         self.assertFalse(OfficerRecoveryTarget.all_objects.exists())
+
+
+class MyRecoveryFocusTestCase(_RecoveryBase):
+    """The dashboard card's escalation: today -> this week -> this month -> achieved.
+    Runs on a fixed mid-month Wednesday of last month so the week never straddles a
+    month boundary, whatever today's date is."""
+
+    def setUp(self):
+        super().setUp()
+        import calendar
+        lm = (self.month - datetime.timedelta(days=1)).replace(day=1)
+        d = lm + datetime.timedelta(days=9)
+        self.day = d + datetime.timedelta(days=(2 - d.weekday()) % 7)  # a Wednesday, day 10-16
+        self.lm = lm
+        days = calendar.monthrange(lm.year, lm.month)[1]
+        self.target = D(days * 100)  # daily target 100, weekly 700
+        self._target(self.dominion, str(self.target), month=lm)
+
+    def _focus(self):
+        from analytics.views import my_recovery_focus
+        return my_recovery_focus(self.dominion, self.owner, self.day)
+
+    def test_behind_today_shows_daily_shortfall(self):
+        self._pay(self.loan_d, self.day, '40')
+        f = self._focus()
+        self.assertEqual((f['focus'], D(f['shortfall'])), ('daily', D('60')))
+
+    def test_today_met_shows_week_shortfall(self):
+        self._pay(self.loan_d, self.day, '100')
+        self._pay(self.loan_d, self.day - datetime.timedelta(days=1), '200')
+        f = self._focus()
+        self.assertEqual((f['focus'], D(f['weekly_target']), D(f['shortfall'])), ('weekly', D('700'), D('400')))
+
+    def test_week_met_shows_month_remaining(self):
+        self._pay(self.loan_d, self.day, '100')
+        self._pay(self.loan_d, self.day - datetime.timedelta(days=2), '700')  # Monday
+        self._pay(self.loan_d, self.lm, '50')  # earlier in the month, outside this week
+        f = self._focus()
+        self.assertEqual(f['focus'], 'monthly')
+        self.assertEqual(D(f['shortfall']), self.target - D('850'))
+
+    def test_month_met_is_achieved(self):
+        self._pay(self.loan_d, self.day, str(self.target + 500))
+        f = self._focus()
+        self.assertEqual((f['focus'], D(f['above_target'])), ('achieved', D('500')))
+
+    def test_no_target_returns_none_and_endpoint_hides(self):
+        from analytics.views import my_recovery_focus
+        self.assertIsNone(my_recovery_focus(self.funmi, self.owner, self.day))
+        self.assertEqual(self.api.get(URL + 'mine/').data, {'has_target': False})
+
+
+class BranchScopeTestCase(_RecoveryBase):
+    """Branch managers see their own branch only; directors see every branch."""
+
+    def setUp(self):
+        super().setUp()
+        from branches.models import Branch
+        self.branch2 = Branch.objects.create(name='Ikeja', code='ikj', tenant=self.tenant, owner=self.owner)
+        self.ikeja_officer = Staff.objects.create(
+            first_name='Omotolani', last_name='Odupitan', position='Credit Officer',
+            owner=self.owner, branch=self.branch2, tenant=self.tenant, created_by=self.owner)
+        client = Client.objects.create(
+            client_id='IK1', first_name='Client', last_name='IK1', gender='male',
+            phone_primary=f'0801{Client.objects.count() + 1:07d}', assigned_officer=self.ikeja_officer,
+            tenant=self.tenant, owner=self.owner, branch=self.branch2)
+        self.ikeja_loan = self._loan(client, 'LN-IK1')
+        LoanAccount.objects.filter(pk=self.ikeja_loan.pk).update(branch=self.branch2)
+        self.old_rows[self.ikeja_loan.pk] = self._sched(
+            self.ikeja_loan, self.month - datetime.timedelta(days=120), '5000000')
+        self._target(self.dominion, '1200000')
+        OfficerRecoveryTarget.objects.create(
+            staff=self.ikeja_officer, month=self.month, target_amount=D('900000'),
+            tenant=self.tenant, branch=self.branch2, owner=self.owner)
+        self._pay(self.loan_d, self.today, '1000')
+        self._pay(self.ikeja_loan, self.today, '2000')
+
+    def _manager_api(self):
+        user = User.objects.create_user(username='bm-hq', password='pass')
+        user.tenant, user.branch = self.tenant, self.branch
+        user.save()
+        api = APIClient()
+        api.force_authenticate(user=user)
+        perm = EffectivePermission(can_view=True, can_edit=True, scope='own_branch')
+        return api, mock.patch('permissions.services.PermissionResolver.resolve', return_value=perm)
+
+    def test_branch_manager_sees_only_own_branch(self):
+        api, patcher = self._manager_api()
+        with patcher:
+            data = api.get(URL).data
+            denied = api.post(URL, {'month': f'{self.month:%Y-%m}', 'targets': [
+                {'staff_id': self.ikeja_officer.pk, 'target_amount': '1'}]}, format='json')
+        ids = {r['staff_id'] for r in data['officers']}
+        self.assertIn(self.dominion.pk, ids)
+        self.assertNotIn(self.ikeja_officer.pk, ids)
+        self.assertEqual(D(data['totals']['target']), D('1200000'))
+        self.assertEqual(D(data['totals']['recovered_mtd']), D('1000'))
+        self.assertTrue(data['can_set_targets'])
+        self.assertEqual(denied.status_code, 400)  # other branch's officer is "not found"
+
+    def test_director_sees_all_branches_and_can_narrow(self):
+        data = self.api.get(URL).data
+        ids = {r['staff_id'] for r in data['officers']}
+        self.assertTrue({self.dominion.pk, self.ikeja_officer.pk} <= ids)
+        self.assertEqual(D(data['totals']['target']), D('2100000'))
+        self.assertEqual(D(data['totals']['recovered_mtd']), D('3000'))
+
+        narrowed = self.api.get(URL, HTTP_X_BRANCH_ID=str(self.branch2.pk)).data
+        self.assertEqual({r['staff_id'] for r in narrowed['officers']}, {self.ikeja_officer.pk})

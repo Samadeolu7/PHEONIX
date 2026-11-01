@@ -17,6 +17,7 @@ from .views import (
     DailyCollectionReportView,
     DisbursementByProductView,
     RecoveryTargetsView,
+    MyRecoveryTargetView,
 )
 
 app_name = 'analytics'
@@ -43,6 +44,7 @@ urlpatterns = [
     path('daily-collection-report/', DailyCollectionReportView.as_view(), name='daily-collection-report'),
     path('disbursement-by-product/', DisbursementByProductView.as_view(), name='disbursement-by-product'),
     # Officer monthly recovery targets (replaces hand-typed thread updates)
+    path('recovery-targets/mine/', MyRecoveryTargetView.as_view(), name='recovery-targets-mine'),
     path('recovery-targets/', RecoveryTargetsView.as_view(), name='recovery-targets'),
 ]
 
