@@ -325,8 +325,14 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '60/hour',
-        'user': '1000/hour',
+        # Per-minute windows: the ERP polls heavily (dashboards, auto-refreshing
+        # reports, notifications), so hourly caps locked busy users out for up
+        # to an hour. A per-minute cap still stops runaway scripts, and the
+        # worst-case wait is under a minute.
+        # 'anon' is counted per IP and covers token refresh, so a whole office
+        # behind one public IP shares it - keep it generous.
+        'anon': '60/minute',
+        'user': '300/minute',
         'login': '5/minute',
         'password_reset': '3/hour',
         'register': '10/hour',
