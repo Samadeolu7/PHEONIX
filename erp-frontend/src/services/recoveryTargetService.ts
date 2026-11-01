@@ -3,7 +3,8 @@
  * Officer monthly recovery targets.
  * Consumes /api/analytics/recovery-targets/ (analytics/views.py::RecoveryTargetsView).
  * Targets are set by managers; every recovered figure is computed server-side
- * from actual loan repayments, so nobody types running totals by hand.
+ * from actual repayments on loans 30+ days in default, so nobody types running
+ * totals by hand.
  */
 import { api, triggerDownload } from './api';
 
@@ -50,6 +51,8 @@ export interface RecoveryTargetsResponse {
   days_elapsed: number;
   pct_month_elapsed: string;
   can_set_targets: boolean;
+  /** A payment counts as recovery only if the loan was at least this many days overdue that day. */
+  min_days_overdue: number;
   officers: RecoveryOfficerRow[];
   totals: RecoveryTotals;
 }

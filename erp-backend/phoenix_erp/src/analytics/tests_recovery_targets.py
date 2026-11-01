@@ -15,7 +15,7 @@ from accounts.models import Account
 from analytics.models import OfficerRecoveryTarget
 from clients.models import Client
 from hr.models import Staff
-from loans.models import LoanAccount, LoanProduct, LoanRepaymentAllocation
+from loans.models import LoanAccount, LoanProduct, LoanRepaymentAllocation, LoanRepaymentSchedule
 from permissions.services import EffectivePermission
 from products.models import Product
 from transactions.models import Transaction, TransactionSeries
@@ -54,6 +54,12 @@ class RecoveryTargetsViewTestCase(TestCase):
         self.loan_u = self._loan(self._client('C3', None), 'LN-R3')
         self.series, _ = TransactionSeries.objects.get_or_create(
             code='LNPMT', defaults={'description': 'Loan payment'})
+        # Each of these loans has a big installment long in default, so payments on
+        # them count as recovery. Payments land on that installment.
+        self.old_rows = {
+            loan.pk: self._sched(loan, self.month - datetime.timedelta(days=120), '5000000')
+            for loan in (self.loan_d, self.loan_f, self.loan_u)
+        }
 
     # ── helpers ──────────────────────────────────────────────────────────────
     def _staff(self, first, last):
@@ -64,7 +70,7 @@ class RecoveryTargetsViewTestCase(TestCase):
     def _client(self, cid, officer):
         return Client.objects.create(
             client_id=cid, first_name='Client', last_name=cid, gender='male',
-            phone_primary=f'0801000{cid[-1]}000', assigned_officer=officer,
+            phone_primary=f'0801{Client.objects.count() + 1:07d}', assigned_officer=officer,
             tenant=self.tenant, owner=self.owner, branch=self.branch)
 
     def _loan(self, client, number):
@@ -80,16 +86,32 @@ class RecoveryTargetsViewTestCase(TestCase):
             disbursement_date=self.month, disbursed_amount=D('100000'),
             owner=self.owner, branch=self.branch)
 
-    def _pay(self, loan, date, principal, interest='0', penalty='0', reversed_=False):
+    def _sched(self, loan, due_date, due, paid='0'):
+        n = LoanRepaymentSchedule.objects.filter(loan=loan).count() + 1
+        return LoanRepaymentSchedule.objects.create(
+            loan=loan, installment_number=n, due_date=due_date, principal_due=D(due),
+            interest_due=D('0'), total_due=D(due), total_paid=D(paid),
+            status='paid' if D(paid) >= D(due) else 'pending',
+            tenant=self.tenant, owner=self.owner, branch=self.branch)
+
+    def _pay(self, loan, date, principal, interest='0', penalty='0', reversed_=False, row=None):
+        """Record a payment the way record_payment() leaves it: an allocation row
+        against an installment, with that installment's total_paid bumped (unless reversed)."""
+        row = row or self.old_rows.get(loan.pk)
         txn = Transaction.objects.create(
             series=self.series, date=date, description=f'payment {loan.loan_number}',
             branch=self.branch, owner=self.owner, tenant=self.tenant)
         if reversed_:
             Transaction.objects.filter(pk=txn.pk).update(is_reversed=True)
+        total = D(principal) + D(interest) + D(penalty)
         LoanRepaymentAllocation.objects.create(
-            loan=loan, journal_entry=txn, principal_applied=D(principal),
+            loan=loan, schedule=row, journal_entry=txn, principal_applied=D(principal),
             interest_applied=D(interest), penalty_applied=D(penalty),
             tenant=self.tenant, owner=self.owner)
+        if row is not None and not reversed_:
+            row.total_paid += total
+            row.status = 'paid' if row.total_paid >= row.total_due else 'partial'
+            row.save(update_fields=['total_paid', 'status'])
 
     def _target(self, staff, amount, month=None):
         return OfficerRecoveryTarget.objects.create(
@@ -155,6 +177,50 @@ class RecoveryTargetsViewTestCase(TestCase):
         row = self._row(self.api.get(URL).data, self.dominion)
         self.assertIsNone(row['target'])
         self.assertEqual(D(row['previous_target']), D('1200000'))
+
+    # ── What counts as recovery ──────────────────────────────────────────────
+    def _fresh_loan(self, number):
+        loan = self._loan(self._client(f'X{number[-1]}', self.dominion), number)
+        return loan
+
+    def test_payment_on_current_loan_is_not_recovery(self):
+        loan = self._fresh_loan('LN-C1')
+        row = self._sched(loan, self.today, '10000')  # due today: not late at all
+        self._pay(loan, self.today, '10000', row=row)
+        row_data = self._row(self.api.get(URL).data, self.dominion)
+        self.assertEqual(D(row_data['recovered_mtd']), D('0'))
+
+    def test_loan_less_than_30_days_overdue_is_not_recovery(self):
+        loan = self._fresh_loan('LN-C2')
+        row = self._sched(loan, self.today - datetime.timedelta(days=20), '10000')
+        self._pay(loan, self.today, '4000', row=row)
+        self.assertEqual(D(self._row(self.api.get(URL).data, self.dominion)['recovered_mtd']), D('0'))
+
+    def test_payment_that_clears_the_old_arrear_still_counts(self):
+        # The installment now shows fully paid - but only because of this month's
+        # payment, so on the day it was made the loan was still 60 days in default.
+        loan = self._fresh_loan('LN-C3')
+        old = self._sched(loan, self.today - datetime.timedelta(days=60), '10000')
+        self._pay(loan, self.today, '10000', row=old)
+        self.assertEqual(old.status, 'paid')
+        self.assertEqual(D(self._row(self.api.get(URL).data, self.dominion)['recovered_mtd']), D('10000'))
+
+    def test_payment_after_arrear_cleared_is_not_recovery(self):
+        if self.today.day < 3:
+            self.skipTest('needs two distinct days inside the current month')
+        loan = self._fresh_loan('LN-C4')
+        old = self._sched(loan, self.today - datetime.timedelta(days=60), '10000')
+        current = self._sched(loan, self.today, '5000')
+        self._pay(loan, self.month, '10000', row=old)      # clears the default
+        self._pay(loan, self.today, '5000', row=current)   # ordinary on-time payment
+        self.assertEqual(D(self._row(self.api.get(URL).data, self.dominion)['recovered_mtd']), D('10000'))
+
+    def test_penny_leftover_does_not_make_a_loan_defaulted(self):
+        loan = self._fresh_loan('LN-C5')
+        self._sched(loan, self.today - datetime.timedelta(days=60), '10000', paid='9999.99')
+        current = self._sched(loan, self.today, '5000')
+        self._pay(loan, self.today, '5000', row=current)
+        self.assertEqual(D(self._row(self.api.get(URL).data, self.dominion)['recovered_mtd']), D('0'))
 
     def test_csv_export(self):
         self._target(self.dominion, '1200000')

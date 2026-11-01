@@ -94,7 +94,7 @@ function DailyBreakdown({ row }: { row: RecoveryOfficerRow }) {
   const target = row.target ? num(row.target) : null;
   let running = 0;
   if (row.daily.length === 0) {
-    return <p className="px-4 py-3 text-sm text-gray-500">No repayments recorded this month yet.</p>;
+    return <p className="px-4 py-3 text-sm text-gray-500">Nothing recovered on defaulted loans this month yet.</p>;
   }
   return (
     <table className="w-full text-sm">
@@ -257,7 +257,7 @@ export default function RecoveryTargetsPage() {
               <h1 className="text-xl font-bold text-gray-900">Recovery Targets</h1>
             </div>
             <p className="text-sm text-gray-500">
-              Each officer's monthly target vs. what their clients have actually repaid. Updates automatically.
+              Each officer's monthly target vs. what they've actually recovered on defaulted loans. Updates automatically.
             </p>
           </div>
         </div>
@@ -430,11 +430,12 @@ export default function RecoveryTargetsPage() {
             </div>
 
             <p className="mt-3 text-xs text-gray-500">
-              Recovered = all loan repayments (principal, interest, fees and penalty) on clients assigned to each officer,
-              by payment date. Reversed payments are excluded. The dark tick on each bar marks where the officer should be
-              by now.
+              Recovered = repayments on loans that were {data.min_days_overdue}+ days overdue on the day the client paid
+              (principal, interest, fees and penalty), for clients assigned to each officer. Repayments on current loans
+              are normal collections and don't count. Reversed payments are excluded. The dark tick on each bar marks where
+              the officer should be by now.
               {data.totals.unassigned_recovered_mtd && num(data.totals.unassigned_recovered_mtd) > 0 && (
-                <> {naira(data.totals.unassigned_recovered_mtd)} was repaid this month by clients with no assigned officer.</>
+                <> {naira(data.totals.unassigned_recovered_mtd)} was recovered this month from clients with no assigned officer.</>
               )}
             </p>
           </>

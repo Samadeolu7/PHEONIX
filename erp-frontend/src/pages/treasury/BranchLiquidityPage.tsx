@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Wallet } from 'lucide-react';
+import { Settings, Wallet } from 'lucide-react';
+import { Modal } from '../../components/ui/Modal';
 import { useBranchOptions } from '../../hooks/useBranches';
 import { toast } from 'sonner';
 import { useBranchForecast, useTreasurySettings, useUpdateTreasurySettings } from '../../hooks/useBankBorrowings';
@@ -26,20 +27,26 @@ const SETTING_FIELDS: { key: keyof TreasurySettings; label: string; hint: string
   { key: 'default_contribution_lead_days', label: 'Share lead time (days)', hint: 'Default days before an instalment that branches send their share.', min: 0, max: 60 },
 ];
 
-const SettingsCard: React.FC = () => {
-  const { data } = useTreasurySettings();
+const SettingsModal: React.FC<{ open: boolean; onClose: () => void }> = ({ open, onClose }) => {
+  const { data, isLoading } = useTreasurySettings();
   const save = useUpdateTreasurySettings();
   const [draft, setDraft] = useState<Partial<TreasurySettings>>({});
-  if (!data) return null;
+  const close = () => { setDraft({}); onClose(); };
+  if (!data) {
+    return (
+      <Modal open={open} onClose={close} title="Lending check settings">
+        <p className="text-sm text-gray-500">{isLoading ? 'Loading…' : 'Could not load the settings.'}</p>
+      </Modal>
+    );
+  }
   const value = (k: keyof TreasurySettings) => (draft[k] ?? data[k]) as number;
   const includeRecovery = (draft.include_arrears_recovery ?? data.include_arrears_recovery) as boolean;
   const dirty = Object.keys(draft).length > 0;
 
   return (
-    <section className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-1">Lending check settings</h2>
+    <Modal open={open} onClose={close} title="Lending check settings" size="large">
       <p className="text-sm text-gray-600 mb-4">Applies to all branches. Directors only.</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {SETTING_FIELDS.map((f) => (
           <label key={f.key} className="block text-sm">
             <span className="font-medium text-gray-700">{f.label}</span>
@@ -60,23 +67,23 @@ const SettingsCard: React.FC = () => {
           </span>
         </span>
       </label>
-      <div className="mt-4 flex gap-2">
+      <div className="mt-6 flex justify-end gap-2">
+        <button type="button" onClick={close} className="px-4 py-2 rounded-lg border border-gray-300">Cancel</button>
         <button type="button" disabled={!dirty || save.isPending}
           onClick={async () => {
             try {
               await save.mutateAsync(draft);
-              setDraft({});
               toast.success('Settings saved.');
+              close();
             } catch (e) {
               toast.error(apiErrorMessage(e, 'Could not save the settings.'));
             }
           }}
           className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50">
-          Save settings
+          {save.isPending ? 'Saving…' : 'Save settings'}
         </button>
-        {dirty && <button type="button" onClick={() => setDraft({})} className="px-4 py-2 rounded-lg border border-gray-300">Undo</button>}
       </div>
-    </section>
+    </Modal>
   );
 };
 
@@ -84,6 +91,7 @@ const BranchLiquidityPage: React.FC = () => {
   const { user, isDirectorPlus: isDirector } = useAuth();
   const { data: branches = [], isError: branchesFailed } = useBranchOptions();
   const [branchId, setBranchId] = useState<number | undefined>(undefined);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Directors pick any branch; everyone else is limited to their own (the API enforces this too).
   useEffect(() => {
@@ -124,12 +132,18 @@ const BranchLiquidityPage: React.FC = () => {
             loans that are waiting to be paid out.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {isDirector && <Link to="/treasury/borrowings" className="text-blue-700 hover:underline text-sm">Bank borrowings</Link>}
           <select title="Branch" className="px-3 py-2 border border-gray-300 rounded-lg" value={branchId ?? ''} disabled={!isDirector}
             onChange={(e) => setBranchId(Number(e.target.value))}>
             {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
+          {isDirector && (
+            <button type="button" onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50">
+              <Settings className="w-4 h-4" /> Settings
+            </button>
+          )}
         </div>
       </div>
 
@@ -303,7 +317,7 @@ const BranchLiquidityPage: React.FC = () => {
           </section>
         </>
       )}
-      {isDirector && <SettingsCard />}
+      {isDirector && <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 };

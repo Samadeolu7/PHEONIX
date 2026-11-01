@@ -1406,7 +1406,7 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     id: 'recovery-targets',
     title: '🎯 Recovery Targets',
     description:
-      'Monthly recovery target per officer vs. actual repayments — today, cumulative, balance and pace',
+      'Monthly recovery target per officer vs. actual recovery on 30+ day defaulted loans — today, cumulative, balance and pace',
     path: '/reports/recovery-targets',
     icon: BarChart3,
     requiredPermission: 'loan-accounts-view',
@@ -2224,7 +2224,7 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     id: 'loans-mod-recovery-targets',
     title: '🎯 Recovery Targets',
     description:
-      'Monthly recovery target per officer vs. actual repayments — today, cumulative, balance and pace',
+      'Monthly recovery target per officer vs. actual recovery on 30+ day defaulted loans — today, cumulative, balance and pace',
     path: '/reports/recovery-targets',
     icon: BarChart3,
     requiredPermission: 'loan-accounts-view',

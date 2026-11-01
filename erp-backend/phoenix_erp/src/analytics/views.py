@@ -1995,6 +1995,85 @@ def _restrict_staff_to_scope(staff_qs, user):
     return staff_qs.filter(pk=staff.pk), True
 
 
+RECOVERY_MIN_DAYS_OVERDUE = 30
+# Ignore penny leftovers from schedule rounding drift when deciding whether an
+# installment was still unpaid - otherwise a ₦0.01 remainder could make a
+# healthy loan look 30+ days in default.
+RECOVERY_UNPAID_TOLERANCE = Decimal('1.00')
+
+
+def _recovery_payments(loan_qs, start, end):
+    """
+    Yield (officer_id, date, amount) for every repayment between start and end
+    (inclusive) made on a loan that was RECOVERY_MIN_DAYS_OVERDUE+ days in
+    arrears on the day of that payment.
+
+    "In arrears on day D" is rebuilt backwards, like treasury's recovery_rate:
+    what an installment still owed just before D = what it owes now + every
+    allocation made to it on or after D. That works for legacy loans (whose
+    older payments predate allocation tracking) because it only needs
+    allocations from `start` onward. The defaulters report's helper can't be
+    reused here: it reads each installment's CURRENT status, so the very
+    payment that clears an old arrear would make the loan look as if it was
+    never in default.
+    """
+    from django.db.models import F
+    from loans.models import LoanRepaymentAllocation, LoanRepaymentSchedule
+
+    live = dict(journal_entry__is_reversed=False, journal_entry__is_reversal=False,
+                journal_entry__is_deleted=False)
+    applied = Sum(F('principal_applied') + F('interest_applied') + F('fees_applied') + F('penalty_applied'))
+
+    payments = list(
+        LoanRepaymentAllocation.objects.filter(
+            loan_id__in=loan_qs.values('id'), journal_entry__date__range=(start, end), **live)
+        .values('loan_id', 'loan__client__assigned_officer', 'journal_entry__date')
+        .annotate(amt=applied)
+    )
+    if not payments:
+        return
+
+    cutoff = end - datetime.timedelta(days=RECOVERY_MIN_DAYS_OVERDUE)
+    rows = {}
+    for r in (
+        LoanRepaymentSchedule.objects.filter(
+            loan_id__in={p['loan_id'] for p in payments}, due_date__lte=cutoff)
+        .exclude(status='restructured')
+        .values('id', 'loan_id', 'due_date', 'total_due', 'total_paid')
+    ):
+        r['unpaid_now'] = max(r['total_due'] - r['total_paid'], Decimal('0.00'))
+        r['later'] = []
+        rows[r['id']] = r
+    if not rows:
+        return
+
+    for a in (
+        LoanRepaymentAllocation.objects.filter(
+            schedule_id__in=list(rows), journal_entry__date__gte=start, **live)
+        .values('schedule_id', 'journal_entry__date')
+        .annotate(amt=applied)
+    ):
+        rows[a['schedule_id']]['later'].append((a['journal_entry__date'], a['amt'] or Decimal('0.00')))
+
+    by_loan = {}
+    for r in rows.values():
+        by_loan.setdefault(r['loan_id'], []).append(r)
+
+    in_default = {}
+    for p in payments:
+        loan_id, day = p['loan_id'], p['journal_entry__date']
+        key = (loan_id, day)
+        if key not in in_default:
+            day_cutoff = day - datetime.timedelta(days=RECOVERY_MIN_DAYS_OVERDUE)
+            in_default[key] = any(
+                r['unpaid_now'] + sum((amt for d, amt in r['later'] if d >= day), Decimal('0.00'))
+                > RECOVERY_UNPAID_TOLERANCE
+                for r in by_loan.get(loan_id, ()) if r['due_date'] <= day_cutoff
+            )
+        if in_default[key]:
+            yield p['loan__client__assigned_officer'], day, p['amt'] or Decimal('0.00')
+
+
 class RecoveryTargetsView(APIView):
     """
     GET  /api/analytics/recovery-targets/?month=YYYY-MM&as_of=YYYY-MM-DD&export=csv
@@ -2005,12 +2084,16 @@ class RecoveryTargetsView(APIView):
     date, balance to target, and pace against the share of the month already
     elapsed ("halfway through the month should be 50% of target").
 
-    Recovered = every loan repayment applied to the officer's portfolio
-    (principal + interest + fees + penalty from LoanRepaymentAllocation),
-    dated by the payment transaction, excluding reversed payments. Money that
-    spilled over into savings is not counted. Attribution uses each client's
-    CURRENT assigned officer, so reassigning a client mid-month moves that
-    client's earlier collections to the new officer.
+    Recovered = repayments on DEFAULTED loans only: a payment counts when, on
+    the day it was made, the loan had an installment unpaid for at least
+    RECOVERY_MIN_DAYS_OVERDUE days (see _recovery_payments). Repayments on
+    current loans are normal collections, not recovery, and are excluded.
+    The whole payment counts (principal + interest + fees + penalty from
+    LoanRepaymentAllocation), dated by the payment transaction, excluding
+    reversed payments. Money that spilled over into savings is not counted.
+    Attribution uses each client's CURRENT assigned officer, so reassigning
+    a client mid-month moves that client's earlier recoveries to the new
+    officer.
 
     POST sets/updates targets for the month; a blank/null target_amount
     removes that officer's target.
@@ -2018,7 +2101,7 @@ class RecoveryTargetsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from loans.models import LoanAccount, LoanRepaymentAllocation
+        from loans.models import LoanAccount
         from hr.models import Staff
         from .models import OfficerRecoveryTarget
         import calendar
@@ -2057,22 +2140,8 @@ class RecoveryTargetsView(APIView):
         # officer_id -> {date -> amount}
         daily = {}
         if as_of:
-            alloc_rows = (
-                LoanRepaymentAllocation.objects.filter(
-                    loan_id__in=loan_qs.values('id'),
-                    journal_entry__date__range=(month_start, as_of),
-                    journal_entry__is_reversed=False,
-                    journal_entry__is_reversal=False,
-                    journal_entry__is_deleted=False,
-                )
-                .values('loan__client__assigned_officer', 'journal_entry__date')
-                .annotate(p=Sum('principal_applied'), i=Sum('interest_applied'),
-                          f=Sum('fees_applied'), n=Sum('penalty_applied'))
-            )
-            for r in alloc_rows:
-                amt = sum((r[k] or Decimal('0.00') for k in ('p', 'i', 'f', 'n')), Decimal('0.00'))
-                by_day = daily.setdefault(r['loan__client__assigned_officer'], {})
-                day = r['journal_entry__date']
+            for officer_id, day, amt in _recovery_payments(loan_qs, month_start, as_of):
+                by_day = daily.setdefault(officer_id, {})
                 by_day[day] = by_day.get(day, Decimal('0.00')) + amt
 
         staff_qs, narrow = _restrict_staff_to_scope(scope_qs(Staff.objects.for_user(user)), user)
@@ -2160,8 +2229,8 @@ class RecoveryTargetsView(APIView):
                 str((tot['mtd'] / tot['target'] * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP))
                 if tot['target'] > 0 else None
             ),
-            # Repayments on clients with no assigned officer - shown so the branch total
-            # reconciles with other collection reports. Hidden from officer-scoped users.
+            # Recovery on clients with no assigned officer - shown so nothing recovered
+            # goes unseen. Hidden from officer-scoped users.
             'unassigned_recovered_mtd': None if narrow else str(unassigned_mtd),
         }
 
@@ -2188,6 +2257,7 @@ class RecoveryTargetsView(APIView):
                 (Decimal(days_elapsed) / days_in_month * 100).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
             ),
             'can_set_targets': _can_set_recovery_targets(user),
+            'min_days_overdue': RECOVERY_MIN_DAYS_OVERDUE,
             'officers': rows,
             'totals': totals,
         })
