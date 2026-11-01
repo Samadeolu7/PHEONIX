@@ -52,6 +52,10 @@ class Command(BaseCommand):
         parser.add_argument('--branch', type=int, required=True, help='Branch id')
         parser.add_argument('--start', required=True, help='First month the rent covers, YYYY-MM')
         parser.add_argument('--months', type=int, help='Months the rent covers (default: inferred)')
+        parser.add_argument(
+            '--total',
+            help='Rent amount for this cycle, when the prepaid account also holds other items '
+                 '(default: balance + already released)')
         parser.add_argument('--prepaid-account-id', type=int)
         parser.add_argument('--expense-account-id', type=int)
         parser.add_argument('--as-of', help='Treat this date (YYYY-MM-DD) as today')
@@ -122,6 +126,15 @@ class Command(BaseCommand):
         manual = entries.filter(side=TransactionEntry.CREDIT, transaction__date__gte=start)
         released = self._sum(manual)
         total = balance + released
+        if o['total']:
+            given = Decimal(o['total'].replace(',', ''))
+            if given > total:
+                raise CommandError(
+                    f'--total {given:,.2f} is more than the account holds for this cycle ({total:,.2f})')
+            other = total - given
+            total = given
+        else:
+            other = ZERO
 
         w(f"\nPrepaid account: id={prepaid_acct.id} {prepaid_acct.code} {prepaid_acct.name}")
         w(f"  balance now {balance:,.2f}; moved to expense since {start:%b %Y}: {released:,.2f}"
@@ -136,6 +149,12 @@ class Command(BaseCommand):
             for e in manual.select_related('transaction').order_by('transaction__date'):
                 w(f"    {e.transaction.date}  {e.amount:,.2f}  {(e.transaction.description or '')[:70]}")
 
+        if other:
+            w(f"  => rent total given as {total:,.2f}; {other:,.2f} stays in the account untouched")
+        elif entries.filter(side=TransactionEntry.DEBIT, transaction__date__gte=start).count() > 1:
+            w(self.style.WARNING(
+                "  ! More than one payment into this account since the start month. If any of "
+                "them is not rent, re-run with --total <rent amount>."))
         if total <= 0:
             raise CommandError('Nothing left to schedule: the prepaid balance is zero or negative.')
 
@@ -222,7 +241,18 @@ class Command(BaseCommand):
             w(f"  {period_end}  {amount:,.2f}")
         if not plan:
             w("  none due yet")
-        w(f"Remaining after that: {total - released - sum((a for _, a in plan), ZERO):,.2f}")
+        w(f"Rent left in prepaid after that: {total - released - sum((a for _, a in plan), ZERO):,.2f}")
+
+        # Back-dated months must be open, or Transaction.post() refuses them.
+        from accounts.models import Period
+        closed = [pe for pe, _ in plan if Period.objects.filter(
+            branch=branch, period_type=Period.MONTH, year=pe.year, month=pe.month, is_closed=True,
+        ).exists()]
+        if closed:
+            raise CommandError(
+                'These months are closed for this branch, so their JVs cannot be posted: '
+                + ', '.join(f'{d:%b %Y}' for d in closed)
+                + '. Reopen them first, or ask for a single catch-up JV in the current month.')
 
         if not o['commit']:
             w(self.style.WARNING('\nPreview only. Re-run with --commit to apply.'))

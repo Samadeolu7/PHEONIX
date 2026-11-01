@@ -87,6 +87,31 @@ class SetupBranchRentPrepaymentTests(TestCase):
         self.assertIn(f'id={self.rent_prepaid.id}', out)
         self.assertIn('2026-10-31  100,000.00', out)
 
+    def test_orimerunmu_shape_backdates_and_leaves_other_items(self):
+        # Live Orimerunmu: 500k rent Jul26-Jun27 paid 6 Jul, 57k painting 12 Aug in
+        # the same account, nothing released yet.
+        acct = Account.objects.create(
+            name='Rent Prepaid', code='1132', account_type='ASSET', account_level='CHILD',
+            category=self.asset_category, owner=self.user, branch=self.branch, created_by=self.user)
+        self._jv(date(2026, 7, 6), acct, self.cash_account, '500000', 'Orimerunmu Rent July 2026 - June 2027')
+        self._jv(date(2026, 8, 12), acct, self.cash_account, '57000', 'Painting of office')
+
+        out = StringIO()
+        call_command('setup_branch_rent_prepayment', '--branch', str(self.branch.pk),
+                     '--start', '2026-07', '--as-of', '2026-11-01', '--months', '12',
+                     '--total', '500000', '--prepaid-account-id', str(acct.id),
+                     '--expense-account-id', str(self.rent_expense.id), '--commit', stdout=out)
+
+        journals = Transaction.objects.filter(workflow_reference__contains='-AMORT-').order_by('date')
+        self.assertEqual([j.date for j in journals],
+                         [date(2026, 7, 31), date(2026, 8, 31), date(2026, 9, 30), date(2026, 10, 31)])
+        amounts = [j.entries.get(side=TransactionEntry.CREDIT).amount for j in journals]
+        self.assertEqual(sum(amounts), Decimal('166666.67'))
+        p = PrepaidExpense.objects.get()
+        self.assertEqual(p.total_amount, Decimal('500000.00'))
+        self.assertEqual(p.remaining_amount, Decimal('333333.33'))
+        self.assertIn('57,000.00 stays in the account', out.getvalue())
+
     def test_cannot_set_up_twice(self):
         self._run('--commit')
         with self.assertRaises(CommandError):
