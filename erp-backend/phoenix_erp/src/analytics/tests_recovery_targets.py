@@ -400,3 +400,60 @@ class BranchScopeTestCase(_RecoveryBase):
 
         narrowed = self.api.get(URL, HTTP_X_BRANCH_ID=str(self.branch2.pk)).data
         self.assertEqual({r['staff_id'] for r in narrowed['officers']}, {self.ikeja_officer.pk})
+
+
+class HiddenCardDiagnosisTestCase(_RecoveryBase):
+    """Login linked to a duplicate/stub Staff record while the target sits on the real one."""
+
+    def test_duplicate_staff_record_is_reported(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        self._target(self.dominion, '900000')
+        user = User.objects.create_user(username='dom', password='pass', email='dom@example.com',
+                                        first_name='Dominion', last_name='Akinfenwa')
+        user.tenant, user.branch = self.tenant, self.branch
+        user.save()
+        stub = Staff.all_objects.filter(user=user).first() or Staff.objects.create(
+            first_name='Dominion', last_name='Akinfenwa', user=user,
+            owner=self.owner, branch=self.branch, tenant=self.tenant)
+        Staff.all_objects.filter(pk=stub.pk).update(first_name='Dominion', last_name='Akinfenwa')
+
+        api = APIClient()
+        api.force_authenticate(user=user)
+        res = api.get(URL + 'mine/').data
+        self.assertEqual(res['reason'], 'no_target_this_month')
+        self.assertEqual(res['staff_id'], stub.pk)
+
+        out = StringIO()
+        call_command('diagnose_recovery_target', user='dom', stdout=out)
+        text = out.getvalue()
+        self.assertIn('possible duplicate', text)
+        self.assertIn(f'Staff #{self.dominion.pk}', text)
+        self.assertIn('Card: HIDDEN', text)
+
+    def test_relink_fixes_tenantless_stub_and_card_appears(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        self._target(self.dominion, '600000')
+        user = User.objects.create_user(username='omo', password='pass')  # no tenant yet -> tenantless stub
+        Staff.all_objects.all_tenants().filter(user=user).delete()
+        stub = Staff.all_objects.all_tenants().create(first_name='omo', last_name='', user=user, tenant=None)
+        user.tenant, user.branch = self.tenant, self.branch
+        user.save()
+
+        api = APIClient()
+        api.force_authenticate(user=user)
+        self.assertFalse(api.get(URL + 'mine/').data['has_target'])
+
+        dry = StringIO()
+        call_command('relink_staff_login', user='omo', staff=self.dominion.pk, stdout=dry)
+        self.assertIn('Dry run', dry.getvalue())
+        self.assertEqual(Staff.all_objects.all_tenants().get(pk=stub.pk).user_id, user.pk)
+
+        call_command('relink_staff_login', user='omo', staff=self.dominion.pk, apply=True, stdout=StringIO())
+        self.assertEqual(Staff.all_objects.all_tenants().get(user=user).pk, self.dominion.pk)
+        self.assertTrue(Staff.all_objects.all_tenants().get(pk=stub.pk).is_deleted)
+        user.refresh_from_db()
+        self.assertTrue(api.get(URL + 'mine/').data['has_target'])

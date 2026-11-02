@@ -2440,5 +2440,16 @@ class MyRecoveryTargetView(APIView):
             staff = request.user.staff_profile
         except Exception:
             staff = None
-        data = my_recovery_focus(staff, request.user, timezone.localdate()) if staff else None
-        return Response(data or {'has_target': False})
+        today = timezone.localdate()
+        if staff is None:
+            return Response({'has_target': False, 'reason': 'no_staff_profile'})
+        data = my_recovery_focus(staff, request.user, today)
+        if data is None:
+            # Say which staff record was checked, so a hidden card can be diagnosed from the
+            # browser's network tab (e.g. the login is linked to a duplicate Staff record).
+            return Response({
+                'has_target': False, 'reason': 'no_target_this_month',
+                'month': f'{today:%Y-%m}', 'staff_id': staff.pk,
+                'staff_name': f'{staff.first_name} {staff.last_name}'.strip(),
+            })
+        return Response(data)
