@@ -340,8 +340,24 @@ class MyRecoveryFocusTestCase(_RecoveryBase):
     def test_no_target_returns_none_and_endpoint_hides(self):
         from analytics.views import my_recovery_focus
         self.assertIsNone(my_recovery_focus(self.funmi, self.owner, self.day))
-        self.assertEqual(self.api.get(URL + 'mine/').data, {'has_target': False})
+        self.assertFalse(self.api.get(URL + 'mine/').data['has_target'])
 
+
+    def test_near_daily_target_moves_to_week(self):
+        # 95 of today's 100 would read "₦5 behind" - too comfortable; show the week instead.
+        self._pay(self.loan_d, self.day, '95')
+        f = self._focus()
+        self.assertEqual((f['focus'], D(f['shortfall'])), ('weekly', D('605')))
+
+    def test_just_under_80_percent_of_today_stays_daily(self):
+        self._pay(self.loan_d, self.day, '79')
+        self.assertEqual(self._focus()['focus'], 'daily')
+
+    def test_near_weekly_target_moves_to_month(self):
+        self._pay(self.loan_d, self.day, '100')
+        self._pay(self.loan_d, self.day - datetime.timedelta(days=1), '500')  # week 600 of 700 (86%)
+        f = self._focus()
+        self.assertEqual((f['focus'], D(f['shortfall'])), ('monthly', self.target - D('600')))
 
 class BranchScopeTestCase(_RecoveryBase):
     """Branch managers see their own branch only; directors see every branch."""
@@ -405,6 +421,17 @@ class BranchScopeTestCase(_RecoveryBase):
 class HiddenCardDiagnosisTestCase(_RecoveryBase):
     """Login linked to a duplicate/stub Staff record while the target sits on the real one."""
 
+    def _tenantless_stub(self, user, first_name):
+        """What auto_create_staff_profile leaves behind for a login created before it had a
+        tenant: a stub named after the username, with tenant=NULL. (Reuse the signal's row -
+        .delete() only soft-deletes, so it would still hold the unique user link.)"""
+        every = Staff.all_objects.all_tenants()
+        stub = every.filter(user=user).first()
+        if stub is None:
+            return every.create(first_name=first_name, last_name='', user=user, tenant=None)
+        every.filter(pk=stub.pk).update(first_name=first_name, last_name='', tenant=None, branch=None)
+        return every.get(pk=stub.pk)
+
     def test_duplicate_staff_record_is_reported(self):
         from io import StringIO
         from django.core.management import call_command
@@ -438,8 +465,7 @@ class HiddenCardDiagnosisTestCase(_RecoveryBase):
 
         self._target(self.dominion, '600000')
         user = User.objects.create_user(username='omo', password='pass')  # no tenant yet -> tenantless stub
-        Staff.all_objects.all_tenants().filter(user=user).delete()
-        stub = Staff.all_objects.all_tenants().create(first_name='omo', last_name='', user=user, tenant=None)
+        stub = self._tenantless_stub(user, 'omo')
         user.tenant, user.branch = self.tenant, self.branch
         user.save()
 
@@ -465,8 +491,7 @@ class HiddenCardDiagnosisTestCase(_RecoveryBase):
         self._target(self.dominion, '600000')  # real record: has clients + target, no login
         user = User.objects.create_user(username='dominion', password='pass',
                                         first_name='Akinfenwa', last_name='Dominion')  # reversed order
-        Staff.all_objects.all_tenants().filter(user=user).delete()
-        Staff.all_objects.all_tenants().create(first_name='dominion', last_name='', user=user, tenant=None)
+        self._tenantless_stub(user, 'dominion')
         user.tenant = self.tenant
         user.save()
 

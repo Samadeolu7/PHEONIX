@@ -2000,6 +2000,9 @@ RECOVERY_MIN_DAYS_OVERDUE = 30
 # installment was still unpaid - otherwise a ₦0.01 remainder could make a
 # healthy loan look 30+ days in default.
 RECOVERY_UNPAID_TOLERANCE = Decimal('1.00')
+# Dashboard card: switch from today's goal to the week's (and week's to month's) once
+# this share of the smaller goal is reached, so the card never shows a tiny shortfall.
+RECOVERY_ESCALATE_AT = Decimal('0.80')
 
 
 def _recovery_payments(loan_qs, start, end):
@@ -2345,11 +2348,12 @@ def my_recovery_focus(staff, user, today):
     """
     The single "how far behind am I" figure for an officer's dashboard card.
 
-    Escalates so a target-holder never sees a comfortable all-green state:
-      1. today's recovery below the daily target      -> show today's shortfall
-      2. else this week's below the weekly target     -> show the week's shortfall
-      3. else the month's target not yet reached      -> show what's left this month
-      4. else                                         -> achieved (amount above target)
+    Escalates so a target-holder never sees a comfortable, nearly-done figure:
+      1. today's recovery below 80% of the daily target  -> show today's shortfall
+      2. else this week's below 80% of the weekly target -> show the week's shortfall
+      3. else the month's target not yet reached         -> show what's left this month
+      4. else                                            -> achieved (amount above target)
+    (80% = RECOVERY_ESCALATE_AT.)
 
     daily target  = monthly target / calendar days in the month (same basis as the
                     Recovery Targets page's pace marker).
@@ -2392,9 +2396,12 @@ def my_recovery_focus(staff, user, today):
     days_left = (month_end - today).days + 1  # including today
     month_left = max(target - mtd, Decimal('0.00'))
 
-    if day < daily_target:
+    # Move to the bigger goal BEFORE the smaller one is finished: "₦1,000 behind today"
+    # reads as nearly done and lets officers relax, so at RECOVERY_ESCALATE_AT of the
+    # day's (or week's) goal the card switches to the larger, still-open shortfall.
+    if day < daily_target * RECOVERY_ESCALATE_AT:
         focus, goal, done = 'daily', daily_target, day
-    elif week < weekly_target:
+    elif week < weekly_target * RECOVERY_ESCALATE_AT:
         focus, goal, done = 'weekly', weekly_target, week
     elif mtd < target:
         focus, goal, done = 'monthly', target, mtd

@@ -4,8 +4,8 @@
  * Shown on the role-based dashboard to anyone with a recovery target this
  * month (renders nothing otherwise). Deliberately never "comfortable green":
  * it always shows the nearest goal not yet met —
- *   behind today's target → today's shortfall
- *   else behind this week's → the week's shortfall
+ *   below 80% of today's target → today's shortfall
+ *   else below 80% of this week's → the week's shortfall
  *   else → what's still left for the month
  * Green only once the whole monthly target is met.
  * Data: /api/analytics/recovery-targets/mine/ (analytics/views.py::my_recovery_focus).
@@ -62,8 +62,8 @@ export default function MyRecoveryTargetCard() {
 
   const detail: Record<RecoveryFocus, string> = {
     daily: `Recovered ${naira(data.recovered_today)} of today’s ${naira(data.daily_target)}`,
-    weekly: `Today’s target met. This week: ${naira(data.recovered_week)} of ${naira(data.weekly_target)}`,
-    monthly: `Today and this week are met. ${naira(data.recovered_mtd)} of ${naira(data.target)} — ${naira(data.required_daily)}/day for the next ${data.days_left} day(s)`,
+    weekly: `This week: ${naira(data.recovered_week)} of ${naira(data.weekly_target)} · today ${naira(data.recovered_today)}`,
+    monthly: `${naira(data.recovered_mtd)} of ${naira(data.target)} — ${naira(data.required_daily)}/day for the next ${data.days_left} day(s)`,
     achieved: `${naira(data.recovered_mtd)} of ${naira(data.target)} recovered`,
   };
 
