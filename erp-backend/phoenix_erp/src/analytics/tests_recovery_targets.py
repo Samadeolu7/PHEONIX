@@ -457,3 +457,21 @@ class HiddenCardDiagnosisTestCase(_RecoveryBase):
         self.assertTrue(Staff.all_objects.all_tenants().get(pk=stub.pk).is_deleted)
         user.refresh_from_db()
         self.assertTrue(api.get(URL + 'mine/').data['has_target'])
+
+    def test_find_mismatches_suggests_relink_by_name(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        self._target(self.dominion, '600000')  # real record: has clients + target, no login
+        user = User.objects.create_user(username='dominion', password='pass',
+                                        first_name='Akinfenwa', last_name='Dominion')  # reversed order
+        Staff.all_objects.all_tenants().filter(user=user).delete()
+        Staff.all_objects.all_tenants().create(first_name='dominion', last_name='', user=user, tenant=None)
+        user.tenant = self.tenant
+        user.save()
+
+        out = StringIO()
+        call_command('find_staff_login_mismatches', stdout=out)
+        text = out.getvalue()
+        self.assertIn('STUB', text)
+        self.assertIn(f'relink_staff_login --user {user.pk} --staff {self.dominion.pk}', text)
