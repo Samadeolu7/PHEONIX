@@ -78,7 +78,13 @@ export interface MyRecoveryTarget {
   above_target?: string;
   target?: string;
   daily_target?: string;
+  /** Shortfall from earlier days this month, added on top of today's normal target. */
+  daily_carried?: string;
+  daily_goal?: string;
   weekly_target?: string;
+  /** Shortfall from earlier weeks this month, added on top of this week's normal target. */
+  weekly_carried?: string;
+  weekly_goal?: string;
   week_start?: string;
   week_end?: string;
   recovered_today?: string;

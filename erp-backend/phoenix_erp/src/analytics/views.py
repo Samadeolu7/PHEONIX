@@ -2360,6 +2360,8 @@ def my_recovery_focus(staff, user, today):
     weekly target = daily target x days of this Monday-Sunday week that fall in the
                     month - the WHOLE week, not prorated, so meeting it means the
                     officer is genuinely ahead.
+    Today's / this week's GOAL = that target + any shortfall carried forward from
+    earlier in the month (never reduced by being ahead).
 
     Returns None when the officer has no target this month.
     """
@@ -2396,13 +2398,28 @@ def my_recovery_focus(staff, user, today):
     days_left = (month_end - today).days + 1  # including today
     month_left = max(target - mtd, Decimal('0.00'))
 
+    # Deficits carry forward, surpluses don't. Today's goal = the normal daily target
+    # plus whatever is still owed from earlier days this month (pace expected by end of
+    # yesterday minus what was recovered before today); being ahead never lowers it below
+    # the normal daily target. The week works the same way from the week's first day.
+    # Neither can exceed what's left of the month.
+    def owed_before(start, recovered_before_start):
+        """Shortfall against pace as of the end of the day before `start`."""
+        expected = (target * (start.day - 1) / days_in_month).quantize(two)
+        return max(expected - recovered_before_start, Decimal('0.00'))
+
+    daily_carried = owed_before(today, mtd - day)
+    weekly_carried = owed_before(week_start, mtd - week)
+    daily_goal = min(daily_target + daily_carried, month_left + day)
+    weekly_goal = min(weekly_target + weekly_carried, month_left + week)
+
     # Move to the bigger goal BEFORE the smaller one is finished: "₦1,000 behind today"
     # reads as nearly done and lets officers relax, so at RECOVERY_ESCALATE_AT of the
     # day's (or week's) goal the card switches to the larger, still-open shortfall.
-    if day < daily_target * RECOVERY_ESCALATE_AT:
-        focus, goal, done = 'daily', daily_target, day
-    elif week < weekly_target * RECOVERY_ESCALATE_AT:
-        focus, goal, done = 'weekly', weekly_target, week
+    if day < daily_goal * RECOVERY_ESCALATE_AT:
+        focus, goal, done = 'daily', daily_goal, day
+    elif week < weekly_goal * RECOVERY_ESCALATE_AT:
+        focus, goal, done = 'weekly', weekly_goal, week
     elif mtd < target:
         focus, goal, done = 'monthly', target, mtd
     else:
@@ -2419,7 +2436,11 @@ def my_recovery_focus(staff, user, today):
         'above_target': str(max(mtd - target, Decimal('0.00'))),
         'target': str(target),
         'daily_target': str(daily_target),
+        'daily_carried': str(daily_carried),
+        'daily_goal': str(daily_goal),
         'weekly_target': str(weekly_target),
+        'weekly_carried': str(weekly_carried),
+        'weekly_goal': str(weekly_goal),
         'week_start': str(week_start),
         'week_end': str(week_end),
         'recovered_today': str(day),

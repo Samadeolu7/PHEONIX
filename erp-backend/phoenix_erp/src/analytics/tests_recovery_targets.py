@@ -308,10 +308,14 @@ class MyRecoveryFocusTestCase(_RecoveryBase):
         days = calendar.monthrange(lm.year, lm.month)[1]
         self.target = D(days * 100)  # daily target 100, weekly 700
         self._target(self.dominion, str(self.target), month=lm)
+        # Dominion is exactly on pace up to yesterday (paid on the 1st), so nothing carries
+        # over and these tests isolate the today -> week -> month escalation.
+        self.baseline = D(100 * (self.day.day - 1))
+        self._pay(self.loan_d, lm, str(self.baseline))
 
-    def _focus(self):
+    def _focus(self, staff=None):
         from analytics.views import my_recovery_focus
-        return my_recovery_focus(self.dominion, self.owner, self.day)
+        return my_recovery_focus(staff or self.dominion, self.owner, self.day)
 
     def test_behind_today_shows_daily_shortfall(self):
         self._pay(self.loan_d, self.day, '40')
@@ -330,16 +334,16 @@ class MyRecoveryFocusTestCase(_RecoveryBase):
         self._pay(self.loan_d, self.lm, '50')  # earlier in the month, outside this week
         f = self._focus()
         self.assertEqual(f['focus'], 'monthly')
-        self.assertEqual(D(f['shortfall']), self.target - D('850'))
+        self.assertEqual(D(f['shortfall']), self.target - self.baseline - D('850'))
 
     def test_month_met_is_achieved(self):
         self._pay(self.loan_d, self.day, str(self.target + 500))
         f = self._focus()
-        self.assertEqual((f['focus'], D(f['above_target'])), ('achieved', D('500')))
+        self.assertEqual((f['focus'], D(f['above_target'])), ('achieved', self.baseline + D('500')))
 
     def test_no_target_returns_none_and_endpoint_hides(self):
         from analytics.views import my_recovery_focus
-        self.assertIsNone(my_recovery_focus(self.funmi, self.owner, self.day))
+        self.assertIsNone(my_recovery_focus(self.funmi, self.owner, self.day))  # no target set
         self.assertFalse(self.api.get(URL + 'mine/').data['has_target'])
 
 
@@ -357,7 +361,33 @@ class MyRecoveryFocusTestCase(_RecoveryBase):
         self._pay(self.loan_d, self.day, '100')
         self._pay(self.loan_d, self.day - datetime.timedelta(days=1), '500')  # week 600 of 700 (86%)
         f = self._focus()
-        self.assertEqual((f['focus'], D(f['shortfall'])), ('monthly', self.target - D('600')))
+        self.assertEqual((f['focus'], D(f['shortfall'])), ('monthly', self.target - self.baseline - D('600')))
+
+    # ── Deficits carry forward, surpluses don't ──────────────────────────────
+    def test_earlier_shortfall_is_added_to_todays_goal(self):
+        # Funmilola: same target, nothing recovered before today -> owes (day-1) x 100.
+        self._target(self.funmi, str(self.target), month=self.lm)
+        self._pay(self.loan_f, self.day, '40')
+        f = self._focus(self.funmi)
+        carried = D(100 * (self.day.day - 1))
+        self.assertEqual(D(f['daily_carried']), carried)
+        self.assertEqual(D(f['daily_goal']), D('100') + carried)
+        self.assertEqual((f['focus'], D(f['shortfall'])), ('daily', D('100') + carried - D('40')))
+
+    def test_being_ahead_does_not_lower_todays_goal(self):
+        self._pay(self.loan_d, self.lm, '500')  # ahead of pace (but monthly target not yet met)
+        self._pay(self.loan_d, self.day, '40')
+        f = self._focus()
+        self.assertEqual((D(f['daily_carried']), D(f['daily_goal'])), (D('0'), D('100')))
+        self.assertEqual((f['focus'], D(f['shortfall'])), ('daily', D('60')))
+
+    def test_shortfall_before_this_week_is_added_to_weekly_goal(self):
+        self._target(self.funmi, str(self.target), month=self.lm)
+        week_start = self.day - datetime.timedelta(days=self.day.weekday())
+        f = self._focus(self.funmi)
+        carried = D(100 * (week_start.day - 1))
+        self.assertEqual(D(f['weekly_carried']), carried)
+        self.assertEqual(D(f['weekly_goal']), D('700') + carried)
 
 class BranchScopeTestCase(_RecoveryBase):
     """Branch managers see their own branch only; directors see every branch."""

@@ -60,9 +60,13 @@ export default function MyRecoveryTargetCard() {
   const done = n(data.focus_recovered);
   const pct = goal > 0 ? Math.min((done / goal) * 100, 100) : 0;
 
+  // Shortfalls from earlier days/weeks are added to today's / this week's goal — say so.
+  const carried = (amount?: string, base?: string) =>
+    n(amount) > 0 ? ` (${naira(base)} + ${naira(amount)} carried over)` : '';
+
   const detail: Record<RecoveryFocus, string> = {
-    daily: `Recovered ${naira(data.recovered_today)} of today’s ${naira(data.daily_target)}`,
-    weekly: `This week: ${naira(data.recovered_week)} of ${naira(data.weekly_target)} · today ${naira(data.recovered_today)}`,
+    daily: `Recovered ${naira(data.recovered_today)} of today’s ${naira(data.daily_goal)}${carried(data.daily_carried, data.daily_target)}`,
+    weekly: `This week: ${naira(data.recovered_week)} of ${naira(data.weekly_goal)}${carried(data.weekly_carried, data.weekly_target)} · today ${naira(data.recovered_today)}`,
     monthly: `${naira(data.recovered_mtd)} of ${naira(data.target)} — ${naira(data.required_daily)}/day for the next ${data.days_left} day(s)`,
     achieved: `${naira(data.recovered_mtd)} of ${naira(data.target)} recovered`,
   };
