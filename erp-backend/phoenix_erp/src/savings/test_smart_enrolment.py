@@ -133,3 +133,20 @@ class SmartEnrolmentTests(TestCase):
         self.assertEqual(wr.savings_account_id, smart.savings_id)
         self.assertEqual(self._bal(self.source), D('1000'))
         self.assertEqual(self._bal(smart.savings), D('499000'))
+
+    def test_investigate_open_withdrawals_flags_hidden_and_duplicates(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from savings.models import SavingsWithdrawalRequest
+        from savings.services import initiate_withdrawal
+        a = initiate_withdrawal(self.source, D('120000'), self.user)
+        b = initiate_withdrawal(self.source, D('120000'), self.user)
+        SavingsWithdrawalRequest.all_objects.filter(pk=b.pk).update(tenant=None)
+        out = StringIO()
+        call_command('investigate_open_withdrawals', '--client', 'ada saver', stdout=out)
+        text = out.getvalue()
+        self.assertIn(f'Request #{a.pk}', text)
+        self.assertIn(f'Request #{b.pk}', text)
+        self.assertIn('NO tenant', text)
+        self.assertIn('DUPLICATED', text)
+        self.assertIn('2 open request(s)', text)
