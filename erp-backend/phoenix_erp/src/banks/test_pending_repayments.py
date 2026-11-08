@@ -35,8 +35,8 @@ class PendingRepaymentsTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         self.tenant = Tenant.objects.create(name='Pending Org', slug='pending-org')
-        self.branch_a = Branch.objects.create(name='Branch A', code='PRA')
-        self.branch_b = Branch.objects.create(name='Branch B', code='PRB')
+        self.branch_a = Branch.objects.create(name='Branch A', code='PRA', tenant=self.tenant)
+        self.branch_b = Branch.objects.create(name='Branch B', code='PRB', tenant=self.tenant)
 
         self.officer_1 = User.objects.create_user(
             username='officer1', password='x', tenant=self.tenant, branch=self.branch_a,
@@ -195,4 +195,27 @@ class PendingRepaymentsTests(TestCase):
         self.client.force_authenticate(self.officer_1)
         resp = self.client.get(LIST_URL, {'branch': self.branch_b.id}).data
         self.assertEqual(resp['results'], [])
+        self.assertEqual([b['branch_id'] for b in resp['totals']['by_branch']], [self.branch_a.id])
+
+    def test_topbar_branch_switcher_scopes_director(self):
+        line_b = self._make_branch_b_line()
+        director = User.objects.create_user(
+            username='director_h', password='x', tenant=self.tenant, branch=self.branch_a, is_superuser=True,
+        )
+        self.tenant.owner = director
+        self.tenant.save(update_fields=['owner'])
+        self.client.force_authenticate(director)
+
+        resp = self.client.get(LIST_URL, HTTP_X_BRANCH_ID=str(self.branch_b.id)).data
+        self.assertEqual([r['id'] for r in resp['results']], [line_b.id])
+        self.assertEqual(resp['totals']['count'], 1)
+        summary = self.client.get(SUMMARY_URL, HTTP_X_BRANCH_ID=str(self.branch_b.id)).data
+        self.assertEqual(summary['count'], 1)
+
+    def test_topbar_header_ignored_for_branch_member(self):
+        self._make_branch_b_line()
+        self.client.force_authenticate(self.officer_1)
+        resp = self.client.get(LIST_URL, HTTP_X_BRANCH_ID=str(self.branch_b.id)).data
+        # Still their own branch (A) only — the header can't move them
+        self.assertEqual(resp['totals']['count'], 2)
         self.assertEqual([b['branch_id'] for b in resp['totals']['by_branch']], [self.branch_a.id])

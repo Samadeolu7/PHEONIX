@@ -3867,14 +3867,26 @@ class PaymentTraceView(APIView):
 PENDING_KINDS = ('bank_only', 'erp_only')
 
 
-def _pending_repayments_qs(user, kind=None):
+def _pending_header_branch(request):
+    """The branch picked in the topbar branch switcher (X-Branch-ID), honoured
+    only for global-scope users — same rule as the dashboard analytics. None
+    means "All branches" (or a branch-scoped user, already limited by for_user)."""
+    from analytics.views import _get_director_branch
+    return _get_director_branch(request)
+
+
+def _pending_repayments_qs(user, kind=None, request=None):
     kinds = [kind] if kind in PENDING_KINDS else list(PENDING_KINDS)
+    recons = DailyReconciliation.objects.for_user(user)
+    header_branch = _pending_header_branch(request) if request is not None else None
+    if header_branch is not None:
+        recons = recons.filter(branch=header_branch)
     # Either side may have been matched since the exception was raised,
     # leaving a stale row behind — never ask staff to act on those.
     matched = ReconciliationBankTransaction.objects.filter(matched=True)
     return (
         ReconciliationException.objects.filter(
-            reconciliation__in=DailyReconciliation.objects.for_user(user),
+            reconciliation__in=recons,
             exception_type__in=kinds,
             direction='CREDIT',
             resolved=False,
@@ -4031,7 +4043,7 @@ class PendingRepaymentsView(APIView):
 
     def get(self, request):
         all_rows = _dedupe_pending(
-            _pending_repayments_qs(request.user).order_by('bank_date', 'erp_date', 'id')
+            _pending_repayments_qs(request.user, request=request).order_by('bank_date', 'erp_date', 'id')
         )
         # Branch picker options — only branches this user can already see
         # (for_user scoping), so a branch member gets one entry and a
@@ -4074,7 +4086,7 @@ class PendingRepaymentsSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        all_rows = _dedupe_pending(_pending_repayments_qs(request.user).order_by('id'))
+        all_rows = _dedupe_pending(_pending_repayments_qs(request.user, request=request).order_by('id'))
         rows = _filter_pending_branch(all_rows, request.query_params.get('branch'))
         totals = _pending_repayments_totals(rows, request.user)
         totals['by_branch'] = _pending_by_branch(all_rows)
@@ -4094,7 +4106,7 @@ class ClaimPendingRepaymentView(APIView):
     permission_page = 'bank-reconciliation-exceptions'
 
     def _get(self, request, pk):
-        return get_object_or_404(_pending_repayments_qs(request.user), pk=pk)
+        return get_object_or_404(_pending_repayments_qs(request.user, request=request), pk=pk)
 
     def post(self, request, pk):
         from django.db import transaction as db_transaction
