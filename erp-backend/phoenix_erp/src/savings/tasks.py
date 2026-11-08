@@ -228,8 +228,9 @@ def _apply_one_smart_cycle(acct_id, today):
     # next cycle starts from maturity date (not today), to avoid drift
     acct.last_interest_date = maturity_date
     acct.start_date = maturity_date
-    # current_balance already includes the interest credited by
-    # journal.post() above — don't add it again
+    # journal.post() updated the balance in the database, not this cached
+    # copy: reload it so the next cycle's opening includes this interest.
+    savings.account.refresh_from_db(fields=['balance'])
     acct.opening_balance = savings.current_balance
     acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
 

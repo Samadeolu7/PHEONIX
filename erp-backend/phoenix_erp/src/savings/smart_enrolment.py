@@ -198,6 +198,7 @@ def max_movable_to_smart(source: SavingsAccount, start: date | None = None) -> d
     """
     today = timezone.localdate()
     start = start or today
+    source.account.refresh_from_db(fields=['balance'])
     balance = _d(source.current_balance)
 
     holds = _d(source.transaction_holds.filter(status='active').aggregate(
@@ -273,7 +274,7 @@ def enrol_with_amount(source: SavingsAccount, amount, user, start_date: date | N
     if start_date > today:
         raise ValidationError('Start date cannot be in the future.')
 
-    source = SavingsAccount.objects.select_for_update().select_related(
+    source = SavingsAccount.objects.select_for_update(of=('self',)).select_related(
         'client', 'product', 'account', 'branch').get(pk=source.pk)
     check_source(source)
 
@@ -302,7 +303,7 @@ def enrol_with_amount(source: SavingsAccount, amount, user, start_date: date | N
     product = get_or_create_smart_product(source.branch, source.tenant, user)
 
     smart_sav = (
-        SavingsAccount.objects.select_for_update()
+        SavingsAccount.objects.select_for_update(of=('self',))
         .filter(client=client, product=product).exclude(status='closed').first()
     )
     if smart_sav is not None:
