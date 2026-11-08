@@ -135,9 +135,15 @@ class SavingsAccountViewSet(ScopedModelViewSet):
         cycle = params.get('cycle')
         product_id = params.get('product')
         status = params.get('status')
+        smart = params.get('smart')
         search = params.get('search', '').strip()
         if client_id:
             qs = qs.filter(client_id=client_id)
+        # smart=active -> in a running Smart Savings cycle; smart=none -> not in one
+        if smart == 'active':
+            qs = qs.filter(smart_account__is_active=True)
+        elif smart == 'none':
+            qs = qs.exclude(smart_account__is_active=True)
         if cycle:
             qs = qs.filter(product__contribution_cycle=cycle)
         if product_id:

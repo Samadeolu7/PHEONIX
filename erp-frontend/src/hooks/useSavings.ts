@@ -90,6 +90,7 @@ export const useSavingsAccounts = (
     cycle?: ContributionCycle;
     product?: number;
     status?: string;
+    smart?: 'active' | 'none';
     search?: string;
     page?: number;
     page_size?: number;

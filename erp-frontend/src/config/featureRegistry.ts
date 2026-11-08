@@ -1064,6 +1064,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'savings-smart-savings',
+    title: '🐷 Smart Savings',
+    description:
+      'Clients in a Smart Savings cycle: maturity dates, expected interest, pending payouts. Enrol or switch off accounts here.',
+    path: '/savings/smart-savings',
+    icon: Banknote,
+    requiredPermission: 'savings-accounts-view',
+    moduleId: 'client-services',
+    category: 'Savings',
+    isNew: true,
+  },
+  {
     id: 'savings-deposit',
     title: '💰 Record Savings Deposit',
     description:
@@ -1906,6 +1918,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     title: '🏦 Savings Accounts',
     description: 'View and manage all member savings accounts, balances, and transaction history',
     path: '/savings/accounts',
+    icon: Banknote,
+    requiredPermission: 'savings-accounts-view',
+    moduleId: 'savings',
+    category: 'Accounts',
+    isNew: true,
+  },
+  {
+    id: 'savings-mod-smart-savings',
+    title: '🐷 Smart Savings',
+    description:
+      'Clients in a Smart Savings cycle: maturity dates, expected interest, pending payouts. Enrol or switch off accounts here.',
+    path: '/savings/smart-savings',
     icon: Banknote,
     requiredPermission: 'savings-accounts-view',
     moduleId: 'savings',

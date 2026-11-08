@@ -1,10 +1,12 @@
 /**
  * Savings Accounts Page
- * Lists all savings accounts with filtering by status and contribution cycle.
+ * Lists all savings accounts with filtering by product, Smart Savings, status
+ * and collection frequency (the product's daily/weekly/monthly contribution
+ * cycle - not the Smart Savings cycle, which lives on /savings/smart-savings).
  * Data is scoped server-side to clients assigned to the logged-in officer.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -14,8 +16,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  PiggyBank,
 } from 'lucide-react';
-import { useSavingsAccounts } from '../../hooks/useSavings';
+import { useSavingsAccounts, useSavingsProducts } from '../../hooks/useSavings';
 import type { ContributionCycle, SavingsAccountStatus } from '../../services/savingsService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -49,10 +52,16 @@ const ACCOUNT_STATUSES: { value: string; label: string }[] = [
 ];
 
 const CYCLES: { value: string; label: string }[] = [
-  { value: '', label: 'All Cycles' },
+  { value: '', label: 'Any Frequency' },
   { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
   { value: 'monthly', label: 'Monthly' },
+];
+
+const SMART_FILTERS: { value: string; label: string }[] = [
+  { value: '', label: 'All Accounts' },
+  { value: 'active', label: 'Smart Savings only' },
+  { value: 'none', label: 'Not in Smart Savings' },
 ];
 
 const PAGE_SIZE = 25;
@@ -65,6 +74,8 @@ export default function SavingsAccountsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [cycleFilter, setCycleFilter] = useState('');
+  const [productFilter, setProductFilter] = useState('');
+  const [smartFilter, setSmartFilter] = useState('');
   const [page, setPage] = useState(1);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,6 +83,8 @@ export default function SavingsAccountsPage() {
   const { data, isLoading, error, refetch } = useSavingsAccounts({
     cycle: cycleFilter ? (cycleFilter as ContributionCycle) : undefined,
     status: statusFilter || undefined,
+    product: productFilter ? Number(productFilter) : undefined,
+    smart: smartFilter ? (smartFilter as 'active' | 'none') : undefined,
     search: search || undefined,
     page,
     page_size: PAGE_SIZE,
@@ -87,9 +100,16 @@ export default function SavingsAccountsPage() {
     }, 300);
   };
 
+  const { data: productsData } = useSavingsProducts();
+  const products: { id: number; name: string }[] = useMemo(() => {
+    const raw = productsData as any;
+    if (!raw) return [];
+    return Array.isArray(raw) ? raw : (raw.results ?? []);
+  }, [productsData]);
+
   useEffect(() => {
     setPage(1);
-  }, [cycleFilter, statusFilter, search]);
+  }, [cycleFilter, statusFilter, productFilter, smartFilter, search]);
 
   const accounts = Array.isArray(data) ? data : (data?.results ?? []);
   const totalCount = Array.isArray(data) ? data.length : (data?.count ?? 0);
@@ -107,6 +127,13 @@ export default function SavingsAccountsPage() {
           </p>
         </div>
         <div className="flex gap-3">
+          <Link
+            to="/savings/smart-savings"
+            className="flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
+          >
+            <PiggyBank size={16} />
+            Smart Savings
+          </Link>
           <Link
             to="/savings/collection"
             className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
@@ -136,6 +163,29 @@ export default function SavingsAccountsPage() {
         </div>
 
         <select
+          aria-label="Filter by product"
+          value={productFilter}
+          onChange={(e) => { setProductFilter(e.target.value); setPage(1); }}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">All Products</option>
+          {products.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+
+        <select
+          aria-label="Filter by Smart Savings"
+          value={smartFilter}
+          onChange={(e) => { setSmartFilter(e.target.value); setPage(1); }}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          {SMART_FILTERS.map((s) => (
+            <option key={s.value} value={s.value}>{s.label}</option>
+          ))}
+        </select>
+
+        <select
           aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
@@ -147,7 +197,8 @@ export default function SavingsAccountsPage() {
         </select>
 
         <select
-          aria-label="Filter by contribution cycle"
+          aria-label="Filter by collection frequency"
+          title="How often the client is expected to contribute (set on the product). Not the Smart Savings cycle."
           value={cycleFilter}
           onChange={(e) => { setCycleFilter(e.target.value); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -192,7 +243,7 @@ export default function SavingsAccountsPage() {
                 <th className="px-4 py-3">Account #</th>
                 <th className="px-4 py-3">Client</th>
                 <th className="px-4 py-3">Product</th>
-                <th className="px-4 py-3">Cycle</th>
+                <th className="px-4 py-3" title="How often the client contributes (from the product)">Frequency</th>
                 <th className="px-4 py-3 text-right">Contribution</th>
                 <th className="px-4 py-3 text-right">Balance</th>
                 <th className="px-4 py-3">Status</th>
@@ -211,7 +262,14 @@ export default function SavingsAccountsPage() {
                     {acc.account_number}
                   </td>
                   <td className="px-4 py-3 text-gray-700">{acc.client_name}</td>
-                  <td className="px-4 py-3 text-gray-600">{acc.product_name}</td>
+                  <td className="px-4 py-3 text-gray-600">
+                    {acc.product_name}
+                    {acc.smart_savings_active && (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                        <PiggyBank size={11} /> Smart
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {acc.contribution_cycle ? (
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${CYCLE_BADGE[acc.contribution_cycle]}`}>
