@@ -7,6 +7,7 @@ import { BRAND } from '../../constants/brand';
 import CashInflowForecastCard from './CashInflowForecastCard';
 import MyRecoveryTargetCard from './MyRecoveryTargetCard';
 import TeamRecoveryTargetsCard from './TeamRecoveryTargetsCard';
+import PendingBankRepaymentsCard from './PendingBankRepaymentsCard';
 import {
   Clock,
   User,
@@ -1265,6 +1266,11 @@ export const SimplifiedRoleBasedDashboard: React.FC<SimplifiedRoleBasedDashboard
               <TeamRecoveryTargetsCard />
             </div>
           )}
+
+          {/* Pending bank repayments — every branch member; renders nothing when the branch has none */}
+          <div className="px-7 pb-5 empty:hidden">
+            <PendingBankRepaymentsCard />
+          </div>
 
           {/* Recovery target — any role; renders nothing unless the user has a target this month */}
           <div className="px-7 pb-5 empty:hidden">

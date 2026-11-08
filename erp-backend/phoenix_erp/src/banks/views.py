@@ -3850,3 +3850,252 @@ class PaymentTraceView(APIView):
             line_results.append(entry)
 
         return Response({'payments': payments, 'lines': line_results})
+
+
+# ── Pending Bank Repayments (branch-wide) ────────────────────────────────────
+#
+# Two kinds of open reconciliation gap, both shown to EVERY member of the
+# branch (the rest of the reconciliation screens are manager/director only):
+#   kind='bank_only'  money reached the bank, no repayment recorded in the ERP
+#   kind='erp_only'   repayment recorded in the ERP, money never reached the bank
+# Branch scoping comes from DailyReconciliation.objects.for_user(). Members
+# "claim" a line before acting on it (recording the repayment, or chasing the
+# missing deposit) so two people don't both act on it. A claim is not a
+# resolution: the exception still closes automatically when a reconciliation
+# run matches both sides.
+
+PENDING_KINDS = ('bank_only', 'erp_only')
+
+
+def _pending_repayments_qs(user, kind=None):
+    kinds = [kind] if kind in PENDING_KINDS else list(PENDING_KINDS)
+    # Either side may have been matched since the exception was raised,
+    # leaving a stale row behind — never ask staff to act on those.
+    matched = ReconciliationBankTransaction.objects.filter(matched=True)
+    return (
+        ReconciliationException.objects.filter(
+            reconciliation__in=DailyReconciliation.objects.for_user(user),
+            exception_type__in=kinds,
+            direction='CREDIT',
+            resolved=False,
+            netted_with__isnull=True,
+            pending_bank_payment__isnull=True,
+        )
+        .exclude(exception_type='bank_only', bank_transaction_id__in=matched.values('id'))
+        .exclude(
+            exception_type='erp_only',
+            loan_payment_id__in=matched.exclude(matched_erp_payment_id__isnull=True)
+            .values('matched_erp_payment_id'),
+        )
+        .select_related(
+            'reconciliation__bank_account', 'reconciliation__branch', 'claimed_by', 'officer',
+        )
+    )
+
+
+def _pending_line_key(exc):
+    if exc.exception_type == 'bank_only' and exc.bank_transaction_id:
+        return ('bank', str(exc.bank_transaction_id))
+    if exc.exception_type == 'erp_only' and exc.loan_payment_id:
+        return ('erp', exc.loan_payment_id)
+    return ('exc', exc.pk)
+
+
+def _dedupe_pending(rows):
+    """The ±window rerun has historically left the same bank line / ERP
+    payment as an exception on more than one day's reconciliation — show it
+    once, preferring a copy that someone has already claimed."""
+    rows = list(rows)
+    claimed_keys = {_pending_line_key(exc) for exc in rows if exc.claimed_by_id}
+    seen, out = set(), []
+    for exc in rows:
+        key = _pending_line_key(exc)
+        if key in seen or (key in claimed_keys and not exc.claimed_by_id):
+            continue
+        seen.add(key)
+        out.append(exc)
+    return out
+
+
+def _user_display(user):
+    if not user:
+        return None
+    return user.get_full_name() or getattr(user, 'username', None) or user.email
+
+
+def _pending_date(exc):
+    if exc.exception_type == 'erp_only':
+        return exc.erp_date or exc.reconciliation.reconciliation_date
+    return exc.bank_date or exc.reconciliation.reconciliation_date
+
+
+def _pending_amount(exc):
+    value = exc.erp_amount if exc.exception_type == 'erp_only' else exc.bank_amount
+    return value or Decimal('0')
+
+
+def _serialize_pending_repayment(exc, request_user, today):
+    pending_date = _pending_date(exc)
+    account = exc.reconciliation.bank_account
+    is_erp = exc.exception_type == 'erp_only'
+    return {
+        'id': exc.pk,
+        'kind': exc.exception_type,
+        'reconciliation_id': exc.reconciliation_id,
+        'date': pending_date,
+        'days_pending': (today - pending_date).days if pending_date else None,
+        'amount': str(_pending_amount(exc)),
+        'narration': exc.erp_narration if is_erp else exc.bank_narration,
+        'recorded_by_name': _user_display(exc.officer) if is_erp else None,
+        'recorded_by_me': bool(is_erp and exc.officer_id == request_user.pk),
+        'bank_account_id': account.pk,
+        'bank_account_name': getattr(account, 'account_name', None) or str(account),
+        'branch_name': exc.reconciliation.branch.name if exc.reconciliation.branch_id else None,
+        'claimed_by': exc.claimed_by_id,
+        'claimed_by_name': _user_display(exc.claimed_by),
+        'claimed_at': exc.claimed_at,
+        'claim_note': exc.claim_note,
+        'claimed_by_me': bool(exc.claimed_by_id and exc.claimed_by_id == request_user.pk),
+    }
+
+
+def _pending_totals_for(rows, user):
+    unclaimed = [exc for exc in rows if not exc.claimed_by_id]
+    dates = [d for d in (_pending_date(exc) for exc in rows) if d]
+    return {
+        'count': len(rows),
+        'amount': str(sum((_pending_amount(exc) for exc in rows), Decimal('0'))),
+        'unclaimed_count': len(unclaimed),
+        'unclaimed_amount': str(sum((_pending_amount(exc) for exc in unclaimed), Decimal('0'))),
+        'claimed_by_me_count': sum(1 for exc in rows if exc.claimed_by_id == user.pk),
+        'oldest_days': (tz.localdate() - min(dates)).days if dates else None,
+    }
+
+
+def _pending_repayments_totals(rows, user):
+    """Overall totals plus a per-kind breakdown (bank_only / erp_only)."""
+    totals = _pending_totals_for(rows, user)
+    for kind in PENDING_KINDS:
+        totals[kind] = _pending_totals_for([exc for exc in rows if exc.exception_type == kind], user)
+    # erp_only lines this user recorded themselves — they're the one who must explain.
+    totals['erp_only']['recorded_by_me_count'] = sum(
+        1 for exc in rows if exc.exception_type == 'erp_only' and exc.officer_id == user.pk
+    )
+    return totals
+
+
+class PendingRepaymentsView(APIView):
+    """
+    GET /api/banks/pending-repayments/
+    Every member of the branch sees the branch's open repayment gaps.
+    Totals always cover the whole (unfiltered) list.
+
+    Query params (optional):
+      kind          'bank_only' | 'erp_only' (default: both)
+      status        'unclaimed' | 'claimed' | 'mine' (default: all)
+      bank_account  bank account id
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        rows = _dedupe_pending(
+            _pending_repayments_qs(request.user).order_by('bank_date', 'erp_date', 'id')
+        )
+        totals = _pending_repayments_totals(rows, request.user)
+
+        kind = request.query_params.get('kind')
+        if kind in PENDING_KINDS:
+            rows = [exc for exc in rows if exc.exception_type == kind]
+
+        bank_account_id = request.query_params.get('bank_account')
+        if bank_account_id:
+            rows = [exc for exc in rows if str(exc.reconciliation.bank_account_id) == bank_account_id]
+
+        status_filter = request.query_params.get('status')
+        if status_filter == 'unclaimed':
+            rows = [exc for exc in rows if not exc.claimed_by_id]
+        elif status_filter == 'claimed':
+            rows = [exc for exc in rows if exc.claimed_by_id]
+        elif status_filter == 'mine':
+            rows = [
+                exc for exc in rows
+                if exc.claimed_by_id == request.user.pk
+                or (exc.exception_type == 'erp_only' and exc.officer_id == request.user.pk)
+            ]
+
+        rows.sort(key=lambda exc: (_pending_date(exc) or tz.localdate(), exc.pk))
+        today = tz.localdate()
+        return Response({
+            'totals': totals,
+            'results': [_serialize_pending_repayment(exc, request.user, today) for exc in rows],
+        })
+
+
+class PendingRepaymentsSummaryView(APIView):
+    """GET /api/banks/pending-repayments/summary/ — counts for the dashboard card."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        rows = _dedupe_pending(_pending_repayments_qs(request.user).order_by('id'))
+        return Response(_pending_repayments_totals(rows, request.user))
+
+
+class ClaimPendingRepaymentView(APIView):
+    """
+    POST   /api/banks/pending-repayments/<pk>/claim/  {note?}  — "I'm handling this"
+    DELETE /api/banks/pending-repayments/<pk>/claim/          — release the claim
+
+    Anyone in the branch may claim an unclaimed line. Only the claimer, or a
+    reconciliation manager/director, may release someone else's claim.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    permission_module = 'banks'
+    permission_page = 'bank-reconciliation-exceptions'
+
+    def _get(self, request, pk):
+        return get_object_or_404(_pending_repayments_qs(request.user), pk=pk)
+
+    def post(self, request, pk):
+        from django.db import transaction as db_transaction
+
+        scoped = self._get(request, pk)
+        with db_transaction.atomic():
+            # Lock only this row — Postgres rejects FOR UPDATE across the
+            # nullable reconciliation.branch join.
+            exc_obj = (
+                ReconciliationException.objects.select_for_update(of=('self',))
+                .select_related('reconciliation__bank_account', 'reconciliation__branch', 'officer')
+                .get(pk=scoped.pk)
+            )
+            if exc_obj.claimed_by_id and exc_obj.claimed_by_id != request.user.pk:
+                return Response(
+                    {'detail': f'Already claimed by {_user_display(exc_obj.claimed_by)}.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            exc_obj.claimed_by = request.user
+            exc_obj.claimed_at = tz.now()
+            exc_obj.claim_note = (request.data.get('note') or '').strip()[:1000]
+            exc_obj.save(update_fields=['claimed_by', 'claimed_at', 'claim_note'])
+
+        return Response(_serialize_pending_repayment(exc_obj, request.user, tz.localdate()))
+
+    def delete(self, request, pk):
+        exc_obj = self._get(request, pk)
+        if not exc_obj.claimed_by_id:
+            return Response({'detail': 'This line is not claimed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        is_manager = (
+            can_user_edit(request.user, module=self.permission_module, page=self.permission_page)
+            or can_user_approve(request.user, module=self.permission_module, page=self.permission_page)
+        )
+        if exc_obj.claimed_by_id != request.user.pk and not is_manager:
+            return Response(
+                {'detail': 'Only the person who claimed this line, or a manager, can release it.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        exc_obj.claimed_by = None
+        exc_obj.claimed_at = None
+        exc_obj.claim_note = ''
+        exc_obj.save(update_fields=['claimed_by', 'claimed_at', 'claim_note'])
+        return Response(_serialize_pending_repayment(exc_obj, request.user, tz.localdate()))

@@ -2346,6 +2346,20 @@ class ReconciliationException(TimeStampedModel):
     unresolved_at = models.DateTimeField(null=True, blank=True)
     unresolved_reason = models.TextField(blank=True)
 
+    # Pending Bank Repayments page (PendingRepaymentsView): any branch member
+    # can claim an unresolved bank_only CREDIT ("money in the bank, no
+    # repayment recorded") to say "I'm recording this one", so two officers
+    # don't both post the same repayment. A claim is NOT a resolution — the
+    # exception still closes only when a rerun matches the recorded payment.
+    claimed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='claimed_recon_exceptions',
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    claim_note = models.TextField(blank=True)
+
     # Director-resolvable tolerance for amount mismatches: whichever is
     # smaller of a flat cap or a percentage of the ERP amount, so small
     # transactions aren't swamped by the flat cap and large ones aren't

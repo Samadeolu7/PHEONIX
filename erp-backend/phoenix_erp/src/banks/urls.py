@@ -37,6 +37,9 @@ from .views import (
     MissingMoneyOfficerExceptionsView,
     MissingMoneyBankAccountExceptionsView,
     PaymentTraceView,
+    PendingRepaymentsView,
+    PendingRepaymentsSummaryView,
+    ClaimPendingRepaymentView,
 )
 
 router = DefaultRouter()
@@ -188,5 +191,21 @@ urlpatterns = [
         'reconciliations/payment-trace/',
         PaymentTraceView.as_view(),
         name='reconciliation-payment-trace',
+    ),
+    # Branch-wide list of bank credits with no recorded repayment
+    path(
+        'pending-repayments/',
+        PendingRepaymentsView.as_view(),
+        name='pending-repayments',
+    ),
+    path(
+        'pending-repayments/summary/',
+        PendingRepaymentsSummaryView.as_view(),
+        name='pending-repayments-summary',
+    ),
+    path(
+        'pending-repayments/<int:pk>/claim/',
+        ClaimPendingRepaymentView.as_view(),
+        name='pending-repayment-claim',
     ),
 ]

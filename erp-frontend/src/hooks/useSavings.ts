@@ -12,6 +12,8 @@ import {
   generateAccountSchedule,
   getSmartSavings,
   toggleSmartSavings,
+  getSmartSavingsLimits,
+  enrolSmartSavings,
   getSmartSavers,
   getSavingsCollectionSheet,
   markContributionPaid,
@@ -515,6 +517,24 @@ export const useDeleteWithdrawalTier = (
       queryClient.invalidateQueries({ queryKey: savingsKeys.withdrawalTiers() });
     },
     ...options,
+  });
+};
+
+export const useSmartSavingsLimits = (accountId: number, enabled = true) =>
+  useQuery({
+    queryKey: [...savingsKeys.all, 'smartLimits', accountId] as const,
+    queryFn: () => getSmartSavingsLimits(accountId),
+    enabled: enabled && !!accountId,
+  });
+
+export const useEnrolSmartSavings = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ accountId, amount }: { accountId: number; amount: string }) => enrolSmartSavings(accountId, amount),
+    onSuccess: () => {
+      // Money moved between two accounts and a new account may exist: refresh all savings data.
+      queryClient.invalidateQueries({ queryKey: savingsKeys.all });
+    },
   });
 };
 

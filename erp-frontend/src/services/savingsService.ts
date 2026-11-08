@@ -180,6 +180,32 @@ export const toggleSmartSavings = (
 ): Promise<SmartSavingsAccount | { detail: string }> =>
   api.post(`${BASE_ACCOUNTS}/${accountId}/toggle-smart-savings/`, { action });
 
+/** How much of a source account can move into Smart Savings, and what must stay behind. */
+export interface SmartSavingsLimits {
+  balance: string;
+  holds: string;
+  open_withdrawals: string;
+  minimum_balance: string;
+  loan_outstanding: string;
+  loan_cover_required: string;
+  must_stay: string;
+  lowest_balance_since_start: string | null;
+  min_transaction_amount: string | null;
+  max_transaction_amount: string | null;
+  max_movable: string;
+  blocked_reason: string | null;
+}
+
+export const getSmartSavingsLimits = (accountId: number): Promise<SmartSavingsLimits> =>
+  api.get(`${BASE_ACCOUNTS}/${accountId}/smart-savings-limits/`);
+
+/** Move `amount` from this account into the client's Smart Savings account and start a cycle today. */
+export const enrolSmartSavings = (
+  accountId: number,
+  amount: string
+): Promise<SmartSavingsAccount & { smart_account_id: number; smart_account_number: string }> =>
+  api.post(`${BASE_ACCOUNTS}/${accountId}/enrol-smart-savings/`, { amount });
+
 // Daily Collection Sheet (savings)
 export const getSavingsCollectionSheet = async (params: {
   date?: string;

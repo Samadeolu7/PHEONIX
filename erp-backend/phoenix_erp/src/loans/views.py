@@ -1467,6 +1467,13 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 {'detail': f'Insufficient savings balance: available ₦{savings_account.available_balance}.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        try:
+            savings_account.check_loan_diversion(
+                min(amount, Decimal(str(loan.total_outstanding))),
+                loan.total_outstanding,
+            )
+        except ValidationError as exc:
+            return Response({'detail': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
         date_raw = request.data.get('payment_date')
         if date_raw:
@@ -2745,6 +2752,13 @@ class LoanRepaymentRequestViewSet(ScopedModelViewSet):
                 payment_amount = payable_now
             else:
                 payment_amount = amount
+
+        # 10% cover rule — re-checked here because savings/loan balances may
+        # have moved since the officer submitted the request.
+        try:
+            savings_account.check_loan_diversion(payment_amount, total_outstanding)
+        except ValidationError as exc:
+            return Response({'detail': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             with db_transaction.atomic():

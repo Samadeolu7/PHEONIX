@@ -83,6 +83,182 @@ def _get_or_create_smart_savings_interest_expense_account(owner, branch):
     return acct
 
 
+def _apply_one_smart_cycle(acct_id, today):
+    """Post interest for ONE matured cycle of a Smart Savings account (row-locked).
+    Returns 'processed', 'manual_jv', 'skipped' or 'not_due'."""
+    from transactions.models import (
+        Transaction as JournalEntry,
+        TransactionEntry as JournalEntryLine,
+        TransactionSeries,
+    )
+    from .models import SMART_SAVINGS_INTEREST_RATE, SmartSavingsAccount, SmartSavingsEvent
+
+    # Lock the row to prevent concurrent double-processing.
+    acct = (
+        SmartSavingsAccount.objects
+        .select_for_update()
+        .select_related(
+            'savings',
+            'savings__account',
+            'savings__client',
+        )
+        .get(pk=acct_id)
+    )
+
+    maturity_date = acct.start_date + relativedelta(months=3)
+
+    # Idempotency: already processed today
+    if acct.last_interest_date == today:
+        return 'skipped'
+
+    # Re-check maturity under the lock (pre-filter may be coarse)
+    if today < maturity_date:
+        return 'not_due'
+
+    savings = acct.savings
+    base_balance = (
+        acct.opening_balance
+        if acct.opening_balance is not None
+        else savings.current_balance
+    )
+
+    if base_balance <= 0:
+        # No positive balance — reset cycle, skip interest posting
+        acct.last_interest_date = today
+        acct.start_date = today
+        acct.opening_balance = savings.current_balance
+        acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
+        return 'skipped'
+
+    # A staff member may have already worked around a missed cycle by
+    # hand with a manual Journal Voucher (the established pattern when
+    # this task has failed before — see project_smart_savers_cron
+    # memory). OBMIG (opening) and SSI (this task's own series) are the
+    # only transactions that should legitimately ever touch a Smart
+    # Savings account's GL — any JV-series entry dated on/after this
+    # cycle's start_date is the tell that the cycle was already
+    # covered manually. Reset the cycle without posting a second
+    # interest entry so the client isn't double-credited.
+    manual_jv = JournalEntryLine.objects.filter(
+        account=savings.account,
+        transaction__series__code='JV',
+        transaction__date__gte=acct.start_date,
+        transaction__is_reversed=False,
+    ).select_related('transaction').first()
+    if manual_jv is not None:
+        SmartSavingsEvent.objects.create(
+            account=acct,
+            event_type=SmartSavingsEvent.INTEREST,
+            amount=Decimal('0.00'),
+            details=(
+                f'Cycle {acct.start_date:%Y-%m-%d}→{maturity_date:%Y-%m-%d} appears already '
+                f'covered by a manual Journal Voucher ({manual_jv.transaction.reference_number}, '
+                f'{manual_jv.transaction.date}) — skipped automatic interest posting to avoid '
+                'double-crediting. Cycle reset; verify the JV amount matches 6% if in doubt.'
+            ),
+        )
+        acct.last_interest_date = maturity_date
+        acct.start_date = maturity_date
+        acct.opening_balance = savings.current_balance
+        acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
+        return 'manual_jv'
+
+    interest = (base_balance * SMART_SAVINGS_INTEREST_RATE).quantize(
+        Decimal('0.01'), rounding=ROUND_HALF_UP
+    )
+
+    # ── GL Journal Entry ─────────────────────────────────────
+    expense_account = _get_or_create_smart_savings_interest_expense_account(
+        owner=savings.owner,
+        branch=savings.branch,
+    )
+
+    series, _ = TransactionSeries.objects.get_or_create(
+        code='SSI',
+        defaults={'description': 'Smart Savings Interest'},
+    )
+
+    journal = JournalEntry.objects.create(
+        series=series,
+        date=maturity_date,
+        description=(
+            f'Smart Savings Interest – {savings.client.full_name} '
+            f'({acct.start_date:%Y-%m-%d} → {maturity_date:%Y-%m-%d})'
+        ),
+        owner=savings.owner,
+        branch=savings.branch,
+        tenant=savings.tenant,
+    )
+
+    # Dr. Interest Expense (EXPENSE account — balance increases on DEBIT)
+    # TransactionEntry has no `description` field (only Transaction does,
+    # set above) — found 2026-08-26 when this raised TypeError on the
+    # very first real GL posting attempt, the next blocker after fixing
+    # the select_related field name and owner-scoping bugs.
+    JournalEntryLine.objects.create(
+        transaction=journal,
+        account=expense_account,
+        side=JournalEntryLine.DEBIT,
+        amount=interest,
+    )
+
+    # Cr. Member Savings GL account (SAVINGS/LIABILITY — balance increases on CREDIT)
+    JournalEntryLine.objects.create(
+        transaction=journal,
+        account=savings.account,
+        side=JournalEntryLine.CREDIT,
+        amount=interest,
+    )
+
+    journal.post()
+
+    # ── Audit event ──────────────────────────────────────────
+    SmartSavingsEvent.objects.create(
+        account=acct,
+        event_type=SmartSavingsEvent.INTEREST,
+        amount=interest,
+        details=(
+            f'6% interest on ₦{base_balance} for cycle '
+            f'{acct.start_date:%Y-%m-%d}→{maturity_date:%Y-%m-%d}. '
+            f'Journal: {journal.reference_number}'
+        ),
+    )
+
+    # ── Reset cycle ──────────────────────────────────────────
+    # next cycle starts from maturity date (not today), to avoid drift
+    acct.last_interest_date = maturity_date
+    acct.start_date = maturity_date
+    # current_balance already includes the interest credited by
+    # journal.post() above — don't add it again
+    acct.opening_balance = savings.current_balance
+    acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
+
+    return 'processed'
+
+
+def process_smart_savings_account(acct_id, today=None, max_cycles=40):
+    """
+    Post every matured cycle for one Smart Savings account, oldest first, each
+    dated on its own maturity date. A backdated enrolment (start date months
+    ago) is therefore fully caught up in one run instead of one cycle per day.
+    Each cycle is its own transaction, so a failure keeps earlier cycles.
+    """
+    today = today or timezone.localdate()
+    counts = {'processed': 0, 'manual_jv': 0, 'skipped': 0}
+    for _ in range(max_cycles):
+        with transaction.atomic():
+            result = _apply_one_smart_cycle(acct_id, today)
+        if result == 'processed':
+            counts['processed'] += 1
+        elif result == 'manual_jv':
+            counts['manual_jv'] += 1
+        else:
+            if result == 'skipped':
+                counts['skipped'] += 1
+            break
+    return counts
+
+
 @shared_task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True)
 def apply_smart_savings_interest(self):  # noqa: ARG002
     """
@@ -116,12 +292,7 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
     ``_get_or_create_smart_savings_interest_expense_account`` (see its
     own docstring) — both needed fixing for this task to work at all.
     """
-    from transactions.models import (
-        Transaction as JournalEntry,
-        TransactionEntry as JournalEntryLine,
-        TransactionSeries,
-    )
-    from .models import SMART_SAVINGS_INTEREST_RATE, SmartSavingsAccount, SmartSavingsEvent
+    from .models import SmartSavingsAccount
 
     today = timezone.localdate()
 
@@ -138,153 +309,10 @@ def apply_smart_savings_interest(self):  # noqa: ARG002
 
     for acct_id in candidate_ids:
         try:
-            with transaction.atomic():
-                # Lock the row to prevent concurrent double-processing.
-                acct = (
-                    SmartSavingsAccount.objects
-                    .select_for_update()
-                    .select_related(
-                        'savings',
-                        'savings__account',
-                        'savings__client',
-                    )
-                    .get(pk=acct_id)
-                )
-
-                maturity_date = acct.start_date + relativedelta(months=3)
-
-                # Idempotency: already processed today
-                if acct.last_interest_date == today:
-                    skipped += 1
-                    continue
-
-                # Re-check maturity under the lock (pre-filter may be coarse)
-                if today < maturity_date:
-                    skipped += 1
-                    continue
-
-                savings = acct.savings
-                base_balance = (
-                    acct.opening_balance
-                    if acct.opening_balance is not None
-                    else savings.current_balance
-                )
-
-                if base_balance <= 0:
-                    # No positive balance — reset cycle, skip interest posting
-                    acct.last_interest_date = today
-                    acct.start_date = today
-                    acct.opening_balance = savings.current_balance
-                    acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
-                    skipped += 1
-                    continue
-
-                # A staff member may have already worked around a missed cycle by
-                # hand with a manual Journal Voucher (the established pattern when
-                # this task has failed before — see project_smart_savers_cron
-                # memory). OBMIG (opening) and SSI (this task's own series) are the
-                # only transactions that should legitimately ever touch a Smart
-                # Savings account's GL — any JV-series entry dated on/after this
-                # cycle's start_date is the tell that the cycle was already
-                # covered manually. Reset the cycle without posting a second
-                # interest entry so the client isn't double-credited.
-                manual_jv = JournalEntryLine.objects.filter(
-                    account=savings.account,
-                    transaction__series__code='JV',
-                    transaction__date__gte=acct.start_date,
-                    transaction__is_reversed=False,
-                ).select_related('transaction').first()
-                if manual_jv is not None:
-                    SmartSavingsEvent.objects.create(
-                        account=acct,
-                        event_type=SmartSavingsEvent.INTEREST,
-                        amount=Decimal('0.00'),
-                        details=(
-                            f'Cycle {acct.start_date:%Y-%m-%d}→{maturity_date:%Y-%m-%d} appears already '
-                            f'covered by a manual Journal Voucher ({manual_jv.transaction.reference_number}, '
-                            f'{manual_jv.transaction.date}) — skipped automatic interest posting to avoid '
-                            'double-crediting. Cycle reset; verify the JV amount matches 6% if in doubt.'
-                        ),
-                    )
-                    acct.last_interest_date = maturity_date
-                    acct.start_date = maturity_date
-                    acct.opening_balance = savings.current_balance
-                    acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
-                    manual_jv_skipped += 1
-                    continue
-
-                interest = (base_balance * SMART_SAVINGS_INTEREST_RATE).quantize(
-                    Decimal('0.01'), rounding=ROUND_HALF_UP
-                )
-
-                # ── GL Journal Entry ─────────────────────────────────────
-                expense_account = _get_or_create_smart_savings_interest_expense_account(
-                    owner=savings.owner,
-                    branch=savings.branch,
-                )
-
-                series, _ = TransactionSeries.objects.get_or_create(
-                    code='SSI',
-                    defaults={'description': 'Smart Savings Interest'},
-                )
-
-                journal = JournalEntry.objects.create(
-                    series=series,
-                    date=maturity_date,
-                    description=(
-                        f'Smart Savings Interest – {savings.client.full_name} '
-                        f'({acct.start_date:%Y-%m-%d} → {maturity_date:%Y-%m-%d})'
-                    ),
-                    owner=savings.owner,
-                    branch=savings.branch,
-                    tenant=savings.tenant,
-                )
-
-                # Dr. Interest Expense (EXPENSE account — balance increases on DEBIT)
-                # TransactionEntry has no `description` field (only Transaction does,
-                # set above) — found 2026-08-26 when this raised TypeError on the
-                # very first real GL posting attempt, the next blocker after fixing
-                # the select_related field name and owner-scoping bugs.
-                JournalEntryLine.objects.create(
-                    transaction=journal,
-                    account=expense_account,
-                    side=JournalEntryLine.DEBIT,
-                    amount=interest,
-                )
-
-                # Cr. Member Savings GL account (SAVINGS/LIABILITY — balance increases on CREDIT)
-                JournalEntryLine.objects.create(
-                    transaction=journal,
-                    account=savings.account,
-                    side=JournalEntryLine.CREDIT,
-                    amount=interest,
-                )
-
-                journal.post()
-
-                # ── Audit event ──────────────────────────────────────────
-                SmartSavingsEvent.objects.create(
-                    account=acct,
-                    event_type=SmartSavingsEvent.INTEREST,
-                    amount=interest,
-                    details=(
-                        f'6% interest on ₦{base_balance} for cycle '
-                        f'{acct.start_date:%Y-%m-%d}→{maturity_date:%Y-%m-%d}. '
-                        f'Journal: {journal.reference_number}'
-                    ),
-                )
-
-                # ── Reset cycle ──────────────────────────────────────────
-                # next cycle starts from maturity date (not today), to avoid drift
-                acct.last_interest_date = maturity_date
-                acct.start_date = maturity_date
-                # current_balance already includes the interest credited by
-                # journal.post() above — don't add it again
-                acct.opening_balance = savings.current_balance
-                acct.save(update_fields=['last_interest_date', 'start_date', 'opening_balance'])
-
-                processed += 1
-
+            r = process_smart_savings_account(acct_id, today)
+            processed += r['processed']
+            manual_jv_skipped += r['manual_jv']
+            skipped += r['skipped']
         except Exception as exc:  # noqa: BLE001
             # Log and continue; individual failure must not abort the whole batch.
             import logging

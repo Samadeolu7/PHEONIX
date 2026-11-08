@@ -54,7 +54,8 @@ const SmartSavingsPage: React.FC = () => {
   const candidateRows = useMemo(() => {
     const d = candidates.data as SavingsAccountsPage | SavingsAccount[] | undefined;
     const list = Array.isArray(d) ? d : d?.results ?? [];
-    return list.filter((a) => !a.smart_savings_active);
+    // Money comes FROM a normal savings account, never from a Smart Savings one.
+    return list.filter((a) => !a.smart_savings_active && a.product_name !== 'Smart Savings');
   }, [candidates.data]);
 
   return (
@@ -158,8 +159,12 @@ const SmartSavingsPage: React.FC = () => {
                   ) : '—'}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <SmartSavingsControl compact accountId={r.id} accountNumber={r.account_number} clientName={r.client_name}
-                    balance={r.balance} active={r.is_active} wasEnrolled matured={r.matured} penaltyRate={r.penalty_rate} />
+                  {r.is_active ? (
+                    <SmartSavingsControl compact accountId={r.id} accountNumber={r.account_number} clientName={r.client_name}
+                      balance={r.balance} active wasEnrolled matured={r.matured} penaltyRate={r.penalty_rate} />
+                  ) : (
+                    <span className="text-xs text-gray-500" title="Use Enrol an account and pick their Regular Savings">Enrol again from their savings</span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -172,7 +177,7 @@ const SmartSavingsPage: React.FC = () => {
           <label className="relative block">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
             <input autoFocus value={enrolSearch} onChange={(e) => setEnrolSearch(e.target.value)}
-              placeholder="Type a client name or account number (2+ letters)"
+              placeholder="Search the account the money comes from (2+ letters)"
               className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg w-full" />
           </label>
           {enrolSearch.trim().length >= 2 && (

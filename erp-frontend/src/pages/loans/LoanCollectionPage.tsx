@@ -826,7 +826,19 @@ function SavingsDebitPanel() {
     (sum, s) => sum + parseFloat(s.total_due) - parseFloat(s.total_paid),
     0
   );
-  const exceedsBalance = !!selectedSavings && selectedTotal > (parseFloat(String(selectedSavings.available_balance)) || 0);
+  // 10% cover rule (mirrors SavingsAccount.max_divertible_to_loan): savings left
+  // must stay >= 10% of the loan balance left, and >= the account minimum.
+  // S - x >= 0.1(L - x)  =>  x <= (S - 0.1L) / 0.9
+  const LOAN_COVER_RATIO = 0.1;
+  const maxDivertible = (() => {
+    if (!selectedSavings || !selectedLoan) return 0;
+    const S = parseFloat(String(selectedSavings.current_balance)) || 0;
+    const L = Math.max(parseFloat(String(selectedLoan.total_outstanding)) || 0, 0);
+    const minBal = parseFloat(String(selectedSavings.minimum_balance)) || 0;
+    const cap = Math.min((S - LOAN_COVER_RATIO * L) / (1 - LOAN_COVER_RATIO), S - minBal, L);
+    return Math.max(Math.floor(cap * 100) / 100, 0);
+  })();
+  const exceedsBalance = !!selectedSavings && selectedTotal > maxDivertible + 0.005;
 
   const toggleInstallment = (index: number) => {
     setSelectedCount(index < selectedCount ? index : index + 1);
@@ -911,7 +923,7 @@ function SavingsDebitPanel() {
       return;
     }
     if (exceedsBalance) {
-      setError('Selected total exceeds the available savings balance.');
+      setError(`Selected total exceeds the ₦${fmt(maxDivertible)} that can be diverted (savings must stay at least 10% of the loan balance).`);
       return;
     }
     setError(null);
@@ -1162,7 +1174,10 @@ function SavingsDebitPanel() {
           )}
 
           <p className="mb-4 text-xs text-gray-500">
-            Max available in savings: ₦{fmt(selectedSavings.available_balance)}
+            Savings balance: ₦{fmt(selectedSavings.current_balance)} · Max that can be diverted:{' '}
+            <strong>₦{fmt(maxDivertible)}</strong>
+            <br />
+            Savings must remain at least 10% of the loan balance after this repayment.
           </p>
 
           <div className="space-y-4">
@@ -1197,7 +1212,7 @@ function SavingsDebitPanel() {
             {exceedsBalance && (
               <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
                 <AlertCircle size={14} />
-                Selected total (₦{fmt(selectedTotal)}) exceeds the available savings balance.
+                Selected total (₦{fmt(selectedTotal)}) exceeds the ₦{fmt(maxDivertible)} that can be diverted — savings must stay at least 10% of the loan balance.
               </div>
             )}
 

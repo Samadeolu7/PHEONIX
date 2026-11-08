@@ -159,3 +159,51 @@ class BankAccountBalanceLogAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         """Prevent deletion of balance logs"""
         return False
+
+
+from .models import ReconciliationException  # noqa: E402
+
+
+@admin.register(ReconciliationException)
+class ReconciliationExceptionAdmin(admin.ModelAdmin):
+    """Read-only view of reconciliation gaps, including who has claimed a
+    line on the Pending Bank Repayments page. Read-only on purpose:
+    resolving goes through the app so the director/dual-approval rules apply."""
+    list_display = [
+        'id', 'exception_type', 'direction', 'amount', 'date', 'bank_account',
+        'branch', 'officer', 'claimed_by', 'claimed_at', 'resolved',
+    ]
+    list_filter = ['exception_type', 'direction', 'resolved', 'reconciliation__branch']
+    search_fields = [
+        'bank_narration', 'erp_narration', 'claim_note',
+        'officer__username', 'officer__first_name', 'officer__last_name',
+        'claimed_by__username', 'claimed_by__first_name', 'claimed_by__last_name',
+    ]
+    list_select_related = ['reconciliation__bank_account', 'reconciliation__branch', 'officer', 'claimed_by']
+    date_hierarchy = 'created_at'
+    ordering = ['-created_at']
+
+    @admin.display(description='Amount')
+    def amount(self, obj):
+        return obj.erp_amount if obj.exception_type == 'erp_only' else obj.bank_amount
+
+    @admin.display(description='Date')
+    def date(self, obj):
+        return obj.erp_date if obj.exception_type == 'erp_only' else obj.bank_date
+
+    @admin.display(description='Bank account')
+    def bank_account(self, obj):
+        return obj.reconciliation.bank_account
+
+    @admin.display(description='Branch')
+    def branch(self, obj):
+        return obj.reconciliation.branch
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

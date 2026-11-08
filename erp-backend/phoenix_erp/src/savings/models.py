@@ -226,6 +226,47 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         return journal_entry
 
+    # After any savings → loan diversion, the savings left behind must still
+    # cover at least this share of the loan balance left behind.
+    LOAN_COVER_RATIO = Decimal('0.10')
+
+    def max_divertible_to_loan(self, loan_balance) -> Decimal:
+        """
+        Largest amount that can move from this savings account into a loan
+        whose total outstanding is `loan_balance`, such that afterwards:
+
+            savings_left >= LOAN_COVER_RATIO * loan_left   (10% cover rule)
+            savings_left >= minimum_balance                (compulsory savings)
+
+        With S = savings, L = loan balance, r = ratio and x diverted:
+            S - x >= r(L - x)  =>  x <= (S - rL) / (1 - r)
+        Overdraft is ignored — only real savings can fund a loan repayment.
+        """
+        from decimal import ROUND_DOWN
+
+        balance = Decimal(str(self.current_balance or 0))
+        loan_balance = max(Decimal(str(loan_balance or 0)), Decimal('0.00'))
+        r = self.LOAN_COVER_RATIO
+
+        cover_cap = (balance - r * loan_balance) / (Decimal('1') - r)
+        floor_cap = balance - Decimal(str(self.minimum_balance or 0))
+        cap = min(cover_cap, floor_cap, loan_balance)
+        return max(cap, Decimal('0.00')).quantize(Decimal('0.01'), rounding=ROUND_DOWN)
+
+    def check_loan_diversion(self, amount, loan_balance):
+        """Raise ValidationError if diverting `amount` breaks the 10% cover rule."""
+        amount = Decimal(str(amount))
+        allowed = self.max_divertible_to_loan(loan_balance)
+        if amount > allowed:
+            pct = int(self.LOAN_COVER_RATIO * 100)
+            raise ValidationError(
+                f"Savings must remain at least {pct}% of the loan balance "
+                f"(and not below the ₦{Decimal(str(self.minimum_balance or 0)):,.2f} minimum). "
+                f"Savings ₦{Decimal(str(self.current_balance or 0)):,.2f}, "
+                f"loan balance ₦{Decimal(str(loan_balance)):,.2f}: at most "
+                f"₦{allowed:,.2f} can be diverted, but ₦{amount:,.2f} was requested."
+            )
+
     @transaction.atomic
     def withdraw(self, amount: Decimal, description: str = "Withdrawal",
                  cashier_account=None, transacted_by=None):

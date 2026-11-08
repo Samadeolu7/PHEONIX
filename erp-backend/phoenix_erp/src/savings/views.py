@@ -311,6 +311,48 @@ class SavingsAccountViewSet(ScopedModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @action(detail=True, methods=['get'], url_path='smart-savings-limits')
+    def smart_savings_limits(self, request, pk=None):
+        """
+        How much of THIS (source) account can move into Smart Savings today,
+        with the breakdown of what must stay behind.
+        """
+        from django.core.exceptions import ValidationError
+        from .smart_enrolment import check_source, max_movable_to_smart
+        account = self.get_object()
+        try:
+            check_source(account)
+            blocked = None
+        except ValidationError as exc:
+            blocked = exc.messages[0]
+        limits = max_movable_to_smart(account)
+        if blocked:
+            limits['max_movable'] = Decimal('0.00')
+        return Response({**{k: (str(v) if isinstance(v, Decimal) else v) for k, v in limits.items()},
+                         'blocked_reason': blocked})
+
+    @action(detail=True, methods=['post'], url_path='enrol-smart-savings')
+    def enrol_smart_savings(self, request, pk=None):
+        """
+        Move a chosen amount from THIS account into the client's Smart Savings
+        account and start a cycle today. Body: {"amount": "50000.00"}
+        """
+        from django.core.exceptions import ValidationError
+        from .smart_enrolment import enrol_with_amount
+        account = self.get_object()
+        try:
+            amount = Decimal(str(request.data.get('amount', '')).replace(',', ''))
+        except Exception:
+            return Response({'detail': 'Enter a valid amount.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            smart = enrol_with_amount(account, amount, request.user)
+        except ValidationError as exc:
+            return Response({'detail': exc.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        data = SmartSavingsAccountSerializer(smart).data
+        data['smart_account_id'] = smart.savings_id
+        data['smart_account_number'] = smart.savings.account_number
+        return Response(data, status=status.HTTP_201_CREATED)
+
     @action(detail=False, methods=['get'], url_path='smart-savers')
     def smart_savers(self, request):
         """
