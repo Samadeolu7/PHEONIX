@@ -18,7 +18,6 @@ Usage:
 """
 from datetime import datetime
 
-from dateutil.relativedelta import relativedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth import get_user_model
@@ -107,15 +106,10 @@ class Command(BaseCommand):
         from savings.smart_enrolment import open_withdrawal_requests
         moving = list(open_withdrawal_requests(source)) if opts['move_open_withdrawals'] else []
         if moving:
-            maturity = start + relativedelta(months=3)
             w('Open withdrawal requests moving to the Smart account:')
             for wr in moving:
                 w(f'  #{wr.pk}  NGN {wr.amount:,.2f}  {wr.get_status_display()}  '
                   f'asked {wr.client_requested_on}, payout due {wr.payout_due_date}')
-            self.stdout.write(self.style.WARNING(
-                f'  NOTE: paid out before the cycle matures on {maturity}, these trigger the early-withdrawal '
-                f'penalty and restart the cycle (the client loses this cycle 6% interest). '
-                f'Paying on or after {maturity} avoids that.'))
 
         try:
             with transaction.atomic():
@@ -137,6 +131,16 @@ class Command(BaseCommand):
                   f'opening NGN {smart.opening_balance:,.2f}')
                 source.account.refresh_from_db()
                 w(f'  Source balance now     NGN {source.current_balance:,.2f}')
+                cfg = smart.savings.product.savings_product_config
+                rate = cfg.cycle_break_penalty_rate or 0
+                w(f'  early-withdrawal penalty on this product: {rate}% of the balance')
+                if moving:
+                    # Warn against the cycle that is open AFTER the catch-up, not the first one.
+                    penalty = (smart.savings.current_balance * rate / 100).quantize(Decimal('0.01'))
+                    self.stdout.write(self.style.WARNING(
+                        f'  NOTE: the open cycle matures on {smart.maturity_date}. Paying the moved request(s) '
+                        f'before then charges the penalty (about NGN {penalty:,.2f} now) and restarts the '
+                        f'cycle from the payout date, with the balance left after the payout as its opening.'))
                 if not opts['apply']:
                     raise _Rollback()
         except _Rollback:
