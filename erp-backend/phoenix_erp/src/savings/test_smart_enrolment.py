@@ -50,6 +50,7 @@ class SmartEnrolmentTests(TestCase):
         # 500,000 deposited well before any start date used below
         self.source.deposit(D('500000'), cashier_account=self.cash, transacted_by=self.user,
                             date=self.today - timedelta(days=300))
+        self.source.account.refresh_from_db()
 
     def tearDown(self):
         set_current_tenant(None)
@@ -119,3 +120,16 @@ class SmartEnrolmentTests(TestCase):
             self.assertEqual(lim['max_movable'], D('499000.00'))
             with self.assertRaises(ValidationError):
                 enrol_with_amount(self.source, D('600000'), self.user, start_date=start)
+
+    def test_open_withdrawal_request_can_move_with_the_money(self):
+        from savings.services import initiate_withdrawal
+        wr = initiate_withdrawal(self.source, D('60000'), self.user)
+        with mock.patch(LOANS, return_value=D('0')):
+            self.assertEqual(max_movable_to_smart(self.source)['max_movable'], D('439000.00'))
+            with self.assertRaises(ValidationError):
+                enrol_with_amount(self.source, D('499000'), self.user)
+            smart = enrol_with_amount(self.source, D('499000'), self.user, move_open_withdrawals=True)
+        wr.refresh_from_db()
+        self.assertEqual(wr.savings_account_id, smart.savings_id)
+        self.assertEqual(self._bal(self.source), D('1000'))
+        self.assertEqual(self._bal(smart.savings), D('499000'))

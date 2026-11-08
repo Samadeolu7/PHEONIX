@@ -191,10 +191,21 @@ def lowest_balance_since(source: SavingsAccount, start: date) -> Decimal:
     return min(lowest, balance)  # balance now = end of `start`
 
 
-def max_movable_to_smart(source: SavingsAccount, start: date | None = None) -> dict:
+_OPEN_WR_STATUSES = (SavingsWithdrawalRequest.STATUS_PENDING, SavingsWithdrawalRequest.STATUS_PARTIAL,
+                     SavingsWithdrawalRequest.STATUS_APPROVED)
+
+
+def open_withdrawal_requests(source: SavingsAccount):
+    return SavingsWithdrawalRequest.objects.filter(savings_account=source, status__in=_OPEN_WR_STATUSES)
+
+
+def max_movable_to_smart(source: SavingsAccount, start: date | None = None,
+                         move_open_withdrawals: bool = False) -> dict:
     """
     Largest amount that can move from `source` into Smart Savings, with the
-    reason for each limit so the UI can explain it.
+    reason for each limit so the UI can explain it. With move_open_withdrawals
+    the open withdrawal requests travel with the money (paid from the Smart
+    account instead), so they don't hold anything back here.
     """
     today = timezone.localdate()
     start = start or today
@@ -203,11 +214,10 @@ def max_movable_to_smart(source: SavingsAccount, start: date | None = None) -> d
 
     holds = _d(source.transaction_holds.filter(status='active').aggregate(
         t=Sum('amount'))['t'])
-    open_wr = _d(SavingsWithdrawalRequest.objects.filter(
-        savings_account=source,
-        status__in=(SavingsWithdrawalRequest.STATUS_PENDING, SavingsWithdrawalRequest.STATUS_PARTIAL,
-                    SavingsWithdrawalRequest.STATUS_APPROVED),
-    ).aggregate(t=Sum('amount'))['t'])
+    open_wr = _d(open_withdrawal_requests(source).aggregate(t=Sum('amount'))['t'])
+    moved_wr = Decimal('0.00')
+    if move_open_withdrawals:
+        moved_wr, open_wr = open_wr, Decimal('0.00')
     minimum = _d(source.minimum_balance)
     loan_debt = client_loan_outstanding(source.client)
     loan_cover = (loan_debt * LOAN_COVER_RATIO).quantize(_CENT)
@@ -227,6 +237,7 @@ def max_movable_to_smart(source: SavingsAccount, start: date | None = None) -> d
         'balance': balance,
         'holds': holds,
         'open_withdrawals': open_wr,
+        'open_withdrawals_moving': moved_wr,
         'minimum_balance': minimum,
         'loan_outstanding': loan_debt,
         'loan_cover_required': loan_cover,
@@ -256,7 +267,8 @@ def check_source(source: SavingsAccount):
 # ---------------------------------------------------------------------------
 
 @transaction.atomic
-def enrol_with_amount(source: SavingsAccount, amount, user, start_date: date | None = None):
+def enrol_with_amount(source: SavingsAccount, amount, user, start_date: date | None = None,
+                      move_open_withdrawals: bool = False):
     """
     Move `amount` from `source` into the client's Smart Savings account (opened
     if needed) and start a cycle on `start_date` (default today). Returns the
@@ -281,7 +293,12 @@ def enrol_with_amount(source: SavingsAccount, amount, user, start_date: date | N
     amount = _d(amount).quantize(_CENT)
     if amount <= 0:
         raise ValidationError('Amount must be more than zero.')
-    limits = max_movable_to_smart(source, start_date)
+    limits = max_movable_to_smart(source, start_date, move_open_withdrawals)
+    if limits['open_withdrawals_moving'] > amount:
+        raise ValidationError(
+            f"The open withdrawal requests (₦{limits['open_withdrawals_moving']:,.2f}) are more than the "
+            f"₦{amount:,.2f} being moved, so the Smart account could not pay them."
+        )
     min_txn = limits['min_transaction_amount']
     if min_txn and amount < min_txn:
         raise ValidationError(f'Minimum transaction on {source.product.name} is ₦{min_txn:,.2f}.')
@@ -385,6 +402,14 @@ def enrol_with_amount(source: SavingsAccount, amount, user, start_date: date | N
         smart.opening_balance = opening
         smart.last_interest_date = None
         smart.save(update_fields=['is_active', 'start_date', 'opening_balance', 'last_interest_date'])
+
+    if move_open_withdrawals:
+        # Same request, same approvals so far: it is now paid from the Smart account.
+        for wr in open_withdrawal_requests(source).select_for_update():
+            wr.savings_account = smart_sav
+            note = f'[Moved from {source.account_number} to Smart Savings {smart_sav.account_number} on {today}]'
+            wr.description = f'{wr.description} {note}'.strip()
+            wr.save(update_fields=['savings_account', 'description', 'updated_at'])
 
     from common.models import FinancialAuditLog, log_financial_event
     log_financial_event(
