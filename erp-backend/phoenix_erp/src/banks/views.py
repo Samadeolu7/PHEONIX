@@ -3984,6 +3984,36 @@ def _pending_repayments_totals(rows, user):
     return totals
 
 
+def _filter_pending_branch(rows, branch_id):
+    """Narrow to one branch. Applied after for_user scoping, so it can only
+    narrow what the user may already see — never widen it."""
+    if not branch_id or branch_id == 'all':
+        return rows
+    return [exc for exc in rows if str(exc.reconciliation.branch_id) == str(branch_id)]
+
+
+def _pending_by_branch(rows):
+    groups = {}
+    for exc in rows:
+        branch = exc.reconciliation.branch
+        key = exc.reconciliation.branch_id
+        g = groups.setdefault(key, {
+            'branch_id': key,
+            'branch_name': branch.name if branch else 'No branch',
+            'count': 0, 'amount': Decimal('0'), 'unclaimed_count': 0,
+            'bank_only_count': 0, 'erp_only_count': 0,
+        })
+        g['count'] += 1
+        g['amount'] += _pending_amount(exc)
+        g[f'{exc.exception_type}_count'] += 1
+        if not exc.claimed_by_id:
+            g['unclaimed_count'] += 1
+    out = sorted(groups.values(), key=lambda g: g['branch_name'])
+    for g in out:
+        g['amount'] = str(g['amount'])
+    return out
+
+
 class PendingRepaymentsView(APIView):
     """
     GET /api/banks/pending-repayments/
@@ -3991,6 +4021,8 @@ class PendingRepaymentsView(APIView):
     Totals always cover the whole (unfiltered) list.
 
     Query params (optional):
+      branch        branch id — narrows within what the user can see; a
+                    director (global-scope role / owner) can pick any branch
       kind          'bank_only' | 'erp_only' (default: both)
       status        'unclaimed' | 'claimed' | 'mine' (default: all)
       bank_account  bank account id
@@ -3998,10 +4030,16 @@ class PendingRepaymentsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        rows = _dedupe_pending(
+        all_rows = _dedupe_pending(
             _pending_repayments_qs(request.user).order_by('bank_date', 'erp_date', 'id')
         )
+        # Branch picker options — only branches this user can already see
+        # (for_user scoping), so a branch member gets one entry and a
+        # director gets every branch with open lines.
+        by_branch = _pending_by_branch(all_rows)
+        rows = _filter_pending_branch(all_rows, request.query_params.get('branch'))
         totals = _pending_repayments_totals(rows, request.user)
+        totals['by_branch'] = by_branch
 
         kind = request.query_params.get('kind')
         if kind in PENDING_KINDS:
@@ -4036,8 +4074,11 @@ class PendingRepaymentsSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        rows = _dedupe_pending(_pending_repayments_qs(request.user).order_by('id'))
-        return Response(_pending_repayments_totals(rows, request.user))
+        all_rows = _dedupe_pending(_pending_repayments_qs(request.user).order_by('id'))
+        rows = _filter_pending_branch(all_rows, request.query_params.get('branch'))
+        totals = _pending_repayments_totals(rows, request.user)
+        totals['by_branch'] = _pending_by_branch(all_rows)
+        return Response(totals)
 
 
 class ClaimPendingRepaymentView(APIView):

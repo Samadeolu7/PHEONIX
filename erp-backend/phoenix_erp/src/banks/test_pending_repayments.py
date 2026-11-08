@@ -153,3 +153,46 @@ class PendingRepaymentsTests(TestCase):
         # The recorder sees it under "mine" even before claiming it
         mine = self.client.get(LIST_URL, {'status': 'mine'}).data['results']
         self.assertEqual([r['id'] for r in mine], [self.erp_pending.id])
+
+    # ── Director branch-to-branch view ──────────────────────────────────────
+
+    def _make_branch_b_line(self):
+        account_b = BankAccount.objects.create(
+            bank=self.bank_account.bank, account_number='0000004', account_name='Branch B Collections',
+            gl_account=Account.objects.create(code='1297', name='Pending GL B', account_level=Account.LEVEL_PARENT),
+            account_manager=self.other_branch_officer,
+        )
+        recon_b = DailyReconciliation.objects.create(
+            bank_account=account_b, reconciliation_date='2026-11-02',
+            uploaded_by=self.other_branch_officer, statement_file='bank_statements/b.csv',
+            status='completed', owner=self.other_branch_officer, branch=self.branch_b, tenant=self.tenant,
+        )
+        return ReconciliationException.objects.create(
+            reconciliation=recon_b, exception_type='bank_only', direction='CREDIT',
+            bank_transaction_id=uuid.uuid4(), bank_amount=Decimal('900.00'), bank_date='2026-11-02',
+        )
+
+    def test_director_sees_all_branches_and_can_pick_one(self):
+        line_b = self._make_branch_b_line()
+        director = User.objects.create_user(
+            username='director_p', password='x', tenant=self.tenant, branch=self.branch_a, is_superuser=True,
+        )
+        self.tenant.owner = director
+        self.tenant.save(update_fields=['owner'])
+        self.client.force_authenticate(director)
+
+        everything = self.client.get(LIST_URL).data
+        self.assertEqual(everything['totals']['count'], 3)
+        self.assertEqual({b['branch_id'] for b in everything['totals']['by_branch']},
+                         {self.branch_a.id, self.branch_b.id})
+
+        only_b = self.client.get(LIST_URL, {'branch': self.branch_b.id}).data
+        self.assertEqual([r['id'] for r in only_b['results']], [line_b.id])
+        self.assertEqual(only_b['totals']['count'], 1)
+
+    def test_branch_filter_cannot_widen_a_members_scope(self):
+        self._make_branch_b_line()
+        self.client.force_authenticate(self.officer_1)
+        resp = self.client.get(LIST_URL, {'branch': self.branch_b.id}).data
+        self.assertEqual(resp['results'], [])
+        self.assertEqual([b['branch_id'] for b in resp['totals']['by_branch']], [self.branch_a.id])

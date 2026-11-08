@@ -40,10 +40,25 @@ export interface PendingRepaymentKindTotals {
   oldest_days: number | null;
 }
 
+export interface PendingRepaymentBranchRow {
+  branch_id: number | null;
+  branch_name: string;
+  count: number;
+  amount: string;
+  unclaimed_count: number;
+  bank_only_count: number;
+  erp_only_count: number;
+}
+
 export interface PendingRepaymentTotals extends PendingRepaymentKindTotals {
   bank_only: PendingRepaymentKindTotals;
   erp_only: PendingRepaymentKindTotals & { recorded_by_me_count: number };
+  /** Every branch the user can see with open lines — one entry for branch staff, all for directors */
+  by_branch: PendingRepaymentBranchRow[];
 }
+
+/** 'all' or a branch id */
+export type PendingRepaymentBranch = 'all' | number;
 
 export type PendingRepaymentStatus = 'all' | 'unclaimed' | 'claimed' | 'mine';
 
@@ -53,12 +68,19 @@ export const pendingRepaymentService = {
   async list(
     kind: PendingRepaymentKind,
     status: PendingRepaymentStatus = 'all',
+    branch: PendingRepaymentBranch = 'all',
   ): Promise<{ totals: PendingRepaymentTotals; results: PendingRepayment[] }> {
-    return api.get(`${BASE}/`, { params: { kind, status: status === 'all' ? undefined : status } });
+    return api.get(`${BASE}/`, {
+      params: {
+        kind,
+        status: status === 'all' ? undefined : status,
+        branch: branch === 'all' ? undefined : branch,
+      },
+    });
   },
 
-  async summary(): Promise<PendingRepaymentTotals> {
-    return api.get(`${BASE}/summary/`);
+  async summary(branch: PendingRepaymentBranch = 'all'): Promise<PendingRepaymentTotals> {
+    return api.get(`${BASE}/summary/`, { params: branch === 'all' ? undefined : { branch } });
   },
 
   async claim(id: number, note = ''): Promise<PendingRepayment> {

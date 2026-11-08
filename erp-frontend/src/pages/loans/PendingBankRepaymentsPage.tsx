@@ -18,6 +18,7 @@ import { Landmark, RefreshCw } from 'lucide-react';
 import {
   pendingRepaymentService,
   PendingRepayment,
+  PendingRepaymentBranch,
   PendingRepaymentKind,
   PendingRepaymentStatus,
   PendingRepaymentTotals,
@@ -67,11 +68,18 @@ function initialKind(): PendingRepaymentKind {
   return k === 'erp_only' ? 'erp_only' : 'bank_only';
 }
 
+function initialBranch(): PendingRepaymentBranch {
+  const b = Number(new URLSearchParams(window.location.search).get('branch'));
+  return Number.isFinite(b) && b > 0 ? b : 'all';
+}
+
 const PendingBankRepaymentsPage: React.FC = () => {
   const navigate = useNavigate();
   const { success, error: showError } = useToast();
   const [kind, setKind] = useState<PendingRepaymentKind>(initialKind);
   const [tab, setTab] = useState<PendingRepaymentStatus>('unclaimed');
+  // Directors see every branch; the picker only appears when there's more than one.
+  const [branch, setBranch] = useState<PendingRepaymentBranch>(initialBranch);
   const [rows, setRows] = useState<PendingRepayment[]>([]);
   const [totals, setTotals] = useState<PendingRepaymentTotals | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,7 +89,7 @@ const PendingBankRepaymentsPage: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await pendingRepaymentService.list(kind, tab);
+      const data = await pendingRepaymentService.list(kind, tab, branch);
       setRows(data.results);
       setTotals(data.totals);
       setLoadError(null);
@@ -90,7 +98,7 @@ const PendingBankRepaymentsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [kind, tab]);
+  }, [kind, tab, branch]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -119,6 +127,8 @@ const PendingBankRepaymentsPage: React.FC = () => {
 
   const kindTotals = totals ? totals[kind] : null;
   const isErp = kind === 'erp_only';
+  const branchRows = totals?.by_branch ?? [];
+  const showBranchPicker = branchRows.length > 1 || branch !== 'all';
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
@@ -127,13 +137,35 @@ const PendingBankRepaymentsPage: React.FC = () => {
           <Landmark className="w-7 h-7 text-amber-600" />
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Pending Bank Repayments</h1>
         </div>
-        <button
+        <div className="flex items-center gap-2">
+          {showBranchPicker && (
+            <select
+              value={branch}
+              onChange={(e) => setBranch(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg bg-white"
+              aria-label="Branch"
+            >
+              <option value="all">All branches</option>
+              {branchRows
+                .filter((b) => b.branch_id !== null)
+                .map((b) => (
+                  <option key={b.branch_id} value={b.branch_id as number}>
+                    {b.branch_name} ({b.count})
+                  </option>
+                ))}
+              {branch !== 'all' && !branchRows.some((b) => b.branch_id === branch) && (
+                <option value={branch}>Selected branch (0)</option>
+              )}
+            </select>
+          )}
+          <button
           onClick={load}
           className="flex items-center gap-1.5 text-sm text-gray-700 bg-white border border-gray-300 px-3 py-1.5 rounded-lg hover:bg-gray-50"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
+        </div>
       </div>
       <p className="text-gray-600 mb-4">
         Repayments that don&apos;t match between the bank statement and the system for your branch. Each

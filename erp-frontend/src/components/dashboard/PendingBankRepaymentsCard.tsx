@@ -36,8 +36,12 @@ export default function PendingBankRepaymentsCard() {
 
   // Red while anything is unclaimed; amber once everything has an owner.
   const accent = data.unclaimed_count > 0 ? '#f87171' : '#fbbf24';
-  const open = (kind: PendingRepaymentKind) => navigate(`/loans/pending-bank-repayments?kind=${kind}`);
+  const open = (kind: PendingRepaymentKind, branchId?: number | null) =>
+    navigate(`/loans/pending-bank-repayments?kind=${kind}${branchId ? `&branch=${branchId}` : ''}`);
   const mineToExplain = data.erp_only.recorded_by_me_count;
+  // More than one branch visible = director / global role: show where the gaps are.
+  const branches = (data.by_branch ?? []).filter((b) => b.count > 0);
+  const multiBranch = branches.length > 1;
 
   return (
     <div
@@ -46,7 +50,7 @@ export default function PendingBankRepaymentsCard() {
     >
       <p className="flex items-center gap-1.5 text-xs" style={{ color: 'rgba(255,255,255,0.55)' }}>
         <Landmark className="h-3.5 w-3.5" style={{ color: accent }} />
-        Pending bank repayments · branch
+        Pending bank repayments · {multiBranch ? 'all branches' : 'branch'}
         {data.oldest_days !== null && <span className="ml-auto">Oldest: {data.oldest_days}d</span>}
       </p>
       <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -64,6 +68,25 @@ export default function PendingBankRepaymentsCard() {
           onClick={() => open('erp_only')}
         />
       </div>
+      {multiBranch && (
+        <div className="mt-3 space-y-1">
+          {branches.map((b) => (
+            <button
+              key={b.branch_id ?? 'none'}
+              type="button"
+              onClick={() => open(b.bank_only_count > 0 ? 'bank_only' : 'erp_only', b.branch_id)}
+              className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 text-left text-xs hover:bg-white/10"
+              title={`Open ${b.branch_name}`}
+            >
+              <span className="truncate text-white">{b.branch_name}</span>
+              <span style={{ color: 'rgba(255,255,255,0.65)' }} className="text-right">
+                {b.bank_only_count} in bank · {b.erp_only_count} not in bank · {formatNaira(b.amount)}
+                {b.unclaimed_count > 0 && <span style={{ color: '#f87171' }}> · {b.unclaimed_count} not taken</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
