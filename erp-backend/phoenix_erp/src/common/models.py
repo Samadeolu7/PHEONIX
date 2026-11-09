@@ -386,8 +386,10 @@ class FinancialAuditLog(models.Model):
     BORROWING_CONTRIBUTION = 'borrowing_contribution'
     BORROWING_INSTALMENT = 'borrowing_instalment'
     LIQUIDITY_OVERRIDE = 'liquidity_override'
+    RECON_RESOLUTION = 'recon_resolution'
 
     EVENT_CHOICES = [
+        (RECON_RESOLUTION, 'Reconciliation Resolution Case Action'),
         (BORROWING_RECEIVE, 'Bank Borrowing Received'),
         (BORROWING_CONTRIBUTION, 'Bank Borrowing Branch Share Sent'),
         (BORROWING_INSTALMENT, 'Bank Borrowing Instalment Paid'),

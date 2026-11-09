@@ -81,9 +81,16 @@ class PendingRepaymentsTests(TestCase):
         exc(resolved=True)
 
     def test_branch_member_sees_only_pending_credits(self):
+        # officer_2 sees the branch's bank-only line but NOT officer_1's
+        # "Recorded, not in bank" payment (below branch manager = own only).
         self.client.force_authenticate(self.officer_2)
         resp = self.client.get(LIST_URL)
         self.assertEqual(resp.status_code, 200)
+        self.assertEqual({r['id'] for r in resp.data['results']}, {self.pending.id})
+
+        # officer_1 posted it, so sees both
+        self.client.force_authenticate(self.officer_1)
+        resp = self.client.get(LIST_URL)
         ids = {r['id'] for r in resp.data['results']}
         self.assertEqual(ids, {self.pending.id, self.erp_pending.id})
         totals = resp.data['totals']

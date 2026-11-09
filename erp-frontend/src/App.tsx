@@ -621,6 +621,7 @@ const DisbursementByProductPage = lazy(() => import('./pages/reports/Disbursemen
 const DailyCollectionReportPage = lazy(() => import('./pages/reports/DailyCollectionReportPage'));
 const RecoveryTargetsPage = lazy(() => import('./pages/reports/RecoveryTargetsPage'));
 const PendingBankRepaymentsPage = lazy(() => import('./pages/loans/PendingBankRepaymentsPage'));
+const ResolutionCasesPage = lazy(() => import('./pages/banks/ResolutionCasesPage'));
 const GroupReportPage = lazy(() => import('./pages/reports/GroupReportPage'));
 const SavingsProductReportPage = lazy(() => import('./pages/reports/SavingsProductReportPage'));
 const DailyContributionReportPage = lazy(
@@ -4275,6 +4276,16 @@ function App() {
                                   element={
                                     <ProtectedRoute>
                                       <PendingBankRepaymentsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Reconciliation resolution cases (maker -> BM -> director); rules enforced server-side */}
+                                <Route
+                                  path="/banks/reconciliations/resolutions"
+                                  element={
+                                    <ProtectedRoute>
+                                      <ResolutionCasesPage />
                                     </ProtectedRoute>
                                   }
                                 />

@@ -1893,6 +1893,25 @@ class LinkResolveExceptionsView(APIView):
 
         from django.core.exceptions import ValidationError as DjangoValidationError
 
+        # A recorded repayment <-> bank credit pair no longer closes on one
+        # director's say-so: it becomes a resolution case (this director as
+        # maker and checker) that a second, different director must approve.
+        repayment_case = _as_repayment_pair(exc_a, exc_b)
+        if repayment_case:
+            from .resolution_service import propose
+            erp_exc, bank_exc = repayment_case
+            try:
+                case = propose(
+                    request.user, erp_exception=erp_exc, kind='link', reason=resolution_notes,
+                    bank_exception=bank_exc, auto_recommend=True,
+                )
+            except DjangoValidationError as exc:
+                return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'detail': f'Sent for a second director\'s approval as {case.reference_number}.',
+                'resolution_case': _serialize_case(case, request),
+            }, status=status.HTTP_202_ACCEPTED)
+
         try:
             result = _link_and_resolve_pair(request, exc_a, exc_b, resolution_notes, both_erp_only, cross_account)
         except DjangoValidationError as exc:
@@ -1903,6 +1922,17 @@ class LinkResolveExceptionsView(APIView):
             'exception_b': ReconciliationExceptionSerializer(exc_b).data,
             'reversal_references': result['reversal_refs'],
         })
+
+
+def _as_repayment_pair(exc_a, exc_b):
+    """(erp_exc, bank_exc) when the pair is a recorded repayment against a
+    bank credit — the shape that goes through resolution cases — else None."""
+    pair = {exc_a.exception_type: exc_a, exc_b.exception_type: exc_b}
+    if set(pair) != {'erp_only', 'bank_only'}:
+        return None
+    if exc_a.direction != 'CREDIT' or exc_b.direction != 'CREDIT':
+        return None
+    return pair['erp_only'], pair['bank_only']
 
 
 def _link_and_resolve_pair(request, exc_a, exc_b, resolution_notes, both_erp_only, cross_account):
@@ -2540,6 +2570,19 @@ class BulkConfirmSuggestedMatchesView(APIView):
                     f'Confirmed via Suggested Matches queue — matching amount ₦{exc_a.resolve_amount} '
                     f'between exception #{exc_a.id} and #{exc_b.id}.'
                 )
+                repayment_pair = _as_repayment_pair(exc_a, exc_b)
+                if repayment_pair:
+                    # Maker-checker: becomes a case needing a second director.
+                    from .resolution_service import propose
+                    case = propose(
+                        request.user, erp_exception=repayment_pair[0], kind='link', reason=notes,
+                        bank_exception=repayment_pair[1], auto_recommend=True,
+                    )
+                    resolved.append({
+                        'exception_a_id': exc_a.id, 'exception_b_id': exc_b.id,
+                        'resolution_case': case.reference_number, 'awaiting_second_director': True,
+                    })
+                    continue
                 _link_and_resolve_pair(request, exc_a, exc_b, notes, both_erp_only, cross_account)
                 resolved.append({'exception_a_id': exc_a.id, 'exception_b_id': exc_b.id})
             except Exception as exc:
@@ -3884,7 +3927,7 @@ def _pending_repayments_qs(user, kind=None, request=None):
     # Either side may have been matched since the exception was raised,
     # leaving a stale row behind — never ask staff to act on those.
     matched = ReconciliationBankTransaction.objects.filter(matched=True)
-    return (
+    qs = (
         ReconciliationException.objects.filter(
             reconciliation__in=recons,
             exception_type__in=kinds,
@@ -3903,6 +3946,13 @@ def _pending_repayments_qs(user, kind=None, request=None):
             'reconciliation__bank_account', 'reconciliation__branch', 'claimed_by', 'officer',
         )
     )
+    # Below branch manager, "Recorded, not in bank" is limited to payments
+    # the officer posted; bank-only lines stay branch-wide so anyone who
+    # recognises the payer can record it.
+    from .resolution_service import is_recon_manager
+    if not is_recon_manager(user):
+        qs = qs.exclude(Q(exception_type='erp_only') & ~Q(officer=user))
+    return qs
 
 
 def _pending_line_key(exc):
@@ -4075,9 +4125,33 @@ class PendingRepaymentsView(APIView):
 
         rows.sort(key=lambda exc: (_pending_date(exc) or tz.localdate(), exc.pk))
         today = tz.localdate()
+
+        # Latest case per ERP gap, for the row's status chip.
+        from .models import ReconciliationResolution
+        latest_case = {}
+        for case in ReconciliationResolution.objects.filter(
+            erp_exception_id__in=[exc.pk for exc in rows if exc.exception_type == 'erp_only'],
+        ).order_by('erp_exception_id', '-proposed_at'):
+            latest_case.setdefault(case.erp_exception_id, case)
+
+        results = []
+        for exc in rows:
+            row = _serialize_pending_repayment(exc, request.user, today)
+            case = latest_case.get(exc.pk)
+            row['case'] = {
+                'id': case.pk, 'reference_number': case.reference_number,
+                'kind': case.kind, 'status': case.status,
+            } if case else None
+            results.append(row)
+
+        from .resolution_service import is_recon_manager, is_recon_director
         return Response({
             'totals': totals,
-            'results': [_serialize_pending_repayment(exc, request.user, today) for exc in rows],
+            'results': results,
+            'viewer': {
+                'is_manager': is_recon_manager(request.user),
+                'is_director': is_recon_director(request.user),
+            },
         })
 
 
@@ -4090,6 +4164,20 @@ class PendingRepaymentsSummaryView(APIView):
         rows = _filter_pending_branch(all_rows, request.query_params.get('branch'))
         totals = _pending_repayments_totals(rows, request.user)
         totals['by_branch'] = _pending_by_branch(all_rows)
+
+        from .resolution_service import scoped_cases, is_recon_manager, is_recon_director
+        from .models import ReconciliationResolution as Case
+        cases = scoped_cases(request.user, _pending_header_branch(request))
+        totals['cases'] = {
+            'to_review': cases.filter(status=Case.PROPOSED).exclude(proposed_by=request.user)
+            .exclude(erp_exception__officer=request.user).count() if is_recon_manager(request.user) else 0,
+            'to_approve': cases.filter(status=Case.RECOMMENDED).exclude(proposed_by=request.user)
+            .exclude(reviewed_by=request.user).count() if is_recon_director(request.user) else 0,
+            'disputes_against_me': cases.filter(
+                kind=Case.KIND_DISPUTE, respondent=request.user, status__in=Case.OPEN_STATUSES,
+                respondent_responded_at__isnull=True,
+            ).count(),
+        }
         return Response(totals)
 
 
@@ -4152,3 +4240,266 @@ class ClaimPendingRepaymentView(APIView):
         exc_obj.claim_note = ''
         exc_obj.save(update_fields=['claimed_by', 'claimed_at', 'claim_note'])
         return Response(_serialize_pending_repayment(exc_obj, request.user, tz.localdate()))
+
+
+# ── Resolution cases (maker → branch manager → director) ─────────────────────
+# Workflow rules live in banks/resolution_service.py; these views only load
+# the right rows for the user and translate errors.
+
+EVIDENCE_MAX_BYTES = 10 * 1024 * 1024
+EVIDENCE_TYPES = ('image/', 'application/pdf')
+
+
+def _serialize_case(case, request):
+    from .resolution_service import is_recon_manager, is_recon_director
+    from .models import ReconciliationResolution as Case
+
+    user = request.user
+    manager = is_recon_manager(user)
+    director = is_recon_director(user)
+    erp_officer_id = case.erp_exception.officer_id
+    is_open = case.status in Case.OPEN_STATUSES
+    involved = user.pk in (case.proposed_by_id, case.reviewed_by_id, erp_officer_id)
+
+    evidence_url = None
+    if case.evidence:
+        try:
+            evidence_url = request.build_absolute_uri(case.evidence.url)
+        except Exception:
+            evidence_url = None
+
+    return {
+        'id': case.pk,
+        'reference_number': case.reference_number,
+        'kind': case.kind,
+        'kind_label': case.get_kind_display(),
+        'status': case.status,
+        'status_label': case.get_status_display(),
+        'amount': str(case.amount),
+        'reason': case.reason,
+        'branch_name': case.branch.name if case.branch_id else None,
+        'bank_account_name': getattr(case.erp_exception.reconciliation.bank_account, 'account_name', ''),
+        'erp_exception_id': case.erp_exception_id,
+        'evidence_url': evidence_url,
+        'facts': case.facts,
+        'applied': case.applied,
+        'proposed_by_name': _user_display(case.proposed_by),
+        'proposed_at': case.proposed_at,
+        'reviewed_by_name': _user_display(case.reviewed_by),
+        'reviewed_at': case.reviewed_at,
+        'review_notes': case.review_notes,
+        'approved_by_name': _user_display(case.approved_by),
+        'approved_at': case.approved_at,
+        'approval_notes': case.approval_notes,
+        'rejected_by_name': _user_display(case.rejected_by),
+        'rejected_at': case.rejected_at,
+        'rejection_reason': case.rejection_reason,
+        'dissolved_by_name': _user_display(case.dissolved_by),
+        'dissolved_at': case.dissolved_at,
+        'dissolve_reason': case.dissolve_reason,
+        'respondent_name': _user_display(case.respondent),
+        'respondent_response': case.respondent_response,
+        'respondent_responded_at': case.respondent_responded_at,
+        'dispute_wait_until': case.dispute_wait_until,
+        'reversal_reference': getattr(case.loan_repayment_reversal, 'reference_number', None),
+        'actions': {
+            'can_review': bool(
+                case.status == Case.PROPOSED and manager
+                and user.pk not in (case.proposed_by_id, erp_officer_id)
+            ),
+            'can_approve': bool(
+                case.status == Case.RECOMMENDED and director and not involved and case.dispute_wait_over
+            ),
+            'waiting_for_respondent': bool(case.status == Case.RECOMMENDED and not case.dispute_wait_over),
+            'can_reject': bool(is_open and (
+                director or (case.status == Case.PROPOSED and manager and user.pk != case.proposed_by_id)
+            )),
+            'can_dissolve': bool(case.status == Case.APPROVED and director and case.kind != Case.KIND_REVERSAL),
+            'can_respond': bool(
+                is_open and case.kind == Case.KIND_DISPUTE and case.respondent_id == user.pk
+                and not case.respondent_responded_at
+            ),
+            'can_cancel': bool(case.status == Case.PROPOSED and case.proposed_by_id == user.pk),
+            'is_clean': bool(case.facts.get('is_clean')),
+        },
+    }
+
+
+def _validation_response(exc):
+    from django.core.exceptions import ValidationError as DjangoValidationError
+    if isinstance(exc, DjangoValidationError):
+        return Response({'detail': _error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    raise exc
+
+
+class PendingRepaymentCandidatesView(APIView):
+    """GET /api/banks/pending-repayments/<pk>/candidates/ — bank lines a
+    "Recorded, not in bank" payment could be (unmatched → link, matched →
+    dispute)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        from .resolution_service import find_candidates
+        exc_obj = get_object_or_404(
+            _pending_repayments_qs(request.user, request=request).filter(exception_type='erp_only'), pk=pk,
+        )
+        return Response(find_candidates(exc_obj))
+
+
+class ResolutionCaseListCreateView(APIView):
+    """
+    GET  /api/banks/resolutions/?status=&kind=&queue=review|approve|mine
+    POST /api/banks/resolutions/   (multipart: erp_exception_id, kind, reason,
+                                    bank_exception_id?, bank_transaction_id?, evidence?)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .resolution_service import scoped_cases
+        from .models import ReconciliationResolution as Case
+
+        qs = scoped_cases(request.user, _pending_header_branch(request))
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status__in=status_filter.split(','))
+        kind = request.query_params.get('kind')
+        if kind:
+            qs = qs.filter(kind=kind)
+        queue = request.query_params.get('queue')
+        if queue == 'review':
+            qs = qs.filter(status=Case.PROPOSED).exclude(proposed_by=request.user).exclude(
+                erp_exception__officer=request.user)
+        elif queue == 'approve':
+            qs = qs.filter(status=Case.RECOMMENDED).exclude(proposed_by=request.user).exclude(
+                reviewed_by=request.user).exclude(erp_exception__officer=request.user)
+        elif queue == 'mine':
+            qs = qs.filter(Q(proposed_by=request.user) | Q(respondent=request.user)
+                           | Q(erp_exception__officer=request.user))
+        qs = qs.order_by('-proposed_at')[:500]
+        return Response({'results': [_serialize_case(c, request) for c in qs]})
+
+    def post(self, request):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from .resolution_service import propose, scoped_exceptions
+
+        erp_exc = get_object_or_404(
+            _pending_repayments_qs(request.user, request=request).filter(exception_type='erp_only'),
+            pk=request.data.get('erp_exception_id'),
+        )
+
+        bank_exc = None
+        if request.data.get('bank_exception_id'):
+            bank_exc = get_object_or_404(
+                scoped_exceptions(request.user).filter(exception_type='bank_only'),
+                pk=request.data.get('bank_exception_id'),
+            )
+        bank_tx = None
+        if request.data.get('bank_transaction_id'):
+            bank_tx = get_object_or_404(
+                ReconciliationBankTransaction.objects.filter(
+                    bank_account_id=erp_exc.reconciliation.bank_account_id,
+                ),
+                pk=request.data.get('bank_transaction_id'),
+            )
+
+        evidence = request.FILES.get('evidence')
+        if evidence is not None:
+            if evidence.size > EVIDENCE_MAX_BYTES:
+                return Response({'detail': 'Evidence file must be 10 MB or smaller.'}, status=status.HTTP_400_BAD_REQUEST)
+            content_type = getattr(evidence, 'content_type', '') or ''
+            if not content_type.startswith(EVIDENCE_TYPES):
+                return Response({'detail': 'Evidence must be an image or a PDF.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            case = propose(
+                request.user,
+                erp_exception=erp_exc,
+                kind=request.data.get('kind'),
+                reason=request.data.get('reason') or '',
+                bank_exception=bank_exc,
+                bank_transaction=bank_tx,
+                evidence=evidence,
+            )
+        except DjangoValidationError as exc:
+            return _validation_response(exc)
+        return Response(_serialize_case(case, request), status=status.HTTP_201_CREATED)
+
+
+class ResolutionCaseDetailView(APIView):
+    """GET /api/banks/resolutions/<pk>/ — with facts refreshed for open cases."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        from .resolution_service import scoped_cases, build_facts
+        from .models import ReconciliationResolution as Case
+
+        case = get_object_or_404(scoped_cases(request.user), pk=pk)
+        if case.status in Case.OPEN_STATUSES:
+            # Show live facts on screen; the frozen copy stays on the case.
+            case.facts = build_facts(case)
+        return Response(_serialize_case(case, request))
+
+
+class ResolutionCaseActionView(APIView):
+    """
+    POST /api/banks/resolutions/<pk>/<action>/
+      review    {recommend: bool, notes}
+      approve   {notes}
+      reject    {reason}
+      dissolve  {reason}
+      respond   {response}
+      cancel    {}
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk, action):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from . import resolution_service as svc
+
+        case = get_object_or_404(svc.scoped_cases(request.user), pk=pk)
+        data = request.data
+        try:
+            if action == 'review':
+                recommend = str(data.get('recommend')).lower() in ('true', '1', 'yes')
+                case = svc.review(request.user, case, recommend=recommend, notes=data.get('notes') or '')
+            elif action == 'approve':
+                case = svc.approve(request.user, case, notes=data.get('notes') or '')
+            elif action == 'reject':
+                case = svc.reject(request.user, case, reason=data.get('reason') or '')
+            elif action == 'dissolve':
+                case = svc.dissolve(request.user, case, reason=data.get('reason') or '')
+            elif action == 'respond':
+                case = svc.respond(request.user, case, response=data.get('response') or '')
+            elif action == 'cancel':
+                case = svc.cancel(request.user, case)
+            else:
+                return Response({'detail': 'Unknown action.'}, status=status.HTTP_404_NOT_FOUND)
+        except DjangoValidationError as exc:
+            return _validation_response(exc)
+        case = svc.scoped_cases(request.user).get(pk=case.pk)
+        return Response(_serialize_case(case, request))
+
+
+class ResolutionCaseBulkApproveView(APIView):
+    """POST /api/banks/resolutions/bulk-approve/ {ids: [...], notes} — clean
+    link cases only; anything else is skipped with a reason."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from . import resolution_service as svc
+        from .models import ReconciliationResolution as Case
+
+        if not svc.is_recon_director(request.user):
+            return Response({'detail': 'Only a director can approve cases.'}, status=status.HTTP_403_FORBIDDEN)
+        ids = request.data.get('ids') or []
+        if not isinstance(ids, list) or not ids:
+            return Response({'detail': 'Pick at least one case.'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(ids) > 200:
+            return Response({'detail': 'At most 200 cases at a time.'}, status=status.HTTP_400_BAD_REQUEST)
+        cases = list(svc.scoped_cases(request.user).filter(pk__in=ids, status=Case.RECOMMENDED))
+        try:
+            result = svc.bulk_approve_clean(request.user, cases, notes=request.data.get('notes') or '')
+        except DjangoValidationError as exc:
+            return _validation_response(exc)
+        return Response(result)

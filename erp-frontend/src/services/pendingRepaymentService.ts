@@ -29,6 +29,8 @@ export interface PendingRepayment {
   claimed_at: string | null;
   claim_note: string;
   claimed_by_me: boolean;
+  /** Latest resolution case on this line (erp_only), if any */
+  case: { id: number; reference_number: string; kind: string; status: string } | null;
 }
 
 export interface PendingRepaymentKindTotals {
@@ -55,6 +57,8 @@ export interface PendingRepaymentTotals extends PendingRepaymentKindTotals {
   erp_only: PendingRepaymentKindTotals & { recorded_by_me_count: number };
   /** Every branch the user can see with open lines — one entry for branch staff, all for directors */
   by_branch: PendingRepaymentBranchRow[];
+  /** Summary endpoint only: resolution cases waiting on this user */
+  cases?: { to_review: number; to_approve: number; disputes_against_me: number };
 }
 
 /** 'all' or a branch id */
@@ -69,7 +73,11 @@ export const pendingRepaymentService = {
     kind: PendingRepaymentKind,
     status: PendingRepaymentStatus = 'all',
     branch: PendingRepaymentBranch = 'all',
-  ): Promise<{ totals: PendingRepaymentTotals; results: PendingRepayment[] }> {
+  ): Promise<{
+    totals: PendingRepaymentTotals;
+    results: PendingRepayment[];
+    viewer?: { is_manager: boolean; is_director: boolean };
+  }> {
     return api.get(`${BASE}/`, {
       params: {
         kind,

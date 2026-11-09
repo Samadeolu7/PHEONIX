@@ -2699,3 +2699,182 @@ class BankFeedTransaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             f"{self.transaction_date} {self.transaction_type} ₦{self.amount} "
             f"[{self.match_status}] ref={self.bank_reference}"
         )
+
+
+# ── Reconciliation resolution cases (maker → branch manager → director) ──────
+
+class ReconciliationResolution(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
+    """
+    A proposed fix for a "Recorded, not in bank" (erp_only CREDIT) gap, so
+    branches do the legwork while a director keeps the final say:
+
+        proposed  --(branch manager recommends)-->  recommended
+        recommended --(director approves)--> approved --(director dissolves)--> dissolved
+        proposed | recommended --(reject)--> rejected
+        proposed --(proposer withdraws)--> cancelled
+
+    Kinds:
+      link      erp_only exception + an UNMATCHED bank line (its bank_only exception)
+      dispute   erp_only exception + a bank line ALREADY MATCHED to another ERP
+                payment ("that money is actually mine"). Evidence is mandatory;
+                the officer of the displaced payment is told and gets 24h to answer.
+      reversal  no bank money at all - on approval the repayment is reversed
+                through LoanRepaymentReversal (requester = proposer, first
+                approver = reviewer, second approver = director).
+
+    Nothing touches reconciliation state until a director approves; every
+    rule is re-checked at that moment (banks/resolution_service.py).
+    Proposer, reviewer and approver must be three different people, and the
+    officer who posted the ERP payment can never review or approve it.
+    """
+    KIND_LINK = 'link'
+    KIND_DISPUTE = 'dispute'
+    KIND_REVERSAL = 'reversal'
+    KIND_CHOICES = [
+        (KIND_LINK, 'Link to bank line'),
+        (KIND_DISPUTE, 'Dispute a matched bank line'),
+        (KIND_REVERSAL, 'Reverse the payment'),
+    ]
+
+    PROPOSED = 'proposed'
+    RECOMMENDED = 'recommended'
+    APPROVED = 'approved'
+    REJECTED = 'rejected'
+    DISSOLVED = 'dissolved'
+    CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (PROPOSED, 'Proposed - waiting for branch manager'),
+        (RECOMMENDED, 'Recommended - waiting for director'),
+        (APPROVED, 'Approved'),
+        (REJECTED, 'Rejected'),
+        (DISSOLVED, 'Dissolved by director'),
+        (CANCELLED, 'Withdrawn by proposer'),
+    ]
+    OPEN_STATUSES = (PROPOSED, RECOMMENDED)
+
+    reference_number = models.CharField(max_length=30, unique=True, db_index=True)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, db_index=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PROPOSED, db_index=True)
+
+    erp_exception = models.ForeignKey(
+        ReconciliationException, on_delete=models.PROTECT, related_name='resolution_cases_as_erp',
+    )
+    bank_exception = models.ForeignKey(
+        ReconciliationException, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='resolution_cases_as_bank',
+        help_text='link: the bank_only exception of the bank line being linked',
+    )
+    bank_transaction = models.ForeignKey(
+        ReconciliationBankTransaction, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='resolution_cases',
+    )
+    displaced_erp_payment_id = models.IntegerField(
+        null=True, blank=True,
+        help_text='dispute: the ERP payment currently matched to the bank line',
+    )
+    loan_repayment_reversal = models.ForeignKey(
+        'loans.LoanRepaymentReversal', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='reconciliation_resolutions',
+    )
+
+    amount = models.DecimalField(max_digits=18, decimal_places=2)
+    reason = models.TextField()
+    evidence = models.FileField(upload_to='recon/evidence/%Y/%m/', null=True, blank=True)
+    facts = models.JSONField(default=dict, blank=True)
+    # What approval changed (exception ids closed, bank line matched) so a
+    # dissolve undoes exactly that and nothing else.
+    applied = models.JSONField(default=dict, blank=True)
+
+    proposed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='recon_resolutions_proposed',
+    )
+    proposed_at = models.DateTimeField(auto_now_add=True)
+
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='recon_resolutions_reviewed',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_notes = models.TextField(blank=True)
+
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='recon_resolutions_approved',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approval_notes = models.TextField(blank=True)
+
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='recon_resolutions_rejected',
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+
+    dissolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='recon_resolutions_dissolved',
+    )
+    dissolved_at = models.DateTimeField(null=True, blank=True)
+    dissolve_reason = models.TextField(blank=True)
+
+    # Dispute only - the officer whose payment currently holds the bank line
+    respondent = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='recon_resolutions_as_respondent',
+    )
+    respondent_response = models.TextField(blank=True)
+    respondent_responded_at = models.DateTimeField(null=True, blank=True)
+
+    objects = OwnerBranchManager()
+    all_objects = OwnerBranchManager(include_deleted=True)
+
+    DISPUTE_WAIT_HOURS = 24
+
+    class Meta:
+        ordering = ['-proposed_at']
+        indexes = [
+            models.Index(fields=['status', 'proposed_at']),
+            models.Index(fields=['kind', 'status']),
+        ]
+        constraints = [
+            # One open case per ERP gap and per bank line - stops two
+            # officers racing to claim the same money.
+            models.UniqueConstraint(
+                fields=['erp_exception'],
+                condition=models.Q(status__in=['proposed', 'recommended'], is_deleted=False),
+                name='uniq_open_resolution_per_erp_exception',
+            ),
+            models.UniqueConstraint(
+                fields=['bank_transaction'],
+                condition=models.Q(status__in=['proposed', 'recommended'], is_deleted=False),
+                name='uniq_open_resolution_per_bank_line',
+            ),
+        ]
+        verbose_name = 'Reconciliation Resolution'
+        verbose_name_plural = 'Reconciliation Resolutions'
+
+    def __str__(self):
+        return f'{self.reference_number} {self.kind} [{self.status}]'
+
+    def save(self, *args, **kwargs):
+        if not self.reference_number:
+            self.reference_number = f'RRES-{uuid.uuid4().hex[:8].upper()}'
+        super().save(*args, **kwargs)
+
+    @property
+    def dispute_wait_until(self):
+        if self.kind != self.KIND_DISPUTE or not self.proposed_at:
+            return None
+        from datetime import timedelta
+        return self.proposed_at + timedelta(hours=self.DISPUTE_WAIT_HOURS)
+
+    @property
+    def dispute_wait_over(self):
+        """A dispute may only be approved once the displaced officer has
+        answered, or 24h have passed since it was raised."""
+        if self.kind != self.KIND_DISPUTE:
+            return True
+        if self.respondent_responded_at or not self.respondent_id:
+            return True
+        return timezone.now() >= self.dispute_wait_until

@@ -40,6 +40,11 @@ from .views import (
     PendingRepaymentsView,
     PendingRepaymentsSummaryView,
     ClaimPendingRepaymentView,
+    PendingRepaymentCandidatesView,
+    ResolutionCaseListCreateView,
+    ResolutionCaseDetailView,
+    ResolutionCaseActionView,
+    ResolutionCaseBulkApproveView,
 )
 
 router = DefaultRouter()
@@ -208,4 +213,14 @@ urlpatterns = [
         ClaimPendingRepaymentView.as_view(),
         name='pending-repayment-claim',
     ),
+    path(
+        'pending-repayments/<int:pk>/candidates/',
+        PendingRepaymentCandidatesView.as_view(),
+        name='pending-repayment-candidates',
+    ),
+    # Resolution cases: maker -> branch manager -> director
+    path('resolutions/', ResolutionCaseListCreateView.as_view(), name='resolution-cases'),
+    path('resolutions/bulk-approve/', ResolutionCaseBulkApproveView.as_view(), name='resolution-cases-bulk-approve'),
+    path('resolutions/<int:pk>/', ResolutionCaseDetailView.as_view(), name='resolution-case-detail'),
+    path('resolutions/<int:pk>/<str:action>/', ResolutionCaseActionView.as_view(), name='resolution-case-action'),
 ]

@@ -207,3 +207,33 @@ class ReconciliationExceptionAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+from .models import ReconciliationResolution  # noqa: E402
+
+
+@admin.register(ReconciliationResolution)
+class ReconciliationResolutionAdmin(admin.ModelAdmin):
+    """Read-only audit view of resolution cases (maker -> branch manager ->
+    director). Actions happen in the app so the maker-checker rules apply."""
+    list_display = [
+        'reference_number', 'kind', 'status', 'amount', 'branch',
+        'proposed_by', 'reviewed_by', 'approved_by', 'respondent', 'proposed_at',
+    ]
+    list_filter = ['kind', 'status', 'branch']
+    search_fields = [
+        'reference_number', 'reason', 'review_notes', 'approval_notes',
+        'proposed_by__username', 'reviewed_by__username', 'approved_by__username',
+    ]
+    list_select_related = ['branch', 'proposed_by', 'reviewed_by', 'approved_by', 'respondent']
+    date_hierarchy = 'proposed_at'
+    ordering = ['-proposed_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

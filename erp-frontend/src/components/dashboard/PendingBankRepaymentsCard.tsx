@@ -32,7 +32,9 @@ export default function PendingBankRepaymentsCard() {
   useEffect(() => { load(); }, [load]);
   useAutoRefresh(load, AUTO_REFRESH_MS, true);
 
-  if (!data || data.count === 0) return null;
+  const hasWaitingCases = !!data?.cases &&
+    (data.cases.to_review + data.cases.to_approve + data.cases.disputes_against_me) > 0;
+  if (!data || (data.count === 0 && !hasWaitingCases)) return null;
 
   // Red while anything is unclaimed; amber once everything has an owner.
   const accent = data.unclaimed_count > 0 ? '#f87171' : '#fbbf24';
@@ -42,6 +44,12 @@ export default function PendingBankRepaymentsCard() {
   // More than one branch visible = director / global role: show where the gaps are.
   const branches = (data.by_branch ?? []).filter((b) => b.count > 0);
   const multiBranch = branches.length > 1;
+  const waiting = data.cases;
+  const waitingItems = [
+    waiting?.to_approve ? { n: waiting.to_approve, label: 'waiting for your approval', tab: 'approve' } : null,
+    waiting?.to_review ? { n: waiting.to_review, label: 'waiting for your review', tab: 'review' } : null,
+    waiting?.disputes_against_me ? { n: waiting.disputes_against_me, label: 'dispute(s) about your payments — respond', tab: 'mine' } : null,
+  ].filter(Boolean) as { n: number; label: string; tab: string }[];
 
   return (
     <div
@@ -53,6 +61,21 @@ export default function PendingBankRepaymentsCard() {
         Pending bank repayments · {multiBranch ? 'all branches' : 'branch'}
         {data.oldest_days !== null && <span className="ml-auto">Oldest: {data.oldest_days}d</span>}
       </p>
+      {waitingItems.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {waitingItems.map((w) => (
+            <button
+              key={w.tab}
+              type="button"
+              onClick={() => navigate(`/banks/reconciliations/resolutions?tab=${w.tab}`)}
+              className="rounded-full px-3 py-1 text-xs font-semibold"
+              style={{ background: 'rgba(251,191,36,0.18)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.4)' }}
+            >
+              {w.n} case(s) {w.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Side
           title="In bank, not recorded"

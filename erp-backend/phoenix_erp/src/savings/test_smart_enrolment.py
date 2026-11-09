@@ -150,3 +150,21 @@ class SmartEnrolmentTests(TestCase):
         self.assertIn('NO tenant', text)
         self.assertIn('DUPLICATED', text)
         self.assertIn('2 open request(s)', text)
+
+    def test_cancel_withdrawal_requests_command(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from savings.models import SavingsWithdrawalRequest
+        from savings.services import initiate_withdrawal
+        wr = initiate_withdrawal(self.source, D('120000'), self.user)
+        SavingsWithdrawalRequest.all_objects.filter(pk=wr.pk).update(tenant=None)
+        call_command('cancel_withdrawal_requests', '--id', str(wr.pk), '--reason', 'dup',
+                     '--user', self.user.username, stdout=StringIO())
+        wr.refresh_from_db()
+        self.assertEqual(wr.status, SavingsWithdrawalRequest.STATUS_PENDING)  # dry-run
+        call_command('cancel_withdrawal_requests', '--id', str(wr.pk), '--reason', 'dup', '--apply',
+                     '--user', self.user.username, stdout=StringIO())
+        wr = SavingsWithdrawalRequest.all_objects.get(pk=wr.pk)
+        self.assertEqual(wr.status, SavingsWithdrawalRequest.STATUS_CANCELLED)
+        self.assertEqual(wr.tenant_id, self.source.tenant_id)
+        self.assertIn('dup', wr.description)

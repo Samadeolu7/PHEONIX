@@ -14,7 +14,8 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Landmark, RefreshCw } from 'lucide-react';
+import { ClipboardCheck, Landmark, RefreshCw } from 'lucide-react';
+import { FindMatchDrawer } from '../../components/banks/FindMatchDrawer';
 import {
   pendingRepaymentService,
   PendingRepayment,
@@ -43,9 +44,10 @@ const KINDS: { key: PendingRepaymentKind; label: string; help: React.ReactNode }
     label: 'Recorded, not in bank',
     help: (
       <>
-        A repayment was recorded in the system but the money never showed up in the bank. The officer who
-        recorded it should deposit the cash or tell a manager the bank reference. Click{' '}
-        <strong>I&apos;ll handle this</strong> to show you&apos;re following it up.
+        A repayment was recorded in the system but the money never showed up in the bank. Click{' '}
+        <strong>Find match</strong> to pick the bank line it belongs to (or say the money never arrived). Your
+        branch manager reviews it and a director approves before anything changes. Officers only see payments
+        they posted.
       </>
     ),
   },
@@ -85,6 +87,8 @@ const PendingBankRepaymentsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [viewer, setViewer] = useState<{ is_manager: boolean; is_director: boolean } | null>(null);
+  const [findRow, setFindRow] = useState<PendingRepayment | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,6 +96,7 @@ const PendingBankRepaymentsPage: React.FC = () => {
       const data = await pendingRepaymentService.list(kind, tab, branch);
       setRows(data.results);
       setTotals(data.totals);
+      setViewer(data.viewer ?? null);
       setLoadError(null);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Failed to load pending repayments');
@@ -137,7 +142,14 @@ const PendingBankRepaymentsPage: React.FC = () => {
           <Landmark className="w-7 h-7 text-amber-600" />
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Pending Bank Repayments</h1>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => navigate('/banks/reconciliations/resolutions')}
+            className="flex items-center gap-1.5 text-sm text-amber-800 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-lg hover:bg-amber-100"
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            Resolution cases
+          </button>
           {showBranchPicker && (
             <select
               value={branch}
@@ -296,6 +308,15 @@ const PendingBankRepaymentsPage: React.FC = () => {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {row.kind === 'erp_only' ? (
+                      <ErpAction
+                        row={row}
+                        canAct={row.recorded_by_me || !!viewer?.is_manager}
+                        onFind={() => setFindRow(row)}
+                        onOpenCase={(id) => navigate(`/banks/reconciliations/resolutions?case=${id}`)}
+                      />
+                    ) : (
+                    <>
                     {!row.claimed_by && (
                       <button
                         disabled={busyId === row.id}
@@ -324,12 +345,60 @@ const PendingBankRepaymentsPage: React.FC = () => {
                         </button>
                       </div>
                     )}
+                    </>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {findRow && (
+        <FindMatchDrawer
+          row={findRow}
+          onClose={() => setFindRow(null)}
+          onSubmitted={() => { setFindRow(null); load(); }}
+        />
+      )}
+    </div>
+  );
+};
+
+const CASE_CHIP: Record<string, { label: string; cls: string }> = {
+  proposed: { label: 'With branch manager', cls: 'bg-blue-100 text-blue-800' },
+  recommended: { label: 'With director', cls: 'bg-amber-100 text-amber-800' },
+  approved: { label: 'Approved', cls: 'bg-green-100 text-green-800' },
+  rejected: { label: 'Rejected', cls: 'bg-red-100 text-red-700' },
+  dissolved: { label: 'Dissolved', cls: 'bg-red-100 text-red-700' },
+  cancelled: { label: 'Withdrawn', cls: 'bg-gray-100 text-gray-600' },
+};
+
+/** Action cell for a "Recorded, not in bank" row: open case chip, or Find match. */
+const ErpAction: React.FC<{
+  row: PendingRepayment;
+  canAct: boolean;
+  onFind: () => void;
+  onOpenCase: (id: number) => void;
+}> = ({ row, canAct, onFind, onOpenCase }) => {
+  const c = row.case;
+  const open = c && (c.status === 'proposed' || c.status === 'recommended');
+  const chip = c ? CASE_CHIP[c.status] : null;
+  return (
+    <div className="flex flex-col items-end gap-1">
+      {c && chip && (
+        <button onClick={() => onOpenCase(c.id)} className={`text-xs px-2 py-0.5 rounded-full ${chip.cls}`} title={c.reference_number}>
+          {chip.label} · {c.reference_number}
+        </button>
+      )}
+      {!open && canAct && (
+        <button
+          onClick={onFind}
+          className="text-sm text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-lg"
+        >
+          {c ? 'Try again' : 'Find match'}
+        </button>
       )}
     </div>
   );
