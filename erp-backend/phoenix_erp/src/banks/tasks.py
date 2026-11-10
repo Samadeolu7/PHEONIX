@@ -708,14 +708,20 @@ def _batch_resolve_officers(loan_payment_ids):
         return {}
     from transactions.models import Transaction
 
-    result = {}
-    for txn in (
+    from .officer_attribution import payment_officers
+
+    txns = list(
         Transaction.objects
         .filter(pk__in=loan_payment_ids)
         .select_related('created_by', 'created_by__branch')
-    ):
-        officer = txn.created_by if txn.created_by_id else None
-        branch = getattr(txn.created_by, 'branch', None) if officer else None
+    )
+    # Collection-sheet transfers belong to the sheet's credit officer, not
+    # the supervisor who confirmed/posted them.
+    officers = payment_officers(txns)
+    result = {}
+    for txn in txns:
+        officer = officers.get(txn.pk)
+        branch = getattr(officer, 'branch', None) if officer else None
         result[txn.pk] = (officer, branch)
     return result
 

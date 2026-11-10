@@ -48,6 +48,8 @@ export interface AssetCategory {
 export interface FixedAsset {
   id: number;
   asset_number: string;
+  /** Owning branch — disposal proceeds must go to one of this branch's accounts. */
+  branch_id?: number | null;
   category: number;
   category_name?: string;
   category_details?: AssetCategory;

@@ -3587,6 +3587,12 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 "Either pass one explicitly or set bank_account_credited on the item."
             )
 
+        # The money must have landed in this sheet's branch's bank account.
+        from cash_management.services.payment_routing import PaymentRoutingService
+        PaymentRoutingService.ensure_bank_gl_account_branch(
+            bank_gl_account, self.sheet.branch if self.sheet_id else self.branch,
+        )
+
         je = self._do_post(
             payment_gl_account=bank_gl_account,
             user=user,
@@ -3691,6 +3697,9 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 received_by=user,
                 spillover_savings_account=spillover_savings,
                 spillover_amount=excess if spillover_savings else Decimal('0.00'),
+                # Carry the client's transfer reference into the payment
+                # description ("| Ref: ...") so reconciliation can match it.
+                bank_reference=self._transfer_reference(),
             )
 
         elif self.collection_type == 'savings_deposit':
@@ -3721,6 +3730,7 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     f"Collection sheet deposit — "
                     f"{self.sheet.collection_date} — "
                     f"{self.client.full_name}"
+                    + (f" | Ref: {self._transfer_reference()}" if self._transfer_reference() else '')
                 ),
                 cashier_account=payment_gl_account,
                 transacted_by=user,
@@ -3735,6 +3745,12 @@ class CollectionSheetItem(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             raise ValidationError(
                 f"Unknown collection_type '{self.collection_type}'."
             )
+
+    def _transfer_reference(self):
+        """The client's bank / mobile-money reference, for transfer items only."""
+        if self.payment_mode in ('bank_transfer', 'mobile_money'):
+            return (self.bank_reference or '').strip() or None
+        return None
 
     def _post_processing_fee(self, payment_gl_account, user):
         """Post a processing fee collection directly to the fee income GL account."""

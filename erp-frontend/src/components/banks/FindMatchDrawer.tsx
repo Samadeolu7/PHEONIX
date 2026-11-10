@@ -4,8 +4,9 @@
  * For a "Recorded, not in bank" payment: shows bank lines it could be, and
  * raises a resolution case (branch manager reviews, director approves).
  *   - Unmatched line   → "Link" case
- *   - Already matched  → "Dispute" case (receipt/screenshot required; the
- *                         officer whose payment holds the line is told)
+ *   - Already matched  → "Dispute" case (reference from the client's receipt
+ *                         required and checked against the bank line; upload
+ *                         optional; the officer whose payment holds the line is told)
  *   - Nothing fits     → "Money never arrived" → reversal case
  */
 import React, { useEffect, useState } from 'react';
@@ -43,6 +44,7 @@ export const FindMatchDrawer: React.FC<{
   const [choice, setChoice] = useState<Choice | null>(null);
   const [reason, setReason] = useState('');
   const [evidence, setEvidence] = useState<File | null>(null);
+  const [payerRef, setPayerRef] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -54,8 +56,9 @@ export const FindMatchDrawer: React.FC<{
   }, [row.id, showError]);
 
   const kind: ResolutionKind | null = choice?.kind ?? null;
-  const needsEvidence = kind === 'dispute';
-  const canSubmit = !!choice && reason.trim().length >= 10 && (!needsEvidence || !!evidence) && !submitting;
+  const isDispute = kind === 'dispute';
+  const refOk = payerRef.replace(/[^a-z0-9]/gi, '').length >= 6;
+  const canSubmit = !!choice && reason.trim().length >= 10 && (!isDispute || refOk) && !submitting;
 
   const submit = async () => {
     if (!choice) return;
@@ -67,6 +70,7 @@ export const FindMatchDrawer: React.FC<{
         reason: reason.trim(),
         bank_exception_id: choice.kind === 'link' ? choice.candidate.bank_exception_id : undefined,
         bank_transaction_id: choice.kind !== 'reversal' ? choice.candidate.bank_transaction_id : undefined,
+        payer_reference: choice.kind === 'dispute' ? payerRef.trim() : undefined,
         evidence,
       });
       success(`${c.reference_number} sent to your branch manager for review.`);
@@ -136,8 +140,9 @@ export const FindMatchDrawer: React.FC<{
               <section>
                 <h3 className="text-sm font-semibold text-gray-900 mb-1">Already matched to another payment</h3>
                 <p className="text-xs text-gray-500 mb-2">
-                  Pick one only if you can prove it&apos;s your client&apos;s money. This raises a dispute: you must
-                  upload a receipt, and the other officer is told and can respond.
+                  Pick one only if it&apos;s your client&apos;s money. This raises a dispute: you&apos;ll need the
+                  reference / session ID from the client&apos;s transfer receipt, and the other officer is told and can
+                  respond.
                 </p>
                 {matched.length === 0 ? (
                   <p className="text-sm text-gray-400">None found.</p>
@@ -166,8 +171,8 @@ export const FindMatchDrawer: React.FC<{
                   {choice.kind === 'dispute' && (
                     <div className="flex gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
                       <AlertTriangle className="w-4 h-4 shrink-0" />
-                      Disputes are checked closely. The director sees who currently holds this line, your evidence,
-                      and your dispute history.
+                      Disputes are checked closely. The system checks your receipt reference against this bank line,
+                      and the director sees who currently holds it and your dispute history.
                     </div>
                   )}
                   <label className="block">
@@ -184,10 +189,22 @@ export const FindMatchDrawer: React.FC<{
                       }
                     />
                   </label>
+                  {isDispute && (
+                    <label className="block">
+                      <span className="text-sm font-medium text-gray-900">
+                        Reference / session ID on the client&apos;s receipt (required)
+                      </span>
+                      <input
+                        value={payerRef}
+                        onChange={(e) => setPayerRef(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                        placeholder="e.g. 000013251109153012345678901234"
+                        inputMode="text"
+                      />
+                    </label>
+                  )}
                   <label className="block">
-                    <span className="text-sm font-medium text-gray-900">
-                      Receipt or screenshot {needsEvidence ? '(required)' : '(optional)'}
-                    </span>
+                    <span className="text-sm font-medium text-gray-900">Receipt or screenshot (optional)</span>
                     <div className="mt-1 flex items-center gap-2">
                       <Upload className="w-4 h-4 text-gray-500" />
                       <input

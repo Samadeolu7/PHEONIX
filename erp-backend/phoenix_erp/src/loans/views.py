@@ -952,7 +952,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
-                payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id)
+                payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id, branch=loan.branch)
             except ValidationError as exc:
                 return Response(
                     {'detail': str(exc.message if hasattr(exc, 'message') else exc)},
@@ -1240,7 +1240,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
                     failed.append({'loan_account_id': loan_id, 'error': 'bank_account_id required.'})
                     continue
                 try:
-                    payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id)
+                    payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id, branch=loan.branch)
                 except ValidationError as exc:
                     failed.append({'loan_account_id': loan_id, 'error': str(exc.message if hasattr(exc, 'message') else exc)})
                     continue
@@ -3036,7 +3036,7 @@ class OfflinePaymentRecordViewSet(ScopedModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
-                payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id)
+                payment_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id, branch=loan.branch)
             except ValidationError as exc:
                 return Response(
                     {'detail': str(exc.message if hasattr(exc, 'message') else exc)},

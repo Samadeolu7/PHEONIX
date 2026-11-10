@@ -225,7 +225,13 @@ export const reconciliationService = {
    */
   async linkResolveExceptions(
     data: LinkResolveExceptionsRequest
-  ): Promise<{ exception_a: ReconciliationException; exception_b: ReconciliationException }> {
+  ): Promise<{
+    exception_a?: ReconciliationException;
+    exception_b?: ReconciliationException;
+    /** Recorded repayment + bank credit pairs now go to a second director (HTTP 202) */
+    detail?: string;
+    resolution_case?: { id: number; reference_number: string };
+  }> {
     return api.post(`${BASE_URL}/exceptions/link-resolve/`, data);
   },
 

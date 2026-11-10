@@ -265,27 +265,40 @@ class ResolutionWorkflowTests(TestCase):
     def _matched_line_held_by_officer2(self):
         tx = ReconciliationBankTransaction.objects.create(
             bank_account=self.account, bank_ref='REF-2', value_date='2026-11-02',
-            direction='CREDIT', amount=Decimal('5000.00'), narration='TRF FROM ADEBAYO JOHN',
+            direction='CREDIT', amount=Decimal('5000.00'), narration='TRF FROM ADEBAYO JOHN NIP 000123456789',
             matched=True, matched_erp_payment_id=888, matched_erp_officer=self.officer2,
             match_confidence='HIGH', matched_at=timezone.now(),
         )
         return tx
 
-    def _propose_dispute(self, tx, with_evidence=True):
+    def _propose_dispute(self, tx, payer_reference='0001-2345-6789', with_evidence=False):
         self.as_user(self.officer)
         data = {
             'erp_exception_id': self.erp_exc.pk, 'kind': 'dispute',
-            'bank_transaction_id': str(tx.pk), 'reason': 'My client sent this, receipt attached.',
+            'bank_transaction_id': str(tx.pk), 'reason': 'My client sent this, see the receipt reference.',
+            'payer_reference': payer_reference,
         }
         if with_evidence:
             data['evidence'] = SimpleUploadedFile('receipt.png', b'\x89PNG fake', content_type='image/png')
         return self.client.post(CASES, data, format='multipart')
 
-    def test_dispute_requires_evidence(self):
+    def test_dispute_requires_receipt_reference_not_upload(self):
         tx = self._matched_line_held_by_officer2()
-        resp = self._propose_dispute(tx, with_evidence=False)
+        resp = self._propose_dispute(tx, payer_reference='')
         self.assertEqual(resp.status_code, 400)
-        self.assertIn('evidence', resp.data['detail'].lower())
+        self.assertIn('reference', resp.data['detail'].lower())
+        # No upload needed once the reference is given; dashes/spaces on the
+        # receipt still match the bank line's formatting.
+        resp = self._propose_dispute(tx)
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertTrue(resp.data['facts']['checks']['payer_reference_in_bank_line'])
+
+    def test_dispute_reference_not_on_bank_line_is_flagged(self):
+        tx = self._matched_line_held_by_officer2()
+        resp = self._propose_dispute(tx, payer_reference='999999999')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertFalse(resp.data['facts']['checks']['payer_reference_in_bank_line'])
+        self.assertTrue(any('receipt' in f for f in resp.data['facts']['flags']))
 
     def test_dispute_waits_for_respondent_then_rematches(self):
         tx = self._matched_line_held_by_officer2()
@@ -335,7 +348,8 @@ class ResolutionWorkflowTests(TestCase):
         self.as_user(self.officer)
         dispute = self.client.post(CASES, {
             'erp_exception_id': other_erp.pk, 'kind': 'dispute', 'bank_transaction_id': str(tx.pk),
-            'reason': 'Receipt attached for this transfer.',
+            'reason': 'Receipt reference given for this transfer.',
+            'payer_reference': '000123456789',
             'evidence': SimpleUploadedFile('r.png', b'\x89PNG', content_type='image/png'),
         }, format='multipart')
         self.assertEqual(dispute.status_code, 201, dispute.data)
@@ -377,3 +391,43 @@ class ResolutionWorkflowTests(TestCase):
         self.assertEqual([r['bank_transaction_id'] for r in resp.data['matched']], [str(tx2.pk)])
         # who holds the matched line is not revealed
         self.assertNotIn('officer_name', resp.data['matched'][0])
+
+    # ── cross-branch: payment posted into another branch's bank account ─────
+
+    def test_branch_sees_its_payment_posted_into_another_branchs_account(self):
+        from transactions.models import Transaction, TransactionSeries
+
+        other_branch = Branch.objects.create(name='Branch Other', code='RSO', tenant=self.tenant)
+        other_bm = User.objects.create_user(username='bm_other', password='x', tenant=self.tenant, branch=other_branch)
+        series = TransactionSeries.objects.create(code='LNPMT', description='Loan payments')
+        # Repayment for an OTHER-branch loan, posted into Branch R's bank account
+        payment = Transaction.objects.create(
+            series=series, description='Loan repayment - LN-9 | Ref: X', owner=self.bm,
+            branch=other_branch, created_by=other_bm, approved=True,
+        )
+        exc = ReconciliationException.objects.create(
+            reconciliation=self.recon, exception_type='erp_only', direction='CREDIT',
+            loan_payment_id=payment.pk, erp_amount=Decimal('700.00'), erp_date='2026-11-02', officer=other_bm,
+        )
+        with patch('banks.resolution_service.is_recon_manager', return_value=True):
+            self.as_user(other_bm)
+            rows = self.client.get(PENDING, {'kind': 'erp_only'}).data['results']
+        row = next(r for r in rows if r['id'] == exc.pk)
+        self.assertEqual(row['branch_name'], 'Branch Other')
+        self.assertEqual(row['bank_account_branch_name'], 'Branch R')
+
+    def test_posting_into_another_branchs_bank_account_is_refused(self):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from cash_management.services.payment_routing import PaymentRoutingService
+
+        other_branch = Branch.objects.create(name='Branch Other', code='RSX', tenant=self.tenant)
+        self.account.branch = self.branch
+        self.account.save(update_fields=['branch'])
+        with self.assertRaises(DjangoValidationError) as ctx:
+            PaymentRoutingService.resolve_bank_gl_account(self.account.pk, branch=other_branch)
+        self.assertIn('belongs to Branch R', ' '.join(ctx.exception.messages))
+        # Own branch is fine
+        self.assertEqual(
+            PaymentRoutingService.resolve_bank_gl_account(self.account.pk, branch=self.branch),
+            self.account.gl_account,
+        )

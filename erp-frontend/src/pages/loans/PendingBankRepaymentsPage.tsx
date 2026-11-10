@@ -294,6 +294,9 @@ const PendingBankRepaymentsPage: React.FC = () => {
                   <td className="px-4 py-3 text-gray-600">
                     {row.bank_account_name}
                     {row.branch_name && <div className="text-xs text-gray-400">{row.branch_name}</div>}
+                    {row.bank_account_branch_name && (
+                      <div className="text-xs text-red-600">Posted into {row.bank_account_branch_name}&apos;s account</div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-600">
                     {row.claimed_by_name ? (

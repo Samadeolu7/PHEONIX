@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { DollarSign, X, AlertCircle, Calculator, ChevronDown, ChevronUp } from 'lucide-react';
 import { Invoice, InvoiceItem, LineItemAllocation } from '../../services/invoiceService';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
+import { useWorkingBranchId } from '../../hooks/useWorkingBranchId';
 import { apiClient } from '../../services/api/apiClient';
 
 export interface PaymentData {
@@ -29,6 +31,7 @@ interface BankAccount {
   current_balance: string;
   is_active: boolean;
   is_suspended: boolean;
+  owning_branch?: number | null;
 }
 
 export interface PaymentValidation {
@@ -53,6 +56,7 @@ const PaymentRecordingModal: React.FC<PaymentRecordingModalProps> = ({
   invoice,
   isLoading = false,
 }) => {
+  const workingBranchId = useWorkingBranchId();
   const [paymentData, setPaymentData] = useState<PaymentData>({
     amount: '',
     payment_date: new Date().toISOString().split('T')[0],
@@ -638,7 +642,7 @@ const PaymentRecordingModal: React.FC<PaymentRecordingModalProps> = ({
                 } ${isLoading || loadingAccounts ? 'bg-gray-50 cursor-not-allowed' : ''}`}
               >
                 <option value="">Select bank account...</option>
-                {bankAccounts.map(account => (
+                {bankAccountsForBranch(bankAccounts, invoice.branch_id ?? workingBranchId).map(account => (
                   <option key={account.id} value={account.id}>
                     {account.bank_display_name} – {account.account_number} ({account.account_name})
                     | Bal: ₦{account.current_balance}

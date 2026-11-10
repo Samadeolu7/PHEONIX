@@ -210,7 +210,7 @@ class PaymentRoutingService:
         )
 
     @staticmethod
-    def resolve_bank_gl_account(bank_account_id) -> Account:
+    def resolve_bank_gl_account(bank_account_id, branch=None) -> Account:
         """
         Resolve the GL ASSET account behind a bank_account_id for bank_transfer /
         mobile_money payments.
@@ -219,11 +219,15 @@ class PaymentRoutingService:
         accounts.Account pk. Looking up accounts.Account directly would accept
         any GL account (including parent/liability/income accounts), letting a
         payment post as if cash landed somewhere it never did.
+
+        `branch` is the branch the money belongs to (the loan's / savings
+        account's branch). When given, the bank account must belong to that
+        branch — see ensure_bank_account_branch.
         """
         from banks.models import BankAccount
 
         try:
-            bank_account = BankAccount.objects.get(
+            bank_account = BankAccount.objects.select_related('branch').get(
                 pk=bank_account_id, is_active=True, is_suspended=False,
             )
         except BankAccount.DoesNotExist as exc:
@@ -234,7 +238,41 @@ class PaymentRoutingService:
                 f'Bank account {bank_account.pk} has no linked GL account configured.'
             )
 
+        PaymentRoutingService.ensure_bank_account_branch(bank_account, branch)
         return bank_account.gl_account
+
+    @staticmethod
+    def ensure_bank_account_branch(bank_account, branch):
+        """
+        Refuse money posted into another branch's bank account. A repayment
+        or deposit for branch X recorded against branch Y's account lands on
+        Y's bank reconciliation, so X never sees its own gap — and the
+        business confirmed clients never genuinely pay one branch's loan
+        into another branch's account. Company-wide accounts (no branch) stay
+        allowed. No-op when `branch` or `bank_account` is None.
+        """
+        if bank_account is None or branch is None:
+            return
+        account_branch_id = getattr(bank_account, 'branch_id', None)
+        branch_id = getattr(branch, 'pk', branch)
+        if account_branch_id is None or account_branch_id == branch_id:
+            return
+        account_branch = getattr(bank_account, 'branch', None)
+        name = getattr(bank_account, 'account_name', None) or str(bank_account)
+        raise ValidationError(
+            f'{name} belongs to {getattr(account_branch, "name", "another branch")}, '
+            f'not {getattr(branch, "name", "this branch")}. Pick one of '
+            f'{getattr(branch, "name", "this branch")}\'s bank accounts.'
+        )
+
+    @staticmethod
+    def ensure_bank_gl_account_branch(gl_account, branch):
+        """Same rule when the caller only has the bank's GL account."""
+        if gl_account is None or branch is None:
+            return
+        from banks.models import BankAccount
+        bank_account = BankAccount.objects.select_related('branch').filter(gl_account=gl_account).first()
+        PaymentRoutingService.ensure_bank_account_branch(bank_account, branch)
 
     @staticmethod
     def determine_payment_route(payment_method: str) -> str:

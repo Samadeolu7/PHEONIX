@@ -10,9 +10,10 @@ See ReconciliationResolution (banks/models.py) for the lifecycle. Rules here:
     officer who posted the ERP payment can never review or approve it.
   * Officers below branch manager may only propose for ERP payments they
     posted themselves.
-  * Disputes need an evidence file, notify the officer whose payment
-    currently holds the bank line, and can't be approved until that officer
-    answers or 24h pass.
+  * Disputes need the reference / session ID from the client's transfer
+    receipt (checked automatically against the bank line; a receipt upload
+    is optional), notify the officer whose payment currently holds the bank
+    line, and can't be approved until that officer answers or 24h pass.
   * A director can reject at any open stage, and dissolve an approved
     link/dispute if it later looks dubious.
 """
@@ -35,6 +36,7 @@ from .models import (
     ReconciliationResolution as Case,
 )
 from .reconciliation_utils import MIN_REASON_LENGTH, reason_too_short
+from .officer_attribution import payment_officer
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +48,29 @@ CLEAN_MAX_DATE_GAP_DAYS = 2
 # ── Who is who ───────────────────────────────────────────────────────────────
 
 def is_recon_manager(user):
-    """Branch manager or above for reconciliation — the page grant that
-    set_bank_recon_resolve_policy gives branch managers (edit) and
-    directors/principals (approve). Configurable in Permission Setup."""
-    return bool(
-        can_user_edit(user, module=PERMISSION_MODULE, page=PERMISSION_PAGE)
-        or can_user_approve(user, module=PERMISSION_MODULE, page=PERMISSION_PAGE)
-    )
+    """
+    Branch manager or above for reconciliation.
+
+    Primarily the page grant that set_bank_recon_resolve_policy gives branch
+    managers (edit) and directors/principals (approve), configurable in
+    Permission Setup. That command is run by hand, so a tenant where it never
+    ran would otherwise treat real branch managers as officers — so also
+    accept the same role-name rule the command uses ("branch manager"), plus
+    owners and global-scope (director) roles.
+    """
+    if can_user_edit(user, module=PERMISSION_MODULE, page=PERMISSION_PAGE) or \
+            can_user_approve(user, module=PERMISSION_MODULE, page=PERMISSION_PAGE):
+        return True
+    if callable(getattr(user, 'is_owner', None)) and user.is_owner():
+        return True
+    try:
+        for name, scope in user.roles.filter(is_active=True).values_list('name', 'default_scope'):
+            lowered = (name or '').lower()
+            if scope == 'global' or 'branch manager' in lowered or 'branch_manager' in lowered:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def is_recon_director(user):
@@ -65,6 +83,12 @@ def _display(user):
     return user.get_full_name() or getattr(user, 'username', None) or getattr(user, 'email', '')
 
 
+def _normalize_ref(text):
+    """Letters/digits only, lower-case — receipts and statements format
+    references differently (spaces, dashes, slashes)."""
+    return ''.join(ch for ch in (text or '').lower() if ch.isalnum())
+
+
 def _require_reason(text, what):
     if reason_too_short(text):
         raise ValidationError(f'{what} is required (at least {MIN_REASON_LENGTH} characters).')
@@ -72,13 +96,52 @@ def _require_reason(text, what):
 
 # ── Scoping ──────────────────────────────────────────────────────────────────
 
-def scoped_exceptions(user, header_branch=None):
-    """Exceptions on reconciliations this user may see (for_user), optionally
-    narrowed by a director's topbar branch."""
+def visible_exception_filter(user, header_branch=None):
+    """
+    Which reconciliation exceptions belong to this user's branch(es).
+
+    A bank line belongs to the branch that owns the bank ACCOUNT (its
+    reconciliation's branch). A "Recorded, not in bank" payment belongs to
+    the branch of the LOAN it was posted for (the repayment Transaction's
+    branch) — and also to the bank account's branch, since that's whose
+    statement it is missing from. Without the loan-branch half, a branch
+    whose repayment was posted into another branch's bank account never
+    sees its own gap.
+
+    Branch scope itself comes from for_user (own branch + temporary grants;
+    directors/owners see every branch), optionally narrowed by a director's
+    topbar branch.
+    """
+    from transactions.models import Transaction
+
     recons = DailyReconciliation.objects.for_user(user)
+    # Branchless payments fall back to the bank account's branch only, so
+    # they don't leak to every branch's managers.
+    payments = Transaction.objects.for_user(user).exclude(branch__isnull=True)
     if header_branch is not None:
         recons = recons.filter(branch=header_branch)
-    return ReconciliationException.objects.filter(reconciliation__in=recons)
+        payments = payments.filter(branch=header_branch)
+    return Q(reconciliation__in=recons) | Q(
+        exception_type='erp_only', loan_payment_id__in=payments.values('id'),
+    )
+
+
+def scoped_exceptions(user, header_branch=None):
+    """Exceptions this user may see — see visible_exception_filter."""
+    return ReconciliationException.objects.filter(visible_exception_filter(user, header_branch))
+
+
+def payment_branch_map(payment_ids):
+    """{transaction id: (branch_id, branch_name)} for repayment transactions."""
+    from transactions.models import Transaction
+
+    ids = [i for i in set(payment_ids) if i]
+    if not ids:
+        return {}
+    return {
+        row['id']: (row['branch_id'], row['branch__name'])
+        for row in Transaction.all_objects.filter(pk__in=ids).values('id', 'branch_id', 'branch__name')
+    }
 
 
 def scoped_cases(user, header_branch=None):
@@ -190,7 +253,7 @@ def build_facts(case):
                 'payment_id': tx.matched_erp_payment_id,
                 'description': holder.description if holder else '',
                 'date': str(holder.date) if holder else None,
-                'officer_name': _display(holder.created_by) if holder else _display(tx.matched_erp_officer),
+                'officer_name': _display(payment_officer(holder)) if holder else _display(tx.matched_erp_officer),
             }
 
         relationship = narration_relationship(tx.narration or '', f'{client_name} {facts["erp"]["description"]}')
@@ -200,7 +263,15 @@ def build_facts(case):
         ref = facts['erp']['reference']
         bank_text = f'{tx.narration or ""} {tx.bank_ref or ""}'.lower()
         ref_in_bank = bool(ref and len(ref) >= 5 and ref.lower() in bank_text)
+        payer_ref = _normalize_ref(case.payer_reference)
+        payer_ref_found = None
+        if payer_ref:
+            payer_ref_found = payer_ref in _normalize_ref(f'{tx.narration or ""} {tx.bank_ref or ""}')
+            if not payer_ref_found:
+                facts['flags'].append("The reference from the client's receipt is NOT on this bank line.")
         facts['checks'] = {
+            'payer_reference': case.payer_reference or None,
+            'payer_reference_in_bank_line': payer_ref_found,
             'amount_equal': (exc.erp_amount or Decimal('0')) == tx.amount,
             'name_check': relationship,
             'date_gap_days': date_gap,
@@ -353,7 +424,7 @@ def _log(event, case, user, extra=None):
 
 @db_transaction.atomic
 def propose(user, *, erp_exception, kind, reason, bank_exception=None, bank_transaction=None,
-            evidence=None, header_branch=None, auto_recommend=False):
+            evidence=None, payer_reference='', header_branch=None, auto_recommend=False):
     """Raise a case. `auto_recommend` is used when a director links from the
     old reconciliation screens: they act as maker AND checker, so a second,
     different director must still approve."""
@@ -369,8 +440,11 @@ def propose(user, *, erp_exception, kind, reason, bank_exception=None, bank_tran
         bank_transaction = _bank_line_for(bank_exception)
     _check_pairing(kind, erp_exception, bank_exception, bank_transaction)
 
-    if kind == Case.KIND_DISPUTE and not evidence:
-        raise ValidationError('A dispute needs evidence — upload the receipt or transfer screenshot.')
+    payer_reference = (payer_reference or '').strip()
+    if kind == Case.KIND_DISPUTE and len(_normalize_ref(payer_reference)) < 6:
+        raise ValidationError(
+            "A dispute needs the reference / session ID from the client's transfer receipt (at least 6 letters or digits)."
+        )
     if kind == Case.KIND_REVERSAL:
         _check_reversal_possible(erp_exception, reason, user)
 
@@ -387,11 +461,15 @@ def propose(user, *, erp_exception, kind, reason, bank_exception=None, bank_tran
         displaced = bank_transaction.matched_erp_payment_id
         from transactions.models import Transaction
         holder = Transaction.objects.select_related('created_by').filter(pk=displaced).first()
-        respondent = (holder.created_by if holder else None) or bank_transaction.matched_erp_officer
+        respondent = payment_officer(holder) or bank_transaction.matched_erp_officer
         if respondent and respondent.pk == user.pk:
             respondent = None
 
     recon = erp_exception.reconciliation
+    # The case belongs to the loan's branch (its branch manager reviews it),
+    # even if the money was posted into another branch's bank account.
+    payment = _erp_transaction(erp_exception)
+    case_branch = getattr(payment, 'branch', None) or recon.branch
     case = Case(
         kind=kind,
         erp_exception=erp_exception,
@@ -400,9 +478,10 @@ def propose(user, *, erp_exception, kind, reason, bank_exception=None, bank_tran
         displaced_erp_payment_id=displaced,
         amount=erp_exception.erp_amount or Decimal('0'),
         reason=reason.strip(),
+        payer_reference=payer_reference[:100],
         proposed_by=user,
         respondent=respondent,
-        branch=recon.branch,
+        branch=case_branch,
         tenant=getattr(recon, 'tenant', None) or getattr(user, 'tenant', None),
         owner=user,
         created_by=user,

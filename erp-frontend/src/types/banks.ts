@@ -66,6 +66,8 @@ export interface CreateBankRequest {
 export interface BankAccount {
   id: number;
   bank: number;
+  /** ERP branch that owns the account (null = company-wide) */
+  owning_branch?: number | null;
   bank_name?: string;
   bank_details?: Bank;
   account_number: string;

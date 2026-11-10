@@ -1932,6 +1932,10 @@ def _as_repayment_pair(exc_a, exc_b):
         return None
     if exc_a.direction != 'CREDIT' or exc_b.direction != 'CREDIT':
         return None
+    # A case needs a real ERP payment and a real bank line; legacy rows
+    # missing either keep the old director-only path.
+    if not pair['erp_only'].loan_payment_id or not pair['bank_only'].bank_transaction_id:
+        return None
     return pair['erp_only'], pair['bank_only']
 
 
@@ -3919,17 +3923,16 @@ def _pending_header_branch(request):
 
 
 def _pending_repayments_qs(user, kind=None, request=None):
+    from .resolution_service import visible_exception_filter
+
     kinds = [kind] if kind in PENDING_KINDS else list(PENDING_KINDS)
-    recons = DailyReconciliation.objects.for_user(user)
     header_branch = _pending_header_branch(request) if request is not None else None
-    if header_branch is not None:
-        recons = recons.filter(branch=header_branch)
     # Either side may have been matched since the exception was raised,
     # leaving a stale row behind — never ask staff to act on those.
     matched = ReconciliationBankTransaction.objects.filter(matched=True)
     qs = (
         ReconciliationException.objects.filter(
-            reconciliation__in=recons,
+            visible_exception_filter(user, header_branch),
             exception_type__in=kinds,
             direction='CREDIT',
             resolved=False,
@@ -3976,7 +3979,33 @@ def _dedupe_pending(rows):
             continue
         seen.add(key)
         out.append(exc)
+    _attach_owning_branch(out)
     return out
+
+
+def _attach_owning_branch(rows):
+    """Set exc.owning_branch = (id, name): the loan's branch for "Recorded,
+    not in bank" lines, the bank account's branch for bank lines. Used for
+    the Branch column, the per-branch breakdown and the branch filter."""
+    from .resolution_service import payment_branch_map
+
+    pay_branch = payment_branch_map(
+        [exc.loan_payment_id for exc in rows if exc.exception_type == 'erp_only']
+    )
+    for exc in rows:
+        recon_branch = exc.reconciliation.branch
+        fallback = (exc.reconciliation.branch_id, recon_branch.name if recon_branch else None)
+        if exc.exception_type == 'erp_only' and exc.loan_payment_id in pay_branch \
+                and pay_branch[exc.loan_payment_id][0] is not None:
+            exc.owning_branch = pay_branch[exc.loan_payment_id]
+        else:
+            exc.owning_branch = fallback
+
+
+def _owning_branch(exc):
+    if getattr(exc, 'owning_branch', None) is None:
+        _attach_owning_branch([exc])
+    return exc.owning_branch
 
 
 def _user_display(user):
@@ -4012,7 +4041,13 @@ def _serialize_pending_repayment(exc, request_user, today):
         'recorded_by_me': bool(is_erp and exc.officer_id == request_user.pk),
         'bank_account_id': account.pk,
         'bank_account_name': getattr(account, 'account_name', None) or str(account),
-        'branch_name': exc.reconciliation.branch.name if exc.reconciliation.branch_id else None,
+        'branch_name': _owning_branch(exc)[1],
+        # Set when the money was posted into ANOTHER branch's bank account
+        'bank_account_branch_name': (
+            exc.reconciliation.branch.name
+            if exc.reconciliation.branch_id and exc.reconciliation.branch_id != _owning_branch(exc)[0]
+            else None
+        ),
         'claimed_by': exc.claimed_by_id,
         'claimed_by_name': _user_display(exc.claimed_by),
         'claimed_at': exc.claimed_at,
@@ -4051,17 +4086,16 @@ def _filter_pending_branch(rows, branch_id):
     narrow what the user may already see — never widen it."""
     if not branch_id or branch_id == 'all':
         return rows
-    return [exc for exc in rows if str(exc.reconciliation.branch_id) == str(branch_id)]
+    return [exc for exc in rows if str(_owning_branch(exc)[0]) == str(branch_id)]
 
 
 def _pending_by_branch(rows):
     groups = {}
     for exc in rows:
-        branch = exc.reconciliation.branch
-        key = exc.reconciliation.branch_id
+        key, name = _owning_branch(exc)
         g = groups.setdefault(key, {
             'branch_id': key,
-            'branch_name': branch.name if branch else 'No branch',
+            'branch_name': name or 'No branch',
             'count': 0, 'amount': Decimal('0'), 'unclaimed_count': 0,
             'bank_only_count': 0, 'erp_only_count': 0,
         })
@@ -4281,6 +4315,7 @@ def _serialize_case(case, request):
         'bank_account_name': getattr(case.erp_exception.reconciliation.bank_account, 'account_name', ''),
         'erp_exception_id': case.erp_exception_id,
         'evidence_url': evidence_url,
+        'payer_reference': case.payer_reference,
         'facts': case.facts,
         'applied': case.applied,
         'proposed_by_name': _user_display(case.proposed_by),
@@ -4350,7 +4385,8 @@ class ResolutionCaseListCreateView(APIView):
     """
     GET  /api/banks/resolutions/?status=&kind=&queue=review|approve|mine
     POST /api/banks/resolutions/   (multipart: erp_exception_id, kind, reason,
-                                    bank_exception_id?, bank_transaction_id?, evidence?)
+                                    bank_exception_id?, bank_transaction_id?,
+                                    payer_reference? (required for disputes), evidence?)
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -4419,6 +4455,7 @@ class ResolutionCaseListCreateView(APIView):
                 bank_exception=bank_exc,
                 bank_transaction=bank_tx,
                 evidence=evidence,
+                payer_reference=request.data.get('payer_reference') or '',
             )
         except DjangoValidationError as exc:
             return _validation_response(exc)

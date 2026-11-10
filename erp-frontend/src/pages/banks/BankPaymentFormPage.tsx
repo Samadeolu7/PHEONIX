@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useBankAccounts, useCreateBankPayment } from '../../hooks/useBanks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
+import { useWorkingBranchId } from '../../hooks/useWorkingBranchId';
 import { useExpenseCategories } from '../../hooks/useExpenseCategories';
 import { listAllPayables } from '../../services/liabilitiesService';
 import { expenseService } from '../../services/expenseService';
@@ -18,7 +20,9 @@ const fmtNGN = (value: string | number) =>
 
 const BankPaymentFormPage: React.FC = () => {
   const navigate = useNavigate();
-  const { data: bankAccounts = [] } = useBankAccounts({ is_active: true });
+  const { data: allBankAccounts = [] } = useBankAccounts({ is_active: true });
+  // Only the working branch's accounts (or company-wide ones).
+  const bankAccounts = bankAccountsForBranch(allBankAccounts, useWorkingBranchId());
   const createPayment = useCreateBankPayment();
 
   // Expense categories - loaded once, used for direct expense payments

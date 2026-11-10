@@ -467,7 +467,7 @@ class SavingsAccountViewSet(ScopedModelViewSet):
                         {'detail': 'bank_account_id is required for bank deposits.'},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                cashier_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id)
+                cashier_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id, branch=account.branch)
             else:
                 cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
                     request.user,

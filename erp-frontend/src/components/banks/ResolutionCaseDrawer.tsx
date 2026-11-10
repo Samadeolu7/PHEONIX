@@ -168,6 +168,13 @@ export const ResolutionCaseDrawer: React.FC<{
 
             {f.bank && (
               <ul className="space-y-1">
+                {checks.payer_reference && (
+                  <Check
+                    ok={!!checks.payer_reference_in_bank_line}
+                    label={`Receipt reference ${checks.payer_reference} is on the bank line`}
+                    bad={`Receipt reference ${checks.payer_reference} is NOT on the bank line`}
+                  />
+                )}
                 <Check ok={checks.amount_equal} label="Amounts are exactly equal" bad="Amounts differ" />
                 <Check
                   ok={checks.name_check === 'CONFIRMED'}

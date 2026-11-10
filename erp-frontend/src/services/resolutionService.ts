@@ -34,6 +34,8 @@ export interface ResolutionFacts {
     matched_to?: { payment_id: number; description: string; date: string | null; officer_name: string | null };
   } | null;
   checks?: {
+    payer_reference?: string | null;
+    payer_reference_in_bank_line?: boolean | null;
     amount_equal?: boolean;
     name_check?: NameCheck;
     date_gap_days?: number | null;
@@ -64,6 +66,7 @@ export interface ResolutionCase {
   bank_account_name: string;
   erp_exception_id: number;
   evidence_url: string | null;
+  payer_reference: string;
   facts: ResolutionFacts;
   proposed_by_name: string | null;
   proposed_at: string;
@@ -132,6 +135,7 @@ export const resolutionService = {
     reason: string;
     bank_exception_id?: number;
     bank_transaction_id?: string;
+    payer_reference?: string;
     evidence?: File | null;
   }): Promise<ResolutionCase> {
     const form = new FormData();
@@ -140,6 +144,7 @@ export const resolutionService = {
     form.append('reason', input.reason);
     if (input.bank_exception_id) form.append('bank_exception_id', String(input.bank_exception_id));
     if (input.bank_transaction_id) form.append('bank_transaction_id', input.bank_transaction_id);
+    if (input.payer_reference) form.append('payer_reference', input.payer_reference);
     if (input.evidence) form.append('evidence', input.evidence);
     return api.postFormData(`${BASE}/`, form);
   },

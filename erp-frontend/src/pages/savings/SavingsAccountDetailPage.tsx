@@ -29,6 +29,7 @@ import {
 import type { SavingsAccount } from '../../services/savingsService';
 import api from '../../services/api';
 import { BankAccount } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 import { bankService } from '../../services/bankService';
 import { useTreasurySettings } from '../../hooks/useBankBorrowings';
 import { SmartSavingsControl } from '../../components/savings/SmartSavingsControl';
@@ -209,7 +210,7 @@ function DepositModal({ account, onClose, onSuccess }: DepositModalProps) {
                 >
                   <option value="">Select bank account</option>
 
-                  {bankAccounts.map(account => (
+                  {bankAccountsForBranch(bankAccounts, account.branch).map(account => (
                     <option key={account.id} value={account.id}>
                       {account.bank_name}
                       {' — '}

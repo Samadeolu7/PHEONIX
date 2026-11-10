@@ -36,6 +36,8 @@ class AssetCategorySerializer(serializers.ModelSerializer):
 
 class FixedAssetSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
+    # Owning branch — the disposal proceeds account must be in this branch.
+    branch_id = serializers.IntegerField(read_only=True)
     book_value = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
     depreciable_amount = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
     current_meter_reading = serializers.SerializerMethodField()
@@ -67,7 +69,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
     class Meta:
         model = FixedAsset
         fields = [
-            'id', 'asset_number', 'category', 'category_name',
+            'id', 'asset_number', 'branch_id', 'category', 'category_name',
             'name', 'description',
             'registered_at',
             'serial_number', 'registration_number', 'make', 'model', 'year',

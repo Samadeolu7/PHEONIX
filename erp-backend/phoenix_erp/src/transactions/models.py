@@ -671,7 +671,28 @@ class TransactionEntry(models.Model):
                         f"Administration) and point it to an account that belongs to branch \"{txn_branch}\", "
                         f"or create one if none exists."
                     )
-        
+
+            # A bank account's statement is reconciled by the branch that owns
+            # the bank account. If that branch differs from this posting's
+            # branch (a bank account whose GL account sits in another branch),
+            # the money lands on the wrong branch's reconciliation and the
+            # posting branch never sees its gap. Company-wide bank accounts
+            # (no branch) are allowed.
+            if self.account and getattr(self.account, 'account_type', None) == 'ASSET':
+                BankAccount = apps.get_model('banks', 'BankAccount')
+                bank = (
+                    BankAccount.all_objects.filter(gl_account_id=self.account_id)
+                    .select_related('branch').first()
+                )
+                txn_branch_id = getattr(self.transaction, 'branch_id', None)
+                if bank is not None and bank.branch_id and txn_branch_id and bank.branch_id != txn_branch_id:
+                    txn_branch = getattr(self.transaction.branch, 'name', None) or 'this branch'
+                    raise ValidationError(
+                        f"Bank account \"{bank.account_name}\" belongs to {bank.branch.name}, "
+                        f"not {txn_branch}. Pick one of {txn_branch}'s bank accounts "
+                        f"(or ask an admin to correct which branch this bank account belongs to)."
+                    )
+
         # Parent accounts never receive direct entries — absolute, no
         # allow_manual_entries override. A parent's rollup balance already
         # reflects its children's postings via TransactionEntry.post(); a

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Upload, X } from 'lucide-react';
@@ -7,6 +7,7 @@ import { useBankAccounts, bankKeys } from '../../hooks/useBanks';
 import { useActiveCashierAccounts, useEnsureMyCashierAccount } from '../../hooks/useTreasury';
 import { useAuth } from '../../contexts/AuthContext';
 import type { CreateBankTransferRequest } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 
 const DECIMAL_INPUT_REGEX = /^\d{0,16}(?:\.\d{0,2})?$/;
 
@@ -35,11 +36,14 @@ const BankTransferFormPage: React.FC = () => {
   const { data: cashierAccounts = [] } = useActiveCashierAccounts();
   const ensureMyCashierAccount = useEnsureMyCashierAccount();
 
-  const [destinationAccounts, setDestinationAccounts] = useState<typeof bankAccounts>([]);
-
-  useEffect(() => {
-    setDestinationAccounts(bankAccounts.filter(acc => acc.id !== formData.source_bank_account));
-  }, [formData.source_bank_account, bankAccounts]);
+  // Bank destinations: the source's own branch's accounts (or company-wide
+  // ones). Moving money to another branch is an inter-branch transfer; the
+  // backend refuses a plain transfer into another branch's bank account.
+  const transferSourceBranch = sourceType === 'bank'
+    ? bankAccounts.find(acc => acc.id === formData.source_bank_account)?.owning_branch
+    : cashierAccounts.find(acc => acc.id === formData.source_cashier_account)?.branch;
+  const destinationAccounts = bankAccountsForBranch(bankAccounts, transferSourceBranch)
+    .filter(acc => acc.id !== formData.source_bank_account);
 
   // Only your own cashier float can be the source of a transfer — the backend
   // rejects any other cashier_account_id (by design: nobody, not even a
@@ -60,14 +64,14 @@ const BankTransferFormPage: React.FC = () => {
   )?.branch;
   const sourceBankBranch = bankAccounts.find(
     acc => acc.id === formData.source_bank_account
-  )?.branch;
+  )?.owning_branch;
   const destinationCashierAccounts = cashierAccounts.filter(acc => {
     if (sourceType === 'cashier') {
       if (acc.cashier === user?.id) return false;
       if (acc.id === formData.source_cashier_account) return false;
       return sourceCashierBranch === undefined || acc.branch === sourceCashierBranch;
     }
-    return sourceBankBranch === undefined || acc.branch === sourceBankBranch;
+    return sourceBankBranch == null || acc.branch === sourceBankBranch;
   });
 
   const handleSourceTypeChange = (st: 'bank' | 'cashier') => {

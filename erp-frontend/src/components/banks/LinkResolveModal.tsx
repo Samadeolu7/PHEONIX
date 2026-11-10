@@ -7,7 +7,12 @@ import { FEE_LINK_MAX_AMOUNT, MIN_REASON_LENGTH, type ReconciliationException } 
 interface LinkResolveModalProps {
   exception: ReconciliationException;
   onClose: () => void;
-  onSuccess: (result: { exception_a: ReconciliationException; exception_b: ReconciliationException }) => void;
+  onSuccess: (result: {
+    exception_a?: ReconciliationException;
+    exception_b?: ReconciliationException;
+    detail?: string;
+    resolution_case?: { id: number; reference_number: string };
+  }) => void;
   onError: (message: string) => void;
 }
 

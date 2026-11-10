@@ -6,6 +6,8 @@ import { useExpenseCategories } from '../../hooks/useExpenseCategories';
 import { useToast } from '../../contexts/ToastContext';
 import { CreateExpense, ExpenseType, PaymentMethod, PayeeType } from '../../types/expense';
 import { useBankAccounts } from '../../hooks/useBanks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
+import { useWorkingBranchId } from '../../hooks/useWorkingBranchId';
 
 const DECIMAL_INPUT_REGEX = /^\d{0,16}(?:\.\d{0,2})?$/;
 
@@ -38,9 +40,12 @@ const ExpenseFormPage: React.FC = () => {
   const updateMutation = useUpdateExpense();
 
   const categories = categoriesData?.results || [];
-  const bankAccounts = Array.isArray(bankAccountsData)
-    ? bankAccountsData
-    : (bankAccountsData as any)?.results || [];
+  const workingBranchId = useWorkingBranchId();
+  // Only the expense's branch's accounts (or company-wide ones).
+  const bankAccounts = bankAccountsForBranch(
+    Array.isArray(bankAccountsData) ? bankAccountsData : (bankAccountsData as any)?.results || [],
+    existingExpense?.branch ?? workingBranchId,
+  );
   const needsBankAccount = ['bank_transfer', 'cheque', 'card'].includes(
     formData.payment_method || ''
   );

@@ -55,11 +55,13 @@ class SavingsAccountSerializer(serializers.ModelSerializer):
             'opened_on', 'closed_on', 'last_transaction_date',
             'current_balance', 'available_balance',
             'smart_savings_active',
+            # Owning branch — bank pickers only offer this branch's accounts.
+            'branch',
         ]
         read_only_fields = [
             'account_number', 'current_balance', 'available_balance',
             'smart_savings_active', 'product_contribution_amount',
-            'effective_contribution_amount',
+            'effective_contribution_amount', 'branch',
         ]
 
     def get_smart_savings_active(self, obj):

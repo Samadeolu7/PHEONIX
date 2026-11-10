@@ -77,6 +77,8 @@ export interface LoanAccountList {
   client_image: string | null;
   client_phone: string;
   group_name: string;
+  /** Branch that owns the loan — bank-transfer repayments must go to this branch's account */
+  branch?: number | null;
   product: number;
   product_name: string;
   requested_amount: string;
@@ -251,6 +253,8 @@ export type DisbursementStatus = 'pending_approval' | 'approved' | 'rejected' | 
 export interface LoanDisbursement {
   id: number;
   loan: number;
+  /** Loan's branch — the disbursement account must belong to it. */
+  branch?: number | null;
   loan_number: string;
   client_name: string;
   client_image: string | null;

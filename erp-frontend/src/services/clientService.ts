@@ -210,6 +210,8 @@ export interface ClassificationOption {
 export interface ClientGroup {
   id: number;
   name: string;
+  /** Owning branch id (bank pickers only offer this branch's accounts). */
+  branch?: number | null;
   code: string;
   meeting_day: string | null;
   leader: number | null;

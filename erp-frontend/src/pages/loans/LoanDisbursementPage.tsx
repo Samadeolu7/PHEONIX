@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 
 import type { BankAccount } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 
 const STATUS_LABELS: Record<DisbursementStatus, string> = {
   pending_approval: 'Pending Approval',
@@ -482,7 +483,7 @@ const LoanDisbursementPage: React.FC = () => {
                 className="w-full border border-gray-200 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">— Select bank account —</option>
-                {bankAccounts.map((ba) => (
+                {bankAccountsForBranch(bankAccounts, disbursement?.branch).map((ba) => (
                   <option key={ba.id} value={ba.id}>
                     {ba.bank_display_name || ba.bank_name} — {ba.account_number} ({ba.account_name})
                   </option>

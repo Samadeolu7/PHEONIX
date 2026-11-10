@@ -15,6 +15,8 @@ export type SavingsAccountStatus = 'active' | 'dormant' | 'frozen' | 'closed';
 export interface SavingsAccount {
   id: number;
   account_number: string;
+  /** Owning branch id (bank pickers only offer this branch's accounts). */
+  branch?: number | null;
   nickname: string;
   status: SavingsAccountStatus;
   client: number;
@@ -344,6 +346,8 @@ export interface WithdrawalApprovalStep {
 export interface SavingsWithdrawalRequest {
   id: number;
   savings_account: number;
+  /** Branch the withdrawal belongs to — the paying bank account must be this branch's. */
+  branch?: number | null;
   account_number?: string;
   client_name?: string;
   client_phone?: string | null;

@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { glAccountsForBranch } from '../../utils/bankAccounts';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -987,7 +988,7 @@ const AssetDetailPage: React.FC = () => {
                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">— Select account —</option>
-                    {allAccounts.map(acc => (
+                    {glAccountsForBranch(allAccounts, asset?.branch_id).map(acc => (
                       <option key={acc.id} value={acc.id}>
                         {acc.code ? `${acc.code} — ` : ''}
                         {acc.name}

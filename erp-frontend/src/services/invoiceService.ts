@@ -71,6 +71,8 @@ export interface LineItemAllocation {
 export interface Invoice {
   id: number;
   client: number;
+  /** Owning branch id (payment bank picker only offers this branch's accounts). */
+  branch_id?: number | null;
   client_name: string;
   invoice_number: string;
   invoice_date: string;

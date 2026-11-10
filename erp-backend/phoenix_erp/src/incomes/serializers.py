@@ -256,6 +256,7 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
 
 class InvoiceSerializer(serializers.ModelSerializer):
     """Unified serializer for invoices with line items"""
+    branch_id = serializers.IntegerField(read_only=True)
     client_name = serializers.CharField(source='client.full_name', read_only=True)
     fee_structure_name = serializers.CharField(source='fee_structure.name', read_only=True)
     balance = serializers.DecimalField(max_digits=18, decimal_places=2, read_only=True)
@@ -281,9 +282,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'journal_entry', 'journal_entry_reference',
             # Line items
             'items', 'items_count',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at',
+            # Owning branch — the payment's bank picker only offers this branch's accounts.
+            'branch_id',
         ]
         read_only_fields = [
+            'branch_id',
             'created_at', 'updated_at', 'balance', 'is_overdue', 'invoice_number',
             'subtotal', 'tax_amount', 'total_amount', 'items_count',
             'is_posted', 'posted_at', 'posted_by', 'posted_by_name',

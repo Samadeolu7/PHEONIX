@@ -28,6 +28,7 @@
  */
 
 import React, { useMemo, useRef, useState } from 'react';
+import { glAccountsForBranch } from '../../utils/bankAccounts';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -336,14 +337,15 @@ const AssetDisposalPage: React.FC = () => {
   // Filter to bank & cash accounts
   const bankAccounts = useMemo(
     () =>
-      accounts.filter(
+      // Only the asset's own branch's accounts — the server refuses others.
+      glAccountsForBranch(accounts, asset?.branch_id).filter(
         a =>
           a.account_type === 'asset' &&
           (a.name.toLowerCase().includes('bank') ||
             a.name.toLowerCase().includes('cash') ||
             a.code?.toLowerCase().startsWith('1'))
       ),
-    [accounts]
+    [accounts, asset?.branch_id]
   );
 
   const proceeds = parseFloat(form.disposal_amount) || 0;

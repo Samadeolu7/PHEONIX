@@ -58,6 +58,7 @@ import { clientService, ClientOption, Client } from '../../services/clientServic
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import { guarantorService, GuarantorProfile } from '../../services/guarantorService';
 import { BankAccount } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 import { bankService } from '../../services/bankService';
 import {
   useLoanAccount,
@@ -353,7 +354,7 @@ function RepayModal({ loan, nextInstallment, onClose, onSuccess }: RepayModalPro
                     required
                   >
                     <option value="">Select bank account</option>
-                    {bankAccounts.map(b => (
+                    {bankAccountsForBranch(bankAccounts, loan.branch).map(b => (
                       <option key={b.id} value={b.id}>
                         {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
                       </option>

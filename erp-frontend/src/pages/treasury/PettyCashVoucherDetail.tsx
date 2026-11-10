@@ -39,6 +39,7 @@ import { useApprovalGuard } from '../../hooks/useApprovalGuard';
 import { useAuth } from '../../hooks/useAuth';
 import { bankService } from '../../services/bankService';
 import type { BankAccount } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 
 const STATUS_INFO = {
   draft: { color: 'bg-gray-100 text-gray-800', icon: ClockIcon, label: 'Draft' },
@@ -917,7 +918,7 @@ export const PettyCashVoucherDetail: React.FC = () => {
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">— Select bank account —</option>
-                    {bankAccounts.map(ba => (
+                    {bankAccountsForBranch(bankAccounts, voucher?.branch).map(ba => (
                       <option key={ba.id} value={ba.id}>
                         {ba.bank_display_name || ba.bank_name} — {ba.account_number} (
                         {ba.account_name})

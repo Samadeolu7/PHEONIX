@@ -36,6 +36,7 @@ import { clientService, ClientGroup } from '../../services/clientService';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import { getSavingsAccounts, SavingsAccount } from '../../services/savingsService';
 import { BankAccount } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 import { bankService } from '../../services/bankService';
 import {
   useLoanSchedule,
@@ -432,7 +433,9 @@ function NormalCollectionPanel() {
                       required
                     >
                       <option value="">Select bank account</option>
-                      {bankAccounts.map(b => (
+                      {/* Only the loan's own branch's accounts (or company-wide ones) —
+                          the server refuses another branch's account. */}
+                      {bankAccountsForBranch(bankAccounts, selectedLoan?.branch).map(b => (
                         <option key={b.id} value={b.id}>
                           {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
                         </option>
@@ -515,6 +518,8 @@ function GroupCollectionPanel() {
     { enabled: false }
   );
   const bulkRepayMutation = useBulkRepay();
+  // Bank picker only offers the group's own branch's accounts.
+  const groupBranchId = groups.find(g => g.id === selectedGroup)?.branch ?? null;
 
   useEffect(() => {
     setGroupsLoading(true);
@@ -740,7 +745,7 @@ function GroupCollectionPanel() {
                       required
                     >
                       <option value="">Select bank account</option>
-                      {bankAccounts.map(b => (
+                      {bankAccountsForBranch(bankAccounts, groupBranchId).map(b => (
                         <option key={b.id} value={b.id}>
                           {b.bank_display_name || b.bank_name} — {b.account_number} ({b.account_name})
                         </option>

@@ -31,6 +31,7 @@ import { getSavingsAccounts, depositToSavings } from '../../services/savingsServ
 import { useDepositToSavings } from '../../hooks/useSavings';
 import { BRAND } from '../../constants/brand';
 import { BankAccount } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 import { bankService } from '../../services/bankService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -727,7 +728,7 @@ export default function CombinedReceiptPage() {
                       required
                     >
                       <option value="">Select bank account</option>
-                      {bankAccounts.map(acc => (
+                      {bankAccountsForBranch(bankAccounts, selectedLoan?.branch ?? savingsAccount?.branch).map(acc => (
                         <option key={acc.id} value={acc.id}>
                           {acc.bank_name} — {acc.account_number} ({acc.account_name})
                         </option>

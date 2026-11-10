@@ -30,6 +30,7 @@ import type { SavingsAccount } from '../../services/savingsService';
 import { getSavingsAccounts, depositToSavings } from '../../services/savingsService';
 import api from '../../services/api';
 import { BankAccount } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 import { bankService } from '../../services/bankService';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -705,7 +706,7 @@ export default function GroupCombinedReceiptPage() {
                         disabled={postingStatus === 'posting'}
                       >
                         <option value="">Select bank account</option>
-                        {bankAccounts.map(acc => (
+                        {bankAccountsForBranch(bankAccounts, groups.find(g => g.id === selectedGroup)?.branch).map(acc => (
                           <option key={acc.id} value={acc.id}>
                             {acc.bank_name} — {acc.account_number} ({acc.account_name})
                           </option>

@@ -1091,6 +1091,12 @@ def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exc
         .select_related('transaction', 'transaction__created_by', 'transaction__created_by__branch')
     )
 
+    from .officer_attribution import collecting_officers
+    entries = list(entries)
+    # Collection-sheet transfers are posted by the confirming supervisor but
+    # belong to the sheet's credit officer.
+    collected_by = collecting_officers([e.transaction_id for e in entries])
+
     payments = []
     for entry in entries:
         txn = entry.transaction
@@ -1099,7 +1105,7 @@ def fetch_erp_payments(bank_account, date_from, date_to, direction='CREDIT', exc
         loan_match = _LOAN_NUMBER_RE.search(description)
         ref_match = _BANK_REFERENCE_RE.search(description)
 
-        officer = txn.created_by
+        officer = collected_by.get(txn.pk) or txn.created_by
         officer_name = f"{officer.first_name} {officer.last_name}".strip() if officer else ''
 
         payments.append({
@@ -1504,8 +1510,10 @@ def get_or_create_erp_only_exception(recon, tx):
             exc_obj.erp_amount = entry.amount if entry else None
             exc_obj.erp_narration = (txn.description or '')[:500]
             exc_obj.erp_date = txn.date
-            exc_obj.officer = txn.created_by
-            exc_obj.erp_branch = getattr(txn.created_by, 'branch', None)
+            from .officer_attribution import payment_officer
+            officer = payment_officer(txn)
+            exc_obj.officer = officer
+            exc_obj.erp_branch = getattr(officer, 'branch', None)
             save_fields.extend([
                 'erp_amount', 'erp_narration', 'erp_date', 'officer', 'erp_branch',
             ])

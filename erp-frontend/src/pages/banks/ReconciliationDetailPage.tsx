@@ -155,9 +155,11 @@ const ReconciliationDetailPage: React.FC = () => {
     success('Draft payment created — awaiting approval');
   };
 
-  const handleLinkResolveSuccess = () => {
+  const handleLinkResolveSuccess = (result?: { detail?: string; resolution_case?: { reference_number: string } }) => {
     refetch();
-    success('Exceptions netted and resolved');
+    // A recorded repayment + bank credit pair isn't resolved yet — it waits
+    // for a second director as a resolution case.
+    success(result?.resolution_case ? (result.detail ?? `Sent for a second director's approval as ${result.resolution_case.reference_number}`) : 'Exceptions netted and resolved');
   };
 
   const handleUnmatch = async (tx: ReconciliationBankTransaction) => {

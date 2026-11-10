@@ -691,6 +691,24 @@ class BankTransfer(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 raise ValidationError({
                     'destination_cashier_account': 'Cashier account should be empty when destination type is bank.'
                 })
+            # Money moving between branches goes through Inter-branch
+            # Transfers (each branch's books stay separate). A plain transfer
+            # into another branch's bank account would land on that branch's
+            # reconciliation. Company-wide (no-branch) accounts are allowed.
+            dest_branch_id = self.destination_bank_account.branch_id
+            if self.source_type == 'bank' and self.source_bank_account_id:
+                source_branch_id = self.source_bank_account.branch_id
+            elif self.source_type == 'cashier' and self.source_cashier_account_id:
+                source_branch_id = self.source_cashier_account.branch_id
+            else:
+                source_branch_id = None
+            if dest_branch_id and source_branch_id and dest_branch_id != source_branch_id:
+                raise ValidationError({
+                    'destination_bank_account': (
+                        'This bank account belongs to another branch. Use an inter-branch '
+                        'transfer to move money between branches.'
+                    )
+                })
 
         # Validate amount
         if self.amount <= 0:
@@ -2716,8 +2734,10 @@ class ReconciliationResolution(TimeStampedModel, BranchScopedModel, SoftDeleteMo
     Kinds:
       link      erp_only exception + an UNMATCHED bank line (its bank_only exception)
       dispute   erp_only exception + a bank line ALREADY MATCHED to another ERP
-                payment ("that money is actually mine"). Evidence is mandatory;
-                the officer of the displaced payment is told and gets 24h to answer.
+                payment ("that money is actually mine"). The reference from the
+                client's receipt is required and checked against the bank line
+                (upload optional); the officer of the displaced payment is told
+                and gets 24h to answer.
       reversal  no bank money at all - on approval the repayment is reversed
                 through LoanRepaymentReversal (requester = proposer, first
                 approver = reviewer, second approver = director).
@@ -2780,6 +2800,9 @@ class ReconciliationResolution(TimeStampedModel, BranchScopedModel, SoftDeleteMo
     amount = models.DecimalField(max_digits=18, decimal_places=2)
     reason = models.TextField()
     evidence = models.FileField(upload_to='recon/evidence/%Y/%m/', null=True, blank=True)
+    # Dispute: the reference / session ID on the client's transfer receipt.
+    # Checked automatically against the disputed bank line (facts.checks).
+    payer_reference = models.CharField(max_length=100, blank=True)
     facts = models.JSONField(default=dict, blank=True)
     # What approval changed (exception ids closed, bank line matched) so a
     # dissolve undoes exactly that and nothing else.

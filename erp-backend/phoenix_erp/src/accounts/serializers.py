@@ -36,6 +36,8 @@ class AccountSerializer(TenantModelSerializer):
     generated_page = serializers.SerializerMethodField()
     can_post_transactions = serializers.ReadOnlyField()
     is_category_account = serializers.ReadOnlyField()
+    # Owning branch (read-only) — lets pickers hide other branches' accounts.
+    branch_id = serializers.IntegerField(read_only=True)
     # Temporarily disabled to diagnose transaction errors
     # children_count = serializers.SerializerMethodField()
     # total_children_balance = serializers.SerializerMethodField()
@@ -50,7 +52,8 @@ class AccountSerializer(TenantModelSerializer):
             'enable_smart_forms', 'generated_form_schema',
             'generated_workflow', 'generated_page',
             'allow_manual_entries', 'is_system_account',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at',
+            'branch_id',
         ]
         extra_kwargs = {
             # Omit `code` to have one auto-generated (see create()/_allocate_code below).

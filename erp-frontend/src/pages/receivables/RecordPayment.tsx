@@ -5,6 +5,9 @@ import { useToast } from '../../hooks/useToast';
 import { apiClient } from '../../services/api/apiClient';
 import { clientService, ClientOption } from '../../services/clientService';
 
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
+import { useWorkingBranchId } from '../../hooks/useWorkingBranchId';
+
 interface Receivable {
   id: number;
   client: number;
@@ -17,6 +20,7 @@ interface Receivable {
   amount_paid: string;
   balance: string;
   due_date: string;
+  branch?: number | null;
   status: 'pending' | 'partial' | 'paid' | 'overdue' | 'cancelled';
   aging_bucket: string;
   days_overdue: number;
@@ -40,10 +44,12 @@ interface BankAccount {
   bank_display_name: string;
   current_balance: string;
   is_active: boolean;
+  owning_branch?: number | null;
 }
 
 const RecordPayment: React.FC = () => {
   const navigate = useNavigate();
+  const workingBranchId = useWorkingBranchId();
   const { success, error: showError } = useToast();
 
   const [clients, setClients] = useState<ClientOption[]>([]);
@@ -663,7 +669,7 @@ const RecordPayment: React.FC = () => {
                     <option value="">
                       {paymentMethod === 'cash' ? 'None (cash)' : 'Select bank account...'}
                     </option>
-                    {bankAccounts.map(account => (
+                    {bankAccountsForBranch(bankAccounts, selectedReceivable?.branch ?? workingBranchId).map(account => (
                       <option key={account.id} value={account.id}>
                         {account.bank_display_name} – {account.account_number} (
                         {account.account_name})

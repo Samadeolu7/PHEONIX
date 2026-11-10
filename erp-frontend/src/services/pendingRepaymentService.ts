@@ -24,6 +24,8 @@ export interface PendingRepayment {
   bank_account_id: number;
   bank_account_name: string;
   branch_name: string | null;
+  /** Set when the money was posted into ANOTHER branch's bank account */
+  bank_account_branch_name: string | null;
   claimed_by: number | null;
   claimed_by_name: string | null;
   claimed_at: string | null;

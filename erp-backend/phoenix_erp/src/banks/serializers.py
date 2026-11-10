@@ -70,6 +70,9 @@ class BankAccountSerializer(TenantModelSerializer):
     new_bank_branch = serializers.CharField(write_only=True, required=False, allow_blank=True, help_text="Branch name for newly created bank")
     bank_display_name = serializers.CharField(source='bank.bank_name', read_only=True)
     bank_branch = serializers.CharField(source='bank.branch_name', read_only=True)
+    # Which ERP branch owns this account — repayments for another branch's
+    # loans are refused (PaymentRoutingService.ensure_bank_account_branch).
+    owning_branch = serializers.IntegerField(source='branch_id', read_only=True)
     bank_code_display = serializers.CharField(source='bank.bank_code', read_only=True)
     account_manager_name = serializers.SerializerMethodField()
     gl_account_code = serializers.SerializerMethodField()
@@ -81,7 +84,7 @@ class BankAccountSerializer(TenantModelSerializer):
         model = BankAccount
         fields = [
             'id', 'bank', 'bank_name', 'new_bank_code', 'new_bank_branch',
-            'bank_display_name', 'bank_branch', 'bank_code_display',
+            'bank_display_name', 'bank_branch', 'bank_code_display', 'owning_branch',
             'account_number', 'account_name', 'account_type', 'currency',
             'gl_account', 'gl_account_code', 'gl_account_name',
             'account_manager', 'account_manager_name',
@@ -151,6 +154,17 @@ class BankAccountSerializer(TenantModelSerializer):
                 f'Selected account is a {value.account_level} account.'
             )
         
+        # The GL account must be in the bank account's own branch, otherwise
+        # that branch's payments land on another branch's reconciliation and
+        # are refused at posting time (TransactionEntry.clean).
+        if (
+            self.instance is not None and self.instance.branch_id
+            and value.branch_id and value.branch_id != self.instance.branch_id
+        ):
+            raise serializers.ValidationError(
+                'This GL account belongs to a different branch from this bank account.'
+            )
+
         # Check if already linked to another bank account
         if hasattr(value, 'bank_account') and value.bank_account:
             if not self.instance or value.bank_account.id != self.instance.id:
@@ -581,6 +595,17 @@ class BankTransferSerializer(TenantModelSerializer):
             if destination_bank.is_suspended:
                 raise serializers.ValidationError({
                     'destination_bank_account': 'Destination bank account is suspended.'
+                })
+            # Between branches → Inter-branch Transfers (keeps each branch's
+            # books and bank reconciliation its own). Company-wide accounts OK.
+            source = data.get('source_bank_account') if source_type == 'bank' else data.get('source_cashier_account')
+            source_branch_id = getattr(source, 'branch_id', None)
+            if destination_bank.branch_id and source_branch_id and destination_bank.branch_id != source_branch_id:
+                raise serializers.ValidationError({
+                    'destination_bank_account': (
+                        'This bank account belongs to another branch. Use an inter-branch '
+                        'transfer to move money between branches.'
+                    )
                 })
 
         return data

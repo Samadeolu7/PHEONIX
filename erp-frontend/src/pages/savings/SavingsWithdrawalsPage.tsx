@@ -53,6 +53,7 @@ import {
   useDeleteWithdrawalTier,
 } from '../../hooks/useSavings';
 import { BankAccount } from '../../types/banks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
 import { bankService } from '../../services/bankService';
 import { accountService } from '../../services/accountService';
 import { Account } from '../../types/accounts';
@@ -576,7 +577,7 @@ function DisburseModal({ withdrawal, onDone, onClose }: DisburseModalProps) {
                 required
               >
                 <option value="">Select org bank account to debit</option>
-                {bankAccounts.map(b => (
+                {bankAccountsForBranch(bankAccounts, withdrawal.branch).map(b => (
                   <option key={b.id} value={b.id}>
                     {b.bank_name} — {b.account_number} ({b.account_name})
                   </option>

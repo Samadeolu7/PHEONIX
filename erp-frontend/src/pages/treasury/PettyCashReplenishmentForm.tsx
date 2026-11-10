@@ -24,6 +24,8 @@ import {
   usePettyCashVouchers,
 } from '../../hooks/usePettyCash';
 import { useBankAccounts } from '../../hooks/useBanks';
+import { bankAccountsForBranch } from '../../utils/bankAccounts';
+import { useWorkingBranchId } from '../../hooks/useWorkingBranchId';
 import { CreatePettyCashReplenishment } from '../../types/pettyCash';
 
 export const PettyCashReplenishmentForm: React.FC = () => {
@@ -56,7 +58,9 @@ export const PettyCashReplenishmentForm: React.FC = () => {
   const funds = defaultFund ? [defaultFund] : [];
   const loadingFunds = loadingFund;
   const { data: bankAccountsData } = useBankAccounts({ is_active: true });
-  const bankAccounts = bankAccountsData ?? [];
+  const workingBranchId = useWorkingBranchId();
+  // Only the fund's branch's accounts (or company-wide ones).
+  const bankAccounts = bankAccountsForBranch(bankAccountsData, defaultFund?.branch ?? workingBranchId);
   const { data: allVouchers = [] } = usePettyCashVouchers({
     fund: formData.fund || undefined,
     status: 'retired',
