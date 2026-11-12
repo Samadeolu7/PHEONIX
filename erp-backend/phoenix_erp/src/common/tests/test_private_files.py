@@ -228,3 +228,48 @@ class HRDocumentEndpointTests(_TempMedia):
             res = self.upload(data=big)
         self.assertEqual(res.status_code, 201, res.content[:300])
         self.assertIs(seen['type'], TemporaryUploadedFile)
+
+
+
+class ClientDocumentEndpointTests(_TempMedia):
+    """Client documents (IDs, utility bills) get the same private treatment."""
+
+    def setUp(self):
+        super().setUp()
+        from clients.models import Client
+        self.owner = User.objects.create_user(username='cliown', password='x' * 12)
+        self.tenant = Tenant.objects.create(name='Cli Org', slug='cli-org', owner=self.owner)
+        self.owner.tenant = self.tenant
+        self.owner.save()
+        self.branch = Branch.objects.create(name='HQ', code='CLQ', tenant=self.tenant, owner=self.owner)
+        self.owner.branch = self.branch
+        self.owner.save()
+        set_current_tenant(self.tenant)
+        self.client_rec = Client.objects.create(
+            first_name='Ngozi', last_name='Eze', gender='female', phone_primary='08030000000',
+            tenant=self.tenant, branch=self.branch, owner=self.owner,
+        )
+        set_current_tenant(None)
+        self.c = APIClient()
+        self.c.force_authenticate(self.owner)
+
+    def upload(self, data=PDF):
+        return self.c.post('/api/clients/documents/', {
+            'client': self.client_rec.pk, 'document_type': 'id_card',
+            'document_file': SimpleUploadedFile('id.pdf', data, content_type='application/pdf'),
+        }, format='multipart', HTTP_X_BRANCH_ID=str(self.branch.pk))
+
+    def test_client_document_private_and_downloadable(self):
+        from clients.models import ClientDocument
+        res = self.upload()
+        self.assertEqual(res.status_code, 201, res.content)
+        doc = ClientDocument.objects.get()
+        self.assertEqual(res.json()['document_file'], f'/clients/documents/{doc.pk}/download/')
+        self.assertTrue((Path(self.media) / 'private' / doc.document_file.name).is_file())
+        dl = self.c.get(f'/api/clients/documents/{doc.pk}/download/')
+        self.assertEqual(dl.status_code, 200)
+        self.assertEqual(b''.join(dl.streaming_content), PDF)
+        self.assertEqual(APIClient().get(f'/api/clients/documents/{doc.pk}/download/').status_code, 401)
+
+    def test_client_document_content_checked(self):
+        self.assertEqual(self.upload(data=b'<html>nope</html>').status_code, 400)

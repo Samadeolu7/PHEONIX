@@ -11,13 +11,14 @@ permission-checked endpoint that streams the file.
 | Guarantor documents | `private/guarantor_documents/` | `GET /api/hr/guarantor-documents/<id>/download/` |
 | Payslip PDFs | `private/hr/payslips/` | `GET /api/hr/payslips/<id>/pdf/` |
 | Leave supporting documents | `private/hr/leave_documents/` | (not exposed yet) |
+| Client documents (IDs, utility bills) | `private/clients/documents/` | `GET /api/clients/documents/<id>/download/` |
 | Portal applicant documents | `private/portal/applications/` | `GET /api/portal/staff/applications/<id>/documents/<doc>/download/` |
 
 Add `?inline=1` to view a PDF or image in the browser instead of downloading it.
 
 ## Deploying this change
 
-Migration `hr.0031_private_file_storage` **moves existing HR files** from
+Migrations `hr.0031_private_file_storage` and `clients.0017_private_client_documents` **move existing files** from
 `media/<path>` to `media/private/<path>`, keeping the same relative names so no
 database rows change. It is idempotent and reversible (`migrate hr 0030` moves
 the files back). As with any migration that touches files, **back up the
