@@ -1,0 +1,35 @@
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from . import views
+
+app_name = 'portal'
+
+staff_router = DefaultRouter()
+staff_router.register('applications', views.StaffOnlineApplicationViewSet, basename='staff-application')
+
+urlpatterns = [
+    # Public
+    path('info/', views.PortalInfoView.as_view(), name='info'),
+    path('products/', views.PortalProductsView.as_view(), name='products'),
+    path('branches/', views.PortalBranchesView.as_view(), name='branches'),
+
+    # Customer auth
+    path('auth/register/', views.RegisterView.as_view(), name='register'),
+    path('auth/verify-email/', views.VerifyEmailView.as_view(), name='verify-email'),
+    path('auth/resend-verification/', views.ResendVerificationView.as_view(), name='resend-verification'),
+    path('auth/login/', views.LoginView.as_view(), name='login'),
+    path('auth/logout/', views.LogoutView.as_view(), name='logout'),
+    path('auth/password-reset/', views.PasswordResetRequestView.as_view(), name='password-reset'),
+    path('auth/password-reset/confirm/', views.PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
+    path('auth/change-password/', views.ChangePasswordView.as_view(), name='change-password'),
+    path('me/', views.MeView.as_view(), name='me'),
+
+    # Customer applications
+    path('applications/', views.ApplicationListCreateView.as_view(), name='applications'),
+    path('applications/<str:reference>/', views.ApplicationDetailView.as_view(), name='application-detail'),
+    path('applications/<str:reference>/withdraw/', views.ApplicationWithdrawView.as_view(), name='application-withdraw'),
+
+    # Staff review (staff JWT auth + page permission)
+    path('staff/', include(staff_router.urls)),
+]

@@ -75,6 +75,7 @@ urlpatterns = [
     path('api/permissions/', include('permissions.urls')),  # Fine-grained scope-aware permissions
     path('api/threads/', include('threads.urls')),  # Contextual page-anchored discussion threads
     path('api/jobs/', include('jobs.urls', namespace='jobs')),  # Scheduled job (Celery Beat) admin visibility
+    path('api/portal/', include('portal.urls', namespace='portal')),  # Customer-facing portal (see portal/models.py)
 
 ]
 

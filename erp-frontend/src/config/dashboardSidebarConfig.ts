@@ -302,6 +302,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
       grp('btn-loans-tx', 'TRANSACTION', 'file-text', [
         leaf('Loan Accounts', '/loans/accounts'),
         leaf('New Loan Application', '/loans/accounts/create'),
+        leaf('Online Applications', '/loans/online-applications'),
         leaf('Loan Verification', '/loans/verification'),
         leaf('Loan Disbursements', '/loans/disbursements'),
         leaf('Loan Collection', '/loans/collection'),
