@@ -31,7 +31,7 @@ The portal is **off** by default and returns 404 until enabled.
 | Variable | Default | Notes |
 |---|---|---|
 | `PORTAL_FRONTEND_URL` | `http://localhost:5173` | **Set in production**, e.g. `https://erp.krystartrust.ng`. Used for links in emails. |
-| `PORTAL_COOKIE_SAMESITE` | `Strict` | Works while the frontend and API share a registrable domain (`*.krystartrust.ng`). The `*.vercel.app` frontend would need a same-site API domain. |
+| `PORTAL_COOKIE_SAMESITE` | `Strict` | Correct for our deployment: the frontend (`erp.krystartrust.ng`) and API (`api.kti.krystartrust.ng`) are both served from our server under the same registrable domain. Only revisit if the frontend ever moves to a different domain. |
 | `PORTAL_COOKIE_DOMAIN` | unset | Leave unset unless you need the cookie on a parent domain. |
 | `PORTAL_COOKIE_SECURE` | `True` when `DEBUG=False` | |
 | `PORTAL_TRUSTED_PROXY_COUNT` | `1` | Number of reverse proxies (Traefik) in front of Django. Used to find the real client IP for rate limiting. |
