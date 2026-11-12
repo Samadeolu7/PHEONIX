@@ -712,14 +712,14 @@ class ApplicationDocumentTests(PortalTestCase):
     def test_content_and_size_checks(self):
         self.assertEqual(self.upload(name='id.pdf', data=b'<html>x</html>').status_code, 400)
         self.assertEqual(self.upload(name='id.docx', data=b'PK\x03\x04').status_code, 400)  # no Word from public
-        big = self.upload(HTTP_CONTENT_LENGTH=str(6 * 1024 * 1024))
+        big = self.upload(CONTENT_LENGTH=str(6 * 1024 * 1024))
         self.assertEqual(big.status_code, 413)
 
     def test_oversize_rejected_without_parsing_body(self):
         from rest_framework.request import Request
         with mock.patch.object(Request, 'data', new_callable=mock.PropertyMock,
                                side_effect=AssertionError('body was parsed')):
-            res = self.upload(HTTP_CONTENT_LENGTH=str(50 * 1024 * 1024))
+            res = self.upload(CONTENT_LENGTH=str(50 * 1024 * 1024))
         self.assertEqual(res.status_code, 413)
 
     def test_cannot_upload_to_someone_elses_application(self):
