@@ -43,6 +43,20 @@ Email must be configured (`EMAIL_HOST`, etc.), since verification and password r
 Local frontend development: set `VITE_PORTAL_TENANT_SLUG=<tenant slug>` so the
 dev server sends the tenant header (production resolves the tenant from the domain).
 
+## Supporting documents
+
+After submitting, applicants can attach documents (ID, passport photo, proof of
+address, bank statement, ...) on their application page: PDF/JPG/PNG, 5 MB each,
+up to 10 per application, and only while the application is open. They can remove
+a document until a reviewer starts on it. Staff see them in the Online Applications
+review panel; every view is written to the portal audit log.
+
+Files are stored in **private storage** (`media/private/`, see
+`common/private_files.py`). They are never reachable through the public `/media/`
+URL. The server checks real file content (not just the extension), re-encodes
+photos (which strips EXIF data such as phone GPS location), and rejects oversized
+uploads from the `Content-Length` header before reading the body.
+
 ## URLs
 
 - Customer: `/portal` (landing), `/portal/register`, `/portal/login`, `/portal/apply`, `/portal/dashboard`

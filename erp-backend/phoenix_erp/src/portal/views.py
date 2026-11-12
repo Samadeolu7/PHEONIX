@@ -31,11 +31,15 @@ from common.views import ScopedModelViewSet
 from . import services
 from .authentication import (
     PortalAnonThrottle, PortalApplyThrottle, PortalLoginThrottle, PortalPasswordResetThrottle,
-    PortalRegisterThrottle, PortalSessionAuthentication, PortalVerifyThrottle,
+    PortalRegisterThrottle, PortalSessionAuthentication, PortalUploadThrottle, PortalVerifyThrottle,
     clear_session_cookie, cookie_name, enforce_csrf_header, set_session_cookie,
 )
-from .models import OnlineLoanApplication, PortalLoanOffering, PortalSession, hash_token
+from .models import (
+    OnlineApplicationDocument, OnlineLoanApplication, PortalLoanOffering, PortalSession, hash_token,
+    PORTAL_DOC_MAX_MB,
+)
 from .serializers import (
+    CustomerDocumentSerializer, DocumentUploadSerializer,
     ApplicationCreateSerializer, ApplicationCustomerSerializer, ChangePasswordSerializer,
     CustomerSerializer, EmailOnlySerializer, LoginSerializer, MatchingClientSerializer,
     PublicBranchSerializer, PublicOfferingSerializer, RegisterSerializer, ResetPasswordSerializer,
@@ -324,6 +328,7 @@ class ApplicationListCreateView(PortalAuthenticatedView):
         apps = (
             OnlineLoanApplication.objects.filter(customer=self.customer, tenant=self.tenant)
             .select_related('branch', 'offering', 'loan_product__product')
+            .prefetch_related('documents')
         )
         return Response(ApplicationCustomerSerializer(apps, many=True).data)
 
@@ -348,7 +353,8 @@ class ApplicationDetailView(PortalAuthenticatedView):
         # Scoped to the logged-in customer: someone else's reference is a 404,
         # indistinguishable from one that doesn't exist.
         return get_object_or_404(
-            OnlineLoanApplication.objects.select_related('branch', 'offering', 'loan_product__product'),
+            OnlineLoanApplication.objects.select_related('branch', 'offering', 'loan_product__product')
+            .prefetch_related('documents'),
             reference=reference, customer=self.customer, tenant=self.tenant,
         )
 
@@ -367,6 +373,60 @@ class ApplicationWithdrawView(ApplicationDetailView):
         except DjangoValidationError as exc:
             raise ValidationError(_django_errors(exc))
         return Response(ApplicationCustomerSerializer(app).data)
+
+
+class ApplicationDocumentsView(ApplicationDetailView):
+    """
+    POST multipart {document_type, file} to attach a document to your own
+    open application. Size is rejected from Content-Length before the body
+    is parsed, so an oversized upload never reaches memory or temp disk.
+    """
+    throttle_classes = [PortalAnonThrottle]
+
+    def get_throttles(self):
+        if self.request.method == 'POST':
+            return [PortalUploadThrottle()]
+        return super().get_throttles()
+
+    def get(self, request, reference):
+        app = self.get_object(reference)
+        return Response(CustomerDocumentSerializer(app.documents.all(), many=True).data)
+
+    def post(self, request, reference):
+        # Multipart overhead allowance on top of the file limit.
+        limit = PORTAL_DOC_MAX_MB * 1024 * 1024 + 64 * 1024
+        try:
+            declared = int(request.META.get('CONTENT_LENGTH') or 0)
+        except ValueError:
+            declared = 0
+        if declared > limit:
+            return Response({'detail': f'File too large. Maximum is {PORTAL_DOC_MAX_MB}MB.'},
+                            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        app = self.get_object(reference)
+        ser = DocumentUploadSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            doc = services.add_application_document(
+                application=app, document_type=ser.validated_data['document_type'],
+                uploaded_file=ser.validated_data['file'], request=request,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        return Response(CustomerDocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
+
+
+class ApplicationDocumentDeleteView(ApplicationDetailView):
+    def get(self, request, reference, doc_id):
+        raise MethodNotAllowed('GET')
+
+    def delete(self, request, reference, doc_id):
+        app = self.get_object(reference)
+        doc = get_object_or_404(OnlineApplicationDocument, pk=doc_id, application=app)
+        try:
+            services.delete_application_document(document=doc, request=request)
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -399,7 +459,7 @@ class StaffOnlineApplicationViewSet(ScopedModelViewSet):
     queryset = OnlineLoanApplication.objects.select_related(
         'branch', 'loan_product__product', 'assigned_to', 'reviewed_by',
         'converted_loan', 'converted_client', 'customer',
-    )
+    ).prefetch_related('documents')
     permission_module = PERMISSION_MODULE
     permission_page = PERMISSION_PAGE
     http_method_names = ['get', 'post', 'head', 'options']
@@ -437,6 +497,20 @@ class StaffOnlineApplicationViewSet(ScopedModelViewSet):
 
     def create(self, request, *args, **kwargs):
         raise MethodNotAllowed('POST')
+
+    @action(detail=True, methods=['get'], url_path=r'documents/(?P<doc_id>\d+)/download')
+    def download_document(self, request, pk=None, doc_id=None):
+        """Stream an applicant document. Same tenant/branch scoping as retrieve; audited."""
+        from common.private_files import private_file_response, safe_download_name
+        app = self.get_object()
+        doc = get_object_or_404(OnlineApplicationDocument, pk=doc_id, application=app)
+        services.audit('document_viewed', request=request, application=app,
+                       staff_user=request.user, document=doc.pk)
+        return private_file_response(
+            doc.file,
+            download_name=safe_download_name(f'{app.reference}-{doc.document_type}', doc.file.name),
+            inline=request.query_params.get('inline') == '1',
+        )
 
     @action(detail=True, methods=['get'], url_path='matching-clients')
     def matching_clients(self, request, pk=None):

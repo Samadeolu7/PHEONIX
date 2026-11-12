@@ -1972,12 +1972,25 @@ class PayslipViewSet(ScopedModelViewSet):
             filename = f'payslip_{payslip.payslip_number}.pdf'
             response['Content-Disposition'] = f'attachment; filename="{filename}"'
             return response
-        except Exception as e:
-            import traceback
+        except Exception:
+            # Log the details server-side only — never send tracebacks to the browser.
+            import logging
+            logging.getLogger(__name__).exception('Payslip PDF generation failed for %s', payslip.pk)
             return Response(
-                {'error': f'Failed to generate PDF: {str(e)}', 'detail': traceback.format_exc()},
+                {'error': 'Failed to generate the payslip PDF. Please try again or contact support.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=['get'])
+    def pdf(self, request, pk=None):
+        """Stream the stored payslip PDF (private storage) to an authorised user."""
+        from common.private_files import private_file_response, safe_download_name
+        payslip = self.get_object()
+        return private_file_response(
+            payslip.pdf_file,
+            download_name=safe_download_name(f'payslip_{payslip.payslip_number}', payslip.pdf_file.name),
+            inline=request.query_params.get('inline') == '1',
+        )
     
     @action(detail=True, methods=['post'])
     def email(self, request, pk=None):
@@ -2200,6 +2213,16 @@ class EmployeeDocumentViewSet(ScopedModelViewSet):
             branch=self.request.user.branch,
         )
 
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Stream the document to an authorised user (same scoping as retrieve)."""
+        from common.private_files import private_file_response, safe_download_name
+        doc = self.get_object()
+        return private_file_response(
+            doc.file, download_name=safe_download_name(doc.title, doc.file.name),
+            inline=request.query_params.get('inline') == '1',
+        )
+
     @action(detail=False, methods=['get'])
     def expiring_soon(self, request):
         """Get documents expiring within the next 30 days"""
@@ -2285,6 +2308,16 @@ class GuarantorDocumentViewSet(ScopedModelViewSet):
             uploaded_by=self.request.user,
             owner=self.request.user,
             branch=self.request.user.branch,
+        )
+
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Stream the document to an authorised user (same scoping as retrieve)."""
+        from common.private_files import private_file_response, safe_download_name
+        doc = self.get_object()
+        return private_file_response(
+            doc.file, download_name=safe_download_name(doc.title, doc.file.name),
+            inline=request.query_params.get('inline') == '1',
         )
 
     @action(detail=False, methods=['get'])

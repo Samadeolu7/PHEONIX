@@ -18,7 +18,9 @@ from rest_framework import serializers
 
 from branches.models import Branch
 
-from .models import OnlineLoanApplication, PortalCustomer, PortalLoanOffering, mask_identifier
+from .models import (
+    OnlineApplicationDocument, OnlineLoanApplication, PortalCustomer, PortalLoanOffering, mask_identifier,
+)
 
 NG_PHONE_RE = re.compile(r'^(\+234|234|0)[789][01]\d{8}$')
 ELEVEN_DIGITS_RE = re.compile(r'^\d{11}$')
@@ -295,6 +297,30 @@ class ApplicationCreateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class DocumentUploadSerializer(serializers.Serializer):
+    document_type = serializers.ChoiceField(choices=OnlineApplicationDocument.TYPE_CHOICES)
+    file = serializers.FileField(max_length=150, allow_empty_file=False)
+
+
+class CustomerDocumentSerializer(serializers.ModelSerializer):
+    """Metadata only — customers can't download files back (smaller attack surface)."""
+    document_type_display = serializers.CharField(source='get_document_type_display')
+
+    class Meta:
+        model = OnlineApplicationDocument
+        fields = ['id', 'document_type', 'document_type_display', 'original_name', 'size', 'uploaded_at']
+
+
+class StaffDocumentSerializer(CustomerDocumentSerializer):
+    download = serializers.SerializerMethodField()
+
+    class Meta(CustomerDocumentSerializer.Meta):
+        fields = CustomerDocumentSerializer.Meta.fields + ['content_type', 'sha256', 'download']
+
+    def get_download(self, obj):
+        return f'/portal/staff/applications/{obj.application_id}/documents/{obj.pk}/download/'
+
+
 class ApplicationCustomerSerializer(serializers.ModelSerializer):
     """What a customer sees about their own application."""
     product_name = serializers.SerializerMethodField()
@@ -303,10 +329,14 @@ class ApplicationCustomerSerializer(serializers.ModelSerializer):
     nin_masked = serializers.SerializerMethodField()
     bvn_masked = serializers.SerializerMethodField()
     can_withdraw = serializers.SerializerMethodField()
+    documents = CustomerDocumentSerializer(many=True, read_only=True)
+    can_upload = serializers.SerializerMethodField()
+    can_remove_documents = serializers.SerializerMethodField()
 
     class Meta:
         model = OnlineLoanApplication
         fields = [
+            'documents', 'can_upload', 'can_remove_documents',
             'reference', 'status', 'status_display', 'product_name', 'branch_name',
             'requested_amount', 'term', 'term_unit', 'repayment_frequency', 'loan_purpose',
             'first_name', 'middle_name', 'last_name', 'phone_primary',
@@ -324,6 +354,13 @@ class ApplicationCustomerSerializer(serializers.ModelSerializer):
         return mask_identifier(obj.bvn)
 
     def get_can_withdraw(self, obj):
+        return obj.status == OnlineLoanApplication.STATUS_SUBMITTED
+
+    def get_can_upload(self, obj):
+        from .models import PORTAL_DOCS_PER_APPLICATION
+        return obj.is_open and len(obj.documents.all()) < PORTAL_DOCS_PER_APPLICATION
+
+    def get_can_remove_documents(self, obj):
         return obj.status == OnlineLoanApplication.STATUS_SUBMITTED
 
 
@@ -360,6 +397,7 @@ class StaffApplicationDetailSerializer(StaffApplicationListSerializer):
     converted_loan_number = serializers.CharField(source='converted_loan.loan_number', default=None)
     converted_client_code = serializers.CharField(source='converted_client.client_id', default=None)
     customer_email_verified = serializers.BooleanField(source='customer.is_email_verified')
+    documents = StaffDocumentSerializer(many=True, read_only=True)
 
     class Meta(StaffApplicationListSerializer.Meta):
         fields = StaffApplicationListSerializer.Meta.fields + [
@@ -371,7 +409,7 @@ class StaffApplicationDetailSerializer(StaffApplicationListSerializer):
             'consent_credit_check', 'consent_data_processing',
             'staff_notes', 'customer_message', 'reviewed_by', 'reviewed_by_name', 'reviewed_at',
             'converted_client', 'converted_client_code', 'converted_loan', 'converted_loan_number',
-            'customer_email_verified', 'updated_at',
+            'customer_email_verified', 'documents', 'updated_at',
         ]
 
     def get_reviewed_by_name(self, obj):

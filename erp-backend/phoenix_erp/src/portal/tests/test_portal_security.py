@@ -4,6 +4,7 @@ Security-focused tests for the customer portal.
 Each test class maps to one guarantee described in portal/models.py.
 """
 import re
+from unittest import mock
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -641,3 +642,109 @@ class ErrorLeakTests(PortalTestCase):
         self.assertEqual(res.status_code, 500)
         self.assertNotIn('hunter2', res.content.decode())
         self.assertNotIn('portal_secret', res.content.decode())
+
+
+class ApplicationDocumentTests(PortalTestCase):
+    PDF = b'%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n'
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        self.media = tempfile.mkdtemp()
+        self._ov = override_settings(MEDIA_ROOT=self.media)
+        self._ov.enable()
+        self.customer = make_customer(self.env)
+        self.c = portal_client('alpha')
+        login(self.c)
+        self.ref = self.c.post('/api/portal/applications/', application_payload(self.env), format='json').json()['reference']
+        self.app = OnlineLoanApplication.objects.get()
+        self.staff = APIClient()
+        self.staff.force_authenticate(self.env['owner'])
+
+    def tearDown(self):
+        import shutil
+        self._ov.disable()
+        shutil.rmtree(self.media, ignore_errors=True)
+        super().tearDown()
+
+    def upload(self, client=None, name='id.pdf', data=None, ctype='application/pdf', ref=None, **extra):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return (client or self.c).post(
+            f'/api/portal/applications/{ref or self.ref}/documents/',
+            {'document_type': 'id_card', 'file': SimpleUploadedFile(name, data or self.PDF, content_type=ctype)},
+            format='multipart', **extra,
+        )
+
+    def test_upload_private_and_staff_download_audited(self):
+        from pathlib import Path
+        from portal.models import OnlineApplicationDocument
+        res = self.upload()
+        self.assertEqual(res.status_code, 201, res.content)
+        self.assertNotIn('download', res.json())          # customers get metadata only
+        doc = OnlineApplicationDocument.objects.get()
+        self.assertTrue((Path(self.media) / 'private' / doc.file.name).is_file())
+        self.assertEqual(APIClient().get(f'/media/private/{doc.file.name}').status_code, 404)
+        detail = self.staff.get(f'/api/portal/staff/applications/{self.app.pk}/').json()
+        path = detail['documents'][0]['download']
+        dl = self.staff.get(f'/api{path}')
+        self.assertEqual(dl.status_code, 200)
+        self.assertEqual(b''.join(dl.streaming_content), self.PDF)
+        self.assertTrue(PortalAuditEvent.objects.filter(event='document_viewed').exists())
+        # The customer's cookie cannot use the staff download endpoint.
+        self.assertIn(self.c.get(f'/api{path}').status_code, (401, 403))
+
+    def test_image_reencoded_and_exif_stripped(self):
+        import io
+        from PIL import Image
+        from portal.models import OnlineApplicationDocument
+        img = Image.new('RGB', (300, 200), (10, 20, 30))
+        exif = img.getexif()
+        exif[0x8825] = {2: (6, 30, 0)}  # GPSInfo
+        exif[0x010F] = 'PhoneMaker'
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', exif=exif)
+        res = self.upload(name='me.jpg', data=buf.getvalue(), ctype='image/jpeg')
+        self.assertEqual(res.status_code, 201, res.content)
+        stored = OnlineApplicationDocument.objects.get()
+        with stored.file.open('rb') as fh:
+            self.assertEqual(len(Image.open(fh).getexif()), 0)
+
+    def test_content_and_size_checks(self):
+        self.assertEqual(self.upload(name='id.pdf', data=b'<html>x</html>').status_code, 400)
+        self.assertEqual(self.upload(name='id.docx', data=b'PK\x03\x04').status_code, 400)  # no Word from public
+        big = self.upload(HTTP_CONTENT_LENGTH=str(6 * 1024 * 1024))
+        self.assertEqual(big.status_code, 413)
+
+    def test_oversize_rejected_without_parsing_body(self):
+        from rest_framework.request import Request
+        with mock.patch.object(Request, 'data', new_callable=mock.PropertyMock,
+                               side_effect=AssertionError('body was parsed')):
+            res = self.upload(HTTP_CONTENT_LENGTH=str(50 * 1024 * 1024))
+        self.assertEqual(res.status_code, 413)
+
+    def test_cannot_upload_to_someone_elses_application(self):
+        make_customer(self.env, email='eve@example.com')
+        eve = portal_client('alpha')
+        login(eve, email='eve@example.com')
+        self.assertEqual(self.upload(client=eve).status_code, 404)
+
+    def test_limits_and_lifecycle(self):
+        from portal.models import OnlineApplicationDocument
+        for _ in range(10):
+            self.assertEqual(self.upload().status_code, 201)
+        self.assertEqual(self.upload().status_code, 400)
+        doc = OnlineApplicationDocument.objects.first()
+        self.assertEqual(self.c.delete(f'/api/portal/applications/{self.ref}/documents/{doc.pk}/').status_code, 204)
+        # Once review starts, documents can't be removed; once closed, none can be added.
+        self.staff.post(f'/api/portal/staff/applications/{self.app.pk}/start-review/')
+        doc = OnlineApplicationDocument.objects.first()
+        self.assertEqual(self.c.delete(f'/api/portal/applications/{self.ref}/documents/{doc.pk}/').status_code, 400)
+        self.staff.post(f'/api/portal/staff/applications/{self.app.pk}/reject/', {'customer_message': 'no'}, format='json')
+        self.assertEqual(self.upload().status_code, 400)
+
+    def test_upload_requires_csrf_header(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        res = self.c.post(f'/api/portal/applications/{self.ref}/documents/',
+                          {'document_type': 'id_card', 'file': SimpleUploadedFile('a.pdf', self.PDF)},
+                          format='multipart', HTTP_X_PORTAL_REQUEST='0')
+        self.assertEqual(res.status_code, 403)

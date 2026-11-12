@@ -520,3 +520,75 @@ def convert_application(
         client=client.client_id, loan=loan.loan_number,
     )
     return app
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Supporting documents
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sha256_streaming(f):
+    """Hash in chunks — never loads the whole upload into memory."""
+    import hashlib
+    h = hashlib.sha256()
+    f.seek(0)
+    for chunk in f.chunks(chunk_size=64 * 1024):
+        h.update(chunk)
+    f.seek(0)
+    return h.hexdigest()
+
+
+def add_application_document(*, application, document_type, uploaded_file, request=None):
+    from common.image_processing import compress_image
+    from common.private_files import check_file_signature
+    from .models import (
+        OnlineApplicationDocument, PORTAL_DOC_EXTENSIONS, PORTAL_DOC_MAX_MB, PORTAL_DOCS_PER_APPLICATION,
+    )
+
+    # Cheap checks first: size (metadata only), then the first few bytes.
+    if uploaded_file.size > PORTAL_DOC_MAX_MB * 1024 * 1024:
+        raise ValidationError({'file': f'File too large. Maximum is {PORTAL_DOC_MAX_MB}MB.'})
+    if uploaded_file.size == 0:
+        raise ValidationError({'file': 'The file is empty.'})
+    try:
+        check_file_signature(uploaded_file, PORTAL_DOC_EXTENSIONS)
+    except ValidationError as exc:
+        raise ValidationError({'file': exc.messages})
+
+    original_name = (getattr(uploaded_file, 'name', '') or '')[-150:]
+    if (uploaded_file.content_type or '').startswith('image/') or original_name.lower().endswith(('.jpg', '.jpeg', '.png')):
+        # Re-encoding strips EXIF (e.g. phone GPS location) and anything hidden
+        # inside the image; decoding is memory-bounded (see image_processing).
+        uploaded_file = compress_image(uploaded_file, max_dimension=2000, quality=85)
+
+    with transaction.atomic():
+        app = OnlineLoanApplication.objects.select_for_update().get(pk=application.pk)
+        if not app.is_open:
+            raise ValidationError('Documents can only be added while the application is being processed.')
+        if app.documents.count() >= PORTAL_DOCS_PER_APPLICATION:
+            raise ValidationError(f'You can upload at most {PORTAL_DOCS_PER_APPLICATION} documents per application.')
+        doc = OnlineApplicationDocument(
+            application=app,
+            document_type=document_type,
+            original_name=original_name,
+            content_type=(uploaded_file.content_type or 'application/octet-stream')[:60],
+            size=uploaded_file.size,
+            sha256=_sha256_streaming(uploaded_file),
+        )
+        doc.file.save(original_name or 'document', uploaded_file, save=False)
+        doc.save()
+    audit('document_uploaded', request=request, customer=app.customer, application=app,
+          document=doc.pk, type=document_type, size=doc.size)
+    return doc
+
+
+def delete_application_document(*, document, request=None):
+    app = document.application
+    if app.status != OnlineLoanApplication.STATUS_SUBMITTED:
+        raise ValidationError('Documents can no longer be removed once review has started.')
+    storage_name = document.file.name
+    storage = document.file.storage
+    with transaction.atomic():
+        document.delete()
+        # Remove the bytes only after the row is gone for good.
+        transaction.on_commit(lambda: storage.delete(storage_name))
+    audit('document_deleted', request=request, customer=app.customer, application=app)

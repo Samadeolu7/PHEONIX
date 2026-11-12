@@ -4,6 +4,7 @@ import { BRAND } from '../../constants/brand';
 import { Application, FieldErrors, Offering, naira, portalApi, toApiError } from '../api';
 import { usePortalAuth } from '../PortalAuth';
 import { Button, Card, Field, Notice, PasswordHint, StatusBadge } from '../ui';
+import { DocumentsCard } from './DocumentsCard';
 
 const FREQ_LABEL: Record<string, string> = {
   daily: 'Daily',
@@ -267,6 +268,7 @@ export function ApplicationDetailPage() {
           </div>
         )}
       </Card>
+      <DocumentsCard app={app} onChange={documents => setApp({ ...app, documents })} />
     </div>
   );
 }

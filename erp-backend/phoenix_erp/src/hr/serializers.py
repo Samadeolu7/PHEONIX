@@ -19,6 +19,22 @@ from .config_models import HRConfig
 from automations.models import WorkflowTemplate, WorkflowRun
 from common.serializers import TenantModelSerializer
 from common.image_processing import compress_image
+from common.private_files import PrivateFileField
+from common.validators import (
+    validate_document_extension, validate_document_file_size, validate_document_signature,
+)
+
+# Declared serializer fields don't inherit model-field validators, so the
+# private document fields must list them explicitly.
+DOCUMENT_VALIDATORS = [validate_document_file_size, validate_document_extension, validate_document_signature]
+
+MAX_PHOTO_MB = 8
+
+
+def _check_photo_size(value):
+    """Reject oversized photos before they are decoded (bounded RAM per request)."""
+    if getattr(value, 'size', 0) > MAX_PHOTO_MB * 1024 * 1024:
+        raise serializers.ValidationError(f'Photo too large. Maximum is {MAX_PHOTO_MB}MB.')
 
 User = get_user_model()
 
@@ -92,6 +108,7 @@ class StaffSerializer(TenantModelSerializer):
 
     def validate_photo(self, value):
         if value:
+            _check_photo_size(value)
             if value.content_type.startswith('image/'):
                 value = compress_image(value, max_dimension=1200, quality=82)
         return value
@@ -539,6 +556,8 @@ class AttendanceSerializer(TenantModelSerializer):
 
 class PayslipSerializer(TenantModelSerializer):
     """Payslip serializer (for list and detail views)"""
+    # Salary data — private; output is the authenticated path that streams it.
+    pdf_file = PrivateFileField(download_path='/hr/payslips/{obj.pk}/pdf/', read_only=True)
     staff_name = serializers.SerializerMethodField()
     staff_id   = serializers.CharField(source='staff.staff_id', read_only=True)
     payroll_reference = serializers.CharField(source='payroll.reference_number', read_only=True)
@@ -795,6 +814,8 @@ class PensionRemittanceSerializer(TenantModelSerializer):
 
 class EmployeeDocumentSerializer(TenantModelSerializer):
     """Employee document serializer for file uploads and management"""
+    # Private file: output is the authenticated download path, never a public URL.
+    file = PrivateFileField(download_path='/hr/employee-documents/{obj.pk}/download/', validators=DOCUMENT_VALIDATORS)
     staff_name = serializers.SerializerMethodField()
     staff_id = serializers.CharField(source='staff.staff_id', read_only=True)
     uploaded_by_name = serializers.SerializerMethodField()
@@ -851,6 +872,8 @@ class StaffGuarantorSerializer(TenantModelSerializer):
         return f"{obj.staff.first_name} {obj.staff.last_name}"
 
     def validate_photo(self, value):
+        if value:
+            _check_photo_size(value)
         if value and value.content_type and value.content_type.startswith('image/'):
             value = compress_image(value, max_dimension=1200, quality=82)
         return value
@@ -858,6 +881,7 @@ class StaffGuarantorSerializer(TenantModelSerializer):
 
 class GuarantorDocumentSerializer(TenantModelSerializer):
     """Guarantor document serializer for file uploads and management"""
+    file = PrivateFileField(download_path='/hr/guarantor-documents/{obj.pk}/download/', validators=DOCUMENT_VALIDATORS)
     guarantor_name = serializers.SerializerMethodField()
     staff_name = serializers.SerializerMethodField()
     uploaded_by_name = serializers.SerializerMethodField()

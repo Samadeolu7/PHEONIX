@@ -426,6 +426,46 @@ def identifier_fingerprint(value: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Supporting documents (ID, utility bill, ...) — private storage only
+# ─────────────────────────────────────────────────────────────────────────────
+
+from common.private_files import RandomFilename, private_storage  # noqa: E402
+
+PORTAL_DOC_EXTENSIONS = ['pdf', 'jpg', 'jpeg', 'png']   # no Word files from the public
+PORTAL_DOC_MAX_MB = 5
+PORTAL_DOCS_PER_APPLICATION = 10
+
+
+class OnlineApplicationDocument(models.Model):
+    TYPE_CHOICES = [
+        ('id_card', 'Means of ID (NIN slip, voter\'s card, passport, driver\'s licence)'),
+        ('passport_photo', 'Passport photograph'),
+        ('utility_bill', 'Utility bill / proof of address'),
+        ('bank_statement', 'Bank statement'),
+        ('business_proof', 'Proof of business (CAC, shop photo, invoice)'),
+        ('payslip', 'Payslip / employment letter'),
+        ('other', 'Other'),
+    ]
+    application = models.ForeignKey(
+        OnlineLoanApplication, on_delete=models.CASCADE, related_name='documents',
+    )
+    document_type = models.CharField(max_length=30, choices=TYPE_CHOICES)
+    # Private storage, random name: never reachable through public /media/.
+    file = models.FileField(upload_to=RandomFilename('portal/applications'), storage=private_storage)
+    original_name = models.CharField(max_length=150, blank=True)
+    content_type = models.CharField(max_length=60)
+    size = models.PositiveIntegerField()
+    sha256 = models.CharField(max_length=64)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['uploaded_at']
+
+    def __str__(self):
+        return f'{self.application.reference} — {self.get_document_type_display()}'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Security audit trail
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -447,6 +487,9 @@ class PortalAuditEvent(models.Model):
         ('application_review_started', 'Staff started review'),
         ('application_rejected', 'Staff declined application'),
         ('application_converted', 'Staff converted application'),
+        ('document_uploaded', 'Applicant uploaded a document'),
+        ('document_deleted', 'Applicant removed a document'),
+        ('document_viewed', 'Staff viewed an applicant document'),
     ]
     tenant = models.ForeignKey('users.Tenant', null=True, blank=True, on_delete=models.SET_NULL)
     customer = models.ForeignKey(PortalCustomer, null=True, blank=True, on_delete=models.SET_NULL)

@@ -345,6 +345,7 @@ REST_FRAMEWORK = {
         'portal_password_reset': '5/hour',
         'portal_verify': '20/hour',
         'portal_apply': '10/day',  # per customer
+        'portal_upload': '40/day',  # per customer
     },
 }
 
@@ -948,7 +949,11 @@ MANAGERS = ADMINS
 # FILE UPLOAD SETTINGS
 # ==================================================
 
-FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+# Uploads above this size are streamed to a temporary file on disk instead
+# of being held in worker RAM for the whole request (Django's default).
+# Was 10MB, which kept every document upload (limit 8MB) fully in memory.
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(2.5 * 1024 * 1024)  # 2.5 MB
+# Non-file request body (JSON, form fields) — does not include uploaded files.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
 

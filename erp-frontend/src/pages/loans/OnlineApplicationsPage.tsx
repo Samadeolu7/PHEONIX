@@ -19,7 +19,7 @@ import {
   Search,
   XCircle,
 } from 'lucide-react';
-import { api } from '../../services/api';
+import { api, openPrivateFile } from '../../services/api';
 
 const BASE = '/portal/staff/applications';
 
@@ -50,6 +50,16 @@ interface Detail extends Row {
   converted_client: number | null;
   converted_client_code: string | null;
   customer_email_verified: boolean;
+  documents: StaffDoc[];
+}
+
+interface StaffDoc {
+  id: number;
+  document_type_display: string;
+  original_name: string;
+  size: number;
+  uploaded_at: string;
+  download: string;
 }
 
 interface Match {
@@ -259,6 +269,52 @@ function DetailPanel({ id, onChanged }: { id: number; onChanged: () => void }) {
           Applicant&apos;s email address is not verified.
         </p>
       )}
+
+      <div className="mb-4">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">
+          Documents ({d.documents?.length || 0})
+        </h3>
+        {!d.documents?.length ? (
+          <p className="text-sm text-gray-500">The applicant has not uploaded any documents.</p>
+        ) : (
+          <ul className="divide-y border rounded">
+            {d.documents.map(doc => (
+              <li
+                key={doc.id}
+                className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+              >
+                <span className="min-w-0">
+                  <span className="font-medium">{doc.document_type_display}</span>
+                  <span className="block text-xs text-gray-500 truncate">
+                    {doc.original_name} · {Math.max(1, Math.round(doc.size / 1024))} KB ·{' '}
+                    {new Date(doc.uploaded_at).toLocaleDateString('en-NG')}
+                  </span>
+                </span>
+                <span className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    className="text-xs px-2 py-1 rounded border"
+                    onClick={() => openPrivateFile(doc.download).catch(e => setError(errText(e)))}
+                  >
+                    View
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs px-2 py-1 rounded border"
+                    onClick={() =>
+                      openPrivateFile(doc.download, {
+                        download: `${d.reference}-${doc.document_type_display}`,
+                      }).catch(e => setError(errText(e)))
+                    }
+                  >
+                    Download
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       {SECTIONS.map(s => (
         <div key={s.title} className="mb-4">

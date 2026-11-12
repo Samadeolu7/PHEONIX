@@ -109,7 +109,31 @@ export interface Customer {
   created_at: string;
 }
 
+export interface AppDocument {
+  id: number;
+  document_type: string;
+  document_type_display: string;
+  original_name: string;
+  size: number;
+  uploaded_at: string;
+}
+
+export const DOCUMENT_TYPES = [
+  { value: 'id_card', label: "Means of ID (NIN slip, voter's card, passport, driver's licence)" },
+  { value: 'passport_photo', label: 'Passport photograph' },
+  { value: 'utility_bill', label: 'Utility bill / proof of address' },
+  { value: 'bank_statement', label: 'Bank statement' },
+  { value: 'business_proof', label: 'Proof of business (CAC, shop photo, invoice)' },
+  { value: 'payslip', label: 'Payslip / employment letter' },
+  { value: 'other', label: 'Other' },
+];
+export const MAX_DOC_MB = 5;
+export const DOC_ACCEPT = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png';
+
 export interface Application {
+  documents: AppDocument[];
+  can_upload: boolean;
+  can_remove_documents: boolean;
   reference: string;
   status: 'submitted' | 'under_review' | 'converted' | 'rejected' | 'withdrawn';
   status_display: string;
@@ -171,6 +195,24 @@ export const portalApi = {
     portalHttp.get<Application>(`/applications/${encodeURIComponent(ref)}/`).then(r => r.data),
   apply: (body: Record<string, unknown>) =>
     portalHttp.post<Application>('/applications/', body).then(r => r.data),
+  uploadDocument: (
+    ref: string,
+    documentType: string,
+    file: File,
+    onProgress?: (pct: number) => void
+  ) => {
+    const form = new FormData();
+    form.append('document_type', documentType);
+    form.append('file', file);
+    return portalHttp
+      .post<AppDocument>(`/applications/${encodeURIComponent(ref)}/documents/`, form, {
+        timeout: 120000,
+        onUploadProgress: e => e.total && onProgress?.(Math.round((e.loaded / e.total) * 100)),
+      })
+      .then(r => r.data);
+  },
+  deleteDocument: (ref: string, id: number) =>
+    portalHttp.delete(`/applications/${encodeURIComponent(ref)}/documents/${id}/`),
   withdraw: (ref: string) =>
     portalHttp
       .post<Application>(`/applications/${encodeURIComponent(ref)}/withdraw/`)

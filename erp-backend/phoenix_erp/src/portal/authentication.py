@@ -159,3 +159,12 @@ class PortalApplyThrottle(SimpleRateThrottle):
 
 class PortalAnonThrottle(_PortalIPThrottle):
     scope = 'portal_anon'
+
+
+class PortalUploadThrottle(SimpleRateThrottle):
+    """Per-customer cap on document uploads."""
+    scope = 'portal_upload'
+
+    def get_cache_key(self, request, view):
+        ident = getattr(getattr(request, 'user', None), 'pk', None) or client_ip(request)
+        return self.cache_format % {'scope': self.scope, 'ident': f'c{ident}'}

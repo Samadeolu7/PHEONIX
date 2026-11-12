@@ -29,6 +29,8 @@ urlpatterns = [
     path('applications/', views.ApplicationListCreateView.as_view(), name='applications'),
     path('applications/<str:reference>/', views.ApplicationDetailView.as_view(), name='application-detail'),
     path('applications/<str:reference>/withdraw/', views.ApplicationWithdrawView.as_view(), name='application-withdraw'),
+    path('applications/<str:reference>/documents/', views.ApplicationDocumentsView.as_view(), name='application-documents'),
+    path('applications/<str:reference>/documents/<int:doc_id>/', views.ApplicationDocumentDeleteView.as_view(), name='application-document'),
 
     # Staff review (staff JWT auth + page permission)
     path('staff/', include(staff_router.urls)),
