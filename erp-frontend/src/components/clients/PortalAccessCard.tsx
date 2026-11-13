@@ -63,7 +63,7 @@ export default function PortalAccessCard({
   defaultEmail?: string | null;
 }) {
   const [access, setAccess] = useState<Access | null>(null);
-  const [hidden, setHidden] = useState(false);
+  const [blocked, setBlocked] = useState<'' | 'permission' | 'scope'>('');
   const [email, setEmail] = useState(defaultEmail || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -75,9 +75,10 @@ export default function PortalAccessCard({
         await api.get('/portal/staff/invitations/for-client/', { params: { client: clientId } })
       );
     } catch (e) {
-      // No permission for this page, or the portal module isn't in use: hide quietly.
+      // Explain why instead of hiding — staff otherwise can't tell what's missing.
       const status = (e as { status?: number })?.status;
-      if (status === 403 || status === 404) setHidden(true);
+      if (status === 403) setBlocked('permission');
+      else if (status === 404) setBlocked('scope');
       else setError(errText(e));
     }
   }, [clientId]);
@@ -86,7 +87,28 @@ export default function PortalAccessCard({
     load();
   }, [load]);
 
-  if (hidden) return null;
+  if (blocked) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="font-semibold flex items-center gap-2 text-gray-900 mb-2">
+          <Globe size={18} className="text-blue-600" /> Online Portal Access
+        </h3>
+        <p className="text-sm text-gray-600">
+          {blocked === 'permission' ? (
+            <>
+              Your role can&apos;t manage online access yet. Ask an administrator to grant{' '}
+              <strong>Clients → Online Portal Access</strong> (view and create) in Permission Setup.
+            </>
+          ) : (
+            <>
+              This client belongs to another branch. Online access can be managed by staff at the
+              client&apos;s branch or by a director.
+            </>
+          )}
+        </p>
+      </div>
+    );
+  }
 
   const pending = access?.invitations.find(i => i.status === 'pending');
 
