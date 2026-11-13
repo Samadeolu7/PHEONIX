@@ -27,6 +27,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from branches.models import Branch
+from common.serializers import IsTenantUser
 from common.views import ScopedModelViewSet
 
 from . import services
@@ -501,6 +502,35 @@ def _require(user, *, flag, module=PERMISSION_MODULE, page=PERMISSION_PAGE):
         raise PermissionDenied('You do not have permission to perform this action.')
 
 
+class _ApplicationPagePermission(permissions.BasePermission):
+    """
+    Explicit action → flag map for the Online Applications page. The generic
+    HasActionPermission treats every POST as can_create, which would make
+    "Start review" need a create grant; here it needs edit, as staff expect.
+    Unknown actions are denied.
+    """
+    FLAGS = {
+        'list': 'can_view', 'retrieve': 'can_view', 'matching_clients': 'can_view',
+        'download_document': 'can_view', 'start_review': 'can_edit',
+        'reject': 'can_approve', 'convert': 'can_approve',
+    }
+    message = 'You do not have permission to perform this action.'
+
+    def has_permission(self, request, view):
+        if getattr(view, 'swagger_fake_view', False):
+            return True
+        flag = self.FLAGS.get(getattr(view, 'action', None))
+        if flag is None:
+            return False
+        from permissions.services import PermissionResolver
+        try:
+            eff = PermissionResolver.resolve(request.user, module=PERMISSION_MODULE, page=PERMISSION_PAGE)
+            return bool(getattr(eff, flag, False))
+        except Exception:
+            logger.exception('Permission resolution failed; denying')
+            return False
+
+
 class StaffOnlineApplicationViewSet(ScopedModelViewSet):
     """
     list / retrieve / start-review / reject / convert.  No create, update or
@@ -514,6 +544,9 @@ class StaffOnlineApplicationViewSet(ScopedModelViewSet):
     permission_module = PERMISSION_MODULE
     permission_page = PERMISSION_PAGE
     http_method_names = ['get', 'post', 'head', 'options']
+    # Replace the generic POST=create rule with the explicit map above.
+    skip_action_permission = True
+    permission_classes = [permissions.IsAuthenticated, IsTenantUser, _ApplicationPagePermission]
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -521,8 +554,11 @@ class StaffOnlineApplicationViewSet(ScopedModelViewSet):
         return StaffApplicationDetailSerializer
 
     def get_narrow_scope_q(self, scope, user, staff):
-        # "Mine" for this page = applications assigned to me.
-        return Q(assigned_to=user)
+        # Officers with a narrow scope see applications assigned to them plus
+        # unassigned ones at their branch (branch filtering is applied
+        # upstream), so they can pick new ones up with "Start review" —
+        # the same "unassigned is visible" rule the ERP uses for clients.
+        return Q(assigned_to=user) | Q(assigned_to__isnull=True)
 
     def get_queryset(self):
         user = self.request.user
