@@ -67,9 +67,14 @@ def get_enabled_config(tenant):
 # Email
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _frontend_url(path: str) -> str:
-    base = getattr(settings, 'PORTAL', {}).get('FRONTEND_URL', '').rstrip('/')
-    return f"{base}{path}"
+def _frontend_url(path: str, tenant=None) -> str:
+    """Portal link for emails: the tenant's configured address, else the server setting."""
+    base = ''
+    if tenant is not None:
+        base = (PortalConfig.objects.filter(tenant=tenant).values_list('public_url', flat=True).first() or '')
+    if not base:
+        base = getattr(settings, 'PORTAL', {}).get('FRONTEND_URL', '')
+    return f"{base.rstrip('/')}{path}"
 
 
 def _send(subject, body, to):
@@ -89,7 +94,7 @@ def _send(subject, body, to):
 def send_verification_email(customer):
     from urllib.parse import quote
     token = tokens.make_token(customer, 'verify')
-    link = _frontend_url(f"/portal/verify-email?token={quote(token)}")
+    link = _frontend_url(f"/portal/verify-email?token={quote(token)}", customer.tenant)
     _send(
         f"Verify your email — {customer.tenant.name}",
         f"Hello {customer.first_name},\n\n"
@@ -104,8 +109,8 @@ def send_existing_account_email(customer):
         f"Sign-up attempt — {customer.tenant.name}",
         f"Hello {customer.first_name},\n\n"
         "Someone tried to create a new account with this email address, but you already have one.\n"
-        f"If that was you, log in here: {_frontend_url('/portal/login')}\n"
-        f"Forgot your password? Reset it here: {_frontend_url('/portal/forgot-password')}\n\n"
+        f"If that was you, log in here: {_frontend_url('/portal/login', customer.tenant)}\n"
+        f"Forgot your password? Reset it here: {_frontend_url('/portal/forgot-password', customer.tenant)}\n\n"
         "If it wasn't you, no action is needed — your account is unchanged.\n",
         customer.email,
     )
@@ -114,7 +119,7 @@ def send_existing_account_email(customer):
 def send_password_reset_email(customer):
     from urllib.parse import quote
     token = tokens.make_token(customer, 'reset')
-    link = _frontend_url(f"/portal/reset-password?token={quote(token)}")
+    link = _frontend_url(f"/portal/reset-password?token={quote(token)}", customer.tenant)
     _send(
         f"Reset your password — {customer.tenant.name}",
         f"Hello {customer.first_name},\n\n"
@@ -618,7 +623,7 @@ def send_invitation(*, client, email, staff_user, request=None):
         raise ValidationError({'email': 'An online account already uses this email address.'})
     inv, raw = PortalInvitation.issue(client=client, email=email, created_by=staff_user)
     from urllib.parse import quote
-    link = _frontend_url(f'/portal/accept-invite?token={quote(raw)}')
+    link = _frontend_url(f'/portal/accept-invite?token={quote(raw)}', client.tenant)
     sent = _send(
         f'Your online account — {client.tenant.name}',
         f'Hello {client.first_name},\n\n'

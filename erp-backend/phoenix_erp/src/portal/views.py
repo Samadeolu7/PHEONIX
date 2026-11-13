@@ -14,6 +14,7 @@ Staff views (``/api/portal/staff/...``)
 """
 import logging
 
+from django.conf import settings as dj_settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django.http import Http404
@@ -39,6 +40,7 @@ from .models import (
     PORTAL_DOC_MAX_MB,
 )
 from .serializers import (
+    OfferingWriteSerializer, PortalSettingsSerializer,
     InvitationAcceptSerializer, StaffInvitationSerializer, StaffInviteCreateSerializer,
     CustomerDocumentSerializer, DocumentUploadSerializer,
     ApplicationCreateSerializer, ApplicationCustomerSerializer, ChangePasswordSerializer,
@@ -709,3 +711,114 @@ class StaffPortalInvitationViewSet(ScopedModelViewSet):
             raise ValidationError(_django_errors(exc))
         inv.refresh_from_db()
         return Response(StaffInvitationSerializer(inv).data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Director settings — manage the portal from the ERP, not the server
+# ─────────────────────────────────────────────────────────────────────────────
+
+from rest_framework import viewsets as _viewsets  # noqa: E402
+
+
+class IsDirector(permissions.BasePermission):
+    """Directors = users with global (all-branch) scope: owner, system admin, global-scope roles."""
+    message = 'Only directors can change the online portal settings.'
+
+    def has_permission(self, request, view):
+        from common.views import is_elevated_user
+        user = request.user
+        return bool(user and user.is_authenticated and getattr(user, 'tenant', None) and is_elevated_user(user))
+
+
+_SETTINGS_FIELDS = ['is_enabled', 'allow_registration', 'max_open_applications', 'public_url',
+                    'support_phone', 'support_email', 'terms_url', 'privacy_url']
+
+
+class StaffPortalSettingsViewSet(_viewsets.ViewSet):
+    """
+    GET  settings/                    current settings + loan products with their online state
+    PUT  settings/                    save settings
+    POST settings/offerings/          add or update the online offering for a loan product
+    POST settings/offerings/<id>/remove/   stop offering a product online
+    """
+    permission_classes = [permissions.IsAuthenticated, IsDirector]
+
+    def _config(self, request):
+        from .models import PortalConfig
+        cfg, _ = PortalConfig.objects.get_or_create(tenant=request.user.tenant)
+        return cfg
+
+    def _payload(self, request, cfg):
+        from loans.models import LoanProduct
+        offerings = {o.loan_product_id: o for o in PortalLoanOffering.objects.filter(tenant=cfg.tenant)}
+        products = []
+        for p in LoanProduct.objects.filter(tenant=cfg.tenant, is_deleted=False).select_related('product').order_by('product__name'):
+            o = offerings.get(p.pk)
+            products.append({
+                'loan_product': p.pk, 'name': p.product.name, 'product_active': p.product.is_active,
+                'min_amount': p.min_loan_amount, 'max_amount': p.max_loan_amount,
+                'interest_rate': p.default_interest_rate, 'term_unit': p.term_unit,
+                'min_term': p.min_term_months, 'max_term': p.max_term_months,
+                'offering': o and {
+                    'id': o.pk, 'is_active': o.is_active, 'display_name': o.display_name,
+                    'public_description': o.public_description, 'max_online_amount': o.max_online_amount,
+                    'sort_order': o.sort_order,
+                },
+            })
+        return {
+            'settings': {f: getattr(cfg, f) for f in _SETTINGS_FIELDS},
+            'server_default_url': getattr(dj_settings, 'PORTAL', {}).get('FRONTEND_URL', ''),
+            'products': products,
+        }
+
+    def list(self, request):
+        return Response(self._payload(request, self._config(request)))
+
+    def put(self, request):
+        cfg = self._config(request)
+        ser = PortalSettingsSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        before = {f: getattr(cfg, f) for f in _SETTINGS_FIELDS}
+        for f, v in ser.validated_data.items():
+            setattr(cfg, f, v)
+        cfg.save()
+        changed = {f: [before[f], getattr(cfg, f)] for f in _SETTINGS_FIELDS if before[f] != getattr(cfg, f)}
+        if changed:
+            services.audit('settings_changed', request=request, tenant=cfg.tenant, staff_user=request.user,
+                           changed={k: [str(a), str(b)] for k, (a, b) in changed.items()})
+        return Response(self._payload(request, cfg))
+
+    @action(detail=False, methods=['post'], url_path='offerings')
+    def save_offering(self, request):
+        from loans.models import LoanProduct
+        cfg = self._config(request)
+        ser = OfferingWriteSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        d = ser.validated_data
+        product = LoanProduct.objects.filter(pk=d['loan_product'], tenant=cfg.tenant, is_deleted=False).first()
+        if product is None:
+            raise ValidationError({'loan_product': 'Loan product not found.'})
+        if d.get('max_online_amount') is not None and d['max_online_amount'] < product.min_loan_amount:
+            raise ValidationError({'max_online_amount': 'The online limit cannot be below the product minimum.'})
+        offering, _ = PortalLoanOffering.objects.update_or_create(
+            tenant=cfg.tenant, loan_product=product,
+            defaults={k: d.get(k) for k in ('is_active', 'display_name', 'public_description',
+                                            'max_online_amount', 'sort_order')},
+        )
+        services.audit('settings_changed', request=request, tenant=cfg.tenant, staff_user=request.user,
+                       offering=offering.pk, product=product.product.name, active=offering.is_active)
+        return Response(self._payload(request, cfg))
+
+    @action(detail=False, methods=['post'], url_path=r'offerings/(?P<offering_id>\d+)/remove')
+    def remove_offering(self, request, offering_id=None):
+        cfg = self._config(request)
+        offering = get_object_or_404(PortalLoanOffering, pk=offering_id, tenant=cfg.tenant)
+        if offering.applications.exists():
+            # Keep history intact: hide it instead of deleting.
+            offering.is_active = False
+            offering.save(update_fields=['is_active', 'updated_at'])
+        else:
+            offering.delete()
+        services.audit('settings_changed', request=request, tenant=cfg.tenant, staff_user=request.user,
+                       offering=int(offering_id), removed=True)
+        return Response(self._payload(request, cfg))

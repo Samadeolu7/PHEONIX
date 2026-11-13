@@ -9,30 +9,29 @@ disbursement workflow. Nothing online approves or pays out money.
 The security model is documented at the top of `portal/models.py`. Read it
 before changing this app.
 
-## Turning it on (per organisation)
+## Turning it on (per organisation) — no server access needed
 
-The portal is **off** by default and returns 404 until enabled.
+1. **Directors** (users with all-branch access) open **Admin → Access Control →
+   Online Portal Settings** in the ERP and:
+   - set the portal web address (e.g. `https://erp.krystartrust.ng`), support
+     contacts, and terms/privacy links;
+   - choose **Loans offered online** (optionally a lower online limit and a
+     customer-facing name/description);
+   - tick **Portal is switched on**. Leave **Allow anyone to sign up** off for
+     invite-only.
+   Every change is written to the portal audit log.
+2. In **Permission Setup**, give staff roles access to **Loans → Online Applications**
+   (view/edit to review, approve to accept/decline; accepting also needs create on Loan
+   Accounts) and **Clients → Online Portal Access** (to send invitations). These pages
+   are registered automatically on deploy; `seed_permissions` is no longer required.
 
-1. Deploy, then run `python manage.py migrate` (the entrypoint already does this) and
-   `python manage.py seed_permissions` to register the *Online Applications* permission page.
-2. Django admin → **Portal configurations** → add one for the organisation, tick
-   *Is enabled*, and fill in support phone/email and terms/privacy URLs.
-   *Allow registration* (open self sign-up) is **off by default**: accounts can then
-   only be created from a staff invitation (see below). Tick it to also let anyone sign up.
-3. Django admin → **Portal loan offerings** → add each loan product the public may
-   apply for. Only listed products are shown. You can set a lower online cap
-   (`max_online_amount`) than the product maximum.
-4. Permission Setup → give reviewer roles access to **Loans → Online Applications**:
-   - *view* to see applications, *edit* to start a review,
-   - *approve* to accept/decline (accepting also needs *create* on Loan Accounts).
-   Roles still in "legacy" mode (no policies) can view and start reviews, but cannot
-   accept or decline.
+The same settings remain available in Django admin.
 
 ## Environment variables
 
 | Variable | Default | Notes |
 |---|---|---|
-| `PORTAL_FRONTEND_URL` | `http://localhost:5173` | **Set in production**, e.g. `https://erp.krystartrust.ng`. Used for links in emails. |
+| `PORTAL_FRONTEND_URL` | `http://localhost:5173` | Fallback only. Directors normally set the web address on the settings page. |
 | `PORTAL_COOKIE_SAMESITE` | `Strict` | Correct for our deployment: the frontend (`erp.krystartrust.ng`) and API (`api.kti.krystartrust.ng`) are both served from our server under the same registrable domain. Only revisit if the frontend ever moves to a different domain. |
 | `PORTAL_COOKIE_DOMAIN` | unset | Leave unset unless you need the cookie on a parent domain. |
 | `PORTAL_COOKIE_SECURE` | `True` when `DEBUG=False` | |
