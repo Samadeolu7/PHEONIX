@@ -1129,3 +1129,82 @@ class BalancesAndWithdrawalTests(PortalTestCase):
         self.assertEqual(other.post(f'/api/portal/staff/withdrawals/{wr.pk}/forward/', {}, format='json').status_code, 404)
         # Portal cookie can't reach the staff endpoint.
         self.assertIn(self.c.get('/api/portal/staff/withdrawals/').status_code, (401, 403))
+
+
+class ProductionDomainResolutionTests(PortalTestCase):
+    """
+    Production: the customer is on erp.krystartrust.ng and the browser calls
+    the API on api.kti.krystartrust.ng with no tenant header. The middleware
+    can't tell the organisation from that host; the portal must use the web
+    address the director configured.
+    """
+    API_HOST = 'api.kti.krystartrust.ng'
+    SITE = 'https://erp.krystartrust.ng'
+
+    def setUp(self):
+        super().setUp()
+        cfg = PortalConfig.objects.get(tenant=self.env['tenant'])
+        cfg.public_url = self.SITE
+        cfg.save()
+
+    def browser(self, origin=None):
+        c = APIClient()
+        c.defaults['HTTP_HOST'] = self.API_HOST
+        c.defaults['HTTP_ORIGIN'] = origin or self.SITE
+        c.defaults['HTTP_X_PORTAL_REQUEST'] = '1'
+        return c
+
+    def test_portal_found_from_configured_web_address(self):
+        res = self.browser().get('/api/portal/info/')
+        self.assertEqual(res.status_code, 200, res.content)
+        self.assertEqual(res.json()['organisation'], self.env['tenant'].name)
+
+    def test_not_found_without_configured_address(self):
+        PortalConfig.objects.filter(tenant=self.env['tenant']).update(public_url='')
+        self.assertEqual(self.browser().get('/api/portal/info/').status_code, 404)
+
+    def test_sign_in_and_session_work_through_api_host(self):
+        make_customer(self.env)
+        c = self.browser()
+        self.assertEqual(login(c).status_code, 200)
+        self.assertEqual(c.get('/api/portal/me/').status_code, 200)
+
+    def test_session_bound_to_its_organisation_even_with_other_origin(self):
+        beta = make_tenant('beta')
+        PortalConfig.objects.filter(tenant=beta['tenant']).update(public_url='https://beta.example.ng')
+        make_customer(self.env)
+        c = self.browser()
+        login(c)
+        c.defaults['HTTP_ORIGIN'] = 'https://beta.example.ng'   # spoofed / other org's site
+        self.assertEqual(c.get('/api/portal/me/').status_code, 401)
+
+    def test_two_organisations_cannot_claim_the_same_address(self):
+        beta = make_tenant('beta')
+        d = APIClient()
+        d.force_authenticate(beta['owner'])
+        res = d.put('/api/portal/staff/settings/', {
+            'is_enabled': True, 'allow_registration': False, 'max_open_applications': 1,
+            'public_url': self.SITE, 'support_phone': '', 'support_email': '', 'terms_url': '', 'privacy_url': '',
+        }, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('Another organisation', str(res.json()))
+
+    def test_accept_invitation_through_api_host(self):
+        set_current_tenant(self.env['tenant'])
+        client_rec = Client.objects.create(first_name='Kemi', last_name='Bello', gender='female',
+                                           phone_primary='08035550000', tenant=self.env['tenant'],
+                                           branch=self.env['branch'], owner=self.env['owner'])
+        set_current_tenant(None)
+        staff = APIClient()
+        staff.force_authenticate(self.env['owner'])
+        self.assertEqual(staff.post('/api/portal/staff/invitations/', {'client': client_rec.pk, 'email': 'kemi@example.com'},
+                                    format='json').status_code, 201)
+        from urllib.parse import unquote
+        token = unquote(re.search(r'/portal/accept-invite\?token=(\S+)', mail.outbox[-1].body).group(1))
+        self.assertIn(self.SITE + '/portal/accept-invite', mail.outbox[-1].body)
+        c = self.browser()
+        self.assertEqual(c.post('/api/portal/auth/invitation/', {'token': token}, format='json').status_code, 200)
+        res = c.post('/api/portal/auth/accept-invitation/', {'token': token, 'password': 'Lagoon-Mango-4471',
+                                                              'accept_terms': True}, format='json')
+        self.assertEqual(res.status_code, 201, res.content)
+        self.assertEqual(c.get('/api/portal/me/').status_code, 200)

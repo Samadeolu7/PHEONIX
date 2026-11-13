@@ -36,7 +36,7 @@ from .authentication import (
     clear_session_cookie, cookie_name, enforce_csrf_header, set_session_cookie,
 )
 from .models import (
-    OnlineApplicationDocument, OnlineLoanApplication, PortalLoanOffering, PortalSession, hash_token,
+    OnlineApplicationDocument, OnlineLoanApplication, PortalConfig, PortalLoanOffering, PortalSession, hash_token,
     PORTAL_DOC_MAX_MB,
 )
 from .serializers import (
@@ -103,11 +103,15 @@ class PortalBaseView(APIView):
     throttle_classes = [PortalAnonThrottle]
 
     def initial(self, request, *args, **kwargs):
-        tenant = getattr(request._request, 'tenant', None)
-        self.portal_config = services.get_enabled_config(tenant)
+        tenant, self.portal_config = services.resolve_portal(request._request)
         if self.portal_config is None:
             raise Http404()
         self.tenant = tenant
+        # Make the rest of the request (session tenant-binding, model
+        # defaults) use the portal's organisation, not the middleware guess.
+        request._request.tenant = tenant
+        from common.managers import set_current_tenant
+        set_current_tenant(tenant)
         # Login-CSRF protection for anonymous POSTs too (login, register, ...).
         enforce_csrf_header(request)
         super().initial(request, *args, **kwargs)
@@ -778,6 +782,12 @@ class StaffPortalSettingsViewSet(_viewsets.ViewSet):
         cfg = self._config(request)
         ser = PortalSettingsSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        new_host = services._host_of(ser.validated_data.get('public_url') or '')
+        if new_host and any(
+            services._host_of(u) == new_host
+            for u in PortalConfig.objects.exclude(tenant=cfg.tenant).exclude(public_url='').values_list('public_url', flat=True)
+        ):
+            raise ValidationError({'public_url': 'Another organisation already uses this web address.'})
         before = {f: getattr(cfg, f) for f in _SETTINGS_FIELDS}
         for f, v in ser.validated_data.items():
             setattr(cfg, f, v)

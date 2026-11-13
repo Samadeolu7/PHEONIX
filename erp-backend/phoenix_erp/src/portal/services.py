@@ -63,6 +63,49 @@ def get_enabled_config(tenant):
     return PortalConfig.objects.filter(tenant=tenant, is_enabled=True).first()
 
 
+def _host_of(url):
+    from urllib.parse import urlsplit
+    try:
+        return (urlsplit(url).hostname or '').lower()
+    except ValueError:
+        return ''
+
+
+def browser_site_host(request):
+    """
+    Host of the page the customer's browser is on. The portal frontend
+    (e.g. erp.krystartrust.ng) calls the API on another host
+    (api.kti.krystartrust.ng), so the API's own Host header can't tell us
+    which organisation's portal this is; the browser's Origin can.
+    """
+    meta = request.META
+    return _host_of(meta.get('HTTP_ORIGIN', '')) or _host_of(meta.get('HTTP_REFERER', ''))
+
+
+def resolve_portal(request):
+    """
+    (tenant, config) for an anonymous or customer portal request, or (None, None).
+
+    1. The organisation whose director set this site as the portal web
+       address (an explicit, unique domain → organisation mapping).
+    2. Otherwise the tenant the middleware resolved (subdomain / custom
+       domain / X-Tenant-Slug in development).
+    Only organisations with the portal switched on are ever returned.
+    """
+    host = browser_site_host(request)
+    if host:
+        matches = [
+            c for c in PortalConfig.objects.filter(is_enabled=True).exclude(public_url='').select_related('tenant')
+            if _host_of(c.public_url) == host
+        ]
+        if len(matches) == 1:
+            return matches[0].tenant, matches[0]
+        # 0 or ambiguous (>1): fall through rather than guess.
+    tenant = getattr(request, 'tenant', None)
+    cfg = get_enabled_config(tenant)
+    return (tenant, cfg) if cfg else (None, None)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Email
 # ─────────────────────────────────────────────────────────────────────────────
