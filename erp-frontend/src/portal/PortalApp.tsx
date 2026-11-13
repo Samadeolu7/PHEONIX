@@ -24,6 +24,7 @@ import {
   LandingPage,
 } from './pages/CustomerPages';
 import { ApplyPage } from './pages/ApplyPage';
+import { AccountsPage } from './pages/AccountsPage';
 
 function Routed() {
   const { loading, unavailable } = usePortalAuth();
@@ -73,6 +74,14 @@ function Routed() {
           element={
             <RequireCustomer>
               <ApplicationDetailPage />
+            </RequireCustomer>
+          }
+        />
+        <Route
+          path="/portal/accounts"
+          element={
+            <RequireCustomer>
+              <AccountsPage />
             </RequireCustomer>
           }
         />

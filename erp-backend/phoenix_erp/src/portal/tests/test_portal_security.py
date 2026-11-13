@@ -986,3 +986,146 @@ class DirectorSettingsTests(PortalTestCase):
         self.assertEqual(self.director.post(self.URL + f'offerings/{off.pk}/remove/').status_code, 200)
         self.assertEqual(portal_client('alpha').get('/api/portal/products/').json(), [])
 
+
+
+class BalancesAndWithdrawalTests(PortalTestCase):
+    def setUp(self):
+        super().setUp()
+        from savings.models import SavingsAccount
+        t, o, b = self.env['tenant'], self.env['owner'], self.env['branch']
+        set_current_tenant(t)
+
+        def gl(name, code, level=Account.LEVEL_PARENT, parent=None, balance='0'):
+            acc = Account.objects.create(name=name, code=code, account_type=Account.SAVINGS, account_level=level,
+                                         parent=parent, owner=o, created_by=o, branch=b, tenant=t)
+            # Test-only seeding: the ledger forbids balance edits through save()
+            # (they must come from posted transactions); queryset.update bypasses it.
+            Account.objects.filter(pk=acc.pk).update(balance=Decimal(balance))
+            acc.refresh_from_db()
+            return acc
+        parent = gl('Savings', '2100')
+        self.sav_product = Product.objects.create(name='Regular Savings', code='SAV-R', product_type='SAVINGS',
+                                                  owner=o, branch=b, tenant=t)
+        self.client_rec = Client.objects.create(first_name='Kemi', last_name='Bello', gender='female',
+                                                phone_primary='08035550000', tenant=t, branch=b, owner=o)
+        self.other_client = Client.objects.create(first_name='Other', last_name='Person', gender='male',
+                                                  phone_primary='08035550001', tenant=t, branch=b, owner=o)
+
+        def sav(client, number, code, balance):
+            return SavingsAccount.objects.create(
+                client=client, account=gl(f'{number}', code, Account.LEVEL_CHILD, parent, balance),
+                product=self.sav_product, account_number=number, interest_rate=Decimal('0'),
+                interest_calculation_method='monthly', minimum_balance=Decimal('1000'),
+                opened_on=date.today(), status='active', owner=o, branch=b, tenant=t)
+        self.mine = sav(self.client_rec, 'SAV-0001', '2101', '50000')
+        self.theirs = sav(self.other_client, 'SAV-0002', '2102', '90000')
+        set_current_tenant(None)
+
+        self.customer = make_customer(self.env)
+        self.customer.client = self.client_rec
+        self.customer.save()
+        self.c = portal_client('alpha')
+        login(self.c)
+        self.staff = APIClient()
+        self.staff.force_authenticate(self.env['owner'])
+
+    def request_withdrawal(self, client=None, account=None, amount='10000'):
+        return (client or self.c).post('/api/portal/withdrawals/', {
+            'savings_account': (account or self.mine).pk, 'amount': amount, 'payout_preference': 'bank',
+            'reason': 'School fees'}, format='json')
+
+    def test_balances_show_only_own_accounts(self):
+        body = self.c.get('/api/portal/me/accounts/').json()
+        self.assertTrue(body['linked'])
+        self.assertEqual([s['account_number'] for s in body['savings']], ['SAV-0001'])
+        s = body['savings'][0]
+        self.assertEqual(Decimal(str(s['balance'])), Decimal('50000.00'))
+        self.assertEqual(Decimal(str(s['withdrawable'])), Decimal('49000.00'))  # minus compulsory minimum
+
+    def test_unlinked_customer_sees_nothing_and_cannot_withdraw(self):
+        make_customer(self.env, email='new@example.com')
+        c = portal_client('alpha')
+        login(c, email='new@example.com')
+        self.assertEqual(c.get('/api/portal/me/accounts/').json(), {'linked': False, 'loans': [], 'savings': []})
+        self.assertEqual(self.request_withdrawal(client=c).status_code, 400)
+
+    def test_cannot_withdraw_from_someone_elses_account_or_over_balance(self):
+        from portal.models import OnlineWithdrawalRequest
+        self.assertEqual(self.request_withdrawal(account=self.theirs).status_code, 400)
+        self.assertEqual(self.request_withdrawal(amount='49000.01').status_code, 400)
+        self.assertFalse(OnlineWithdrawalRequest.objects.exists())
+
+    def test_request_cancel_and_one_open_per_account(self):
+        res = self.request_withdrawal()
+        self.assertEqual(res.status_code, 201, res.content)
+        ref = res.json()['reference']
+        self.assertEqual(self.request_withdrawal().status_code, 400)       # already one waiting
+        self.assertEqual(self.c.post(f'/api/portal/withdrawals/{ref}/cancel/').status_code, 200)
+        self.assertEqual(self.request_withdrawal().status_code, 201)
+
+    def test_withdrawal_requires_csrf_header(self):
+        res = self.c.post('/api/portal/withdrawals/', {'savings_account': self.mine.pk, 'amount': '100',
+                                                        'payout_preference': 'bank'},
+                          format='json', HTTP_X_PORTAL_REQUEST='0')
+        self.assertEqual(res.status_code, 403)
+
+    def test_staff_forward_goes_through_existing_workflow(self):
+        from savings.models import SavingsWithdrawalRequest
+        ref = self.request_withdrawal().json()['reference']
+        from portal.models import OnlineWithdrawalRequest
+        wr = OnlineWithdrawalRequest.objects.get(reference=ref)
+        res = self.staff.post(f'/api/portal/staff/withdrawals/{wr.pk}/forward/', {}, format='json')
+        self.assertEqual(res.status_code, 200, res.content)
+        real = SavingsWithdrawalRequest.objects.get()
+        self.assertEqual(real.status, 'pending')                     # approvals still required
+        self.assertEqual(real.requested_by, self.env['owner'])
+        self.assertEqual(real.amount, Decimal('10000.00'))
+        self.assertEqual(real.client_requested_on, wr.submitted_at.date())
+        # No money has moved.
+        self.mine.account.refresh_from_db()
+        self.assertEqual(self.mine.account.balance, Decimal('50000.00'))
+        mine = self.c.get('/api/portal/withdrawals/').json()[0]
+        self.assertEqual(mine['status_display'], 'Awaiting approval')
+        self.assertFalse(mine['can_cancel'])
+        # Can't forward twice.
+        self.assertEqual(self.staff.post(f'/api/portal/staff/withdrawals/{wr.pk}/forward/', {}, format='json').status_code, 400)
+
+    def test_account_manager_rule_is_respected(self):
+        from savings.models import SavingsProduct, SavingsWithdrawalRequest
+        from portal.models import OnlineWithdrawalRequest
+        set_current_tenant(self.env['tenant'])
+        SavingsProduct.objects.create(product=self.sav_product, only_account_manager_can_withdraw=True,
+                                      owner=self.env['owner'], branch=self.env['branch'], tenant=self.env['tenant'])
+        set_current_tenant(None)
+        ref = self.request_withdrawal().json()['reference']
+        wr = OnlineWithdrawalRequest.objects.get(reference=ref)
+        res = self.staff.post(f'/api/portal/staff/withdrawals/{wr.pk}/forward/', {}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('account manager', str(res.json()).lower())
+        self.assertFalse(SavingsWithdrawalRequest.objects.exists())
+        wr.refresh_from_db()
+        self.assertEqual(wr.status, 'submitted')
+
+    def test_decline_needs_message_and_customer_sees_it(self):
+        from portal.models import OnlineWithdrawalRequest
+        ref = self.request_withdrawal().json()['reference']
+        wr = OnlineWithdrawalRequest.objects.get(reference=ref)
+        self.assertEqual(self.staff.post(f'/api/portal/staff/withdrawals/{wr.pk}/decline/', {}, format='json').status_code, 400)
+        res = self.staff.post(f'/api/portal/staff/withdrawals/{wr.pk}/decline/',
+                              {'customer_message': 'Please visit the branch with your ID.', 'staff_notes': 'internal'}, format='json')
+        self.assertEqual(res.status_code, 200, res.content)
+        mine = self.c.get('/api/portal/withdrawals/').json()[0]
+        self.assertEqual(mine['status'], 'declined')
+        self.assertEqual(mine['customer_message'], 'Please visit the branch with your ID.')
+        self.assertNotIn('internal', str(mine))
+
+    def test_staff_scope(self):
+        from portal.models import OnlineWithdrawalRequest
+        ref = self.request_withdrawal().json()['reference']
+        wr = OnlineWithdrawalRequest.objects.get(reference=ref)
+        beta = make_tenant('beta')
+        other = APIClient()
+        other.force_authenticate(beta['owner'])
+        self.assertEqual(other.post(f'/api/portal/staff/withdrawals/{wr.pk}/forward/', {}, format='json').status_code, 404)
+        # Portal cookie can't reach the staff endpoint.
+        self.assertIn(self.c.get('/api/portal/staff/withdrawals/').status_code, (401, 403))

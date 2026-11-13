@@ -527,3 +527,78 @@ class OfferingWriteSerializer(serializers.Serializer):
     public_description = serializers.CharField(allow_blank=True, max_length=2000, required=False, default='')
     max_online_amount = serializers.DecimalField(max_digits=18, decimal_places=2, required=False, allow_null=True, min_value=1)
     sort_order = serializers.IntegerField(min_value=0, required=False, default=0)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Online withdrawals
+# ─────────────────────────────────────────────────────────────────────────────
+
+class WithdrawalCreateSerializer(serializers.Serializer):
+    savings_account = serializers.IntegerField()
+    amount = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=1)
+    payout_preference = serializers.ChoiceField(choices=['bank', 'cash'])
+    reason = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+
+
+class CustomerWithdrawalSerializer(serializers.Serializer):
+    reference = serializers.CharField()
+    account_number = serializers.CharField(source='savings_account.account_number')
+    amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    payout_preference = serializers.CharField()
+    payout_preference_display = serializers.CharField(source='get_payout_preference_display')
+    reason = serializers.CharField()
+    status = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+    customer_message = serializers.CharField()
+    submitted_at = serializers.DateTimeField()
+    can_cancel = serializers.SerializerMethodField()
+
+    def get_status(self, obj):
+        return obj.customer_status[0]
+
+    def get_status_display(self, obj):
+        return obj.customer_status[1]
+
+    def get_can_cancel(self, obj):
+        return obj.status == 'submitted'
+
+
+class StaffWithdrawalSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    reference = serializers.CharField()
+    client_name = serializers.CharField(source='savings_account.client.full_name')
+    client_code = serializers.CharField(source='savings_account.client.client_id')
+    client_id = serializers.IntegerField(source='savings_account.client_id')
+    account_number = serializers.CharField(source='savings_account.account_number')
+    branch_name = serializers.CharField(source='branch.name', default=None)
+    amount = serializers.DecimalField(max_digits=18, decimal_places=2)
+    payout_preference_display = serializers.CharField(source='get_payout_preference_display')
+    reason = serializers.CharField()
+    status = serializers.CharField()
+    status_display = serializers.CharField(source='get_status_display')
+    submitted_at = serializers.DateTimeField()
+    customer_email = serializers.CharField(source='customer.email')
+    reviewed_by_name = serializers.SerializerMethodField()
+    reviewed_at = serializers.DateTimeField(allow_null=True)
+    customer_message = serializers.CharField()
+    staff_notes = serializers.CharField()
+    forwarded_request = serializers.IntegerField(source='forwarded_request_id', allow_null=True)
+    forwarded_status = serializers.CharField(source='forwarded_request.get_status_display', default=None)
+    balance_now = serializers.SerializerMethodField()
+
+    def get_reviewed_by_name(self, obj):
+        u = obj.reviewed_by
+        return (u.get_full_name() or u.username) if u else None
+
+    def get_balance_now(self, obj):
+        a = obj.savings_account
+        try:
+            return {'balance': a.account.balance, 'available': a.calculate_available_balance(),
+                    'minimum_balance': a.minimum_balance}
+        except Exception:
+            return None
+
+
+class StaffWithdrawalDecisionSerializer(serializers.Serializer):
+    customer_message = serializers.CharField(max_length=1000, required=False, allow_blank=True, default='')
+    staff_notes = serializers.CharField(max_length=2000, required=False, allow_blank=True, default='')

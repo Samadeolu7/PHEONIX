@@ -78,7 +78,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
     description: 'Savings accounts, deposits, withdrawals, and schedules',
     pages: [
       { code: 'savings-accounts', title: 'Savings Accounts', description: 'View and manage savings accounts', paths: ['/savings/accounts', '/savings/accounts/:id', '/savings/accounts/create', '/savings/smart-savings'] },
-      { code: 'savings-withdrawals', title: 'Withdrawals', description: 'Process savings withdrawals', path: '/savings/withdrawals' },
+      { code: 'savings-withdrawals', title: 'Withdrawals', description: 'Process savings withdrawals (incl. online requests)', paths: ['/savings/withdrawals', '/savings/online-withdrawals'] },
       { code: 'savings-deposit', title: 'Deposits', description: 'Process savings deposits', path: '/savings/deposit' },
       { code: 'savings-collection', title: 'Collection', description: 'Field savings collection — sheet, spreadsheet, and multi-day views', paths: ['/reports/contributions/daily', '/reports/contributions/spreadsheet', '/savings/collection', '/savings/collection/multi-day', '/savings/collection/sheet', '/savings/collection/spreadsheet'] },
       { code: 'compulsory-savings-policies', title: 'Compulsory Savings Policies', description: 'Mandatory savings rules', path: '/savings/policy' },

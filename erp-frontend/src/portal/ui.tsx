@@ -24,6 +24,9 @@ export function PortalShell({ children }: { children: React.ReactNode }) {
           <nav className="flex items-center gap-1">
             {customer ? (
               <>
+                <NavLink to="/portal/accounts" className={navCls}>
+                  My accounts
+                </NavLink>
                 <NavLink to="/portal/dashboard" className={navCls}>
                   My applications
                 </NavLink>
