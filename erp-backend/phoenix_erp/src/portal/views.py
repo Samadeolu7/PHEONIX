@@ -141,12 +141,20 @@ class PortalAuthenticatedView(PortalBaseView):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _live_offerings(tenant):
+    """
+    Loans this organisation's directors switched on for the portal.
+    Offerings are tenant-bound and can only be created from products the
+    director can see in the ERP; products with no tenant stamped (older /
+    imported rows) are accepted, another organisation's never.
+    """
+    from django.db.models import Q
     return (
         PortalLoanOffering.objects.filter(
             tenant=tenant, is_active=True,
-            loan_product__tenant=tenant, loan_product__is_deleted=False,
+            loan_product__is_deleted=False,
             loan_product__product__is_active=True,
         )
+        .filter(Q(loan_product__tenant=tenant) | Q(loan_product__tenant__isnull=True))
         .select_related('loan_product', 'loan_product__product')
     )
 
@@ -734,6 +742,12 @@ class IsDirector(permissions.BasePermission):
         return bool(user and user.is_authenticated and getattr(user, 'tenant', None) and is_elevated_user(user))
 
 
+def _director_products(user):
+    """Exactly the loan products this director sees on the ERP Loan Products page."""
+    from loans.models import LoanProduct
+    return LoanProduct.objects.for_user(user).filter(is_deleted=False)
+
+
 _SETTINGS_FIELDS = ['is_enabled', 'allow_registration', 'max_open_applications', 'public_url',
                     'support_phone', 'support_email', 'terms_url', 'privacy_url']
 
@@ -756,7 +770,7 @@ class StaffPortalSettingsViewSet(_viewsets.ViewSet):
         from loans.models import LoanProduct
         offerings = {o.loan_product_id: o for o in PortalLoanOffering.objects.filter(tenant=cfg.tenant)}
         products = []
-        for p in LoanProduct.objects.filter(tenant=cfg.tenant, is_deleted=False).select_related('product').order_by('product__name'):
+        for p in _director_products(request.user).select_related('product').order_by('product__name'):
             o = offerings.get(p.pk)
             products.append({
                 'loan_product': p.pk, 'name': p.product.name, 'product_active': p.product.is_active,
@@ -805,7 +819,7 @@ class StaffPortalSettingsViewSet(_viewsets.ViewSet):
         ser = OfferingWriteSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         d = ser.validated_data
-        product = LoanProduct.objects.filter(pk=d['loan_product'], tenant=cfg.tenant, is_deleted=False).first()
+        product = _director_products(request.user).filter(pk=d['loan_product']).first()
         if product is None:
             raise ValidationError({'loan_product': 'Loan product not found.'})
         if d.get('max_online_amount') is not None and d['max_online_amount'] < product.min_loan_amount:
