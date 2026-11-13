@@ -17,6 +17,8 @@ The portal is **off** by default and returns 404 until enabled.
    `python manage.py seed_permissions` to register the *Online Applications* permission page.
 2. Django admin → **Portal configurations** → add one for the organisation, tick
    *Is enabled*, and fill in support phone/email and terms/privacy URLs.
+   *Allow registration* (open self sign-up) is **off by default**: accounts can then
+   only be created from a staff invitation (see below). Tick it to also let anyone sign up.
 3. Django admin → **Portal loan offerings** → add each loan product the public may
    apply for. Only listed products are shown. You can set a lower online cap
    (`max_online_amount`) than the product maximum.
@@ -43,6 +45,21 @@ Email must be configured (`EMAIL_HOST`, etc.), since verification and password r
 Local frontend development: set `VITE_PORTAL_TENANT_SLUG=<tenant slug>` so the
 dev server sends the tenant header (production resolves the tenant from the domain).
 
+## Inviting existing clients (the default way in)
+
+On a client's record, the **Online Portal Access** card shows whether they have an
+account and lets staff email an invitation (only to an address confirmed as the
+client's). The client opens the link, chooses a password and is signed in. Their
+account is already linked to their client record and their email counts as verified.
+
+- Links are single-use, expire after 72 hours, and only the hash is stored.
+  Sending a new invitation cancels the previous one, and staff can cancel a
+  pending one.
+- Staff can only invite clients in their own organisation and branch, unless
+  they have cross-branch access. Permission page: **Clients → Online Portal Access**.
+- When an invited customer applies, accepting the application uses their linked
+  client record directly. No NIN/BVN matching step and no duplicate client.
+
 ## Supporting documents
 
 After submitting, applicants can attach documents (ID, passport photo, proof of
@@ -59,7 +76,7 @@ uploads from the `Content-Length` header before reading the body.
 
 ## URLs
 
-- Customer: `/portal` (landing), `/portal/register`, `/portal/login`, `/portal/apply`, `/portal/dashboard`
+- Customer: `/portal` (landing), `/portal/accept-invite`, `/portal/register` (only if open sign-up is on), `/portal/login`, `/portal/apply`, `/portal/dashboard`
 - Staff: `/loans/online-applications`
 - API: `/api/portal/...` (customer, cookie session) and `/api/portal/staff/...` (staff JWT)
 

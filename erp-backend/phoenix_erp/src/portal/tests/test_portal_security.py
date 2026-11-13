@@ -65,7 +65,8 @@ def make_tenant(slug, *, enabled=True):
         allowed_repayment_frequencies=['monthly', 'weekly'],
         owner=owner, branch=branch, tenant=tenant,
     )
-    PortalConfig.objects.create(tenant=tenant, is_enabled=enabled)
+    # Most tests exercise open sign-up; InvitationTests covers the invite-only default.
+    PortalConfig.objects.create(tenant=tenant, is_enabled=enabled, allow_registration=True)
     offering = PortalLoanOffering.objects.create(
         tenant=tenant, loan_product=loan_product, max_online_amount=Decimal('500000'),
     )
@@ -748,3 +749,133 @@ class ApplicationDocumentTests(PortalTestCase):
                           {'document_type': 'id_card', 'file': SimpleUploadedFile('a.pdf', self.PDF)},
                           format='multipart', HTTP_X_PORTAL_REQUEST='0')
         self.assertEqual(res.status_code, 403)
+
+
+
+class InvitationTests(PortalTestCase):
+    def setUp(self):
+        super().setUp()
+        cfg = PortalConfig.objects.get(tenant=self.env['tenant'])
+        cfg.allow_registration = False   # the production default
+        cfg.save()
+        set_current_tenant(self.env['tenant'])
+        self.client_rec = Client.objects.create(
+            first_name='Kemi', last_name='Bello', gender='female', phone_primary='08035550000',
+            email='kemi@example.com', nin='12345678901',
+            tenant=self.env['tenant'], branch=self.env['branch'], owner=self.env['owner'],
+        )
+        set_current_tenant(None)
+        self.staff = APIClient()
+        self.staff.force_authenticate(self.env['owner'])
+
+    def invite(self, staff=None, email='kemi@example.com', client=None):
+        return (staff or self.staff).post('/api/portal/staff/invitations/', {
+            'client': (client or self.client_rec).pk, 'email': email,
+        }, format='json')
+
+    def token_from_mail(self):
+        from urllib.parse import unquote
+        m = re.search(r'/portal/accept-invite\?token=(\S+)', mail.outbox[-1].body)
+        return unquote(m.group(1))
+
+    def accept(self, token, client=None, password='Lagoon-Mango-4471'):
+        return (client or portal_client('alpha')).post('/api/portal/auth/accept-invitation/', {
+            'token': token, 'password': password, 'accept_terms': True,
+        }, format='json')
+
+    def test_new_configs_are_invite_only(self):
+        self.assertFalse(PortalConfig(tenant=self.env['tenant']).allow_registration)
+        res = portal_client('alpha').post('/api/portal/auth/register/', {
+            'first_name': 'Eve', 'last_name': 'X', 'email': 'eve@example.com', 'phone': '08031234567',
+            'password': STRONG_PW, 'accept_terms': True}, format='json')
+        self.assertEqual(res.status_code, 403)
+        self.assertFalse(PortalCustomer.objects.exists())
+
+    def test_invite_accept_creates_linked_verified_account_and_signs_in(self):
+        self.assertEqual(self.invite().status_code, 201)
+        token = self.token_from_mail()
+        from portal.models import PortalInvitation
+        self.assertFalse(PortalInvitation.objects.filter(token_hash=token).exists())  # only the hash is stored
+        c = portal_client('alpha')
+        self.assertEqual(c.post('/api/portal/auth/invitation/', {'token': token}, format='json').json()['first_name'], 'Kemi')
+        res = self.accept(token, client=c)
+        self.assertEqual(res.status_code, 201, res.content)
+        cust = PortalCustomer.objects.get()
+        self.assertEqual(cust.client, self.client_rec)
+        self.assertTrue(cust.is_email_verified)
+        self.assertEqual(c.get('/api/portal/me/').status_code, 200)   # signed in by the cookie
+        # Single use.
+        self.assertEqual(self.accept(token).status_code, 400)
+        # Status visible to staff.
+        body = self.staff.get(f'/api/portal/staff/invitations/for-client/?client={self.client_rec.pk}').json()
+        self.assertEqual(body['account']['email'], 'kemi@example.com')
+        self.assertEqual(body['invitations'][0]['status'], 'accepted')
+
+    def test_expired_revoked_and_superseded_invites_fail(self):
+        from portal.models import PortalInvitation
+        self.invite()
+        first = self.token_from_mail()
+        self.invite()                                  # supersedes the first
+        second = self.token_from_mail()
+        self.assertEqual(self.accept(first).status_code, 400)
+        inv = PortalInvitation.objects.get(revoked_at__isnull=True)
+        inv.expires_at = timezone.now() - timedelta(minutes=1)
+        inv.save()
+        self.assertEqual(self.accept(second).status_code, 400)
+        self.invite()
+        third = self.token_from_mail()
+        inv = PortalInvitation.objects.get(revoked_at__isnull=True, expires_at__gt=timezone.now())
+        self.assertEqual(self.staff.post(f'/api/portal/staff/invitations/{inv.pk}/revoke/').status_code, 200)
+        self.assertEqual(self.accept(third).status_code, 400)
+        self.assertFalse(PortalCustomer.objects.exists())
+
+    def test_token_is_bound_to_tenant(self):
+        make_tenant('beta')
+        self.invite()
+        token = self.token_from_mail()
+        self.assertEqual(self.accept(token, client=portal_client('beta')).status_code, 400)
+
+    def test_weak_password_rejected_on_accept(self):
+        self.invite()
+        res = self.accept(self.token_from_mail(), password='password1')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('password', res.json())
+
+    def test_staff_scope_for_invitations(self):
+        beta = make_tenant('beta')
+        other = APIClient()
+        other.force_authenticate(beta['owner'])
+        self.assertEqual(self.invite(staff=other).status_code, 400)       # other tenant's client: "not found"
+        self.assertEqual(other.get(f'/api/portal/staff/invitations/for-client/?client={self.client_rec.pk}').status_code, 404)
+        # Same tenant, different branch, not elevated.
+        set_current_tenant(self.env['tenant'])
+        b2 = Branch.objects.create(name='Oyo', code='OYO2', tenant=self.env['tenant'], owner=self.env['owner'])
+        set_current_tenant(None)
+        clerk = User.objects.create_user(username='b2clerk', password='x' * 12)
+        clerk.tenant, clerk.branch = self.env['tenant'], b2
+        clerk.save()
+        from users.models import Role
+        clerk.roles.add(Role.objects.create(name='Clerk', tenant=self.env['tenant']))
+        c = APIClient()
+        c.force_authenticate(clerk)
+        self.assertEqual(self.invite(staff=c).status_code, 400)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_cannot_invite_when_account_exists(self):
+        self.invite()
+        self.accept(self.token_from_mail())
+        self.assertEqual(self.invite().status_code, 400)
+
+    def test_convert_uses_linked_client_without_nin_conflict(self):
+        self.invite()
+        c = portal_client('alpha')
+        self.accept(self.token_from_mail(), client=c)
+        # Same NIN as the existing client: an un-invited applicant would get a 409.
+        res = c.post('/api/portal/applications/', application_payload(self.env, nin='12345678901'), format='json')
+        self.assertEqual(res.status_code, 201, res.content)
+        app = OnlineLoanApplication.objects.get()
+        res = self.staff.post(f'/api/portal/staff/applications/{app.pk}/convert/', {}, format='json')
+        self.assertEqual(res.status_code, 200, res.content)
+        app.refresh_from_db()
+        self.assertEqual(app.converted_client, self.client_rec)
+        self.assertEqual(Client.objects.count(), 1)   # no duplicate client created

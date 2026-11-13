@@ -10,6 +10,7 @@ import { BRAND } from '../constants/brand';
 import { PortalAuthProvider, RequireCustomer, usePortalAuth } from './PortalAuth';
 import { PortalShell, Notice } from './ui';
 import {
+  AcceptInvitePage,
   ForgotPasswordPage,
   LoginPage,
   RegisterPage,
@@ -47,6 +48,7 @@ function Routed() {
         <Route path="/portal" element={<LandingPage />} />
         <Route path="/portal/register" element={<RegisterPage />} />
         <Route path="/portal/login" element={<LoginPage />} />
+        <Route path="/portal/accept-invite" element={<AcceptInvitePage />} />
         <Route path="/portal/verify-email" element={<VerifyEmailPage />} />
         <Route path="/portal/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/portal/reset-password" element={<ResetPasswordPage />} />

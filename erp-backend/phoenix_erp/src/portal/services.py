@@ -429,6 +429,11 @@ def convert_application(
         app = _lock_open(application)
         product = app.loan_product
 
+        linked = app.customer.client if app.customer.client_id else None
+        if linked is not None and not client_id:
+            # Invited customer: staff already vouched for this identity when
+            # they sent the invitation from the client's record.
+            client_id = linked.pk
         if client_id:
             try:
                 client = Client.objects.get(pk=client_id, tenant=app.tenant)
@@ -592,3 +597,96 @@ def delete_application_document(*, document, request=None):
         # Remove the bytes only after the row is gone for good.
         transaction.on_commit(lambda: storage.delete(storage_name))
     audit('document_deleted', request=request, customer=app.customer, application=app)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Staff invitations
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_invitation(*, client, email, staff_user, request=None):
+    from .models import PortalInvitation
+    email = normalise_email(email)
+    if PortalCustomer.objects.filter(client=client).exists():
+        raise ValidationError('This client already has an online account.')
+    if PortalCustomer.objects.filter(tenant=client.tenant, email=email).exists():
+        raise ValidationError({'email': 'An online account already uses this email address.'})
+    inv, raw = PortalInvitation.issue(client=client, email=email, created_by=staff_user)
+    from urllib.parse import quote
+    link = _frontend_url(f'/portal/accept-invite?token={quote(raw)}')
+    _send(
+        f'Your online account — {client.tenant.name}',
+        f'Hello {client.first_name},\n\n'
+        f'{client.tenant.name} has set up online access for you. Use this link to choose a password '
+        f'and sign in, so you can apply for loans and track your applications online:\n\n{link}\n\n'
+        f'The link works once and expires in {PortalInvitation.INVITE_TTL_HOURS} hours. '
+        'If you were not expecting this, ignore this email. We will never ask for your password, '
+        'PIN or OTP by phone, SMS or email.\n',
+        email,
+    )
+    audit('invite_sent', request=request, tenant=client.tenant, staff_user=staff_user,
+          client=client.client_id, invitation=inv.pk)
+    return inv
+
+
+def revoke_invitation(*, invitation, staff_user, request=None):
+    if invitation.status != 'pending':
+        raise ValidationError(f'This invitation is already {invitation.status}.')
+    invitation.revoked_at = timezone.now()
+    invitation.save(update_fields=['revoked_at'])
+    audit('invite_revoked', request=request, tenant=invitation.tenant, staff_user=staff_user,
+          invitation=invitation.pk)
+
+
+def find_invitation(*, tenant, token):
+    """Usable invitation for this tenant, or None (never says why)."""
+    from .models import PortalInvitation, hash_token
+    if not token or len(token) > 200:
+        return None
+    inv = (PortalInvitation.objects.select_related('client', 'tenant')
+           .filter(token_hash=hash_token(token), tenant=tenant).first())
+    return inv if inv and inv.is_usable else None
+
+
+class InvitationInvalid(Exception):
+    pass
+
+
+def accept_invitation(*, tenant, token, password, request=None):
+    """
+    Create a verified portal account linked to the invited client and sign it
+    in. Works whether or not open registration is enabled.
+    """
+    from .models import PortalInvitation, hash_token
+    with transaction.atomic():
+        inv = (PortalInvitation.objects.select_for_update().select_related('client')
+               .filter(token_hash=hash_token(token or ''), tenant=tenant).first())
+        if inv is None or not inv.is_usable:
+            audit('invite_failed', request=request, tenant=tenant)
+            raise InvitationInvalid()
+        client = inv.client
+        if PortalCustomer.objects.filter(client=client).exists() or \
+                PortalCustomer.objects.filter(tenant=tenant, email=inv.email).exists():
+            raise ValidationError('An online account already exists for this client. Please sign in instead.')
+        customer = PortalCustomer(
+            tenant=tenant, email=inv.email, phone=client.phone_primary or '',
+            first_name=client.first_name, last_name=client.last_name,
+            accepted_terms_at=timezone.now(), email_verified_at=timezone.now(),  # the link proves the mailbox
+            client=client,
+        )
+        try:
+            validate_password(password, user=customer)
+        except ValidationError as exc:
+            raise ValidationError({'password': exc.messages})
+        customer.set_password(password)
+        customer.save()
+        inv.accepted_at = timezone.now()
+        inv.customer = customer
+        inv.save(update_fields=['accepted_at', 'customer'])
+        customer.register_successful_login()
+        session, raw = PortalSession.issue(
+            customer,
+            ip_address=client_ip(request) if request is not None else None,
+            user_agent=request.META.get('HTTP_USER_AGENT', '') if request is not None else '',
+        )
+    audit('invite_accepted', request=request, customer=customer, invitation=inv.pk)
+    return customer, raw

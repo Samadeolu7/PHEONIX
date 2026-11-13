@@ -58,6 +58,11 @@ export function LandingPage() {
               <Link to="/portal/login">
                 <Button variant="secondary">Sign in</Button>
               </Link>
+              {info && !info.allow_registration && (
+                <p className="text-sm text-gray-600 self-center">
+                  Already a client? Ask your branch for an invitation to set up online access.
+                </p>
+              )}
             </>
           )}
         </div>

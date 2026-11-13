@@ -448,3 +448,37 @@ class MatchingClientSerializer(serializers.Serializer):
         if obj.phone_primary == app.phone_primary:
             hits.append('phone')
         return hits
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Invitations
+# ─────────────────────────────────────────────────────────────────────────────
+
+class InvitationAcceptSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=200)
+    password = serializers.CharField(min_length=8, max_length=128, trim_whitespace=False)
+    accept_terms = serializers.BooleanField()
+
+    def validate_accept_terms(self, value):
+        if not value:
+            raise serializers.ValidationError('You must accept the terms to continue.')
+        return value
+
+
+class StaffInviteCreateSerializer(serializers.Serializer):
+    client = serializers.IntegerField()
+    email = serializers.EmailField(max_length=254)
+
+
+class StaffInvitationSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    email = serializers.EmailField()
+    status = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    expires_at = serializers.DateTimeField()
+    accepted_at = serializers.DateTimeField(allow_null=True)
+    created_by_name = serializers.SerializerMethodField()
+
+    def get_created_by_name(self, obj):
+        u = obj.created_by
+        return (u.get_full_name() or u.username) if u else None

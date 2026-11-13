@@ -25,10 +25,17 @@ export function RegisterPage() {
 
   if (info && !info.allow_registration) {
     return (
-      <AuthCard title="Registration closed">
+      <AuthCard title="Online accounts are by invitation">
         <Notice>
-          Online registration is not open right now. Please visit any of our branches.
+          If you are already a client, ask your branch or loan officer to send you an invitation. It
+          arrives by email with a link to set your password.
         </Notice>
+        <p className="text-sm text-gray-600">
+          Already have an account?{' '}
+          <Link to="/portal/login" className="underline">
+            Sign in
+          </Link>
+        </p>
       </AuthCard>
     );
   }
@@ -199,7 +206,7 @@ export function RegisterPage() {
 }
 
 export function LoginPage() {
-  const { setCustomer } = usePortalAuth();
+  const { setCustomer, info } = usePortalAuth();
   const navigate = useNavigate();
   const location = useLocation() as { state?: { from?: string } };
   const [email, setEmail] = useState('');
@@ -255,10 +262,17 @@ export function LoginPage() {
         <Link to="/portal/forgot-password" className="underline">
           Forgot password?
         </Link>
-        <Link to="/portal/register" className="underline">
-          Create account
-        </Link>
+        {info?.allow_registration && (
+          <Link to="/portal/register" className="underline">
+            Create account
+          </Link>
+        )}
       </div>
+      {info && !info.allow_registration && (
+        <p className="text-xs text-gray-500 mt-4">
+          New here? Online accounts are set up by invitation. Ask your branch to send you one.
+        </p>
+      )}
     </AuthCard>
   );
 }
@@ -456,6 +470,152 @@ export function ResetPasswordPage() {
         />
         <Button type="submit" className="w-full" loading={busy}>
           Update password
+        </Button>
+      </form>
+    </AuthCard>
+  );
+}
+
+export function AcceptInvitePage() {
+  const token = useUrlToken();
+  const navigate = useNavigate();
+  const { setCustomer, info } = usePortalAuth();
+  const [invite, setInvite] = useState<{ first_name: string; email: string } | null>(null);
+  const [state, setState] = useState<'checking' | 'ready' | 'bad'>(token ? 'checking' : 'bad');
+  const [pw, setPw] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [accept, setAccept] = useState(false);
+  const [errors, setErrors] = useState<FieldErrors>({});
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const ran = useRef(false);
+
+  useEffect(() => {
+    if (!token || ran.current) return;
+    ran.current = true;
+    portalApi
+      .invitation(token)
+      .then(d => {
+        setInvite(d);
+        setState('ready');
+      })
+      .catch(() => setState('bad'));
+  }, [token]);
+
+  if (state === 'checking') {
+    return (
+      <AuthCard title="Set up your account">
+        <p className="text-sm text-gray-600">Checking your invitation…</p>
+      </AuthCard>
+    );
+  }
+  if (state === 'bad' || !invite) {
+    return (
+      <AuthCard title="Invitation not valid">
+        <Notice kind="error">
+          This invitation link is invalid, has expired or was already used. Ask your branch to send
+          a new one.
+        </Notice>
+        <p className="text-sm">
+          Already set up?{' '}
+          <Link to="/portal/login" className="underline">
+            Sign in
+          </Link>
+        </p>
+      </AuthCard>
+    );
+  }
+
+  return (
+    <AuthCard
+      title={`Welcome, ${invite.first_name}`}
+      subtitle={`Choose a password for ${invite.email}. You'll use this email to sign in.`}
+    >
+      {message && <Notice kind="error">{message}</Notice>}
+      <form
+        onSubmit={async e => {
+          e.preventDefault();
+          setErrors({});
+          setMessage('');
+          if (pw !== confirm) {
+            setErrors({ confirm: 'Passwords do not match.' });
+            return;
+          }
+          setBusy(true);
+          try {
+            const { customer } = await portalApi.acceptInvitation(token, pw, accept);
+            setCustomer(customer);
+            navigate('/portal/dashboard', { replace: true });
+          } catch (err) {
+            const e2 = toApiError(err);
+            setErrors(e2.fields);
+            setMessage(e2.fields.token || e2.message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <Field
+          label="Password"
+          name="password"
+          type="password"
+          autoComplete="new-password"
+          value={pw}
+          onChange={e => setPw(e.target.value)}
+          error={errors.password}
+          required
+        />
+        <PasswordHint />
+        <Field
+          label="Confirm password"
+          name="confirm"
+          type="password"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={e => setConfirm(e.target.value)}
+          error={errors.confirm}
+          required
+        />
+        <label className="flex items-start gap-2 text-sm text-gray-700 mb-1">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={accept}
+            onChange={e => setAccept(e.target.checked)}
+          />
+          <span>
+            I agree to the{' '}
+            {info?.terms_url ? (
+              <a
+                href={info.terms_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+              >
+                terms of use
+              </a>
+            ) : (
+              'terms of use'
+            )}{' '}
+            and{' '}
+            {info?.privacy_url ? (
+              <a
+                href={info.privacy_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+              >
+                privacy policy
+              </a>
+            ) : (
+              'privacy policy'
+            )}
+            .
+          </span>
+        </label>
+        {errors.accept_terms && <p className="text-xs text-red-600 mb-2">{errors.accept_terms}</p>}
+        <Button type="submit" className="w-full mt-4" loading={busy}>
+          Create my account
         </Button>
       </form>
     </AuthCard>

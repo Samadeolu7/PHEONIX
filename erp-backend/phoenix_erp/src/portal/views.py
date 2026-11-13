@@ -39,6 +39,7 @@ from .models import (
     PORTAL_DOC_MAX_MB,
 )
 from .serializers import (
+    InvitationAcceptSerializer, StaffInvitationSerializer, StaffInviteCreateSerializer,
     CustomerDocumentSerializer, DocumentUploadSerializer,
     ApplicationCreateSerializer, ApplicationCustomerSerializer, ChangePasswordSerializer,
     CustomerSerializer, EmailOnlySerializer, LoginSerializer, MatchingClientSerializer,
@@ -223,6 +224,42 @@ class ResendVerificationView(PortalBaseView):
         ser.is_valid(raise_exception=True)
         services.resend_verification(tenant=self.tenant, email=ser.validated_data['email'])
         return Response({'detail': GENERIC_EMAIL_SENT})
+
+
+class InvitationLookupView(PortalBaseView):
+    """POST {token}: who is this invitation for? (lets the page greet them by name)."""
+    throttle_classes = [PortalVerifyThrottle]
+
+    def post(self, request):
+        ser = TokenSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        inv = services.find_invitation(tenant=self.tenant, token=ser.validated_data['token'])
+        if inv is None:
+            raise ValidationError({'token': 'This invitation link is invalid, has expired or was already used.'})
+        return Response({'first_name': inv.client.first_name, 'email': inv.email,
+                         'expires_at': inv.expires_at})
+
+
+class AcceptInvitationView(PortalBaseView):
+    """POST {token, password, accept_terms}: create the linked account and sign in."""
+    throttle_classes = [PortalVerifyThrottle]
+
+    def post(self, request):
+        ser = InvitationAcceptSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        revoke_cookie_session(request)
+        try:
+            customer, raw = services.accept_invitation(
+                tenant=self.tenant, token=ser.validated_data['token'],
+                password=ser.validated_data['password'], request=request,
+            )
+        except services.InvitationInvalid:
+            raise ValidationError({'token': 'This invitation link is invalid, has expired or was already used.'})
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        response = Response({'customer': CustomerSerializer(customer).data}, status=status.HTTP_201_CREATED)
+        set_session_cookie(response, raw)
+        return response
 
 
 class LoginView(PortalBaseView):
@@ -572,3 +609,103 @@ class StaffOnlineApplicationViewSet(ScopedModelViewSet):
         except DjangoValidationError as exc:
             raise ValidationError(_django_errors(exc))
         return Response(StaffApplicationDetailSerializer(app).data)
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Staff — portal invitations (from a client's record)
+# ─────────────────────────────────────────────────────────────────────────────
+
+INVITE_MODULE = 'clients'
+INVITE_PAGE = 'portal-invitations'
+
+
+def _visible_client(user, client_id):
+    """The client if this staff user may act on it (same tenant; own branch unless elevated)."""
+    from clients.models import Client
+    from common.views import _get_temp_branch_ids, is_elevated_user
+    tenant = getattr(user, 'tenant', None)
+    if tenant is None:
+        return None
+    client = Client.objects.filter(pk=client_id, tenant=tenant).first()
+    if client is None:
+        return None
+    if not is_elevated_user(user):
+        allowed = set(_get_temp_branch_ids(user) or set())
+        if getattr(user, 'branch_id', None):
+            allowed.add(user.branch_id)
+        if client.branch_id not in allowed:
+            return None
+    return client
+
+
+class StaffPortalInvitationViewSet(ScopedModelViewSet):
+    """
+    for-client (GET ?client=), create (POST {client, email}), revoke.
+    Tenant-filtered; clients outside the staff user's branch are invisible.
+    """
+    from .models import PortalInvitation as _Model
+    queryset = _Model.objects.select_related('client', 'created_by')
+    permission_module = INVITE_MODULE
+    permission_page = INVITE_PAGE
+    http_method_names = ['get', 'post', 'head', 'options']
+    serializer_class = StaffInvitationSerializer
+
+    def get_queryset(self):
+        tenant = getattr(self.request.user, 'tenant', None)
+        if tenant is None:
+            return self._Model.objects.none()
+        return super().get_queryset().filter(tenant=tenant)
+
+    def list(self, request, *args, **kwargs):
+        raise MethodNotAllowed('GET')
+
+    def retrieve(self, request, *args, **kwargs):
+        raise MethodNotAllowed('GET')
+
+    @action(detail=False, methods=['get'], url_path='for-client')
+    def for_client(self, request):
+        _require(request.user, flag='can_view', module=INVITE_MODULE, page=INVITE_PAGE)
+        client = _visible_client(request.user, request.query_params.get('client'))
+        if client is None:
+            raise Http404()
+        from .models import PortalCustomer as _Customer
+        account = _Customer.objects.filter(client=client).first()
+        invites = self.get_queryset().filter(client=client)[:10]
+        return Response({
+            'account': account and {
+                'email': account.email, 'is_active': account.is_active,
+                'created_at': account.created_at, 'last_login': account.last_login,
+            },
+            'invitations': StaffInvitationSerializer(invites, many=True).data,
+        })
+
+    def create(self, request, *args, **kwargs):
+        _require(request.user, flag='can_create', module=INVITE_MODULE, page=INVITE_PAGE)
+        ser = StaffInviteCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        client = _visible_client(request.user, ser.validated_data['client'])
+        if client is None:
+            raise ValidationError({'client': 'Client not found.'})
+        if services.get_enabled_config(client.tenant) is None:
+            raise ValidationError('The online portal is not switched on for your organisation yet.')
+        try:
+            inv = services.send_invitation(
+                client=client, email=ser.validated_data['email'], staff_user=request.user, request=request,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        return Response(StaffInvitationSerializer(inv).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def revoke(self, request, pk=None):
+        _require(request.user, flag='can_create', module=INVITE_MODULE, page=INVITE_PAGE)
+        inv = self.get_object()
+        if _visible_client(request.user, inv.client_id) is None:
+            raise Http404()
+        try:
+            services.revoke_invitation(invitation=inv, staff_user=request.user, request=request)
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        inv.refresh_from_db()
+        return Response(StaffInvitationSerializer(inv).data)

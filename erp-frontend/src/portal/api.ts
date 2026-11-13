@@ -175,6 +175,18 @@ export const portalApi = {
     portalHttp.post<{ detail: string }>('/auth/verify-email/', { token }).then(r => r.data),
   resendVerification: (email: string) =>
     portalHttp.post<{ detail: string }>('/auth/resend-verification/', { email }).then(r => r.data),
+  invitation: (token: string) =>
+    portalHttp
+      .post<{
+        first_name: string;
+        email: string;
+        expires_at: string;
+      }>('/auth/invitation/', { token })
+      .then(r => r.data),
+  acceptInvitation: (token: string, password: string, accept_terms: boolean) =>
+    portalHttp
+      .post<{ customer: Customer }>('/auth/accept-invitation/', { token, password, accept_terms })
+      .then(r => r.data),
   login: (email: string, password: string) =>
     portalHttp.post<{ customer: Customer }>('/auth/login/', { email, password }).then(r => r.data),
   logout: () => portalHttp.post('/auth/logout/').then(r => r.data),

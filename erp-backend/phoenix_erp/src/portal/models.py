@@ -72,8 +72,11 @@ class PortalConfig(models.Model):
         help_text='Master switch. When off, the portal is invisible for this organisation.',
     )
     allow_registration = models.BooleanField(
-        default=True,
-        help_text='Turn off to stop new sign-ups while keeping existing customers able to log in.',
+        default=False,
+        help_text=(
+            'Open self sign-up. Off (default): accounts can only be created from a staff '
+            'invitation sent from the client\'s record. On: anyone can also register.'
+        ),
     )
     max_open_applications = models.PositiveSmallIntegerField(
         default=1,
@@ -426,6 +429,70 @@ def identifier_fingerprint(value: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Staff invitations (the default way to get a portal account)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PortalInvitation(models.Model):
+    """
+    A staff member invites an existing client to the portal. The client sets a
+    password through a single-use link and gets an account already linked to
+    their Client record (staff vouch for the identity, so no NIN matching).
+
+    Only the SHA-256 of the token is stored; the raw token exists only in the
+    email. Issuing a new invitation for a client revokes any earlier one.
+    """
+    INVITE_TTL_HOURS = 72
+
+    tenant = models.ForeignKey('users.Tenant', on_delete=models.CASCADE, related_name='portal_invitations')
+    client = models.ForeignKey('clients.Client', on_delete=models.CASCADE, related_name='portal_invitations')
+    email = models.EmailField()
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name='portal_invitations_sent',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    customer = models.OneToOneField(
+        PortalCustomer, null=True, blank=True, on_delete=models.SET_NULL, related_name='invitation',
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['client', 'accepted_at', 'revoked_at'])]
+
+    def __str__(self):
+        return f'Invitation for {self.client} <{self.email}>'
+
+    @property
+    def status(self):
+        if self.accepted_at:
+            return 'accepted'
+        if self.revoked_at:
+            return 'revoked'
+        if self.expires_at <= timezone.now():
+            return 'expired'
+        return 'pending'
+
+    @property
+    def is_usable(self):
+        return self.status == 'pending'
+
+    @classmethod
+    def issue(cls, *, client, email, created_by):
+        raw = secrets.token_urlsafe(32)
+        cls.objects.filter(client=client, accepted_at__isnull=True, revoked_at__isnull=True).update(
+            revoked_at=timezone.now(),
+        )
+        inv = cls.objects.create(
+            tenant=client.tenant, client=client, email=email, token_hash=hash_token(raw),
+            created_by=created_by, expires_at=timezone.now() + timedelta(hours=cls.INVITE_TTL_HOURS),
+        )
+        return inv, raw
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Supporting documents (ID, utility bill, ...) — private storage only
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -490,6 +557,10 @@ class PortalAuditEvent(models.Model):
         ('document_uploaded', 'Applicant uploaded a document'),
         ('document_deleted', 'Applicant removed a document'),
         ('document_viewed', 'Staff viewed an applicant document'),
+        ('invite_sent', 'Staff sent a portal invitation'),
+        ('invite_revoked', 'Staff revoked a portal invitation'),
+        ('invite_accepted', 'Client accepted a portal invitation'),
+        ('invite_failed', 'Invalid or expired invitation used'),
     ]
     tenant = models.ForeignKey('users.Tenant', null=True, blank=True, on_delete=models.SET_NULL)
     customer = models.ForeignKey(PortalCustomer, null=True, blank=True, on_delete=models.SET_NULL)

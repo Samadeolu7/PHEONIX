@@ -78,6 +78,7 @@ PAGES = [
     ('clients', 'client-relationships','Client Relationships','list',   4),
     ('clients', 'client-notes',       'Client Notes',         'list',   5),
     ('clients', 'client-groups',      'Client Groups',        'list',   6),
+    ('clients', 'portal-invitations', 'Online Portal Access', 'custom', 7),
     # incomes
     ('incomes', 'academic-years',     'Academic Years',       'list',   1),
     ('incomes', 'academic-terms',     'Academic Terms',       'list',   2),
@@ -240,6 +241,8 @@ ACTIONS = [
     ('clients','clients','client-edit',        'Edit Client',      'edit'),
     ('clients','clients','client-view-detail', 'View Client Detail','view'),
     ('clients','clients','client-import',      'Import Clients',   'import'),
+    ('clients','portal-invitations','portal-invite-view',  'View Online Access',  'view'),
+    ('clients','portal-invitations','portal-invite-send',  'Send Online Invitation','create'),
     # ── incomes ───────────────────────────────────────────────────────────────
     ('incomes','invoices','invoice-list',       'List Invoices',    'view'),
     ('incomes','invoices','invoice-create',     'Create Invoice',   'create'),

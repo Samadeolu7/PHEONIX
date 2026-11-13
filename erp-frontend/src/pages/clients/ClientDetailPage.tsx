@@ -26,6 +26,7 @@ import {
   Landmark,
 } from 'lucide-react';
 import { clientService, Client } from '../../services/clientService';
+import PortalAccessCard from '../../components/clients/PortalAccessCard';
 import { loanService, LoanTransactionRow } from '../../services/loanService';
 import { getSavingsAccounts, getSavingsTransactions, SavingsTransactionRow } from '../../services/savingsService';
 import { useDomainLabels } from '../../contexts/DomainLabelContext';
@@ -531,6 +532,9 @@ const ClientDetailPage: React.FC = () => {
             <InfoItem label="Marketing Consent" value={client.marketing_consent ? 'Yes' : 'No'} />
           </InfoGrid>
         </SectionCard>
+
+        {/* Customer portal: invite the client to set up online access */}
+        <PortalAccessCard clientId={client.id} defaultEmail={client.email} />
 
         {/* Financial Profile */}
         <SectionCard title="Financial Profile" icon={<Briefcase size={20} color="#8b5cf6" />}>

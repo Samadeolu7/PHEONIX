@@ -7,6 +7,7 @@ app_name = 'portal'
 
 staff_router = DefaultRouter()
 staff_router.register('applications', views.StaffOnlineApplicationViewSet, basename='staff-application')
+staff_router.register('invitations', views.StaffPortalInvitationViewSet, basename='staff-invitation')
 
 urlpatterns = [
     # Public
@@ -19,6 +20,8 @@ urlpatterns = [
     path('auth/verify-email/', views.VerifyEmailView.as_view(), name='verify-email'),
     path('auth/resend-verification/', views.ResendVerificationView.as_view(), name='resend-verification'),
     path('auth/login/', views.LoginView.as_view(), name='login'),
+    path('auth/invitation/', views.InvitationLookupView.as_view(), name='invitation'),
+    path('auth/accept-invitation/', views.AcceptInvitationView.as_view(), name='accept-invitation'),
     path('auth/logout/', views.LogoutView.as_view(), name='logout'),
     path('auth/password-reset/', views.PasswordResetRequestView.as_view(), name='password-reset'),
     path('auth/password-reset/confirm/', views.PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
