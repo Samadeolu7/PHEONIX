@@ -911,3 +911,84 @@ class EmailFailureTests(_InviteBase):
             reset = c.post('/api/portal/auth/password-reset/', {'email': 'ada2@example.com'}, format='json')
         self.assertEqual(res.status_code, 201)
         self.assertEqual(reset.json(), ok.json())
+
+
+class DirectorSettingsTests(PortalTestCase):
+    URL = '/api/portal/staff/settings/'
+
+    def setUp(self):
+        super().setUp()
+        self.director = APIClient()
+        self.director.force_authenticate(self.env['owner'])   # tenant owner = director
+
+    def body(self, **over):
+        b = {'is_enabled': True, 'allow_registration': False, 'max_open_applications': 1,
+             'public_url': 'https://erp.example.ng', 'support_phone': '0700', 'support_email': 'help@example.ng',
+             'terms_url': 'https://example.ng/terms', 'privacy_url': 'https://example.ng/privacy'}
+        b.update(over)
+        return b
+
+    def test_non_director_staff_cannot_view_or_change(self):
+        from users.models import Role
+        officer = User.objects.create_user(username='officer2', password='x' * 12)
+        officer.tenant, officer.branch = self.env['tenant'], self.env['branch']
+        officer.save()
+        officer.roles.add(Role.objects.create(name='Officer', tenant=self.env['tenant']))  # branch-scoped role
+        c = APIClient()
+        c.force_authenticate(officer)
+        self.assertEqual(c.get(self.URL).status_code, 403)
+        self.assertEqual(c.put(self.URL, self.body(is_enabled=False), format='json').status_code, 403)
+        self.assertTrue(PortalConfig.objects.get(tenant=self.env['tenant']).is_enabled)
+        # A customer session is no use either.
+        make_customer(self.env)
+        cust = portal_client('alpha')
+        login(cust)
+        self.assertIn(cust.get(self.URL).status_code, (401, 403))
+
+    def test_director_updates_settings_and_it_is_audited(self):
+        res = self.director.put(self.URL, self.body(allow_registration=True, support_phone='0800 123'), format='json')
+        self.assertEqual(res.status_code, 200, res.content)
+        cfg = PortalConfig.objects.get(tenant=self.env['tenant'])
+        self.assertTrue(cfg.allow_registration)
+        self.assertEqual(cfg.public_url, 'https://erp.example.ng')
+        self.assertTrue(PortalAuditEvent.objects.filter(event='settings_changed').exists())
+        # Emails now use the configured address.
+        from portal.services import _frontend_url
+        self.assertEqual(_frontend_url('/portal/login', self.env['tenant']), 'https://erp.example.ng/portal/login')
+
+    def test_settings_validation(self):
+        for over in [{'public_url': 'http://evil.example'}, {'public_url': 'https://x.ng/path?q=1'},
+                     {'max_open_applications': 0}, {'support_email': 'nope'}]:
+            self.assertEqual(self.director.put(self.URL, self.body(**over), format='json').status_code, 400, over)
+
+    def test_settings_isolated_per_tenant(self):
+        beta = make_tenant('beta')
+        other = APIClient()
+        other.force_authenticate(beta['owner'])
+        other.put(self.URL, self.body(is_enabled=False, public_url='https://beta.example.ng'), format='json')
+        self.assertTrue(PortalConfig.objects.get(tenant=self.env['tenant']).is_enabled)
+        names = [p['name'] for p in other.get(self.URL).json()['products']]
+        self.assertEqual(names, ['Business Loan'])   # beta's own product only, not alpha's
+        res = other.post(self.URL + 'offerings/', {'loan_product': self.env['product'].pk}, format='json')
+        self.assertEqual(res.status_code, 400)       # can't offer another organisation's product
+
+    def test_offer_and_stop_offering_a_product(self):
+        pid = self.env['product'].pk
+        off = self.env['offering']
+        res = self.director.post(self.URL + 'offerings/', {
+            'loan_product': pid, 'is_active': True, 'display_name': 'SME Loan', 'max_online_amount': '200000'}, format='json')
+        self.assertEqual(res.status_code, 200, res.content)
+        off.refresh_from_db()
+        self.assertEqual(off.display_name, 'SME Loan')
+        self.assertEqual(portal_client('alpha').get('/api/portal/products/').json()[0]['name'], 'SME Loan')
+        bad = self.director.post(self.URL + 'offerings/', {'loan_product': pid, 'max_online_amount': '5'}, format='json')
+        self.assertEqual(bad.status_code, 400)       # below product minimum
+        self.assertEqual(self.director.post(self.URL + f'offerings/{off.pk}/remove/').status_code, 200)
+        self.assertEqual(portal_client('alpha').get('/api/portal/products/').json(), [])
+
+
+class PermissionPagesSeededTests(TestCase):
+    def test_portal_permission_pages_exist_after_migrate(self):
+        from pages.models import ModulePage
+        for module, page in [('loans', 'online-loan-applications'), ('clients', 'portal-invitations')]:
+            self.assertTrue(ModulePage.all_objects.filter(module__code=module, code=page).exists(), page)

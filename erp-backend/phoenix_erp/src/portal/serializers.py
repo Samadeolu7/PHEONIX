@@ -482,3 +482,48 @@ class StaffInvitationSerializer(serializers.Serializer):
     def get_created_by_name(self, obj):
         u = obj.created_by
         return (u.get_full_name() or u.username) if u else None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Director settings
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PortalSettingsSerializer(serializers.Serializer):
+    is_enabled = serializers.BooleanField()
+    allow_registration = serializers.BooleanField()
+    max_open_applications = serializers.IntegerField(min_value=1, max_value=5)
+    public_url = serializers.URLField(allow_blank=True, max_length=200)
+    support_phone = serializers.CharField(allow_blank=True, max_length=30)
+    support_email = serializers.EmailField(allow_blank=True)
+    terms_url = serializers.URLField(allow_blank=True, max_length=200)
+    privacy_url = serializers.URLField(allow_blank=True, max_length=200)
+
+    def validate_public_url(self, v):
+        from urllib.parse import urlsplit
+        if not v:
+            return v
+        u = urlsplit(v)
+        local = u.hostname in ('localhost', '127.0.0.1')
+        if u.scheme != 'https' and not local:
+            raise serializers.ValidationError('Use an https:// address.')
+        if u.path not in ('', '/') or u.query or u.fragment:
+            raise serializers.ValidationError('Enter just the site address, e.g. https://erp.krystartrust.ng')
+        return v.rstrip('/')
+
+    def validate(self, attrs):
+        if attrs.get('is_enabled') and not attrs.get('public_url'):
+            from django.conf import settings as dj
+            if not getattr(dj, 'PORTAL', {}).get('FRONTEND_URL', '').startswith('https://'):
+                raise serializers.ValidationError(
+                    {'public_url': 'Set the portal web address before switching the portal on, '
+                                   'so links in emails work.'})
+        return attrs
+
+
+class OfferingWriteSerializer(serializers.Serializer):
+    loan_product = serializers.IntegerField()
+    is_active = serializers.BooleanField(default=True)
+    display_name = serializers.CharField(allow_blank=True, max_length=150, required=False, default='')
+    public_description = serializers.CharField(allow_blank=True, max_length=2000, required=False, default='')
+    max_online_amount = serializers.DecimalField(max_digits=18, decimal_places=2, required=False, allow_null=True, min_value=1)
+    sort_order = serializers.IntegerField(min_value=0, required=False, default=0)

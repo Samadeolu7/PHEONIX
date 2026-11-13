@@ -35,6 +35,11 @@ urlpatterns = [
     path('applications/<str:reference>/documents/', views.ApplicationDocumentsView.as_view(), name='application-documents'),
     path('applications/<str:reference>/documents/<int:doc_id>/', views.ApplicationDocumentDeleteView.as_view(), name='application-document'),
 
+    # Director settings (staff JWT; directors only)
+    path('staff/settings/', views.StaffPortalSettingsViewSet.as_view({'get': 'list', 'put': 'put'}), name='staff-settings'),
+    path('staff/settings/offerings/', views.StaffPortalSettingsViewSet.as_view({'post': 'save_offering'}), name='staff-settings-offering'),
+    path('staff/settings/offerings/<int:offering_id>/remove/', views.StaffPortalSettingsViewSet.as_view({'post': 'remove_offering'}), name='staff-settings-offering-remove'),
+
     # Staff review (staff JWT auth + page permission)
     path('staff/', include(staff_router.urls)),
 ]

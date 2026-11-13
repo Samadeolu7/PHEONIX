@@ -165,6 +165,7 @@ const PermissionElevationLogPage = lazy(() => import('./pages/admin/PermissionEl
 const UserSettingsPage = lazy(() => import('./pages/settings/UserSettingsPage'));
 const UserProfilePage = lazy(() => import('./pages/profile/UserProfilePage'));
 const PermissionSetupPage = lazy(() => import('./pages/settings/PermissionSetupPage'));
+const OnlinePortalSettingsPage = lazy(() => import('./pages/settings/OnlinePortalSettingsPage'));
 // const PagesActionsSettingsPage = lazy(() => import('./pages/settings/PagesActionsSettingsPage'));
 // const UserPreferencesDemoPage = lazy(() => import('./pages/UserPreferencesDemoPage'));
 
@@ -2487,6 +2488,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="user-list" module="permissions" page="role-permission-policies" action="edit">
                                       <PermissionSetupPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* Online portal settings - directors only (enforced by the API) */}
+                                <Route
+                                  path="/admin/online-portal"
+                                  element={
+                                    <ProtectedRoute>
+                                      <OnlinePortalSettingsPage />
                                     </ProtectedRoute>
                                   }
                                 />

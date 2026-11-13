@@ -82,6 +82,11 @@ class PortalConfig(models.Model):
         default=1,
         help_text='How many unresolved applications one customer may have at a time.',
     )
+    public_url = models.URLField(
+        blank=True,
+        help_text='Web address of the portal, e.g. https://erp.krystartrust.ng. Used for links in '
+                  'emails. Falls back to the PORTAL_FRONTEND_URL setting when empty.',
+    )
     support_phone = models.CharField(max_length=30, blank=True)
     support_email = models.EmailField(blank=True)
     terms_url = models.URLField(blank=True)
@@ -561,6 +566,7 @@ class PortalAuditEvent(models.Model):
         ('invite_revoked', 'Staff revoked a portal invitation'),
         ('invite_accepted', 'Client accepted a portal invitation'),
         ('invite_failed', 'Invalid or expired invitation used'),
+        ('settings_changed', 'Director changed portal settings'),
     ]
     tenant = models.ForeignKey('users.Tenant', null=True, blank=True, on_delete=models.SET_NULL)
     customer = models.ForeignKey(PortalCustomer, null=True, blank=True, on_delete=models.SET_NULL)
