@@ -15,14 +15,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 DAILY_JOB_PREFIX = 'Loan penalty accrual — '
-RESTORE_PREFIX = 'Loan penalty restored — '
 OPEN_STATUSES = ('active', 'disbursed', 'defaulted')
 _INSTALLMENT_RE = re.compile(r'\(installment due (\d{4}-\d{2}-\d{2})\)')
-
-
-def restore_marker(txn):
-    """Tag put in a restoring entry's description, naming the reduction it undoes."""
-    return f'[restores {txn.reference_number or txn.pk}]'
 
 
 @dataclass

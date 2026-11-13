@@ -13,8 +13,7 @@ Never show a client:
 - correction, repair, catch-up or restore entries posted by management
   commands, e.g. "Loan penalty accrual (compounding bug corrected) — …",
   "(cutover-corrected)", "(payoff-capped, corrected)", "(understated
-  catch-up)", "Penalty accrual over-collection reversal — …",
-  "Loan penalty restored — … [restores …]";
+  catch-up)", "Penalty accrual over-collection reversal — …";
 - internal references to bugs, fixes, audits or reposting.
 
 Instead, net corrections into the item they correct, so the client sees one

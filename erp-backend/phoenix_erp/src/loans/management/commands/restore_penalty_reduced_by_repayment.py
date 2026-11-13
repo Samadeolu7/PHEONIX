@@ -15,16 +15,16 @@ same entries (selected by loans/penalty_reductions.py, so the two always
 agree).
 
 For every REPAYMENT-DRIVEN reduction on an open loan (active / disbursed /
-defaulted), posts one LNPEN entry for the same amount, in the opposite
-direction:
+defaulted), reverses that reduction with Transaction.reverse() (the standard
+audited path: a linked opposite entry, Dr Loan Receivable / Cr Penalty
+Income, and the original marked is_reversed), then adds the amount back to
+the installment's penalty_due and the loan's outstanding_penalties so the
+schedule, the loan totals and GL stay in step.
 
-    Dr Loan Receivable (loan.account)
-    Cr Penalty Income  (the account the reduction debited)
-    "Loan penalty restored — <loan> (installment due …) [restores <ref>]"
-
-and adds the amount back to the installment's penalty_due and the loan's
-outstanding_penalties, so the schedule, the loan totals and GL stay in
-step.
+Reversing (rather than posting a fresh "restored" entry) keeps the client's
+ledger clean: the wrong reduction and its reversal are a linked pair that
+the ledger views hide, so the client only sees the penalty as originally
+charged (see the project rule in CLAUDE.md).
 
 Skipped and listed for manual review, never posted:
   - loans no longer open (paid off, closed, written off): the money can no
@@ -34,8 +34,7 @@ Skipped and listed for manual review, never posted:
   - reductions whose installment is now 'restructured' or cannot be found:
     the penalty may already have been rolled into the restructured terms.
 
-Safe to re-run: a reduction that already has a restoring entry (found by
-its [restores <ref>] marker) is skipped.
+Safe to re-run: a reduction already reversed is no longer selected.
 
 Usage:
     python manage.py restore_penalty_reduced_by_repayment               # dry-run
@@ -47,7 +46,11 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 from django.db import transaction as db_transaction
-from django.utils import timezone
+
+REVERSAL_REASON = (
+    'Penalty wrongly reduced by the daily job after a repayment; '
+    'restored by restore_penalty_reduced_by_repayment'
+)
 
 
 class Command(BaseCommand):
@@ -68,17 +71,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from common.models import FinancialAuditLog, log_financial_event
         from loans.models import LoanAccount
-        from loans.penalty_reductions import (
-            OPEN_STATUSES, RESTORE_PREFIX, find_penalty_reductions, restore_marker,
-        )
-        from transactions.models import (
-            Transaction as JournalEntry,
-            TransactionEntry as JournalEntryLine,
-            TransactionSeries,
-        )
+        from loans.penalty_reductions import OPEN_STATUSES, find_penalty_reductions
 
         apply_changes = options['apply']
-        today = timezone.localdate()
         if not apply_changes:
             self.stdout.write(self.style.WARNING('DRY-RUN — nothing will be posted. Re-run with --apply.'))
 
@@ -86,20 +81,9 @@ class Command(BaseCommand):
             loan_number=options['loan_number'], window_days=options['window'],
         )
 
-        already_restored = set(
-            JournalEntry.objects.filter(
-                series__code='LNPEN',
-                description__startswith=RESTORE_PREFIX,
-                is_reversed=False,
-            ).values_list('description', flat=True)
-        )
-
         to_restore = defaultdict(list)   # loan.pk -> [(reduction, sched)]
         skipped = defaultdict(list)      # reason -> [reduction]
         for r in reductions:
-            if any(restore_marker(r.txn) in d for d in already_restored):
-                skipped['already restored'].append(r)
-                continue
             if not r.repayment_driven:
                 skipped['no repayment nearby — review manually'].append(r)
                 continue
@@ -120,12 +104,6 @@ class Command(BaseCommand):
                 skipped['installment restructured — review manually'].append(r)
                 continue
             to_restore[r.loan.pk].append((r, sched))
-
-        series = None
-        if apply_changes and to_restore:
-            series, _ = TransactionSeries.objects.get_or_create(
-                code='LNPEN', defaults={'description': 'Loan Penalty Accrual'},
-            )
 
         grand_total = Decimal('0.00')
         posted = 0
@@ -148,28 +126,7 @@ class Command(BaseCommand):
             with db_transaction.atomic():
                 loan = LoanAccount.all_objects.select_for_update().get(pk=loan_pk)
                 for r, sched in items:
-                    # Credit back the exact account the reduction debited.
-                    income_line = r.txn.entries.filter(side=JournalEntryLine.DEBIT).first()
-                    income_account = income_line.account if income_line else loan.product.penalty_income_account
-                    journal = JournalEntry.objects.create(
-                        series=series,
-                        date=today,
-                        description=(
-                            f'{RESTORE_PREFIX}{loan.loan_number} '
-                            f'(installment due {sched.due_date}) {restore_marker(r.txn)}'
-                        )[:255],
-                        owner=loan.owner,
-                        branch=loan.branch,
-                    )
-                    JournalEntryLine.objects.create(
-                        transaction=journal, account=loan.account,
-                        side=JournalEntryLine.DEBIT, amount=r.amount,
-                    )
-                    JournalEntryLine.objects.create(
-                        transaction=journal, account=income_account,
-                        side=JournalEntryLine.CREDIT, amount=r.amount,
-                    )
-                    journal.post()
+                    reversal = r.txn.reverse(user=None, reason=REVERSAL_REASON)
 
                     sched.refresh_from_db()
                     sched.penalty_due += r.amount
@@ -191,7 +148,7 @@ class Command(BaseCommand):
                             'installment_due_date': str(sched.due_date),
                             'restored_transaction_id': str(r.txn.pk),
                             'restored_reference': r.txn.reference_number or '',
-                            'journal_entry_id': str(journal.pk),
+                            'reversal_transaction_id': str(reversal.pk),
                         },
                     )
                     posted += 1
@@ -214,7 +171,7 @@ class Command(BaseCommand):
         verb = 'Restored' if apply_changes else 'Would restore'
         self.stdout.write(self.style.SUCCESS(
             f'\n{verb} ₦{grand_total:,.2f} across {len(to_restore)} loan(s)'
-            + (f' ({posted} entries posted).' if apply_changes else '.')
+            + (f' ({posted} reductions reversed).' if apply_changes else '.')
         ))
         if not apply_changes:
             self.stdout.write(self.style.WARNING('DRY-RUN — nothing posted.'))

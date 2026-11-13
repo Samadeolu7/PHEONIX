@@ -241,7 +241,7 @@ class RestorePenaltyReducedByRepaymentTestCase(_BugEntriesBase):
         income_before = Account.objects.get(pk=self.penalty_income.pk).balance
 
         text = self._restore("--apply")
-        self.assertIn("Restored ₦1,816.03 across 1 loan(s) (1 entries posted).", text)
+        self.assertIn("Restored ₦1,816.03 across 1 loan(s) (1 reductions reversed).", text)
         self.assertIn("no repayment nearby — review manually: ₦100.00", text)
 
         loan_after = Account.objects.get(pk=self.loan.account_id).balance
@@ -249,11 +249,14 @@ class RestorePenaltyReducedByRepaymentTestCase(_BugEntriesBase):
         self.assertEqual(abs(loan_after - loan_before), Decimal("1816.03"))
         self.assertEqual(abs(income_after - income_before), Decimal("1816.03"))
 
-        restore = TransactionEntry.objects.get(
-            transaction__description__contains=f"[restores {self.bug_txn.reference_number or self.bug_txn.pk}]",
-            account=self.loan.account,
+        # Undone via the standard reversal path, so client ledgers hide the pair.
+        self.bug_txn.refresh_from_db()
+        self.assertTrue(self.bug_txn.is_reversed)
+        rev = self.bug_txn.reversal_transaction
+        self.assertTrue(rev.is_reversal)
+        self.assertEqual(
+            rev.entries.get(account=self.loan.account).side, TransactionEntry.DEBIT,
         )
-        self.assertEqual(restore.side, TransactionEntry.DEBIT)
 
         self.rows[0].refresh_from_db()
         self.loan.refresh_from_db()
@@ -263,7 +266,6 @@ class RestorePenaltyReducedByRepaymentTestCase(_BugEntriesBase):
         # Re-running posts nothing more.
         text = self._restore("--apply")
         self.assertIn("Restored ₦0.00 across 0 loan(s)", text)
-        self.assertIn("already restored: ₦1,816.03", text)
         self.rows[0].refresh_from_db()
         self.assertEqual(self.rows[0].penalty_due, Decimal("4900.00"))
 
