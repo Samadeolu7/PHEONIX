@@ -23,7 +23,8 @@ before changing this app.
 2. In **Permission Setup**, give staff roles access to **Loans → Online Applications**
    (view/edit to review, approve to accept/decline; accepting also needs create on Loan
    Accounts) and **Clients → Online Portal Access** (to send invitations). These pages
-   are registered automatically on deploy; `seed_permissions` is no longer required.
+   appear in Permission Setup automatically the first time an admin opens it after the
+   deploy; nothing needs to run on the server.
 
 The same settings remain available in Django admin.
 
