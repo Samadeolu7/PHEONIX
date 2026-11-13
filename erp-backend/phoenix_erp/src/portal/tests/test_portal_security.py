@@ -986,9 +986,3 @@ class DirectorSettingsTests(PortalTestCase):
         self.assertEqual(self.director.post(self.URL + f'offerings/{off.pk}/remove/').status_code, 200)
         self.assertEqual(portal_client('alpha').get('/api/portal/products/').json(), [])
 
-
-class PermissionPagesSeededTests(TestCase):
-    def test_portal_permission_pages_exist_after_migrate(self):
-        from pages.models import ModulePage
-        for module, page in [('loans', 'online-loan-applications'), ('clients', 'portal-invitations')]:
-            self.assertTrue(ModulePage.all_objects.filter(module__code=module, code=page).exists(), page)

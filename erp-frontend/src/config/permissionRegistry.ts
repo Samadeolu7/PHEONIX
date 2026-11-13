@@ -43,6 +43,7 @@ export const PERMISSION_REGISTRY: PermModule[] = [
       { code: 'client-groups', title: 'Client Groups', description: 'Ajo / savings groups and member management', paths: ['/clients/groups', '/reports/clients/groups'] },
       { code: 'client-classifications', title: 'Classifications', description: 'Client classification categories', paths: ['/clients/classifications', '/clients/classifications/:id/edit', '/clients/classifications/create'] },
       { code: 'client-documents', title: 'Documents', description: 'Upload and view client documents' },
+      { code: 'portal-invitations', title: 'Online Portal Access', description: 'Invite clients to the online portal from their client record' },
       { code: 'client-notes', title: 'Notes', description: 'Client interaction notes' },
       { code: 'client-relationships', title: 'Relationships', description: 'Client-to-client relationship records' },
       { code: 'client-services', title: 'Client Services', description: 'Service assignment for clients (e.g. student services)', path: '/client-services' },
