@@ -78,6 +78,7 @@ PAGES = [
     ('clients', 'client-relationships','Client Relationships','list',   4),
     ('clients', 'client-notes',       'Client Notes',         'list',   5),
     ('clients', 'client-groups',      'Client Groups',        'list',   6),
+    ('clients', 'portal-invitations', 'Online Portal Access', 'custom', 7),
     # incomes
     ('incomes', 'academic-years',     'Academic Years',       'list',   1),
     ('incomes', 'academic-terms',     'Academic Terms',       'list',   2),
@@ -172,6 +173,7 @@ PAGES = [
     ('loans', 'loan-disbursements',    'Loan Disbursements', 'list',   2),
     ('loans', 'loan-disbursement-corrections', 'Disbursement Corrections', 'list', 3),
     ('loans', 'loan-repayment-reversals', 'Repayment Reversals', 'list', 4),
+    ('loans', 'online-loan-applications', 'Online Applications', 'list', 5),
     # budgets
     ('budgets', 'budget-periods',      'Budget Periods',     'list',   1),
     ('budgets', 'budget-lines',        'Budget Lines',       'list',   2),
@@ -239,6 +241,8 @@ ACTIONS = [
     ('clients','clients','client-edit',        'Edit Client',      'edit'),
     ('clients','clients','client-view-detail', 'View Client Detail','view'),
     ('clients','clients','client-import',      'Import Clients',   'import'),
+    ('clients','portal-invitations','portal-invite-view',  'View Online Access',  'view'),
+    ('clients','portal-invitations','portal-invite-send',  'Send Online Invitation','create'),
     # ── incomes ───────────────────────────────────────────────────────────────
     ('incomes','invoices','invoice-list',       'List Invoices',    'view'),
     ('incomes','invoices','invoice-create',     'Create Invoice',   'create'),
@@ -368,6 +372,9 @@ ACTIONS = [
     ('loans','loan-disbursements','loan-disbursement-approve','Approve Disbursement','approve'),
     ('loans','loan-disbursement-corrections','loan-correction-approve','Approve Disbursement Correction','approve'),
     ('loans','loan-repayment-reversals','loan-repayment-reversal-approve','Approve Repayment Reversal','approve'),
+    ('loans','online-loan-applications','online-application-list',    'List Online Applications','view'),
+    ('loans','online-loan-applications','online-application-review',  'Review Online Application','edit'),
+    ('loans','online-loan-applications','online-application-decide',  'Accept/Decline Online Application','approve'),
     # ── budgets ───────────────────────────────────────────────────────────────
     ('budgets','budget-periods','budget-list',           'List Budgets',    'view'),
     ('budgets','budget-periods','budget-create',         'Create Budget',   'create'),

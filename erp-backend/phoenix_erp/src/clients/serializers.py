@@ -1,6 +1,10 @@
 from rest_framework import serializers
 from common.serializers import TenantModelSerializer
 from common.image_processing import compress_image
+from common.private_files import PrivateFileField
+from common.validators import (
+    validate_document_extension, validate_document_file_size, validate_document_signature,
+)
 from clients.models import (
     Client,
     ClientClassification,
@@ -31,6 +35,12 @@ class ClientClassificationSerializer(TenantModelSerializer):
 
 class ClientDocumentSerializer(TenantModelSerializer):
     verified_by_name = serializers.CharField(source='verified_by.get_full_name', read_only=True)
+    # Private file: outputs the authenticated download path. Declared fields
+    # don't inherit model validators, so they are listed explicitly.
+    document_file = PrivateFileField(
+        download_path='/clients/documents/{obj.pk}/download/',
+        validators=[validate_document_file_size, validate_document_extension, validate_document_signature],
+    )
     
     class Meta:
         model = ClientDocument

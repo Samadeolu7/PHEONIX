@@ -6,6 +6,10 @@ from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager, SoftDeleteManager
 from django.conf import settings
 from django.utils import timezone
+from common.private_files import RandomFilename, private_storage
+from common.validators import (
+    validate_document_extension, validate_document_file_size, validate_document_signature,
+)
 
 
 def validate_nin(value):
@@ -712,7 +716,13 @@ class ClientDocument(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     issue_date = models.DateField(null=True, blank=True)
     expiry_date = models.DateField(null=True, blank=True)
     issuing_authority = models.CharField(max_length=200, blank=True)
-    document_file = models.FileField(upload_to='clients/documents/')
+    # Private (ID cards, utility bills): never served at public /media/.
+    # Download only via ClientDocumentViewSet.download — see common/PRIVATE_FILES.md.
+    document_file = models.FileField(
+        upload_to=RandomFilename('clients/documents'),
+        storage=private_storage,
+        validators=[validate_document_file_size, validate_document_extension, validate_document_signature],
+    )
     verification_status = models.CharField(max_length=20, choices=[
         ('pending', 'Pending'),
         ('verified', 'Verified'),

@@ -10,6 +10,7 @@ uploads are touched.
 """
 import io
 
+from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import InMemoryUploadedFile
 from PIL import Image, ImageOps
@@ -27,17 +28,40 @@ def _to_rgb(img):
     return img
 
 
-def _open_normalized(uploaded_file):
-    """Open + auto-rotate (per EXIF) + flatten to RGB. Raises on unreadable input."""
+# Refuse to decode anything bigger than this (pixels). Image.open() only
+# reads the header, so this check costs nothing; decoding a 100MP image
+# would otherwise allocate ~300MB of RAM in the worker for one request.
+MAX_DECODE_PIXELS = 50_000_000
+
+
+class ImageTooLarge(ValidationError):
+    """A DRF serializer turns this into a normal 400 field error."""
+
+
+def _open_normalized(uploaded_file, target_dimension=None):
+    """
+    Open + auto-rotate (per EXIF) + flatten to RGB. Raises on unreadable input.
+
+    Memory: for JPEGs, ``draft()`` makes libjpeg decode directly at a reduced
+    scale (1/2, 1/4, 1/8) that is still >= the target size, so a 48MP phone
+    photo is never fully materialised in RAM just to be shrunk to 1600px.
+    """
     uploaded_file.seek(0)
     img = Image.open(uploaded_file)
+    width, height = img.size
+    if width * height > MAX_DECODE_PIXELS:
+        raise ImageTooLarge(
+            f'Image is too large ({width}x{height} pixels). Please upload a smaller photo.'
+        )
+    if target_dimension and img.format == 'JPEG':
+        img.draft('RGB', (target_dimension, target_dimension))
     img.load()
     img = ImageOps.exif_transpose(img)
     return _to_rgb(img)
 
 
-def _encode_jpeg(img, max_dimension, quality):
-    resized = img.copy()
+def _encode_jpeg(img, max_dimension, quality, in_place=False):
+    resized = img if in_place else img.copy()
     resized.thumbnail((max_dimension, max_dimension), Image.LANCZOS)
     buffer = io.BytesIO()
     resized.save(buffer, format='JPEG', quality=quality, optimize=True)
@@ -59,12 +83,15 @@ def compress_image(uploaded_file, max_dimension=1600, quality=82):
     if not uploaded_file:
         return uploaded_file
     try:
-        img = _open_normalized(uploaded_file)
+        img = _open_normalized(uploaded_file, target_dimension=max_dimension)
+    except ImageTooLarge:
+        raise
     except Exception:
         uploaded_file.seek(0)
         return uploaded_file
 
-    buffer = _encode_jpeg(img, max_dimension, quality)
+    buffer = _encode_jpeg(img, max_dimension, quality, in_place=True)
+    img.close()
     name = f'{_base_name(uploaded_file)}.jpg'
     return InMemoryUploadedFile(
         buffer, None, name, 'image/jpeg', buffer.getbuffer().nbytes, None,
@@ -81,8 +108,10 @@ def compress_and_thumbnail(uploaded_file, max_dimension=1600, quality=82,
     if not uploaded_file:
         return uploaded_file, None
     try:
-        img = _open_normalized(uploaded_file)
+        img = _open_normalized(uploaded_file, target_dimension=max_dimension)
     except Exception:
+        # Includes ImageTooLarge: keep the original (already size-checked by
+        # the caller) rather than decoding it; just skip the thumbnail.
         uploaded_file.seek(0)
         return uploaded_file, None
 
@@ -93,7 +122,8 @@ def compress_and_thumbnail(uploaded_file, max_dimension=1600, quality=82,
         buffer, None, f'{base_name}.jpg', 'image/jpeg', buffer.getbuffer().nbytes, None,
     )
 
-    thumb_buffer = _encode_jpeg(img, thumb_size, thumb_quality)
+    thumb_buffer = _encode_jpeg(img, thumb_size, thumb_quality, in_place=True)
+    img.close()
     thumbnail = ContentFile(thumb_buffer.read(), name=f'{base_name}_thumb.jpg')
 
     return compressed, thumbnail

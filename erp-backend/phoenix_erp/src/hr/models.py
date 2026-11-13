@@ -5,7 +5,10 @@ from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from common.base import TimeStampedModel, BranchScopedModel, SoftDeleteModel
 from common.managers import OwnerBranchManager
-from common.validators import validate_document_file_size, validate_document_extension
+from common.validators import (
+    validate_document_file_size, validate_document_extension, validate_document_signature,
+)
+from common.private_files import RandomFilename, private_storage
 
 # Import config models
 from hr.config_models import HRConfig  # noqa
@@ -573,8 +576,11 @@ class LeaveRequest(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         blank=True,
         help_text="Link to medical certificate (for sick leave)"
     )
+    # Private: served only via LeaveRequestViewSet.supporting_document.
     supporting_documents = models.FileField(
-        upload_to='hr/leave_documents/',
+        upload_to=RandomFilename('hr/leave_documents'),
+        storage=private_storage,
+        validators=[validate_document_file_size, validate_document_extension, validate_document_signature],
         null=True,
         blank=True
     )
@@ -1042,8 +1048,10 @@ class Payslip(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
     overtime_hours = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     
     # PDF generation
+    # Private: salary data. Served only via PayslipViewSet.pdf.
     pdf_file = models.FileField(
         upload_to='hr/payslips/',
+        storage=private_storage,
         null=True,
         blank=True,
         help_text="Generated PDF payslip"
@@ -1479,9 +1487,11 @@ class EmployeeDocument(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         choices=CATEGORY_CHOICES,
         default='other',
     )
+    # Private: served only via EmployeeDocumentViewSet.download.
     file = models.FileField(
-        upload_to='employee_documents/',
-        validators=[validate_document_file_size, validate_document_extension],
+        upload_to=RandomFilename('employee_documents'),
+        storage=private_storage,
+        validators=[validate_document_file_size, validate_document_extension, validate_document_signature],
     )
     description = models.TextField(blank=True)
     expiry_date = models.DateField(null=True, blank=True)
@@ -1569,9 +1579,11 @@ class GuarantorDocument(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         choices=CATEGORY_CHOICES,
         default='other',
     )
+    # Private: served only via GuarantorDocumentViewSet.download.
     file = models.FileField(
-        upload_to='guarantor_documents/',
-        validators=[validate_document_file_size, validate_document_extension],
+        upload_to=RandomFilename('guarantor_documents'),
+        storage=private_storage,
+        validators=[validate_document_file_size, validate_document_extension, validate_document_signature],
     )
     description = models.TextField(blank=True)
     uploaded_by = models.ForeignKey(

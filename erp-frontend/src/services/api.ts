@@ -158,6 +158,17 @@ const handleResponse = async (response: Response): Promise<any> => {
   }
 };
 
+/**
+ * FormData (file uploads) must be sent as-is so the browser writes the
+ * multipart body and boundary. JSON.stringify(new FormData()) is "{}" —
+ * which silently dropped every uploaded file sent through this client.
+ */
+const toBody = (data: unknown): BodyInit | undefined => {
+  if (data === undefined) return undefined;
+  if (data instanceof FormData || data instanceof Blob) return data;
+  return JSON.stringify(data);
+};
+
 export const api = {
   get: async (url: string, options?: { params?: Record<string, any> }) => {
     let requestUrl = url;
@@ -183,7 +194,7 @@ export const api = {
   post: async (url: string, data?: any) => {
     const response = await fetchWithAuth(url, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: toBody(data),
     });
     return handleResponse(response);
   },
@@ -191,7 +202,7 @@ export const api = {
   put: async (url: string, data?: any) => {
     const response = await fetchWithAuth(url, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      body: toBody(data),
     });
     return handleResponse(response);
   },
@@ -199,7 +210,7 @@ export const api = {
   patch: async (url: string, data?: any) => {
     const response = await fetchWithAuth(url, {
       method: 'PATCH',
-      body: JSON.stringify(data),
+      body: toBody(data),
     });
     return handleResponse(response);
   },
@@ -302,3 +313,47 @@ export function triggerDownload(blob: Blob, filename: string): void {
 }
 
 export default api;
+
+/**
+ * Open or download a private file (staff documents, payslips, applicant IDs).
+ *
+ * These files are not publicly served; `path` is the authenticated API path
+ * returned by the backend (e.g. "/hr/employee-documents/12/download/"). We
+ * fetch it with the staff token and hand the browser a temporary object URL.
+ */
+const EXT_BY_TYPE: Record<string, string> = {
+  'application/pdf': '.pdf',
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+};
+
+export async function openPrivateFile(
+  path: string,
+  opts: { download?: string } = {}
+): Promise<void> {
+  // Open the tab synchronously (inside the click) so popup blockers allow it.
+  const win = opts.download ? null : window.open('', '_blank');
+  try {
+    const sep = path.includes('?') ? '&' : '?';
+    const blob = await api.getBlob(opts.download ? path : `${path}${sep}inline=1`);
+    if (opts.download) {
+      const ext = EXT_BY_TYPE[blob.type] || '';
+      const name = opts.download.toLowerCase().endsWith(ext)
+        ? opts.download
+        : `${opts.download}${ext}`;
+      triggerDownload(blob, name);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(blob);
+    if (win) win.location.href = objectUrl;
+    else window.open(objectUrl, '_blank');
+    // Free the memory once the viewer has had time to load it.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+  } catch (err) {
+    win?.close();
+    throw err;
+  }
+}

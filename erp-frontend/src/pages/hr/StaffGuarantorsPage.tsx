@@ -21,8 +21,17 @@ import {
   Pencil,
 } from 'lucide-react';
 import { hrService } from '../../services/hrService';
+import { openPrivateFile } from '../../services/api';
 import { GuarantorDocumentCategory, StaffGuarantor } from '../../types/hr';
 import { ManualLink } from '../../components/help';
+
+// Private files are fetched with the staff token (no public URL exists).
+const openDoc = (path: string | null | undefined, downloadAs?: string) => {
+  if (!path) return;
+  openPrivateFile(path, downloadAs ? { download: downloadAs } : {}).catch(() =>
+    window.alert('Could not open the document. You may not have access, or it was removed.')
+  );
+};
 
 const DOC_CATEGORY_ICONS: Record<string, React.ReactNode> = {
   id_document: <Shield className="w-4 h-4" />,
@@ -338,23 +347,22 @@ export default function StaffGuarantorsPage() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1">
-                              <a
-                                href={doc.file}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                              <button
+                                type="button"
+                                onClick={() => openDoc(doc.file)}
                                 className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50"
                                 title="View"
                               >
                                 <Eye className="w-4 h-4" />
-                              </a>
-                              <a
-                                href={doc.file}
-                                download
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openDoc(doc.file, doc.title)}
                                 className="p-1.5 text-gray-400 hover:text-green-600 rounded-lg hover:bg-green-50"
                                 title="Download"
                               >
                                 <Download className="w-4 h-4" />
-                              </a>
+                              </button>
                               <button
                                 onClick={() => setDeleteDocConfirm(doc.id)}
                                 className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50"

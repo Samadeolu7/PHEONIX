@@ -20,6 +20,32 @@ import {
 } from '../../hooks/usePayslips';
 import { useToast } from '../../hooks/useToast';
 import { AllowanceValue, PAYEBandDetail, StaffIOUDetail } from '../../types/payslip';
+import { api } from '../../services/api';
+
+/** Payslip PDFs are private: fetch with the staff token, show via a temporary object URL. */
+function PrivatePdfPreview({ path }: { path: string }) {
+  const [src, setSrc] = React.useState<string | null>(null);
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    api
+      .getBlob(`${path}?inline=1`)
+      .then(blob => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl); // release the PDF from memory
+    };
+  }, [path]);
+  if (failed) return <p className="p-4 text-sm text-gray-500">Preview unavailable.</p>;
+  if (!src) return <p className="p-4 text-sm text-gray-500">Loading preview…</p>;
+  return <iframe src={src} className="w-full h-64" title="Payslip PDF Preview" />;
+}
 
 interface EmailModalProps {
   isOpen: boolean;
@@ -474,14 +500,18 @@ const PayslipDetailPage: React.FC = () => {
 
               {iouOutstanding > 0 && (
                 <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-1">
-                  <p className="text-xs font-semibold text-amber-800">Staff IOU Balance Outstanding</p>
+                  <p className="text-xs font-semibold text-amber-800">
+                    Staff IOU Balance Outstanding
+                  </p>
                   <div className="flex justify-between text-sm">
                     <span className="text-amber-700">Before this period:</span>
                     <span className="font-semibold text-amber-900">{fmt(iouOutstanding)}</span>
                   </div>
                   {iouMonthlyDeduction > 0 && (
                     <div className="flex justify-between text-sm">
-                      <span className="text-amber-700">After this deduction (₦{fmt(iouMonthlyDeduction)}):</span>
+                      <span className="text-amber-700">
+                        After this deduction (₦{fmt(iouMonthlyDeduction)}):
+                      </span>
                       <span className="font-semibold text-green-700">{fmt(iouBalanceAfter)}</span>
                     </div>
                   )}
@@ -494,9 +524,16 @@ const PayslipDetailPage: React.FC = () => {
                         >
                           <span>{detail.reference_number}</span>
                           <span>
-                            {fmt(detail.monthly_installment)} / mo — balance before: {fmt(detail.balance_remaining)}
+                            {fmt(detail.monthly_installment)} / mo — balance before:{' '}
+                            {fmt(detail.balance_remaining)}
                             {detail.balance_after_this_period != null && (
-                              <> → after: <span className="text-green-700">{fmt(detail.balance_after_this_period)}</span></>
+                              <>
+                                {' '}
+                                → after:{' '}
+                                <span className="text-green-700">
+                                  {fmt(detail.balance_after_this_period)}
+                                </span>
+                              </>
                             )}
                           </span>
                         </div>
@@ -680,11 +717,7 @@ const PayslipDetailPage: React.FC = () => {
             {payslip.pdf_file ? (
               <div className="space-y-3">
                 <div className="border rounded-lg overflow-hidden">
-                  <iframe
-                    src={payslip.pdf_file}
-                    className="w-full h-64"
-                    title="Payslip PDF Preview"
-                  />
+                  <PrivatePdfPreview path={payslip.pdf_file} />
                 </div>
                 <button
                   onClick={handleDownloadPDF}

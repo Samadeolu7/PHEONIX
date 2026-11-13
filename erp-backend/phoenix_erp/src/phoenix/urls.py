@@ -75,12 +75,27 @@ urlpatterns = [
     path('api/permissions/', include('permissions.urls')),  # Fine-grained scope-aware permissions
     path('api/threads/', include('threads.urls')),  # Contextual page-anchored discussion threads
     path('api/jobs/', include('jobs.urls', namespace='jobs')),  # Scheduled job (Celery Beat) admin visibility
+    path('api/portal/', include('portal.urls', namespace='portal')),  # Customer-facing portal (see portal/models.py)
 
 ]
 
 # Serve media files — use re_path+serve directly so it works in both
 # DEBUG=True (development) and DEBUG=False (production/staging).
 # Django's static() helper is a no-op when DEBUG=False, so we bypass it.
+def serve_public_media(request, path, document_root=None):
+    """
+    Public media only. Sensitive uploads live under media/private/ and are
+    served exclusively through authenticated download endpoints — see
+    common/private_files.py. Django's serve() streams the file (no full
+    read into memory).
+    """
+    from django.http import Http404
+    from common.private_files import is_private_media_path
+    if is_private_media_path(path):
+        raise Http404()
+    return serve_static(request, path, document_root=document_root)
+
+
 urlpatterns += [
-    re_path(r'^media/(?P<path>.*)$', serve_static, {'document_root': settings.MEDIA_ROOT}),
+    re_path(r'^media/(?P<path>.*)$', serve_public_media, {'document_root': settings.MEDIA_ROOT}),
 ]

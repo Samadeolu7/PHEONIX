@@ -48,6 +48,8 @@ class LeaveRequestAdmin(admin.ModelAdmin):
 	list_display = ('id', 'reference_number', 'staff', 'leave_type', 'start_date', 'end_date', 'status')
 	search_fields = ('reference_number', 'staff__first_name', 'staff__last_name')
 	list_filter = ('status', 'leave_type')
+	# Private file: admin's file widget would try to build a public URL.
+	exclude = ('supporting_documents',)
 
 
 @admin.register(Attendance)
@@ -68,6 +70,8 @@ class PayrollAdmin(admin.ModelAdmin):
 class PayslipAdmin(admin.ModelAdmin):
 	list_display = ('id', 'payslip_number', 'payroll', 'staff', 'net_pay')
 	search_fields = ('payslip_number', 'staff__first_name', 'staff__last_name')
+	# Private file (salary data) — downloaded via the app, not the admin.
+	exclude = ('pdf_file',)
 
 
 @admin.register(StaffIOU)

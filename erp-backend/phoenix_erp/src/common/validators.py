@@ -25,3 +25,13 @@ def validate_document_file_size(value):
 
 
 validate_document_extension = FileExtensionValidator(allowed_extensions=ALLOWED_DOCUMENT_EXTENSIONS)
+
+
+def validate_document_signature(value):
+    """
+    Check the file's real content (magic bytes), not just its extension, so a
+    renamed executable or HTML page can't be uploaded as "contract.pdf".
+    Reads only the first few bytes — see common.private_files.
+    """
+    from common.private_files import check_file_signature
+    check_file_signature(value, ALLOWED_DOCUMENT_EXTENSIONS)

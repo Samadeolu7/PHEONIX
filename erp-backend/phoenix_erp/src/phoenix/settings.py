@@ -210,6 +210,7 @@ INSTALLED_APPS = [
     'internal_api',  # Internal endpoints consumed by Java microservices
     'permissions',  # Granular scope-aware permission system
     'threads',  # Contextual page-anchored discussion threads
+    'portal',  # Client-facing customer portal (registration + online loan applications)
 ]
 
 MIDDLEWARE = [
@@ -285,6 +286,7 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
     'x-tenant-id',
     'x-tenant-slug',
+    'x-portal-request',  # CSRF guard header for the customer portal
 ]
 
 # Cache preflight responses for 10 minutes to reduce OPTIONS round-trips
@@ -336,7 +338,38 @@ REST_FRAMEWORK = {
         'login': '5/minute',
         'password_reset': '3/hour',
         'register': '10/hour',
+        # Customer portal (per client IP unless noted)
+        'portal_anon': '120/minute',
+        'portal_login': '10/minute',
+        'portal_register': '5/hour',
+        'portal_password_reset': '5/hour',
+        'portal_verify': '20/hour',
+        'portal_apply': '10/day',  # per customer
+        'portal_upload': '40/day',  # per customer
     },
+}
+
+# ==================================================
+# CUSTOMER PORTAL
+# ==================================================
+# See portal/models.py for the security model.
+PORTAL = {
+    # Where links in portal emails point (the public frontend).
+    'FRONTEND_URL': os.environ.get('PORTAL_FRONTEND_URL', 'http://localhost:5173'),
+    'SESSION_COOKIE_NAME': 'phx_portal_session',
+    'SESSION_IDLE_MINUTES': int(os.environ.get('PORTAL_SESSION_IDLE_MINUTES', '30')),
+    'SESSION_ABSOLUTE_HOURS': int(os.environ.get('PORTAL_SESSION_ABSOLUTE_HOURS', '12')),
+    # Secure cookies everywhere except plain-HTTP local development.
+    'COOKIE_SECURE': os.environ.get('PORTAL_COOKIE_SECURE', str(not DEBUG)).lower() == 'true',
+    # Strict works because the frontend and API share a registrable domain
+    # (erp.krystartrust.ng -> api.kti.krystartrust.ng). Use 'Lax' only if needed.
+    'COOKIE_SAMESITE': os.environ.get('PORTAL_COOKIE_SAMESITE', 'Strict'),
+    'COOKIE_DOMAIN': os.environ.get('PORTAL_COOKIE_DOMAIN', '') or None,
+    'LOCKOUT_THRESHOLD': int(os.environ.get('PORTAL_LOCKOUT_THRESHOLD', '5')),
+    'LOCKOUT_MINUTES': int(os.environ.get('PORTAL_LOCKOUT_MINUTES', '15')),
+    # Number of reverse proxies (Traefik) in front of Django, used to find the
+    # real client IP for throttling without trusting client-supplied XFF.
+    'TRUSTED_PROXY_COUNT': int(os.environ.get('PORTAL_TRUSTED_PROXY_COUNT', '1')),
 }
 
 # ==================================================
@@ -916,7 +949,11 @@ MANAGERS = ADMINS
 # FILE UPLOAD SETTINGS
 # ==================================================
 
-FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+# Uploads above this size are streamed to a temporary file on disk instead
+# of being held in worker RAM for the whole request (Django's default).
+# Was 10MB, which kept every document upload (limit 8MB) fully in memory.
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(2.5 * 1024 * 1024)  # 2.5 MB
+# Non-file request body (JSON, form fields) — does not include uploaded files.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
 

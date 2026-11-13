@@ -1900,6 +1900,19 @@ class ClientDocumentViewSet(ScopedModelViewSet):
             queryset = queryset.filter(client_id=client_id)
         return queryset
     
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Stream the document to an authorised user (same scoping as retrieve)."""
+        from common.private_files import private_file_response, safe_download_name
+        document = self.get_object()
+        return private_file_response(
+            document.document_file,
+            download_name=safe_download_name(
+                f'{document.client.client_id}-{document.document_type}', document.document_file.name,
+            ),
+            inline=request.query_params.get('inline') == '1',
+        )
+
     @action(detail=True, methods=['post'])
     def verify(self, request, pk=None):
         """Verify a document"""
