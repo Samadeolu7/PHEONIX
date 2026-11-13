@@ -498,6 +498,84 @@ class PortalInvitation(models.Model):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Online withdrawal requests (staging — staff forward into the real workflow)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_withdrawal_reference():
+    chunks = [''.join(secrets.choice(_REF_ALPHABET) for _ in range(4)) for _ in range(2)]
+    return 'OWR-' + '-'.join(chunks)
+
+
+class OnlineWithdrawalRequest(models.Model):
+    """
+    A customer asks to withdraw from their own savings account. Nothing moves
+    here: the client's account manager reviews it and forwards it into the
+    normal SavingsWithdrawalRequest workflow (initiate_withdrawal), so the
+    account-manager rule, holds/minimum-balance checks, approval tiers,
+    notice periods and the separate disburser all still apply.
+    """
+    STATUS_SUBMITTED = 'submitted'
+    STATUS_FORWARDED = 'forwarded'
+    STATUS_DECLINED = 'declined'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_SUBMITTED, 'Submitted'),
+        (STATUS_FORWARDED, 'Being processed'),
+        (STATUS_DECLINED, 'Declined'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+    PAYOUT_CHOICES = [('bank', 'Transfer to my bank account on file'), ('cash', 'Collect cash at my branch')]
+
+    tenant = models.ForeignKey('users.Tenant', on_delete=models.CASCADE, related_name='online_withdrawal_requests')
+    customer = models.ForeignKey(PortalCustomer, on_delete=models.PROTECT, related_name='withdrawal_requests')
+    savings_account = models.ForeignKey(
+        'savings.SavingsAccount', on_delete=models.PROTECT, related_name='online_withdrawal_requests',
+    )
+    branch = models.ForeignKey('branches.Branch', null=True, on_delete=models.SET_NULL, related_name='+')
+    reference = models.CharField(max_length=20, unique=True, default=generate_withdrawal_reference, editable=False)
+    amount = models.DecimalField(max_digits=18, decimal_places=2)
+    payout_preference = models.CharField(max_length=10, choices=PAYOUT_CHOICES, default='bank')
+    reason = models.CharField(max_length=500, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_SUBMITTED, db_index=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    submitted_ip = models.GenericIPAddressField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    customer_message = models.TextField(blank=True)
+    staff_notes = models.TextField(blank=True)
+    forwarded_request = models.OneToOneField(
+        'savings.SavingsWithdrawalRequest', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='online_request',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-submitted_at']
+        indexes = [models.Index(fields=['tenant', 'status'])]
+
+    def __str__(self):
+        return f'{self.reference} — ₦{self.amount:,.2f}'
+
+    @property
+    def customer_status(self):
+        """What the customer sees, following the real request once forwarded."""
+        if self.status != self.STATUS_FORWARDED or not self.forwarded_request_id:
+            return self.status, self.get_status_display()
+        fr = self.forwarded_request.status
+        mapping = {
+            'pending': ('processing', 'Awaiting approval'),
+            'partially_approved': ('processing', 'Awaiting approval'),
+            'fully_approved': ('approved', 'Approved — awaiting payout'),
+            'completed': ('paid', 'Paid out'),
+            'rejected': ('declined', 'Declined'),
+            'cancelled': ('cancelled', 'Cancelled'),
+        }
+        return mapping.get(fr, ('processing', 'Being processed'))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Supporting documents (ID, utility bill, ...) — private storage only
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -567,6 +645,10 @@ class PortalAuditEvent(models.Model):
         ('invite_accepted', 'Client accepted a portal invitation'),
         ('invite_failed', 'Invalid or expired invitation used'),
         ('settings_changed', 'Director changed portal settings'),
+        ('withdrawal_requested', 'Customer requested a withdrawal'),
+        ('withdrawal_cancelled', 'Customer cancelled a withdrawal request'),
+        ('withdrawal_forwarded', 'Staff forwarded a withdrawal request for approval'),
+        ('withdrawal_declined', 'Staff declined a withdrawal request'),
     ]
     tenant = models.ForeignKey('users.Tenant', null=True, blank=True, on_delete=models.SET_NULL)
     customer = models.ForeignKey(PortalCustomer, null=True, blank=True, on_delete=models.SET_NULL)

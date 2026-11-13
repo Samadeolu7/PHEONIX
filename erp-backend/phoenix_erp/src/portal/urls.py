@@ -8,6 +8,7 @@ app_name = 'portal'
 staff_router = DefaultRouter()
 staff_router.register('applications', views.StaffOnlineApplicationViewSet, basename='staff-application')
 staff_router.register('invitations', views.StaffPortalInvitationViewSet, basename='staff-invitation')
+staff_router.register('withdrawals', views.StaffOnlineWithdrawalViewSet, basename='staff-withdrawal')
 
 urlpatterns = [
     # Public
@@ -27,6 +28,9 @@ urlpatterns = [
     path('auth/password-reset/confirm/', views.PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
     path('auth/change-password/', views.ChangePasswordView.as_view(), name='change-password'),
     path('me/', views.MeView.as_view(), name='me'),
+    path('me/accounts/', views.MyAccountsView.as_view(), name='my-accounts'),
+    path('withdrawals/', views.WithdrawalListCreateView.as_view(), name='withdrawals'),
+    path('withdrawals/<str:reference>/cancel/', views.WithdrawalCancelView.as_view(), name='withdrawal-cancel'),
 
     # Customer applications
     path('applications/', views.ApplicationListCreateView.as_view(), name='applications'),

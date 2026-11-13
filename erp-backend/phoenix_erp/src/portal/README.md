@@ -72,6 +72,28 @@ account is already linked to their client record and their email counts as verif
 - When an invited customer applies, accepting the application uses their linked
   client record directly. No NIN/BVN matching step and no duplicate client.
 
+## Balances and withdrawal requests
+
+Customers linked to a client record (invited, or after an application is accepted)
+see **My accounts**: their savings balances (with the amount available to withdraw
+after holds and the compulsory minimum) and their loans (outstanding, paid, next
+payment, arrears). It's read-only, and only their own client's accounts are shown.
+
+From a savings account they can **request a withdrawal** (amount, bank transfer or
+cash, optional reason). Nothing moves at that point:
+
+1. The request appears in **Savings → Online Withdrawal Requests** (permission:
+   *Savings → Withdrawals*).
+2. Staff confirm with the client and click **Forward for approval**. This creates a
+   normal savings withdrawal request in the staff member's name through the existing
+   `initiate_withdrawal` service. The account-manager rule, balance and hold checks,
+   approval tiers, Smart Savings notice period (counted from the client's request
+   date) and the separate disburser all apply as usual.
+3. Or **Decline**, with a message the client sees.
+
+The customer can follow the status (awaiting approval / approved / paid out / declined)
+and cancel while the request is still waiting.
+
 ## Supporting documents
 
 After submitting, applicants can attach documents (ID, passport photo, proof of

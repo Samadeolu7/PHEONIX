@@ -36,7 +36,7 @@ from .authentication import (
     clear_session_cookie, cookie_name, enforce_csrf_header, set_session_cookie,
 )
 from .models import (
-    OnlineApplicationDocument, OnlineLoanApplication, PortalLoanOffering, PortalSession, hash_token,
+    OnlineApplicationDocument, OnlineLoanApplication, PortalConfig, PortalLoanOffering, PortalSession, hash_token,
     PORTAL_DOC_MAX_MB,
 )
 from .serializers import (
@@ -103,11 +103,15 @@ class PortalBaseView(APIView):
     throttle_classes = [PortalAnonThrottle]
 
     def initial(self, request, *args, **kwargs):
-        tenant = getattr(request._request, 'tenant', None)
-        self.portal_config = services.get_enabled_config(tenant)
+        tenant, self.portal_config = services.resolve_portal(request._request)
         if self.portal_config is None:
             raise Http404()
         self.tenant = tenant
+        # Make the rest of the request (session tenant-binding, model
+        # defaults) use the portal's organisation, not the middleware guess.
+        request._request.tenant = tenant
+        from common.managers import set_current_tenant
+        set_current_tenant(tenant)
         # Login-CSRF protection for anonymous POSTs too (login, register, ...).
         enforce_csrf_header(request)
         super().initial(request, *args, **kwargs)
@@ -778,6 +782,12 @@ class StaffPortalSettingsViewSet(_viewsets.ViewSet):
         cfg = self._config(request)
         ser = PortalSettingsSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        new_host = services._host_of(ser.validated_data.get('public_url') or '')
+        if new_host and any(
+            services._host_of(u) == new_host
+            for u in PortalConfig.objects.exclude(tenant=cfg.tenant).exclude(public_url='').values_list('public_url', flat=True)
+        ):
+            raise ValidationError({'public_url': 'Another organisation already uses this web address.'})
         before = {f: getattr(cfg, f) for f in _SETTINGS_FIELDS}
         for f, v in ser.validated_data.items():
             setattr(cfg, f, v)
@@ -822,3 +832,126 @@ class StaffPortalSettingsViewSet(_viewsets.ViewSet):
         services.audit('settings_changed', request=request, tenant=cfg.tenant, staff_user=request.user,
                        offering=int(offering_id), removed=True)
         return Response(self._payload(request, cfg))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Customer: balances and withdrawal requests
+# ─────────────────────────────────────────────────────────────────────────────
+
+from .serializers import (  # noqa: E402
+    CustomerWithdrawalSerializer, StaffWithdrawalDecisionSerializer, StaffWithdrawalSerializer,
+    WithdrawalCreateSerializer,
+)
+from .models import OnlineWithdrawalRequest  # noqa: E402
+
+
+class MyAccountsView(PortalAuthenticatedView):
+    """GET: the customer's own loans and savings (linked client only)."""
+
+    def get(self, request):
+        data = services.customer_accounts(self.customer)
+        if data is None:
+            return Response({'linked': False, 'loans': [], 'savings': []})
+        return Response({'linked': True, **data})
+
+
+class WithdrawalListCreateView(PortalAuthenticatedView):
+    def get_throttles(self):
+        if self.request.method == 'POST':
+            return [PortalApplyThrottle()]
+        return super().get_throttles()
+
+    def get(self, request):
+        qs = (OnlineWithdrawalRequest.objects
+              .filter(customer=self.customer, tenant=self.tenant)
+              .select_related('savings_account', 'forwarded_request')[:50])
+        return Response(CustomerWithdrawalSerializer(qs, many=True).data)
+
+    def post(self, request):
+        ser = WithdrawalCreateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            wr = services.submit_withdrawal_request(
+                customer=self.customer, savings_account_id=ser.validated_data['savings_account'],
+                amount=ser.validated_data['amount'], payout_preference=ser.validated_data['payout_preference'],
+                reason=ser.validated_data.get('reason', ''), request=request,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        return Response(CustomerWithdrawalSerializer(wr).data, status=status.HTTP_201_CREATED)
+
+
+class WithdrawalCancelView(PortalAuthenticatedView):
+    def post(self, request, reference):
+        wr = get_object_or_404(OnlineWithdrawalRequest, reference=reference, customer=self.customer, tenant=self.tenant)
+        try:
+            wr = services.cancel_withdrawal_request(withdrawal=wr, request=request)
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        return Response(CustomerWithdrawalSerializer(wr).data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Staff: online withdrawal inbox → forward into the normal withdrawal workflow
+# ─────────────────────────────────────────────────────────────────────────────
+
+WITHDRAWAL_MODULE = 'savings'
+WITHDRAWAL_PAGE = 'savings-withdrawals'
+
+
+class StaffOnlineWithdrawalViewSet(ScopedModelViewSet):
+    queryset = OnlineWithdrawalRequest.objects.select_related(
+        'savings_account__client', 'savings_account__account', 'branch', 'customer',
+        'reviewed_by', 'forwarded_request',
+    )
+    serializer_class = StaffWithdrawalSerializer
+    permission_module = WITHDRAWAL_MODULE
+    permission_page = WITHDRAWAL_PAGE
+    officer_client_lookup = 'savings_account__client__assigned_officer'
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def get_queryset(self):
+        user = self.request.user
+        tenant = getattr(user, 'tenant', None)
+        if tenant is None and not getattr(user, 'is_system_admin', False):
+            return OnlineWithdrawalRequest.objects.none()
+        qs = super().get_queryset()
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
+        st = self.request.query_params.get('status')
+        if st:
+            qs = qs.filter(status=st)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        raise MethodNotAllowed('POST')
+
+    @action(detail=True, methods=['post'])
+    def forward(self, request, pk=None):
+        _require(request.user, flag='can_create', module=WITHDRAWAL_MODULE, page=WITHDRAWAL_PAGE)
+        wr = self.get_object()
+        ser = StaffWithdrawalDecisionSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            wr = services.forward_withdrawal_request(
+                withdrawal=wr, staff_user=request.user, staff_notes=ser.validated_data['staff_notes'], request=request,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        return Response(StaffWithdrawalSerializer(wr).data)
+
+    @action(detail=True, methods=['post'])
+    def decline(self, request, pk=None):
+        _require(request.user, flag='can_create', module=WITHDRAWAL_MODULE, page=WITHDRAWAL_PAGE)
+        wr = self.get_object()
+        ser = StaffWithdrawalDecisionSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        if not ser.validated_data['customer_message'].strip():
+            raise ValidationError({'customer_message': 'Tell the client why (they will see this).'})
+        try:
+            wr = services.decline_withdrawal_request(
+                withdrawal=wr, staff_user=request.user, request=request, **ser.validated_data,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(_django_errors(exc))
+        return Response(StaffWithdrawalSerializer(wr).data)

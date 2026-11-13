@@ -63,6 +63,49 @@ def get_enabled_config(tenant):
     return PortalConfig.objects.filter(tenant=tenant, is_enabled=True).first()
 
 
+def _host_of(url):
+    from urllib.parse import urlsplit
+    try:
+        return (urlsplit(url).hostname or '').lower()
+    except ValueError:
+        return ''
+
+
+def browser_site_host(request):
+    """
+    Host of the page the customer's browser is on. The portal frontend
+    (e.g. erp.krystartrust.ng) calls the API on another host
+    (api.kti.krystartrust.ng), so the API's own Host header can't tell us
+    which organisation's portal this is; the browser's Origin can.
+    """
+    meta = request.META
+    return _host_of(meta.get('HTTP_ORIGIN', '')) or _host_of(meta.get('HTTP_REFERER', ''))
+
+
+def resolve_portal(request):
+    """
+    (tenant, config) for an anonymous or customer portal request, or (None, None).
+
+    1. The organisation whose director set this site as the portal web
+       address (an explicit, unique domain → organisation mapping).
+    2. Otherwise the tenant the middleware resolved (subdomain / custom
+       domain / X-Tenant-Slug in development).
+    Only organisations with the portal switched on are ever returned.
+    """
+    host = browser_site_host(request)
+    if host:
+        matches = [
+            c for c in PortalConfig.objects.filter(is_enabled=True).exclude(public_url='').select_related('tenant')
+            if _host_of(c.public_url) == host
+        ]
+        if len(matches) == 1:
+            return matches[0].tenant, matches[0]
+        # 0 or ambiguous (>1): fall through rather than guess.
+    tenant = getattr(request, 'tenant', None)
+    cfg = get_enabled_config(tenant)
+    return (tenant, cfg) if cfg else (None, None)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Email
 # ─────────────────────────────────────────────────────────────────────────────
@@ -709,3 +752,175 @@ def accept_invitation(*, tenant, token, password, request=None):
         )
     audit('invite_accepted', request=request, customer=customer, invitation=inv.pk)
     return customer, raw
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Balances (read-only) and online withdrawal requests
+# ─────────────────────────────────────────────────────────────────────────────
+
+LOAN_STATUSES_SHOWN = ('pending', 'approved', 'disbursed', 'active', 'defaulted', 'paid_off', 'written_off')
+
+
+def _money(v):
+    return Decimal(v or 0).quantize(Decimal('0.01'))
+
+
+def customer_accounts(customer):
+    """
+    The customer's own loans and savings, read-only. Only for accounts linked
+    to a client record (i.e. invited, or accepted by staff) — never derived
+    from anything the customer typed in.
+    """
+    from loans.models import LoanAccount, LoanRepaymentSchedule
+    from savings.models import SavingsAccount
+    client = customer.client
+    if client is None or client.tenant_id != customer.tenant_id:
+        return None
+
+    loans = []
+    for loan in (LoanAccount.objects.filter(client=client, status__in=LOAN_STATUSES_SHOWN)
+                 .select_related('product__product').order_by('-application_date')):
+        nxt = (LoanRepaymentSchedule.objects
+               .filter(loan=loan, status__in=('pending', 'partial', 'overdue'))
+               .order_by('due_date').first())
+        outstanding = (loan.outstanding_principal + loan.outstanding_interest
+                       + loan.outstanding_fees + loan.outstanding_penalties)
+        loans.append({
+            'loan_number': loan.loan_number,
+            'product': loan.product.product.name,
+            'status': loan.status,
+            'status_display': loan.get_status_display(),
+            'amount': _money(loan.disbursed_amount or loan.approved_amount or loan.requested_amount),
+            'outstanding': _money(outstanding),
+            'total_paid': _money(loan.total_paid),
+            'days_in_arrears': loan.days_in_arrears,
+            'arrears_amount': _money(loan.arrears_amount),
+            'maturity_date': loan.maturity_date,
+            'next_due_date': nxt.due_date if nxt else None,
+            'next_due_amount': _money(nxt.total_due - nxt.total_paid) if nxt else None,
+        })
+
+    savings = []
+    for acct in (SavingsAccount.objects.filter(client=client).exclude(status='closed')
+                 .select_related('product', 'account')):
+        balance = _money(acct.account.balance if acct.account_id else 0)
+        withdrawable = max(_money(acct.calculate_available_balance()) - _money(acct.minimum_balance), Decimal('0.00'))
+        savings.append({
+            'id': acct.pk,
+            'account_number': acct.account_number,
+            'product': getattr(acct.product, 'name', '') or 'Savings',
+            'nickname': acct.nickname,
+            'status': acct.status,
+            'balance': balance,
+            'withdrawable': withdrawable,
+            'minimum_balance': _money(acct.minimum_balance),
+            'last_transaction_date': acct.last_transaction_date,
+            'can_withdraw': acct.status in ('active', 'dormant') and withdrawable > 0,
+        })
+    return {'loans': loans, 'savings': savings}
+
+
+def _customer_savings_account(customer, savings_account_id):
+    from savings.models import SavingsAccount
+    if customer.client_id is None:
+        return None
+    return SavingsAccount.objects.filter(pk=savings_account_id, client_id=customer.client_id).first()
+
+
+MAX_OPEN_WITHDRAWALS = 3
+
+
+def submit_withdrawal_request(*, customer, savings_account_id, amount, payout_preference, reason='', request=None):
+    from .models import OnlineWithdrawalRequest
+    if customer.client_id is None:
+        raise ValidationError('Your online account is not linked to a client record yet. Please contact your branch.')
+    if not customer.is_email_verified:
+        raise ValidationError('Please verify your email address first.')
+    with transaction.atomic():
+        PortalCustomer.objects.select_for_update().get(pk=customer.pk)
+        acct = _customer_savings_account(customer, savings_account_id)
+        if acct is None:
+            raise ValidationError({'savings_account': 'Account not found.'})
+        if acct.status not in ('active', 'dormant'):
+            raise ValidationError({'savings_account': 'Withdrawals are not possible on this account. Please contact your branch.'})
+        amount = _money(amount)
+        if amount <= 0:
+            raise ValidationError({'amount': 'Enter an amount greater than zero.'})
+        withdrawable = max(_money(acct.calculate_available_balance()) - _money(acct.minimum_balance), Decimal('0.00'))
+        if amount > withdrawable:
+            raise ValidationError({'amount': f'You can withdraw up to ₦{withdrawable:,.2f} from this account.'})
+        open_qs = OnlineWithdrawalRequest.objects.filter(customer=customer, status=OnlineWithdrawalRequest.STATUS_SUBMITTED)
+        if open_qs.filter(savings_account=acct).exists():
+            raise ValidationError('You already have a withdrawal request waiting on this account.')
+        if open_qs.count() >= MAX_OPEN_WITHDRAWALS:
+            raise ValidationError('You have too many withdrawal requests waiting. Please wait for them to be handled.')
+        wr = OnlineWithdrawalRequest.objects.create(
+            tenant=customer.tenant, customer=customer, savings_account=acct, branch=acct.branch,
+            amount=amount, payout_preference=payout_preference, reason=(reason or '')[:500],
+            submitted_ip=client_ip(request) if request is not None else None,
+        )
+    audit('withdrawal_requested', request=request, customer=customer, withdrawal=wr.reference, amount=str(amount))
+    return wr
+
+
+def cancel_withdrawal_request(*, withdrawal, request=None):
+    from .models import OnlineWithdrawalRequest
+    with transaction.atomic():
+        wr = OnlineWithdrawalRequest.objects.select_for_update().get(pk=withdrawal.pk)
+        if wr.status != OnlineWithdrawalRequest.STATUS_SUBMITTED:
+            raise ValidationError('This request is already being processed. Please contact your branch to stop it.')
+        wr.status = OnlineWithdrawalRequest.STATUS_CANCELLED
+        wr.save(update_fields=['status', 'updated_at'])
+    audit('withdrawal_cancelled', request=request, customer=wr.customer, withdrawal=wr.reference)
+    return wr
+
+
+def forward_withdrawal_request(*, withdrawal, staff_user, staff_notes='', request=None):
+    """
+    Create the real SavingsWithdrawalRequest via the existing service, with
+    the staff member as requester. All existing controls apply there.
+    """
+    from django.utils import timezone as tz
+    from savings.services import initiate_withdrawal
+    from .models import OnlineWithdrawalRequest
+    with transaction.atomic():
+        wr = OnlineWithdrawalRequest.objects.select_for_update().select_related('savings_account').get(pk=withdrawal.pk)
+        if wr.status != OnlineWithdrawalRequest.STATUS_SUBMITTED:
+            raise ValidationError(f'This request is already {wr.get_status_display().lower()}.')
+        real = initiate_withdrawal(
+            savings_account=wr.savings_account,
+            amount=wr.amount,
+            requested_by=staff_user,
+            description=(
+                f'Online request {wr.reference} — client prefers: {wr.get_payout_preference_display().lower()}.'
+                + (f' Reason: {wr.reason}' if wr.reason else '')
+            )[:1000],
+            client_requested_on=tz.localtime(wr.submitted_at).date(),
+        )
+        wr.status = OnlineWithdrawalRequest.STATUS_FORWARDED
+        wr.forwarded_request = real
+        wr.reviewed_by = staff_user
+        wr.reviewed_at = tz.now()
+        if staff_notes:
+            wr.staff_notes = staff_notes
+        wr.save()
+    audit('withdrawal_forwarded', request=request, customer=wr.customer, staff_user=staff_user,
+          withdrawal=wr.reference, savings_withdrawal_request=real.pk)
+    return wr
+
+
+def decline_withdrawal_request(*, withdrawal, staff_user, customer_message, staff_notes='', request=None):
+    from django.utils import timezone as tz
+    from .models import OnlineWithdrawalRequest
+    with transaction.atomic():
+        wr = OnlineWithdrawalRequest.objects.select_for_update().get(pk=withdrawal.pk)
+        if wr.status != OnlineWithdrawalRequest.STATUS_SUBMITTED:
+            raise ValidationError(f'This request is already {wr.get_status_display().lower()}.')
+        wr.status = OnlineWithdrawalRequest.STATUS_DECLINED
+        wr.customer_message = customer_message
+        wr.staff_notes = staff_notes or wr.staff_notes
+        wr.reviewed_by = staff_user
+        wr.reviewed_at = tz.now()
+        wr.save()
+    audit('withdrawal_declined', request=request, customer=wr.customer, staff_user=staff_user, withdrawal=wr.reference)
+    return wr

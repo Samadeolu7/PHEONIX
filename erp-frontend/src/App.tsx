@@ -569,6 +569,7 @@ const SavingsProductConfigPage = lazy(() => import('./pages/savings/SavingsProdu
 const SavingsProductContributionsPage = lazy(() => import('./pages/savings/SavingsProductContributionsPage'));
 const SavingsContributionsHubPage = lazy(() => import('./pages/savings/SavingsContributionsHubPage'));
 const SavingsWithdrawalsPage = lazy(() => import('./pages/savings/SavingsWithdrawalsPage'));
+const OnlineWithdrawalsPage = lazy(() => import('./pages/savings/OnlineWithdrawalsPage'));
 const SmartSavingsPage = lazy(() => import('./pages/savings/SmartSavingsPage'));
 
 // Loan Accounts list page
@@ -4183,6 +4184,15 @@ function App() {
                                 />
 
                                 {/* Savings — Withdrawal requests & approval inbox */}
+                                {/* Withdrawal requests sent from the customer portal */}
+                                <Route
+                                  path="/savings/online-withdrawals"
+                                  element={
+                                    <ProtectedRoute requiredPermission="savings-accounts-view" module="savings" page="savings-withdrawals">
+                                      <OnlineWithdrawalsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
                                 <Route
                                   path="/savings/withdrawals"
                                   element={

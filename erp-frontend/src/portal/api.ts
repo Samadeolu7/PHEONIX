@@ -109,6 +109,54 @@ export interface Customer {
   created_at: string;
 }
 
+export interface LoanSummary {
+  loan_number: string;
+  product: string;
+  status: string;
+  status_display: string;
+  amount: number;
+  outstanding: number;
+  total_paid: number;
+  days_in_arrears: number;
+  arrears_amount: number;
+  maturity_date: string | null;
+  next_due_date: string | null;
+  next_due_amount: number | null;
+}
+
+export interface SavingsSummary {
+  id: number;
+  account_number: string;
+  product: string;
+  nickname: string;
+  status: string;
+  balance: number;
+  withdrawable: number;
+  minimum_balance: number;
+  last_transaction_date: string | null;
+  can_withdraw: boolean;
+}
+
+export interface MyAccounts {
+  linked: boolean;
+  loans: LoanSummary[];
+  savings: SavingsSummary[];
+}
+
+export interface WithdrawalRequest {
+  reference: string;
+  account_number: string;
+  amount: number;
+  payout_preference: 'bank' | 'cash';
+  payout_preference_display: string;
+  reason: string;
+  status: string;
+  status_display: string;
+  customer_message: string;
+  submitted_at: string;
+  can_cancel: boolean;
+}
+
 export interface AppDocument {
   id: number;
   document_type: string;
@@ -225,6 +273,18 @@ export const portalApi = {
   },
   deleteDocument: (ref: string, id: number) =>
     portalHttp.delete(`/applications/${encodeURIComponent(ref)}/documents/${id}/`),
+  accounts: () => portalHttp.get<MyAccounts>('/me/accounts/').then(r => r.data),
+  withdrawals: () => portalHttp.get<WithdrawalRequest[]>('/withdrawals/').then(r => r.data),
+  requestWithdrawal: (body: {
+    savings_account: number;
+    amount: string;
+    payout_preference: 'bank' | 'cash';
+    reason: string;
+  }) => portalHttp.post<WithdrawalRequest>('/withdrawals/', body).then(r => r.data),
+  cancelWithdrawal: (ref: string) =>
+    portalHttp
+      .post<WithdrawalRequest>(`/withdrawals/${encodeURIComponent(ref)}/cancel/`)
+      .then(r => r.data),
   withdraw: (ref: string) =>
     portalHttp
       .post<Application>(`/applications/${encodeURIComponent(ref)}/withdraw/`)
