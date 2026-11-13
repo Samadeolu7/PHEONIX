@@ -73,11 +73,17 @@ def _frontend_url(path: str) -> str:
 
 
 def _send(subject, body, to):
+    """
+    Returns True if the mail server accepted the message. Customer-facing
+    callers ignore the result on purpose (no enumeration via error
+    messages); staff-facing callers (invitations) must check it.
+    """
     try:
         send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, [to], fail_silently=False)
+        return True
     except Exception:
-        # Never leak delivery failures to the caller (enumeration), but log them.
-        logger.exception('Portal email to customer failed (subject=%s)', subject)
+        logger.exception('Portal email failed (subject=%s)', subject)
+        return False
 
 
 def send_verification_email(customer):
@@ -613,7 +619,7 @@ def send_invitation(*, client, email, staff_user, request=None):
     inv, raw = PortalInvitation.issue(client=client, email=email, created_by=staff_user)
     from urllib.parse import quote
     link = _frontend_url(f'/portal/accept-invite?token={quote(raw)}')
-    _send(
+    sent = _send(
         f'Your online account — {client.tenant.name}',
         f'Hello {client.first_name},\n\n'
         f'{client.tenant.name} has set up online access for you. Use this link to choose a password '
@@ -623,6 +629,14 @@ def send_invitation(*, client, email, staff_user, request=None):
         'PIN or OTP by phone, SMS or email.\n',
         email,
     )
+    if not sent:
+        # Don't leave a live link nobody received, and tell the staff member.
+        inv.revoked_at = timezone.now()
+        inv.save(update_fields=['revoked_at'])
+        raise ValidationError(
+            'The invitation email could not be sent. The mail server may be misconfigured or '
+            'unreachable. Ask your administrator to check the email settings, then try again.'
+        )
     audit('invite_sent', request=request, tenant=client.tenant, staff_user=staff_user,
           client=client.client_id, invitation=inv.pk)
     return inv

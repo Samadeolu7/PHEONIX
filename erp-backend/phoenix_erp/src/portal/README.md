@@ -40,7 +40,19 @@ The portal is **off** by default and returns 404 until enabled.
 | `PORTAL_SESSION_IDLE_MINUTES` / `PORTAL_SESSION_ABSOLUTE_HOURS` | `30` / `12` | |
 | `PORTAL_LOCKOUT_THRESHOLD` / `PORTAL_LOCKOUT_MINUTES` | `5` / `15` | |
 
-Email must be configured (`EMAIL_HOST`, etc.), since verification and password reset depend on it.
+Email must work: invitations, verification and password reset all depend on it.
+Check it on the server before go-live:
+
+```
+docker compose exec backend python manage.py sendtestemail you@example.com
+```
+
+With Gmail SMTP you need an app password and `EMAIL_USE_TLS=True` in the server's
+`.env`. If it's missing, compose passes an empty value, which turns TLS off, and Gmail
+refuses the connection. If a staff invitation can't be sent, the staff member sees an
+error and no link is left active. Customer-facing emails (verification, reset) fail
+silently by design, so attackers can't use error messages to probe which emails
+exist; failures go to the server log as "Portal email failed".
 
 Local frontend development: set `VITE_PORTAL_TENANT_SLUG=<tenant slug>` so the
 dev server sends the tenant header (production resolves the tenant from the domain).

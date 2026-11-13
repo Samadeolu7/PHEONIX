@@ -752,7 +752,7 @@ class ApplicationDocumentTests(PortalTestCase):
 
 
 
-class InvitationTests(PortalTestCase):
+class _InviteBase(PortalTestCase):
     def setUp(self):
         super().setUp()
         cfg = PortalConfig.objects.get(tenant=self.env['tenant'])
@@ -783,6 +783,8 @@ class InvitationTests(PortalTestCase):
             'token': token, 'password': password, 'accept_terms': True,
         }, format='json')
 
+
+class InvitationTests(_InviteBase):
     def test_new_configs_are_invite_only(self):
         self.assertFalse(PortalConfig(tenant=self.env['tenant']).allow_registration)
         res = portal_client('alpha').post('/api/portal/auth/register/', {
@@ -879,3 +881,33 @@ class InvitationTests(PortalTestCase):
         app.refresh_from_db()
         self.assertEqual(app.converted_client, self.client_rec)
         self.assertEqual(Client.objects.count(), 1)   # no duplicate client created
+
+
+class EmailFailureTests(_InviteBase):
+    """Staff must learn when an invitation didn't go out; customers must not learn anything."""
+
+    def _fail_mail(self):
+        import smtplib
+        return mock.patch('portal.services.send_mail', side_effect=smtplib.SMTPAuthenticationError(535, b'bad creds'))
+
+    def test_invite_reports_failure_and_leaves_no_live_link(self):
+        from portal.models import PortalInvitation
+        with self._fail_mail():
+            res = self.invite()
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('could not be sent', str(res.json()))
+        self.assertFalse(PortalInvitation.objects.filter(revoked_at__isnull=True, accepted_at__isnull=True).exists())
+
+    def test_customer_flows_stay_generic_when_mail_fails(self):
+        cfg = PortalConfig.objects.get(tenant=self.env['tenant'])
+        cfg.allow_registration = True
+        cfg.save()
+        c = portal_client('alpha')
+        ok = c.post('/api/portal/auth/password-reset/', {'email': 'ghost@example.com'}, format='json')
+        with self._fail_mail():
+            res = c.post('/api/portal/auth/register/', {
+                'first_name': 'Ada', 'last_name': 'Obi', 'email': 'ada2@example.com', 'phone': '08031234567',
+                'password': STRONG_PW, 'accept_terms': True}, format='json')
+            reset = c.post('/api/portal/auth/password-reset/', {'email': 'ada2@example.com'}, format='json')
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(reset.json(), ok.json())
