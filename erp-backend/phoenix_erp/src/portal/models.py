@@ -136,7 +136,8 @@ class PortalLoanOffering(models.Model):
     def clean(self):
         from django.core.exceptions import ValidationError
         # Never expose another organisation's product.
-        if self.loan_product_id and self.tenant_id and self.loan_product.tenant_id != self.tenant_id:
+        if (self.loan_product_id and self.tenant_id and self.loan_product.tenant_id is not None
+                and self.loan_product.tenant_id != self.tenant_id):
             raise ValidationError({'loan_product': 'The loan product must belong to the same organisation.'})
         if (
             self.max_online_amount is not None and self.loan_product_id

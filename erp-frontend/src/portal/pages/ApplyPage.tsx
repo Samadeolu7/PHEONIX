@@ -200,12 +200,14 @@ export function ApplyPage() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     Promise.all([portalApi.products(), portalApi.branches()])
       .then(([o, b]) => {
         setOfferings(o);
         setBranches(b);
+        setLoaded(true);
       })
       .catch(e => setMessage(toApiError(e).message));
   }, []);
@@ -302,6 +304,12 @@ export function ApplyPage() {
         ))}
       </ol>
       {message && <Notice kind="error">{message}</Notice>}
+      {loaded && offerings.length === 0 && (
+        <Notice>
+          No loans are open for online applications right now. Please check back later or contact
+          your branch.
+        </Notice>
+      )}
 
       <Card>
         {step === 0 && (

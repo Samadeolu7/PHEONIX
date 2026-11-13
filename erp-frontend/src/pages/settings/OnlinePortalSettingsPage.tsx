@@ -325,6 +325,12 @@ export default function OnlinePortalSettingsPage() {
       </p>
 
       {error && <div className="bg-red-50 text-red-700 text-sm rounded p-3 mb-4">{error}</div>}
+      {data.settings.is_enabled && offeredCount === 0 && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded p-3 mb-4">
+          The portal is on, but <strong>no loans are offered online</strong>, so customers see an
+          empty loan list. Choose at least one under &ldquo;Loans offered online&rdquo; below.
+        </div>
+      )}
       {saved && <div className="bg-green-50 text-green-800 text-sm rounded p-3 mb-4">{saved}</div>}
 
       <section className="bg-white border rounded-xl p-5 mb-5">

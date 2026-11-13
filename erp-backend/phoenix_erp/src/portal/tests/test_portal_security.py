@@ -1208,3 +1208,32 @@ class ProductionDomainResolutionTests(PortalTestCase):
                                                               'accept_terms': True}, format='json')
         self.assertEqual(res.status_code, 201, res.content)
         self.assertEqual(c.get('/api/portal/me/').status_code, 200)
+
+
+class OfferingProductScopeTests(PortalTestCase):
+    """Settings and the public list use the same product visibility as the ERP."""
+
+    def setUp(self):
+        super().setUp()
+        self.director = APIClient()
+        self.director.force_authenticate(self.env['owner'])
+
+    def test_offering_a_product_from_settings_lists_it_publicly(self):
+        PortalLoanOffering.objects.all().delete()
+        self.assertEqual(portal_client('alpha').get('/api/portal/products/').json(), [])
+        pid = self.env['product'].pk
+        res = self.director.post('/api/portal/staff/settings/offerings/', {'loan_product': pid, 'is_active': True}, format='json')
+        self.assertEqual(res.status_code, 200, res.content)
+        names = [o['name'] for o in portal_client('alpha').get('/api/portal/products/').json()]
+        self.assertEqual(names, ['Business Loan'])
+
+    def test_settings_lists_the_directors_erp_products(self):
+        names = [p['name'] for p in self.director.get('/api/portal/staff/settings/').json()['products']]
+        self.assertEqual(names, ['Business Loan'])
+
+    def test_other_tenants_product_never_listed(self):
+        beta = make_tenant('beta')
+        # Even a hand-made offering pointing at beta's product stays invisible to alpha.
+        PortalLoanOffering.objects.create(tenant=self.env['tenant'], loan_product=beta['product'])
+        names = [o['name'] for o in portal_client('alpha').get('/api/portal/products/').json()]
+        self.assertEqual(names.count('Business Loan'), 1)   # alpha's own only
