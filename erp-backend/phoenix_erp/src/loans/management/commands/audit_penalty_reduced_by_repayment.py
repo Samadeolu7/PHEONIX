@@ -17,7 +17,7 @@ That cut both the client's debt and the institution's penalty income for
 periods that had already been charged (found on LN-659's statement). This
 command finds every such entry, across every loan and tenant.
 
-Selection: LNPEN journal entries that CREDIT a loan's own Loan Receivable
+Selection (see loans/penalty_reductions.py): LNPEN journal entries that CREDIT a loan's own Loan Receivable
 account and whose description is the daily job's own wording
 ("Loan penalty accrual — <loan> (installment due …)"). The deliberate
 correction commands use different wording ("Loan penalty accrual
@@ -39,12 +39,9 @@ Usage:
 """
 import csv
 from collections import defaultdict
-from datetime import timedelta
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
-
-DAILY_JOB_PREFIX = 'Loan penalty accrual — '
 
 
 class Command(BaseCommand):
@@ -64,48 +61,11 @@ class Command(BaseCommand):
                             help='Also write every reduction entry to this CSV file.')
 
     def handle(self, *args, **options):
-        from loans.models import LoanAccount
-        from transactions.models import TransactionEntry
+        from loans.penalty_reductions import find_penalty_reductions
 
-        window = timedelta(days=options['window'])
-
-        loans_by_account = {
-            loan.account_id: loan
-            for loan in LoanAccount.all_objects.filter(is_deleted=False)
-            .select_related('client')
-            .only('id', 'loan_number', 'status', 'account_id', 'outstanding_penalties',
-                  'client__first_name', 'client__last_name')
-        }
-        if options['loan_number']:
-            loans_by_account = {
-                k: v for k, v in loans_by_account.items()
-                if v.loan_number == options['loan_number']
-            }
-
-        reductions = (
-            TransactionEntry.objects.filter(
-                transaction__series__code='LNPEN',
-                transaction__approved=True,
-                transaction__description__startswith=DAILY_JOB_PREFIX,
-                transaction__is_reversal=False,
-                transaction__is_reversed=False,
-                side=TransactionEntry.CREDIT,
-                account_id__in=list(loans_by_account),
-            )
-            .select_related('transaction')
-            .order_by('transaction__date', 'transaction_id')
+        reductions = find_penalty_reductions(
+            loan_number=options['loan_number'], window_days=options['window'],
         )
-
-        payment_dates = defaultdict(list)
-        for account_id, txn_date in TransactionEntry.objects.filter(
-            transaction__series__code='LNPMT',
-            transaction__approved=True,
-            transaction__is_reversal=False,
-            transaction__is_reversed=False,
-            side=TransactionEntry.CREDIT,
-            account_id__in=list(loans_by_account),
-        ).values_list('account_id', 'transaction__date'):
-            payment_dates[account_id].append(txn_date)
 
         per_loan = defaultdict(lambda: {
             'repay_count': 0, 'repay_total': Decimal('0.00'),
@@ -115,13 +75,8 @@ class Command(BaseCommand):
         per_month = defaultdict(lambda: [Decimal('0.00'), Decimal('0.00')])
         rows = []
 
-        for entry in reductions:
-            loan = loans_by_account[entry.account_id]
-            txn = entry.transaction
-            repayment_driven = any(
-                txn.date - window <= d <= txn.date
-                for d in payment_dates.get(entry.account_id, ())
-            )
+        for r in reductions:
+            loan, entry, txn, repayment_driven = r.loan, r.entry, r.txn, r.repayment_driven
             bucket = per_loan[loan.loan_number]
             if repayment_driven:
                 bucket['repay_count'] += 1
@@ -191,6 +146,10 @@ class Command(BaseCommand):
         repay_total = sum(b['repay_total'] for b in per_loan.values())
         other_total = sum(b['other_total'] for b in per_loan.values())
         repay_loans = sum(1 for b in per_loan.values() if b['repay_count'])
+        self.stdout.write(
+            '\nTo re-charge the repayment-driven amounts on open loans: '
+            'python manage.py restore_penalty_reduced_by_repayment (dry-run first).'
+        )
         open_loans = [
             b for b in per_loan.values()
             if b['loan'].status in ('active', 'disbursed', 'defaulted') and b['repay_count']
