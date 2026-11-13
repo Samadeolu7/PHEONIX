@@ -742,6 +742,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     category: 'Admin Management',
     isNew: true,
   },
+  {
+    id: 'online-portal-settings',
+    title: 'Online Portal Settings',
+    description:
+      'Directors: switch the customer portal on/off, sign-up, web address, contacts and the loans offered online',
+    path: '/admin/online-portal',
+    icon: Globe,
+    requiredPermission: 'online-portal-settings',
+    moduleId: 'administration',
+    category: 'Admin Management',
+    isNew: true,
+  },
 
   // ----- HR & Payroll Category -----
   {
@@ -1158,6 +1170,17 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'savings-online-withdrawals',
+    title: '🌐 Online Withdrawal Requests',
+    description: 'Withdrawal requests clients sent from the online portal',
+    path: '/savings/online-withdrawals',
+    icon: Globe,
+    requiredPermission: 'savings-accounts-view',
+    moduleId: 'client-services',
+    category: 'Savings',
+    isNew: true,
+  },
+  {
     id: 'savings-combined-receipt',
     title: '🧾 Receipt Combined',
     description:
@@ -1289,6 +1312,17 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     path: '/loans/repayment-approvals',
     icon: ClipboardList,
     requiredPermission: 'loan-repayment-requests-approve',
+    moduleId: 'client-services',
+    category: 'Loans',
+    isNew: true,
+  },
+  {
+    id: 'loan-online-applications',
+    title: '🌐 Online Applications',
+    description: 'Loan applications submitted by clients through the online portal',
+    path: '/loans/online-applications',
+    icon: Globe,
+    requiredPermission: 'online-loan-applications-view',
     moduleId: 'client-services',
     category: 'Loans',
     isNew: true,
@@ -1983,6 +2017,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'savings-mod-online-withdrawals',
+    title: '🌐 Online Withdrawal Requests',
+    description:
+      'Withdrawal requests clients sent from the online portal; forward into the normal approval workflow or decline',
+    path: '/savings/online-withdrawals',
+    icon: Globe,
+    requiredPermission: 'savings-accounts-view',
+    moduleId: 'savings',
+    category: 'Transactions',
+    isNew: true,
+  },
+  {
     id: 'savings-mod-combined',
     title: '🧾 Receipt Combined',
     description:
@@ -2102,6 +2148,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     path: '/loans/accounts/create',
     icon: Plus,
     requiredPermission: 'loan-accounts-create',
+    moduleId: 'loans',
+    category: 'Accounts',
+    isNew: true,
+  },
+  {
+    id: 'loans-mod-online-applications',
+    title: '🌐 Online Applications',
+    description:
+      'Review loan applications clients submitted through the online portal, then accept into a pending loan or decline',
+    path: '/loans/online-applications',
+    icon: Globe,
+    requiredPermission: 'online-loan-applications-view',
     moduleId: 'loans',
     category: 'Accounts',
     isNew: true,
