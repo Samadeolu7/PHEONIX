@@ -2396,8 +2396,15 @@ class LoanRepaymentSchedule(TimeStampedModel, BranchScopedModel, SoftDeleteModel
     interest_due = models.DecimalField(max_digits=18, decimal_places=2)
     fees_due = models.DecimalField(max_digits=18, decimal_places=2, default=0)
     penalty_due = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    # How many overdue repayment periods have already been charged into
+    # penalty_due by update_loan_status. Each run only charges the periods
+    # elapsed since this count, on the balance unpaid at that time, so a
+    # later repayment never reduces a penalty already charged. NULL means
+    # "not yet tracked" (rows assessed before this field existed); the next
+    # run locks in whatever penalty_due already holds.
+    penalty_periods_charged = models.PositiveIntegerField(null=True, blank=True)
     total_due = models.DecimalField(max_digits=18, decimal_places=2)
-    
+
     # Amounts paid
     principal_paid = models.DecimalField(max_digits=18, decimal_places=2, default=0)
     interest_paid = models.DecimalField(max_digits=18, decimal_places=2, default=0)

@@ -16,35 +16,21 @@ dashboards); repayments remain postable on defaulted loans either way.
 
 Penalty accrual (LNPEN series) — one journal entry per overdue INSTALLMENT
 (not lumped per loan), so each month's/period's penalty charge is individually
-traceable in the ledger. Posted whenever a schedule row's assessed penalty
-(delta = new_penalty - sched.penalty_due) moves, for a product with
-penalty_income_account configured:
-    Fresh/increased charge (delta > 0):
-        Dr. Loan Receivable (loan.account)            — ASSET goes up
-        Cr. Penalty Income  (product.penalty_income_account) — INCOME goes up
-    Self-correction lowering a previously-assessed amount (delta < 0):
-        Dr. Penalty Income  (product.penalty_income_account)
-        Cr. Loan Receivable (loan.account)
+traceable in the ledger. A penalty only ever INCREASES the debt: each run
+charges the repayment periods newly elapsed since
+LoanRepaymentSchedule.penalty_periods_charged, on the balance unpaid at that
+time, and never recomputes periods already charged. For a product with
+penalty_income_account configured, each charge posts:
+    Dr. Loan Receivable (loan.account)                   — ASSET goes up
+    Cr. Penalty Income  (product.penalty_income_account) — INCOME goes up
+Lowering an already-charged penalty (a waiver or a correction) is a deliberate
+act for a correction command, never a side effect of this daily job.
 Once a loan has had at least one such entry posted, LoanAccount.penalty_accrual_active
 is set True permanently, so LoanAccount.record_payment() stops re-crediting
 Penalty Income for that loan's penalty collections (already recognized here) and
 instead collects straight against Loan Receivable — see record_payment()'s
 docstring. Loans on products without penalty_income_account configured keep the
 legacy cash-basis behavior (income recognized only when the penalty is paid).
-
-Each overdue installment's GL entry is posted individually and in full, inside
-the loop, using that row's own (possibly negative, self-correcting) delta —
-independent of what happens to outstanding_penalties afterward. Found
-2026-08-23: when the SUM of a run's deltas would push outstanding_penalties
-below zero, it used to be silently floored to 0.00 there while GL had already
-recorded the true (larger, negative) total — a live, daily-recurring desync
-between loan.account.balance and outstanding_principal + outstanding_interest
-+ outstanding_fees + outstanding_penalties, discovered because loans manually
-resynced to GL that same day had already drifted again within the hour. Fixed
-by routing the clamped excess to outstanding_principal — the same "plug"
-bucket used by every other GL-anchored correction in this codebase
-(sync_outstanding_to_gl, correct_principal_penalty_misallocation, etc.) —
-instead of discarding it.
 
 Usage:
     python manage.py update_loan_status
@@ -113,53 +99,75 @@ class Command(BaseCommand):
                     # 2. Update risk classification
                     loan.update_risk_classification()
 
-                    # 3. Auto-penalty: apply to overdue installments. Recomputes from
-                    # the current days_late every run (not gated on penalty_due=0) so
-                    # a percentage penalty keeps growing as more repayment periods
-                    # (weeks/months, per the loan's frequency) elapse overdue,
-                    # instead of freezing at its first-assessed value.
-                    #
-                    # penalty_due is always set to the freshly recalculated figure
-                    # (not just raised when higher) so this stays self-correcting:
-                    # if a stored value was ever inflated — stale data, a prior
-                    # formula bug, or simply base_amount shrinking after a partial
-                    # payment — the next run brings it back in line with
-                    # calculate_late_penalty() instead of leaving it stuck. Only the
-                    # (possibly negative) delta is applied to outstanding_penalties,
-                    # since penalty_due is an absolute (not incremental) figure.
+                    # 3. Auto-penalty: apply to overdue installments. A penalty
+                    # only ever INCREASES the debt. Each run charges just the
+                    # repayment periods that have newly elapsed since the last
+                    # charge (sched.penalty_periods_charged), on the balance
+                    # unpaid right now. Periods already charged are never
+                    # recomputed, so a repayment lowers the base for FUTURE
+                    # periods only and never claws back a penalty already
+                    # charged. (Previously penalty_due was recomputed from
+                    # scratch as rate x current balance x ALL periods late, so
+                    # every repayment retroactively shrank past periods'
+                    # penalties and posted a Cr Loan Receivable "accrual" — the
+                    # LN-659 statement, 2026-11-13.)
                     overdue_schedules = loan.repayment_schedule.filter(status='overdue')
                     penalty_delta_total = Decimal('0.00')
                     penalty_account = loan.product.penalty_income_account
                     loan_had_accrual = False
                     for sched in overdue_schedules:
                         days_late = loan.product.effective_days_late(sched.due_date, today)
-                        # Base the penalty on principal+interest+fees remaining only —
-                        # NOT sched.total_due - sched.total_paid, which bakes the row's
-                        # own penalty_due into total_due (see flat_schedule() /
-                        # _update_schedule_with_payment, "sched.total_due += portion"
-                        # right after penalty_due is added). Using total_due here fed
-                        # yesterday's already-accrued penalty back in as part of
-                        # tomorrow's base, charging penalty on penalty every time this
-                        # job ran on a still-overdue installment.
-                        non_penalty_remaining = (
-                            (sched.principal_due + sched.interest_due + sched.fees_due)
-                            - (sched.principal_paid + sched.interest_paid + sched.fees_paid)
-                        )
-                        # periods_late derived from this loan's own real schedule
-                        # cadence (see periods_late_for_installment) instead of the
-                        # flat 30-day-per-month approximation — a real calendar
-                        # month is 28-31 days, so the flat guess can drift a period
-                        # at boundaries relative to the loan's actual due dates.
                         periods_late = loan.periods_late_for_installment(sched, today)
-                        new_penalty = loan.product.calculate_late_penalty(
-                            non_penalty_remaining, days_late,
-                            loan.repayment_frequency, periods_late=periods_late,
-                        )
-                        delta = new_penalty - sched.penalty_due
-                        if delta == 0:
+
+                        if sched.penalty_periods_charged is None:
+                            if sched.penalty_due > 0:
+                                # Assessed before period tracking existed: treat
+                                # every period elapsed so far as already charged
+                                # in penalty_due and keep it as is.
+                                sched.penalty_periods_charged = periods_late
+                                sched.save(update_fields=['penalty_periods_charged', 'updated_at'])
+                                continue
+                            sched.penalty_periods_charged = 0
+
+                        # Still inside the grace period: nothing chargeable yet,
+                        # and the period count is left untouched so the first
+                        # chargeable period is not skipped.
+                        if days_late <= loan.product.grace_period_days:
                             continue
-                        sched.penalty_due = new_penalty
-                        sched.save(update_fields=['penalty_due', 'updated_at'])
+
+                        if loan.product.late_payment_penalty_type == 'fixed':
+                            # Flat one-off charge per installment.
+                            delta = max(
+                                Decimal('0.00'),
+                                loan.product.late_payment_penalty - sched.penalty_due,
+                            )
+                        else:
+                            new_periods = periods_late - sched.penalty_periods_charged
+                            if new_periods <= 0:
+                                continue
+                            # Base the penalty on principal+interest+fees remaining
+                            # only — NOT sched.total_due - sched.total_paid, which
+                            # bakes the row's own penalty_due into total_due and
+                            # would charge penalty on penalty.
+                            non_penalty_remaining = max(Decimal('0.00'), (
+                                (sched.principal_due + sched.interest_due + sched.fees_due)
+                                - (sched.principal_paid + sched.interest_paid + sched.fees_paid)
+                            ))
+                            delta = loan.product.calculate_late_penalty(
+                                non_penalty_remaining, days_late,
+                                loan.repayment_frequency, periods_late=new_periods,
+                            )
+
+                        sched.penalty_periods_charged = max(
+                            sched.penalty_periods_charged, periods_late,
+                        )
+                        if delta <= 0:
+                            sched.save(update_fields=['penalty_periods_charged', 'updated_at'])
+                            continue
+                        sched.penalty_due += delta
+                        sched.save(update_fields=[
+                            'penalty_due', 'penalty_periods_charged', 'updated_at',
+                        ])
                         penalty_delta_total += delta
 
                         # 3b. Accrue THIS installment's penalty delta to GL now, on
@@ -172,11 +180,8 @@ class Command(BaseCommand):
                         if not penalty_account:
                             continue
 
-                        amount = abs(delta)
-                        if delta > 0:
-                            debit_account, credit_account = loan.account, penalty_account
-                        else:
-                            debit_account, credit_account = penalty_account, loan.account
+                        amount = delta
+                        debit_account, credit_account = loan.account, penalty_account
 
                         if dry_run:
                             self.stdout.write(
@@ -227,30 +232,7 @@ class Command(BaseCommand):
                         loan_had_accrual = True
 
                     if penalty_delta_total != 0:
-                        new_outstanding_penalties = loan.outstanding_penalties + penalty_delta_total
-                        if new_outstanding_penalties < 0:
-                            # GL already received the full, unclamped per-row deltas
-                            # posted independently in the loop above — simply flooring
-                            # outstanding_penalties at 0 here would silently discard the
-                            # excess and desync outstanding_principal + outstanding_
-                            # interest + outstanding_fees + outstanding_penalties from
-                            # loan.account.balance. Route the excess to
-                            # outstanding_principal instead — the established "plug"
-                            # bucket for this kind of GL-anchored correction throughout
-                            # the 2026-08-23 investigation (sync_outstanding_to_gl,
-                            # correct_principal_penalty_misallocation, etc.). Found as
-                            # the live, currently-running cause of loans re-drifting
-                            # within an hour of being manually resynced to GL.
-                            if dry_run:
-                                self.stdout.write(
-                                    f'  [{loan.loan_number}] penalty self-correction would '
-                                    f'floor outstanding_penalties below zero '
-                                    f'({new_outstanding_penalties}) — {-new_outstanding_penalties} '
-                                    f'would move to outstanding_principal'
-                                )
-                            loan.outstanding_principal += new_outstanding_penalties
-                            new_outstanding_penalties = Decimal('0.00')
-                        loan.outstanding_penalties = new_outstanding_penalties
+                        loan.outstanding_penalties += penalty_delta_total
                         stats['penalised'] += 1
 
                     if loan_had_accrual:
