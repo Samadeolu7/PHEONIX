@@ -23,8 +23,10 @@ restore would add back):
 
 Installments whose loan received repayments before per-installment
 repayment records existed (before 2026-08-06) are flagged INCOMPLETE
-HISTORY: payments in that window are invisible here, so the recomputed
-figure may be too high for those.
+HISTORY. "Unpaid at that moment" is reconstructed as unpaid now plus every
+repayment recorded since, so a repayment missing from the records is left
+out and the recomputed figure may be too LOW for those: an OVERCHARGE there
+may be a false alarm, and an UNDERCHARGE may be larger than shown.
 
 By default checks only the installments the restore would touch (confirmed
 reductions on open loans). --all checks every overdue installment on open
@@ -188,6 +190,6 @@ class Command(BaseCommand):
             'OVERCHARGE: the restore would leave the client owing more than the correct penalty. '
             'UNDERCHARGE: still owing less than the correct penalty after the restore. '
             'INCOMPLETE HISTORY: repayments before 2026-08-06 are not visible here, '
-            'so "correct" may be too high.'
+            'so "correct" may be too low (an OVERCHARGE may be a false alarm).'
         )
         self.stdout.write(self.style.WARNING('\nRead-only — no changes made.'))
