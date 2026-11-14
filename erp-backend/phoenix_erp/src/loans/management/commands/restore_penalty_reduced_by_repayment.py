@@ -14,7 +14,7 @@ audit_penalty_reduced_by_repayment for the report; this command undoes the
 same entries (selected by loans/penalty_reductions.py, so the two always
 agree).
 
-For every REPAYMENT-DRIVEN reduction on an open loan (active / disbursed /
+For every CONFIRMED reduction on an open loan (active / disbursed /
 defaulted), reverses that reduction with Transaction.reverse() (the standard
 audited path: a linked opposite entry, Dr Loan Receivable / Cr Penalty
 Income, and the original marked is_reversed), then adds the amount back to
@@ -29,10 +29,11 @@ charged (see the project rule in CLAUDE.md).
 Skipped and listed for manual review, never posted:
   - loans no longer open (paid off, closed, written off): the money can no
     longer be collected by re-charging the loan;
-  - reductions with no repayment within --window days before them (OTHER in
-    the audit): these may be legitimate corrections of an inflated penalty;
-  - reductions whose installment is now 'restructured' or cannot be found:
-    the penalty may already have been rolled into the restructured terms.
+  - reductions NOT CONFIRMED by the check in loans/penalty_reductions.py
+    (no repayment on that installment explains the exact amount): these may
+    be legitimate corrections of an overcharged penalty;
+  - reductions whose installment is now 'restructured': the penalty may
+    already have been rolled into the restructured terms.
 
 Safe to re-run: a reduction already reversed is no longer selected.
 
@@ -62,9 +63,6 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--loan', dest='loan_number', default=None,
                             help='Only restore this loan number.')
-        parser.add_argument('--window', type=int, default=7,
-                            help='Days before a reduction to look for a repayment (default 7). '
-                                 'Use the same value you audited with.')
         parser.add_argument('--apply', action='store_true',
                             help='Actually post the restoring entries. Without this, only previews.')
 
@@ -77,29 +75,18 @@ class Command(BaseCommand):
         if not apply_changes:
             self.stdout.write(self.style.WARNING('DRY-RUN — nothing will be posted. Re-run with --apply.'))
 
-        reductions = find_penalty_reductions(
-            loan_number=options['loan_number'], window_days=options['window'],
-        )
+        reductions = find_penalty_reductions(loan_number=options['loan_number'])
 
         to_restore = defaultdict(list)   # loan.pk -> [(reduction, sched)]
         skipped = defaultdict(list)      # reason -> [reduction]
         for r in reductions:
             if not r.repayment_driven:
-                skipped['no repayment nearby — review manually'].append(r)
+                skipped[f'not confirmed ({r.verdict})'].append(r)
                 continue
             if r.loan.status not in OPEN_STATUSES:
-                skipped[f'loan no longer open — not recoverable by re-charging'].append(r)
+                skipped['loan no longer open — not recoverable by re-charging'].append(r)
                 continue
-            due = r.installment_due_date
-            sched = None
-            if due:
-                sched = (
-                    r.loan.repayment_schedule.filter(due_date=due, is_deleted=False)
-                    .order_by('installment_number').first()
-                )
-            if sched is None:
-                skipped['installment not found — review manually'].append(r)
-                continue
+            sched = r.sched
             if sched.status == 'restructured':
                 skipped['installment restructured — review manually'].append(r)
                 continue

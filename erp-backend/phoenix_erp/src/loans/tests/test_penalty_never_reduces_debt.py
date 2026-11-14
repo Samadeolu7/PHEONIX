@@ -179,27 +179,39 @@ class _BugEntriesBase(_LoanWithScheduleBase):
         txn.post()
         return txn
 
-    def _seed(self):
+    def _seed(self, bug_amount=Decimal("1000.00")):
+        """
+        Installment 1 (due 2026-08-01, 5% penalty, 2 periods late on
+        2026-10-22/23) had 5,000 penalty charged; a 10,000 principal repayment
+        on it then made the old job claw back 5% x 2 x 10,000 = 1,000.
+        """
+        from loans.models import LoanRepaymentAllocation
         cash = _make_account(self.owner, self.branch, "Cash", "1000", Account.ASSET)
         loan_acct = self.loan.account
-        # Charge, repayment, then the old bug's reduction the next day.
-        self._post('LNPEN', date(2026, 10, 1), 'Loan penalty accrual — LN-PU-1 (installment due 2026-08-01)',
+        desc = 'Loan penalty accrual — LN-PU-1 (installment due 2026-08-01)'
+        self._post('LNPEN', date(2026, 10, 1), desc,
                    loan_acct, self.penalty_income, Decimal("5000.00"))
-        self._post('LNPMT', date(2026, 10, 22), 'Loan repayment – LN-PU-1',
-                   cash, loan_acct, Decimal("10000.00"))
-        self.bug_txn = self._post(
-            'LNPEN', date(2026, 10, 23), 'Loan penalty accrual — LN-PU-1 (installment due 2026-08-01)',
-            self.penalty_income, loan_acct, Decimal("1816.03"))
-        # A reduction with no repayment nearby: reported as OTHER.
-        self._post('LNPEN', date(2026, 9, 10), 'Loan penalty accrual — LN-PU-1 (installment due 2026-08-01)',
+        self.pmt_txn = self._post('LNPMT', date(2026, 10, 22), 'Loan repayment – LN-PU-1',
+                                  cash, loan_acct, Decimal("10000.00"))
+        LoanRepaymentAllocation.objects.create(
+            loan=self.loan, schedule=self.rows[0], journal_entry=self.pmt_txn,
+            principal_applied=Decimal("10000.00"),
+        )
+        self.bug_txn = self._post('LNPEN', date(2026, 10, 23), desc,
+                                  self.penalty_income, loan_acct, bug_amount)
+        # A reduction with no repayment on the installment before it.
+        self._post('LNPEN', date(2026, 10, 24), desc,
                    self.penalty_income, loan_acct, Decimal("100.00"))
         # A deliberate correction command's entry: excluded.
         self._post('LNPEN', date(2026, 10, 24), 'Loan penalty accrual (compounding bug corrected) — LN-PU-1',
                    self.penalty_income, loan_acct, Decimal("999.00"))
-        self.rows[0].penalty_due = Decimal("3083.97")
-        self.rows[0].status = "overdue"
-        self.rows[0].save()
-        self.loan.outstanding_penalties = Decimal("3083.97")
+        row = self.rows[0]
+        row.principal_paid = Decimal("10000.00")
+        row.total_paid = Decimal("10000.00")
+        row.penalty_due = Decimal("5000.00") - bug_amount - Decimal("100.00")
+        row.status = "overdue"
+        row.save()
+        self.loan.outstanding_penalties = row.penalty_due
         self.loan.save()
 
 
@@ -212,9 +224,29 @@ class AuditPenaltyReducedByRepaymentTestCase(_BugEntriesBase):
         out = io.StringIO()
         call_command("audit_penalty_reduced_by_repayment", stdout=out)
         text = out.getvalue()
-        self.assertIn("Repayment-driven penalty reversals (the bug): ₦1,816.03 across 1 loan(s)", text)
-        self.assertIn("₦100.00", text)
+        self.assertIn("(the bug): ₦1,000.00 across 1 loan(s)", text)
+        self.assertIn("no repayment on this installment before it: ₦100.00 (1)", text)
         self.assertNotIn("999.00", text)
+
+    def test_reduction_not_matching_the_repayment_is_not_confirmed(self):
+        import io
+        self._seed(bug_amount=Decimal("1500.00"))
+        out = io.StringIO()
+        call_command("audit_penalty_reduced_by_repayment", "--detail", stdout=out)
+        text = out.getvalue()
+        self.assertIn("(the bug): ₦0.00 across 0 loan(s)", text)
+        self.assertIn("amount does not match the repayment: ₦1,500.00 (1)", text)
+        self.assertIn("expected ₦   1,000.00", text)
+
+    def test_reduction_from_a_later_reversed_repayment_is_not_confirmed(self):
+        import io
+        self._seed()
+        self.pmt_txn.reverse(user=None, reason="Entered against the wrong loan")
+        out = io.StringIO()
+        call_command("audit_penalty_reduced_by_repayment", stdout=out)
+        text = out.getvalue()
+        self.assertIn("(the bug): ₦0.00 across 0 loan(s)", text)
+        self.assertIn("the repayment was later reversed: ₦1,000.00 (1)", text)
 
 
 class RestorePenaltyReducedByRepaymentTestCase(_BugEntriesBase):
@@ -230,10 +262,10 @@ class RestorePenaltyReducedByRepaymentTestCase(_BugEntriesBase):
         self._seed()
         before = Account.objects.get(pk=self.loan.account_id).balance
         text = self._restore()
-        self.assertIn("Would restore ₦1,816.03 across 1 loan(s)", text)
+        self.assertIn("Would restore ₦1,000.00 across 1 loan(s)", text)
         self.assertEqual(Account.objects.get(pk=self.loan.account_id).balance, before)
         self.rows[0].refresh_from_db()
-        self.assertEqual(self.rows[0].penalty_due, Decimal("3083.97"))
+        self.assertEqual(self.rows[0].penalty_due, Decimal("3900.00"))
 
     def test_apply_recharges_repayment_driven_reduction_once(self):
         self._seed()
@@ -241,13 +273,13 @@ class RestorePenaltyReducedByRepaymentTestCase(_BugEntriesBase):
         income_before = Account.objects.get(pk=self.penalty_income.pk).balance
 
         text = self._restore("--apply")
-        self.assertIn("Restored ₦1,816.03 across 1 loan(s) (1 reductions reversed).", text)
-        self.assertIn("no repayment nearby — review manually: ₦100.00", text)
+        self.assertIn("Restored ₦1,000.00 across 1 loan(s) (1 reductions reversed).", text)
+        self.assertIn("not confirmed (no repayment on this installment before it): ₦100.00", text)
 
         loan_after = Account.objects.get(pk=self.loan.account_id).balance
         income_after = Account.objects.get(pk=self.penalty_income.pk).balance
-        self.assertEqual(abs(loan_after - loan_before), Decimal("1816.03"))
-        self.assertEqual(abs(income_after - income_before), Decimal("1816.03"))
+        self.assertEqual(abs(loan_after - loan_before), Decimal("1000.00"))
+        self.assertEqual(abs(income_after - income_before), Decimal("1000.00"))
 
         # Undone via the standard reversal path, so client ledgers hide the pair.
         self.bug_txn.refresh_from_db()
@@ -274,5 +306,5 @@ class RestorePenaltyReducedByRepaymentTestCase(_BugEntriesBase):
         self.loan.status = "paid_off"
         self.loan.save()
         text = self._restore("--apply")
-        self.assertIn("loan no longer open — not recoverable by re-charging: ₦1,816.03", text)
+        self.assertIn("loan no longer open — not recoverable by re-charging: ₦1,000.00", text)
         self.assertIn("Restored ₦0.00 across 0 loan(s)", text)
