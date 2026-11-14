@@ -1,0 +1,255 @@
+name: Build & Deploy Phoenix KTI — STAGING
+
+# Staging runs on the SAME server as production, fully isolated by name
+# (see docs/STAGING.md). This workflow never touches /opt/phoenix-kti, never
+# pushes the :latest tags, and refuses to deploy if staging's rendered
+# compose config resolves to any production name (staging-guard.sh).
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:   # manual run (Actions → this workflow → Run workflow)
+
+# One staging deploy at a time; a newer push replaces a queued one.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/phoenix-kti-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/phoenix-kti-frontend
+  STAGING_DIR: /opt/phoenix-kti-staging
+  STAGING_API_URL: https://api.staging.krystartrust.ng/api
+  STAGING_FRONTEND_URL: https://staging.krystartrust.ng
+
+jobs:
+  # ── 1. Build & push backend image (:staging only) ──────────────────────────
+  build-backend:
+    name: Build Backend (staging)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./erp-backend/phoenix_erp
+          dockerfile: ./erp-backend/phoenix_erp/Dockerfile
+          push: true
+          tags: |
+            ${{ env.BACKEND_IMAGE }}:staging
+            ${{ env.BACKEND_IMAGE }}:staging-${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.BACKEND_IMAGE }}:staging
+          cache-to: type=inline
+
+  # ── 2. Build & push frontend image (:staging, staging API URL baked in) ────
+  build-frontend:
+    name: Build Frontend (staging)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./erp-frontend
+          dockerfile: ./erp-frontend/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_URL=${{ env.STAGING_API_URL }}
+            VITE_API_BASE_URL=${{ env.STAGING_API_URL }}
+            VITE_ENV_LABEL=staging
+            VITE_BRAND_COMPANY_NAME=${{ vars.VITE_BRAND_COMPANY_NAME }}
+            VITE_BRAND_SHORT_NAME=${{ vars.VITE_BRAND_SHORT_NAME }}
+            VITE_BRAND_MOTTO=${{ vars.VITE_BRAND_MOTTO }}
+            VITE_BRAND_TAGLINE=${{ vars.VITE_BRAND_TAGLINE }}
+            VITE_BRAND_SYSTEM_LABEL=${{ vars.VITE_BRAND_SYSTEM_LABEL }}
+            VITE_BRAND_GOVT_APPROVED=${{ vars.VITE_BRAND_GOVT_APPROVED }}
+            VITE_BRAND_LOGO_URL=${{ vars.VITE_BRAND_LOGO_URL }}
+            VITE_BRAND_BUILDING_IMAGE_URL=${{ vars.VITE_BRAND_BUILDING_IMAGE_URL }}
+            VITE_BRAND_COLOR_NAVY_PRIMARY=${{ vars.VITE_BRAND_COLOR_NAVY_PRIMARY }}
+            VITE_BRAND_COLOR_NAVY_DARK=${{ vars.VITE_BRAND_COLOR_NAVY_DARK }}
+            VITE_BRAND_COLOR_NAVY_LIGHT=${{ vars.VITE_BRAND_COLOR_NAVY_LIGHT }}
+            VITE_BRAND_COLOR_GOLD=${{ vars.VITE_BRAND_COLOR_GOLD }}
+            VITE_BRAND_COLOR_GOLD_LIGHT=${{ vars.VITE_BRAND_COLOR_GOLD_LIGHT }}
+            VITE_BRAND_COLOR_GOLD_DARK=${{ vars.VITE_BRAND_COLOR_GOLD_DARK }}
+            VITE_BRAND_COLOR_RED=${{ vars.VITE_BRAND_COLOR_RED }}
+            VITE_BRAND_COLOR_RED_LIGHT=${{ vars.VITE_BRAND_COLOR_RED_LIGHT }}
+            VITE_BRAND_COLOR_WHITE=${{ vars.VITE_BRAND_COLOR_WHITE }}
+            VITE_BRAND_COLOR_OFF_WHITE=${{ vars.VITE_BRAND_COLOR_OFF_WHITE }}
+            VITE_BRAND_COLOR_TEXT_PRIMARY=${{ vars.VITE_BRAND_COLOR_TEXT_PRIMARY }}
+            VITE_BRAND_COLOR_TEXT_SECONDARY=${{ vars.VITE_BRAND_COLOR_TEXT_SECONDARY }}
+            VITE_BRAND_COLOR_BORDER=${{ vars.VITE_BRAND_COLOR_BORDER }}
+            VITE_BRAND_ROLE_DIRECTOR_PRIMARY=${{ vars.VITE_BRAND_ROLE_DIRECTOR_PRIMARY }}
+            VITE_BRAND_ROLE_DIRECTOR_ACCENT=${{ vars.VITE_BRAND_ROLE_DIRECTOR_ACCENT }}
+            VITE_BRAND_ROLE_PRINCIPAL_PRIMARY=${{ vars.VITE_BRAND_ROLE_PRINCIPAL_PRIMARY }}
+            VITE_BRAND_ROLE_PRINCIPAL_ACCENT=${{ vars.VITE_BRAND_ROLE_PRINCIPAL_ACCENT }}
+            VITE_BRAND_ROLE_ADMINISTRATOR_PRIMARY=${{ vars.VITE_BRAND_ROLE_ADMINISTRATOR_PRIMARY }}
+            VITE_BRAND_ROLE_ADMINISTRATOR_ACCENT=${{ vars.VITE_BRAND_ROLE_ADMINISTRATOR_ACCENT }}
+            VITE_BRAND_ROLE_REGISTRAR_PRIMARY=${{ vars.VITE_BRAND_ROLE_REGISTRAR_PRIMARY }}
+            VITE_BRAND_ROLE_REGISTRAR_ACCENT=${{ vars.VITE_BRAND_ROLE_REGISTRAR_ACCENT }}
+            VITE_BRAND_ROLE_OFFICER_PRIMARY=${{ vars.VITE_BRAND_ROLE_OFFICER_PRIMARY }}
+            VITE_BRAND_ROLE_OFFICER_ACCENT=${{ vars.VITE_BRAND_ROLE_OFFICER_ACCENT }}
+          tags: |
+            ${{ env.FRONTEND_IMAGE }}:staging
+            ${{ env.FRONTEND_IMAGE }}:staging-${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.FRONTEND_IMAGE }}:staging
+          cache-to: type=inline
+
+  # ── 3. Deploy to /opt/phoenix-kti-staging on the shared server ─────────────
+  deploy:
+    name: Deploy to Staging
+    needs: [build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check the staging folder and .env exist
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            mkdir -p ${{ env.STAGING_DIR }}
+            if [ ! -f ${{ env.STAGING_DIR }}/.env ]; then
+              echo "ERROR: ${{ env.STAGING_DIR }}/.env is missing."
+              echo "Create it from erp-backend/phoenix_erp/staging.env.example (docs/STAGING.md, step 2)."
+              exit 1
+            fi
+
+      - name: Copy compose files and guard to the staging folder
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "erp-backend/phoenix_erp/docker-compose.yml,erp-backend/phoenix_erp/docker-compose.staging.yml,erp-backend/phoenix_erp/staging-guard.sh"
+          target: "/opt/phoenix-kti-staging/"
+          strip_components: 2
+
+      - name: Pull images and restart staging services
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          # The FIRST deploy migrates an empty database (~10+ minutes).
+          command_timeout: 30m
+          script: |
+            set -e
+            cd ${{ env.STAGING_DIR }}
+            # Always both files, even if .env forgets COMPOSE_FILE.
+            export COMPOSE_FILE=docker-compose.yml:docker-compose.staging.yml
+
+            echo "==> Isolation guard (refuses to continue if any name is production's)..."
+            sh ./staging-guard.sh
+
+            echo "==> Ensuring staging's own database volume exists..."
+            PG_VOLUME=$(grep -E '^PG_VOLUME_NAME=' .env | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+            if [ -z "$PG_VOLUME" ] || [ "$PG_VOLUME" = "phoenix-kti_kti_postgres_data" ]; then
+              echo "ERROR: PG_VOLUME_NAME must be set in .env and must not be production's volume." && exit 1
+            fi
+            docker volume inspect "$PG_VOLUME" >/dev/null 2>&1 || docker volume create "$PG_VOLUME"
+
+            echo "==> Pulling :staging images..."
+            docker compose pull
+
+            echo "==> Starting staging postgres + redis (no-op if already running)..."
+            docker compose up -d postgres redis
+
+            echo "==> Waiting for staging postgres to be healthy..."
+            PGID=$(docker compose ps -q postgres)
+            for i in $(seq 1 24); do
+              PGSTATUS=$(docker inspect --format='{{.State.Health.Status}}' "$PGID" 2>/dev/null || echo "starting")
+              echo "  attempt $i/24: postgres=$PGSTATUS"
+              if [ "$PGSTATUS" = "healthy" ]; then break; fi
+              if [ "$i" = "24" ]; then echo "ERROR: postgres not healthy" && docker compose logs --tail=30 postgres && exit 1; fi
+              sleep 5
+            done
+
+            echo "==> Running migrations + collectstatic with the new image..."
+            # Same entrypoint override as production's deploy.yml (see the note there).
+            docker compose run --rm --no-deps \
+              --entrypoint /bin/sh \
+              -e DJANGO_SETTINGS_MODULE=phoenix.settings \
+              -e PYTHONPATH=/app/src \
+              backend \
+              -c "set -e; cd /app/src; python manage.py migrate --noinput; python manage.py collectstatic --noinput; python manage.py createcachetable 2>/dev/null || true"
+
+            echo "==> Restarting backend..."
+            docker compose stop backend || true
+            docker compose rm -f backend || true
+            docker compose up -d --no-deps backend
+
+            echo "==> Waiting for backend to pass health check..."
+            BACKEND_ID=$(docker compose ps -q backend)
+            for i in $(seq 1 30); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' "$BACKEND_ID" 2>/dev/null || echo "starting")
+              echo "  attempt $i/30: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then echo "  Backend is healthy — continuing"; break; fi
+              if [ "$i" = "30" ]; then
+                echo "  ERROR: backend did not become healthy in time"
+                docker compose logs --tail=50 backend
+                exit 1
+              fi
+              sleep 6
+            done
+
+            echo "==> Confirming the STAGING switch is on inside the backend..."
+            docker compose exec -T backend /bin/sh -c 'cd /app/src && python -c "import django,os;os.environ.setdefault(\"DJANGO_SETTINGS_MODULE\",\"phoenix.settings\");django.setup();from django.conf import settings as s;assert s.STAGING, \"STAGING is off\";assert s.EMAIL_BACKEND==\"common.staging.StagingEmailBackend\";assert not s.TELEGRAM_BOT_TOKEN;print(\"STAGING on; email via\", s.STAGING_EMAIL_INNER_BACKEND, \"redirect:\", s.STAGING_EMAIL_REDIRECT or \"(log only)\")"'
+
+            echo "==> Restarting backend_ws and Celery (no Flower on staging)..."
+            docker compose stop backend_ws celery_worker celery_beat || true
+            docker compose rm -f backend_ws celery_worker celery_beat || true
+            docker compose up -d --no-deps backend_ws celery_worker celery_beat
+
+            echo "==> Restarting frontend..."
+            docker compose stop frontend || true
+            docker compose rm -f frontend || true
+            docker compose up -d --no-deps frontend
+
+            echo "==> Removing orphaned staging containers..."
+            docker compose up -d --remove-orphans
+
+            echo "==> Cleaning up dangling images..."
+            docker image prune -f
+
+            echo "==> Staging deployment complete. Running containers:"
+            docker compose ps
+
+      - name: Smoke test over HTTPS
+        run: |
+          set -e
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 10 "${{ env.STAGING_API_URL }}/common/health/" -o /dev/null \
+               && curl -fsS --max-time 10 "${{ env.STAGING_FRONTEND_URL }}/" -o /dev/null; then
+              echo "Staging API and frontend answer over HTTPS with a valid certificate."
+              exit 0
+            fi
+            echo "  attempt $i/20: not ready yet (DNS / Let's Encrypt can take a minute)"
+            sleep 15
+          done
+          echo "ERROR: staging did not answer over HTTPS. Check DNS A records and Traefik logs (docs/STAGING.md)."
+          exit 1

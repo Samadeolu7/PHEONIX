@@ -813,6 +813,30 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '')
 
 # ==================================================
+# STAGING SAFETY SWITCH
+# ==================================================
+# STAGING=true marks a test copy of the system (see docs/STAGING.md). It must
+# never contact real people, whatever else is configured:
+#   - every email is either printed to the log (no STAGING_EMAIL_REDIRECT) or
+#     re-addressed to the single STAGING_EMAIL_REDIRECT inbox
+#     (common/staging.py: StagingEmailBackend);
+#   - SMS, WhatsApp, Telegram and push providers only log
+#     (notifications/providers.py) and director Telegram alerts are skipped
+#     (notifications/telegram_alerts.py).
+# Defaults to off, so production is unaffected.
+from common.staging_config import env_flag as _env_flag, staging_email_settings as _staging_email_settings
+
+STAGING = _env_flag(os.environ.get('STAGING'))
+STAGING_EMAIL_REDIRECT = os.environ.get('STAGING_EMAIL_REDIRECT', '').strip()
+if STAGING:
+    EMAIL_BACKEND, STAGING_EMAIL_INNER_BACKEND = _staging_email_settings(
+        EMAIL_BACKEND, STAGING_EMAIL_REDIRECT,
+    )
+    # Belt and braces: no bot credentials, even if someone sets them.
+    TELEGRAM_BOT_TOKEN = ''
+    TELEGRAM_CHAT_ID = ''
+
+# ==================================================
 # LOGGING CONFIGURATION
 # ==================================================
 
