@@ -562,9 +562,11 @@ class StaffReviewTests(PortalTestCase):
         self.assertEqual(s.post(self.url('convert/'), {'create_new_client': True}, format='json').status_code, 404)
 
     def test_staff_cannot_create_or_edit_via_api(self):
-        self.assertEqual(self.staff.post('/api/portal/staff/applications/', {}, format='json').status_code, 405)
-        self.assertEqual(self.staff.patch(self.url(), {'status': 'converted'}, format='json').status_code, 405)
-        self.assertEqual(self.staff.delete(self.url()).status_code, 405)
+        # Refused either by the explicit permission map (403) or the method guard (405).
+        self.assertIn(self.staff.post('/api/portal/staff/applications/', {}, format='json').status_code, (403, 405))
+        self.assertIn(self.staff.patch(self.url(), {'status': 'converted'}, format='json').status_code, (403, 405))
+        self.assertIn(self.staff.delete(self.url()).status_code, (403, 405))
+        self.assertEqual(OnlineLoanApplication.objects.get().status, 'submitted')
 
     def test_reject_shows_message_to_customer(self):
         res = self.staff.post(self.url('reject/'), {'customer_message': 'Income too low', 'staff_notes': 'internal'}, format='json')
@@ -1237,3 +1239,96 @@ class OfferingProductScopeTests(PortalTestCase):
         PortalLoanOffering.objects.create(tenant=self.env['tenant'], loan_product=beta['product'])
         names = [o['name'] for o in portal_client('alpha').get('/api/portal/products/').json()]
         self.assertEqual(names.count('Business Loan'), 1)   # alpha's own only
+
+
+class OfficerVisibilityAndNotificationTests(PortalTestCase):
+    """Credit officers can pick up new applications; staff get bell notifications."""
+
+    def setUp(self):
+        super().setUp()
+        from users.models import Role
+        from permissions.models import RolePermissionPolicy
+        from pages.models import Module, ModulePage
+        t, b, o = self.env['tenant'], self.env['branch'], self.env['owner']
+        module, _ = Module.all_objects.get_or_create(code='loans', defaults={'name': 'Loans'})
+        page, _ = ModulePage.all_objects.get_or_create(
+            module=module, code='online-loan-applications',
+            defaults={'title': 'Online Applications', 'url_path': '/loans/online-loan-applications/'})
+        role = Role.objects.create(name='Credit Officer', tenant=t)
+        RolePermissionPolicy.objects.create(role=role, page=page, can_view=True, can_edit=True,
+                                            scope='assigned_clients')
+        self.officer = User.objects.create_user(username='co1', password='x' * 12)
+        self.officer.tenant, self.officer.branch = t, b
+        self.officer.save()
+        self.officer.roles.add(role)
+        self.officer_api = APIClient()
+        self.officer_api.force_authenticate(self.officer)
+
+        make_customer(self.env)
+        self.c = portal_client('alpha')
+        login(self.c)
+
+    def submit(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            res = self.c.post('/api/portal/applications/', application_payload(self.env), format='json')
+        self.assertEqual(res.status_code, 201, res.content)
+        return OnlineLoanApplication.objects.get(reference=res.json()['reference'])
+
+    def officer_rows(self):
+        res = self.officer_api.get('/api/portal/staff/applications/')
+        self.assertEqual(res.status_code, 200, res.content)
+        body = res.json()
+        return [r['reference'] for r in body.get('results', body)]
+
+    def test_narrow_scope_officer_sees_unassigned_and_can_pick_up(self):
+        app = self.submit()
+        self.assertEqual(self.officer_rows(), [app.reference])
+        res = self.officer_api.post(f'/api/portal/staff/applications/{app.pk}/start-review/')
+        self.assertEqual(res.status_code, 200, res.content)
+        app.refresh_from_db()
+        self.assertEqual(app.assigned_to, self.officer)
+        self.assertEqual(self.officer_rows(), [app.reference])
+
+    def test_application_taken_by_someone_else_is_hidden_from_officer(self):
+        app = self.submit()
+        director = APIClient()
+        director.force_authenticate(self.env['owner'])
+        director.post(f'/api/portal/staff/applications/{app.pk}/start-review/')
+        self.assertEqual(self.officer_rows(), [])
+
+    def test_other_branch_applications_stay_hidden(self):
+        set_current_tenant(self.env['tenant'])
+        b2 = Branch.objects.create(name='Ikeja', code='IKJ2', tenant=self.env['tenant'], owner=self.env['owner'])
+        set_current_tenant(None)
+        with self.captureOnCommitCallbacks(execute=True):
+            self.c.post('/api/portal/applications/', application_payload(self.env, branch=b2.pk), format='json')
+        self.assertEqual(self.officer_rows(), [])
+
+    def test_branch_staff_get_notified_of_new_application(self):
+        from notifications.models import Notification
+        app = self.submit()
+        notes = Notification.objects.filter(recipient_user=self.officer)
+        self.assertEqual(notes.count(), 1)
+        n = notes.get()
+        self.assertIn(app.reference, n.message)
+        self.assertNotIn(app.nin, n.message)       # no identity numbers in notifications
+        self.assertNotIn(app.bvn, n.message)
+
+    def test_staff_without_page_access_not_notified(self):
+        from notifications.models import Notification
+        from users.models import Role
+        from permissions.models import RolePermissionPolicy
+        from pages.models import Module
+        teller = User.objects.create_user(username='teller1', password='x' * 12)
+        teller.tenant, teller.branch = self.env['tenant'], self.env['branch']
+        teller.save()
+        role = Role.objects.create(name='Teller', tenant=self.env['tenant'])
+        module, _ = Module.all_objects.get_or_create(code='hr', defaults={'name': 'HR'})
+        RolePermissionPolicy.objects.create(role=role, module=module, can_view=True)
+        teller.roles.add(role)
+        self.submit()
+        self.assertFalse(Notification.objects.filter(recipient_user=teller).exists())
+
+    def test_notification_failure_never_blocks_the_customer(self):
+        with mock.patch('hr.notifications._create_notification', side_effect=RuntimeError('boom')):
+            self.submit()   # still 201

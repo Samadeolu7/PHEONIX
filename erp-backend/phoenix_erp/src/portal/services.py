@@ -348,6 +348,8 @@ def submit_application(*, customer, config, validated, request=None):
         )
         app.save()
     audit('application_submitted', request=request, customer=customer, application=app)
+    from .notifications import notify_new_application
+    transaction.on_commit(lambda: notify_new_application(app))
     return app
 
 
@@ -860,6 +862,8 @@ def submit_withdrawal_request(*, customer, savings_account_id, amount, payout_pr
             submitted_ip=client_ip(request) if request is not None else None,
         )
     audit('withdrawal_requested', request=request, customer=customer, withdrawal=wr.reference, amount=str(amount))
+    from .notifications import notify_new_withdrawal
+    transaction.on_commit(lambda: notify_new_withdrawal(wr))
     return wr
 
 

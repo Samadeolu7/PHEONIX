@@ -24,6 +24,12 @@ export interface RouteMapping {
 }
 
 export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
+  '/loans/online-applications': {
+    module: 'loans',
+    page: 'online-loan-applications',
+    action: 'view',
+  },
+  '/savings/online-withdrawals': { module: 'savings', page: 'savings-withdrawals', action: 'view' },
   '/accounting/journal-vouchers': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounting/journal-vouchers/:id': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounting/journal-vouchers/create': { module: 'accounts', page: 'chart-of-accounts', action: 'create' },

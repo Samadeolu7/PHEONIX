@@ -72,6 +72,25 @@ account is already linked to their client record and their email counts as verif
 - When an invited customer applies, accepting the application uses their linked
   client record directly. No NIN/BVN matching step and no duplicate client.
 
+## Who sees online applications, and alerts
+
+- **Loans → Online Applications** (`/loans/online-applications`). Each application
+  belongs to the branch the customer chose. Branch staff see their branch;
+  directors see all branches.
+- Roles with a narrow scope (e.g. credit officers on "assigned clients") see
+  applications assigned to them **plus unassigned ones** at their branch, so they can
+  pick a new one up with **Start review** (which assigns it to them). Once someone
+  else starts reviewing it, it disappears from other narrow-scope officers.
+- Page permissions: *view* (list/details), *edit* (Start review), *approve*
+  (Accept/Decline; Accept also needs *create* on Loan Accounts).
+- **Bell notifications:**
+  - New application: up to 10 staff at that branch who can view Online Applications.
+  - New withdrawal request: the client's account manager/officer, or branch staff with
+    Savings → Withdrawals if neither has a login.
+
+  Messages never include NIN/BVN or account details, and a notification failure never
+  blocks the customer.
+
 ## Balances and withdrawal requests
 
 Customers linked to a client record (invited, or after an application is accepted)
