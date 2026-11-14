@@ -3,6 +3,7 @@ import * as React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 import { BRAND } from './constants/brand';
+import { StagingBanner } from './components/environment/StagingBanner';
 
 const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
 if (favicon) favicon.href = BRAND.logoUrl;
@@ -18,6 +19,8 @@ if (!isPortal) document.title = `${BRAND.systemLabel} — ${BRAND.companyName}`;
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
+    {/* Visible on staging builds only (VITE_ENV_LABEL), in the staff app and the portal. */}
+    <StagingBanner />
     <React.Suspense fallback={null}>
       <Root />
     </React.Suspense>

@@ -2,6 +2,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_API_URL: string;
+  // Environment label: unset in production; 'staging' shows the STAGING banner.
+  readonly VITE_ENV_LABEL?: string;
   // Add other env variables here
 
   // ── Brand overrides (all optional — see .env.example) ──────────────────

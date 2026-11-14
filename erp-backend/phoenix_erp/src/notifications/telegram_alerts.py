@@ -22,6 +22,12 @@ def notify_directors(event_code: str, subject: str, message: str, *, owner, bran
     wrap the call in their own try/except as defence-in-depth on a
     financial code path, but this function guards itself regardless.
     """
+    from common.staging import is_staging
+    if is_staging():
+        # Staging must never message the real directors' group chat.
+        logger.info("STAGING: Telegram alert '%s' skipped (%s)", event_code, subject)
+        return None
+
     try:
         from .models import Notification, NotificationChannel
 
