@@ -308,3 +308,68 @@ class RestorePenaltyReducedByRepaymentTestCase(_BugEntriesBase):
         text = self._restore("--apply")
         self.assertIn("loan no longer open — not recoverable by re-charging: ₦1,000.00", text)
         self.assertIn("Restored ₦0.00 across 0 loan(s)", text)
+
+
+class VerifyPenaltyRestoreTestCase(_BugEntriesBase):
+    """
+    Independent recomputation from repayment records. Installment of 11,000
+    due 2026-08-01 at 5%: 550 charged 2 Aug (1 period), 550 on 1 Oct (2nd
+    period), a 10,000 repayment on 22 Oct, the old job's 1,000 clawback on
+    23 Oct, then 50 on 1 Nov (3rd period, on the 1,000 left). Correct total:
+    550 + 550 + 50 = 1,150. Stored now: 150. Restore adds 1,000 -> 1,150.
+    """
+
+    def _history(self, penalty_now):
+        from loans.models import LoanRepaymentAllocation
+        from transactions.models import Transaction
+
+        def at(d, hour=1):
+            return timezone.make_aware(datetime.combine(d, time(hour, 0)))
+
+        cash = _make_account(self.owner, self.branch, "Cash", "1000", Account.ASSET)
+        loan_acct = self.loan.account
+        desc = 'Loan penalty accrual — LN-PU-1 (installment due 2026-08-01)'
+        for d, amount, charge in [
+            (date(2026, 8, 2), Decimal("550.00"), True),
+            (date(2026, 10, 1), Decimal("550.00"), True),
+        ]:
+            t = self._post('LNPEN', d, desc, loan_acct, self.penalty_income, amount)
+            Transaction.objects.filter(pk=t.pk).update(created_at=at(d))
+        pmt = self._post('LNPMT', date(2026, 10, 22), 'Loan repayment – LN-PU-1',
+                         cash, loan_acct, Decimal("10000.00"))
+        Transaction.objects.filter(pk=pmt.pk).update(created_at=at(date(2026, 10, 22), 12))
+        alloc = LoanRepaymentAllocation.objects.create(
+            loan=self.loan, schedule=self.rows[0], journal_entry=pmt,
+            principal_applied=Decimal("10000.00"),
+        )
+        LoanRepaymentAllocation.objects.filter(pk=alloc.pk).update(
+            created_at=at(date(2026, 10, 22), 12))
+        bug = self._post('LNPEN', date(2026, 10, 23), desc,
+                         self.penalty_income, loan_acct, Decimal("1000.00"))
+        Transaction.objects.filter(pk=bug.pk).update(created_at=at(date(2026, 10, 23)))
+        t = self._post('LNPEN', date(2026, 11, 1), desc, loan_acct, self.penalty_income, Decimal("50.00"))
+        Transaction.objects.filter(pk=t.pk).update(created_at=at(date(2026, 11, 1)))
+
+        row = self.rows[0]
+        row.principal_paid = Decimal("10000.00")
+        row.total_paid = Decimal("10000.00")
+        row.penalty_due = penalty_now
+        row.status = "overdue"
+        row.save()
+
+    def _verify(self):
+        import io
+        out = io.StringIO()
+        with _at(date(2026, 11, 14)):
+            call_command("verify_penalty_restore", stdout=out)
+        return out.getvalue()
+
+    def test_restore_lands_on_independently_computed_penalty(self):
+        self._history(penalty_now=Decimal("150.00"))
+        text = self._verify()
+        self.assertRegex(text, r"LN-PU-1\s+2026-08-01\s+150\.00\s+1,000\.00\s+1,150\.00\s+1,150\.00\s+\+0\.00\s+MATCH")
+
+    def test_restore_that_would_overcharge_is_flagged(self):
+        self._history(penalty_now=Decimal("500.00"))
+        text = self._verify()
+        self.assertRegex(text, r"1,500\.00\s+1,150\.00\s+\+350\.00\s+OVERCHARGE")
