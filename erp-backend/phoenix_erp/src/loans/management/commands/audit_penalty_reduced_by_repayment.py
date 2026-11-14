@@ -25,12 +25,11 @@ correction commands use different wording ("Loan penalty accrual
 reversal — …", "REVERSAL: …") and are excluded, as are entries that were
 themselves reversed later.
 
-Each reduction is tagged REPAYMENT-DRIVEN when the same loan received an
-LNPMT repayment within --window days before it (default 7): that is the bug
-pattern. Any other reduction is reported separately as OTHER, because it may
-be the daily job self-correcting a genuinely inflated stored penalty (a real
-fix, not lost revenue) and deserves a manual look before anything is
-reposted.
+Each reduction is VERIFIED against the repayment that should have caused
+it (see loans/penalty_reductions.py): CONFIRMED only when a repayment on that
+same installment explains the exact amount under the old formula. Everything
+else is NOT CONFIRMED, with the reason, and is left alone: it may be the job
+correcting a penalty that really was overcharged.
 
 Usage:
     python manage.py audit_penalty_reduced_by_repayment
@@ -53,8 +52,6 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--loan', dest='loan_number', default=None,
                             help='Only check this loan number.')
-        parser.add_argument('--window', type=int, default=7,
-                            help='Days before a reduction to look for a repayment (default 7).')
         parser.add_argument('--detail', action='store_true',
                             help='List every individual reduction entry.')
         parser.add_argument('--csv', dest='csv_path', default=None,
@@ -63,9 +60,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from loans.penalty_reductions import find_penalty_reductions
 
-        reductions = find_penalty_reductions(
-            loan_number=options['loan_number'], window_days=options['window'],
-        )
+        reductions = find_penalty_reductions(loan_number=options['loan_number'])
+        not_confirmed_by_reason = defaultdict(lambda: [0, Decimal('0.00')])
 
         per_loan = defaultdict(lambda: {
             'repay_count': 0, 'repay_total': Decimal('0.00'),
@@ -84,6 +80,8 @@ class Command(BaseCommand):
             else:
                 bucket['other_count'] += 1
                 bucket['other_total'] += entry.amount
+                not_confirmed_by_reason[r.verdict][0] += 1
+                not_confirmed_by_reason[r.verdict][1] += entry.amount
             bucket['first'] = bucket['first'] or txn.date
             bucket['last'] = txn.date
             bucket['loan'] = loan
@@ -98,7 +96,10 @@ class Command(BaseCommand):
                 'date': txn.date.isoformat(),
                 'reference': getattr(txn, 'reference_number', '') or '',
                 'amount': f'{entry.amount:.2f}',
-                'classification': 'REPAYMENT-DRIVEN' if repayment_driven else 'OTHER',
+                'classification': 'CONFIRMED' if repayment_driven else 'NOT CONFIRMED',
+                'reason': r.verdict,
+                'paid_on_installment': f'{r.paid:.2f}',
+                'expected_reduction': '' if r.expected is None else f'{r.expected:.2f}',
                 'description': txn.description,
                 'transaction_id': str(txn.pk),
             })
@@ -115,13 +116,17 @@ class Command(BaseCommand):
             for r in rows:
                 self.stdout.write(
                     f"  {r['date']}  {r['loan_number']:16s} {r['reference']:24s} "
-                    f"₦{Decimal(r['amount']):>12,.2f}  {r['classification']}"
+                    f"₦{Decimal(r['amount']):>12,.2f}  {r['classification']:13s} "
+                    f"paid ₦{Decimal(r['paid_on_installment']):>11,.2f}  "
+                    + (f"expected ₦{Decimal(r['expected_reduction']):>11,.2f}  "
+                       if r['expected_reduction'] else ' ' * 23)
+                    + r['reason']
                 )
 
         self.stdout.write('\n--- Per loan (largest first) ---')
         self.stdout.write(
-            f"  {'loan':16s} {'status':10s} {'repay-driven':>16s} {'#':>4s} "
-            f"{'other':>14s} {'#':>4s}  first → last"
+            f"  {'loan':16s} {'status':10s} {'confirmed':>16s} {'#':>4s} "
+            f"{'not confirmed':>14s} {'#':>4s}  first → last"
         )
         ordered = sorted(
             per_loan.items(),
@@ -140,7 +145,7 @@ class Command(BaseCommand):
         for month in sorted(per_month):
             repay, other = per_month[month]
             self.stdout.write(
-                f'  {month}  repayment-driven ₦{repay:>14,.2f}   other ₦{other:>14,.2f}'
+                f'  {month}  confirmed ₦{repay:>14,.2f}   not confirmed ₦{other:>14,.2f}'
             )
 
         repay_total = sum(b['repay_total'] for b in per_loan.values())
@@ -155,17 +160,20 @@ class Command(BaseCommand):
             if b['loan'].status in ('active', 'disbursed', 'defaulted') and b['repay_count']
         ]
         self.stdout.write(self.style.ERROR(
-            f'\nRepayment-driven penalty reversals (the bug): ₦{repay_total:,.2f} '
+            f'\nConfirmed — penalty wrongly reduced by repayments (the bug): ₦{repay_total:,.2f} '
             f'across {repay_loans} loan(s)'
         ))
         self.stdout.write(
-            f'  of which on loans still open (recoverable by reposting): '
+            f'  of which on loans still open (recoverable by reversing them): '
             f'₦{sum(b["repay_total"] for b in open_loans):,.2f} across {len(open_loans)} loan(s)'
         )
         self.stdout.write(self.style.WARNING(
-            f'Other reductions (review manually — may be legitimate corrections): '
-            f'₦{other_total:,.2f}'
+            f'Not confirmed — left alone: ₦{other_total:,.2f}'
         ))
+        for reason, (count, total) in sorted(
+            not_confirmed_by_reason.items(), key=lambda kv: -kv[1][1],
+        ):
+            self.stdout.write(f'    {reason}: ₦{total:,.2f} ({count})')
 
         if options['csv_path']:
             with open(options['csv_path'], 'w', newline='') as fh:
