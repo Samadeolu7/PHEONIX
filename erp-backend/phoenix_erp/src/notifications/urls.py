@@ -11,7 +11,12 @@ router.register('notifications', NotificationViewSet, basename='notification')
 router.register('templates', NotificationTemplateViewSet, basename='notification-template')
 router.register('preferences', NotificationPreferenceViewSet, basename='notification-preference')
 
+from .receipt_views import SmsReceiptSettingsView, SmsReceiptTestView  # noqa: E402
+
 urlpatterns = [
+    # Directors: automatic SMS receipts to customers (Admin → SMS Receipts)
+    path('sms-receipts/', SmsReceiptSettingsView.as_view(), name='sms-receipts'),
+    path('sms-receipts/test/', SmsReceiptTestView.as_view(), name='sms-receipts-test'),
     path('', include(router.urls)),
 ]
 

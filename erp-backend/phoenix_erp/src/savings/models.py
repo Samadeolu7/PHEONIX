@@ -224,6 +224,13 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                    'journal_entry_id': str(journal_entry.pk)},
         )
 
+        # SMS receipt to the customer (never raises; only for live postings).
+        try:
+            from notifications.receipts import receipt_for_savings
+            receipt_for_savings('savings_deposit', self, amount, when=date, journal_entry=journal_entry)
+        except Exception:
+            pass
+
         return journal_entry
 
     # After any savings → loan diversion, the savings left behind must still
@@ -361,6 +368,13 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                    'client_id': str(self.client_id),
                    'journal_entry_id': str(journal_entry.pk)},
         )
+
+        # SMS receipt to the customer (never raises; only for live postings).
+        try:
+            from notifications.receipts import receipt_for_savings
+            receipt_for_savings('savings_withdrawal', self, amount, journal_entry=journal_entry)
+        except Exception:
+            pass
 
     def __str__(self):
         return f"{self.account_number} - {self.client.name} ({self.account.code})"

@@ -1095,6 +1095,13 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                    'journal_entry_id': str(journal_entry.pk)},
         )
 
+        # SMS receipt to the customer (never raises; only for live postings).
+        try:
+            from notifications.receipts import receipt_for_loan_disbursement
+            receipt_for_loan_disbursement(self, journal_entry=journal_entry)
+        except Exception:
+            pass
+
     def _generate_repayment_schedule(self, principal_override=None, start_number=1):
         """Delegate schedule generation to RepaymentScheduleService."""
         from .schedule_service import RepaymentScheduleService
@@ -1604,6 +1611,13 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                     'journal_entry_id': str(journal_entry.pk),
                 },
             )
+
+        # SMS receipt to the customer (never raises; only for live postings).
+        try:
+            from notifications.receipts import receipt_for_loan_repayment
+            receipt_for_loan_repayment(self, amount, payment_date=payment_date, journal_entry=journal_entry)
+        except Exception:
+            pass
 
         return journal_entry
 

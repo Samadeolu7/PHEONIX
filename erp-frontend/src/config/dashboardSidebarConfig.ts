@@ -366,6 +366,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Role Management', '/admin/roles'),
         leaf('Permission Setup', '/admin/permission-setup'),
         leaf('Online Portal Settings', '/admin/online-portal'),
+        leaf('SMS Receipts', '/admin/sms-receipts'),
       ]),
       grp('btn-admin-office', 'OFFICE SPACE', 'file-text', [
         leaf('Clock In', '/hr/attendance/clock'),
