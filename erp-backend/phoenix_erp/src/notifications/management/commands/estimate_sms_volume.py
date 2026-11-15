@@ -4,7 +4,8 @@ and for talking to SMS providers.
 
 Counts the money movements that trigger a receipt (from the financial audit
 log, the same methods the receipts hook into):
-  loan disbursements, loan repayments, savings deposits, savings withdrawals
+  loan disbursements, loan repayments, savings deposits, savings withdrawals,
+  loan approvals, registration/reactivation fees, penalties charged
 and keeps only customers with a valid Nigerian mobile number (others can't
 receive SMS). Every receipt fits in one SMS unit (160 GSM characters), so
 messages = SMS units.
@@ -24,12 +25,19 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 
+# Every logged financial action that involves a customer. The first four get a
+# receipt today; the rest are counted so you can budget for them too.
 EVENTS = {
     'loan_disburse': 'Loan disbursed',
     'loan_repay': 'Loan repayment',
     'savings_deposit': 'Savings deposit',
-    'savings_withdraw': 'Savings withdrawal',
+    'savings_withdraw': 'Savings withdraw',
+    'loan_approve': 'Loan approved',
+    'client_registration_fee': 'Registration fee',
+    'client_reactivation_fee': 'Reactivation fee',
+    'loan_penalty_accrual': 'Penalty charged',
 }
+LABEL_W = 17
 
 
 def _month_start(d, back):
@@ -69,7 +77,12 @@ class Command(BaseCommand):
         # record → (client_id, phone ok) without one query per row.
         loan_ids = {int(r[2]) for r in rows if r[1] == 'LoanAccount' and str(r[2]).isdigit()}
         sav_ids = {int(r[2]) for r in rows if r[1] == 'SavingsAccount' and str(r[2]).isdigit()}
+        client_ids = {int(r[2]) for r in rows if r[1] == 'Client' and str(r[2]).isdigit()}
         owner = {}
+        from clients.models import Client
+        for pk, phone in Client.all_objects.filter(pk__in=client_ids).values_list(
+                'pk', 'phone_primary').iterator(chunk_size=5000):
+            owner[('Client', pk)] = (pk, bool(normalise_ng_mobile(phone)))
         for pk, cid, phone in LoanAccount.all_objects.filter(pk__in=loan_ids).values_list(
                 'pk', 'client_id', 'client__phone_primary').iterator(chunk_size=5000):
             owner[('LoanAccount', pk)] = (cid, bool(normalise_ng_mobile(phone)))
@@ -109,7 +122,7 @@ class Command(BaseCommand):
 
         out = self.stdout.write
         out('\nEstimated SMS receipts per month (1 SMS each; read-only estimate)\n')
-        header = f"{'Month':<17}" + ''.join(f'{v:>18}' for v in EVENTS.values()) + f"{'TOTAL SMS':>12}{'Customers':>11}{'No phone':>10}"
+        header = f"{'Month':<17}" + ''.join(f'{v:>{LABEL_W}}' for v in EVENTS.values()) + f"{'TOTAL SMS':>12}{'Customers':>11}{'No phone':>10}"
         if price:
             header += f"{'Cost NGN':>14}"
         out(header)
@@ -118,7 +131,7 @@ class Command(BaseCommand):
         for m in months:
             total = sum(sendable[m].values())
             label = m + (' (to date)' if m == current else '')
-            line = f'{label:<17}' + ''.join(f'{sendable[m][e]:>18,}' for e in EVENTS) + f'{total:>12,}{len(customers[m]):>11,}{no_phone[m]:>10,}'
+            line = f'{label:<17}' + ''.join(f'{sendable[m][e]:>{LABEL_W},}' for e in EVENTS) + f'{total:>12,}{len(customers[m]):>11,}{no_phone[m]:>10,}'
             if price:
                 line += f'{total * price:>14,.2f}'
             out(line)
@@ -132,7 +145,13 @@ class Command(BaseCommand):
             out(f'Peak full month: {max(full_totals):,} SMS. Plan for the peak plus ~20% headroom: '
                 f'{int(max(full_totals) * 1.2):,} SMS/month.')
         out('\n"No phone" = events for customers without a valid Nigerian mobile number (they would get no SMS).')
-        out('Upper bound: also includes postings made by scripts/imports, which never send receipts.\n')
+        out('Upper bound: also includes postings made by scripts/imports, which never send receipts.')
+        receipt_now = ('loan_disburse', 'loan_repay', 'savings_deposit', 'savings_withdraw')
+        for m in months:
+            r = sum(sendable[m][e] for e in receipt_now)
+            out(f'{m}: {r:,} SMS for money in/out (receipts built today), '
+                f'{sum(sendable[m].values()) - r:,} more for approvals, fees and penalties.')
+        out('')
 
         if opts['by_branch']:
             out('By branch (SMS):')
