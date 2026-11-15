@@ -166,6 +166,7 @@ const UserSettingsPage = lazy(() => import('./pages/settings/UserSettingsPage'))
 const UserProfilePage = lazy(() => import('./pages/profile/UserProfilePage'));
 const PermissionSetupPage = lazy(() => import('./pages/settings/PermissionSetupPage'));
 const OnlinePortalSettingsPage = lazy(() => import('./pages/settings/OnlinePortalSettingsPage'));
+const SmsReceiptsPage = lazy(() => import('./pages/settings/SmsReceiptsPage'));
 // const PagesActionsSettingsPage = lazy(() => import('./pages/settings/PagesActionsSettingsPage'));
 // const UserPreferencesDemoPage = lazy(() => import('./pages/UserPreferencesDemoPage'));
 
@@ -2489,6 +2490,16 @@ function App() {
                                   element={
                                     <ProtectedRoute requiredPermission="user-list" module="permissions" page="role-permission-policies" action="edit">
                                       <PermissionSetupPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+
+                                {/* SMS receipts to customers - directors only (enforced by the API) */}
+                                <Route
+                                  path="/admin/sms-receipts"
+                                  element={
+                                    <ProtectedRoute>
+                                      <SmsReceiptsPage />
                                     </ProtectedRoute>
                                   }
                                 />

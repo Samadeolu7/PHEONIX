@@ -1,4 +1,5 @@
 # notifications/models.py
+from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -818,3 +819,33 @@ class NotificationPreference(TimeStampedModel, SoftDeleteModel):
         if self.client:
             return f"Preferences for {self.client.full_name}"
         return "Notification Preferences"
+
+class SmsReceiptSettings(models.Model):
+    """
+    Per-organisation switch for automatic SMS receipts to customers.
+
+    Receipts are the main protection for customers who can't use apps: they
+    learn that "no SMS = not recorded". Off by default. Directors manage this
+    (and the SMS provider credentials on the 'sms' NotificationChannel) from
+    Admin → SMS Receipts.
+    """
+    tenant = models.OneToOneField('users.Tenant', on_delete=models.CASCADE, related_name='sms_receipt_settings')
+    is_enabled = models.BooleanField(default=False)
+    brand_name = models.CharField(
+        max_length=20, blank=True,
+        help_text='Short name at the start of each SMS, e.g. "KTIL". Keep it short: SMS are 160 characters.',
+    )
+    support_phone = models.CharField(max_length=20, blank=True, help_text='Number customers call if a receipt looks wrong.')
+    send_loan_disbursement = models.BooleanField(default=True)
+    send_loan_repayment = models.BooleanField(default=True)
+    send_savings_deposit = models.BooleanField(default=True)
+    send_savings_withdrawal = models.BooleanField(default=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'SMS receipt settings'
+        verbose_name_plural = 'SMS receipt settings'
+
+    def __str__(self):
+        return f"SMS receipts — {self.tenant} ({'on' if self.is_enabled else 'off'})"

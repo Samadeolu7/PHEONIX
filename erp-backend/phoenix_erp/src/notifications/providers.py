@@ -126,6 +126,10 @@ class SMSProvider(NotificationProvider):
         config = channel_config or {}
         provider = config.get('provider', 'termii')
         
+        if provider == 'log':
+            # Test mode: nothing leaves the server; the message is only logged.
+            logger.info('SMS (test mode, not sent) to %s: %s', recipient, message)
+            return {'success': True, 'message_id': 'test-mode', 'delivered': True}
         if provider == 'termii':
             return self._send_termii(recipient, message, config)
         elif provider == 'twilio':
@@ -155,7 +159,9 @@ class SMSProvider(NotificationProvider):
                     'from': sender_id,
                     'sms': message,
                     'type': 'plain',
-                    'channel': 'generic',
+                    # 'dnd' = transactional route (receipts; reaches DND numbers once the
+                    # sender ID is approved for it). 'generic' = promotional, skips DND numbers.
+                    'channel': config.get('channel', 'dnd'),
                     'api_key': api_key
                 },
                 timeout=30
