@@ -160,3 +160,57 @@ class Command(BaseCommand):
             for b in branches:
                 out(f'{b[:27]:<28}' + ''.join(f'{by_branch[m][b]:>12,}' for m in months))
             out('')
+
+        self._penalty_warnings(months, start, today, opts, out)
+
+    def _penalty_warnings(self, months, start, today, opts, out):
+        """
+        Warnings before a penalty is added: one SMS per instalment.
+          * 'Due reminder'   - every instalment falling due that month (sent a day or two before).
+          * 'Missed warning' - only instalments NOT fully paid by their due date, i.e. the ones a
+                               penalty would hit (sent on the due date / during the grace period).
+        """
+        from django.db.models import F, Q
+        from loans.models import LoanRepaymentSchedule
+        from notifications.receipts import normalise_ng_mobile
+
+        qs = LoanRepaymentSchedule.objects.filter(
+            due_date__gte=start, due_date__lte=today, is_deleted=False)
+        if opts['tenant']:
+            qs = qs.filter(loan__tenant__slug=opts['tenant'])
+        missed_q = (Q(days_late__gt=0) | Q(penalty_due__gt=0)
+                    | (Q(status__in=['pending', 'partial', 'overdue']) & Q(due_date__lt=today))
+                    | (Q(status='paid') & Q(payment_date__gt=F('due_date'))))
+        due = defaultdict(int)
+        missed = defaultdict(int)
+        missed_customers = defaultdict(set)
+        phone_ok = {}
+        missed_ids = set(qs.filter(missed_q).values_list('pk', flat=True))
+        for pk, d, cid, phone in qs.values_list('pk', 'due_date', 'loan__client_id',
+                                                'loan__client__phone_primary').iterator(chunk_size=5000):
+            if cid not in phone_ok:
+                phone_ok[cid] = bool(normalise_ng_mobile(phone))
+            if not phone_ok[cid]:
+                continue
+            m = d.strftime('%Y-%m')
+            due[m] += 1
+            if pk in missed_ids:
+                missed[m] += 1
+                missed_customers[m].add(cid)
+        current = today.strftime('%Y-%m')
+        price = opts['price']
+        out('Warnings before penalties (1 SMS per instalment, customers with a valid mobile only):')
+        head = f"{'Month':<17}{'Due reminders':>16}{'Missed warnings':>17}{'Customers missed':>18}"
+        if price:
+            head += f"{'Cost reminders':>16}{'Cost missed':>13}"
+        out(head)
+        out('-' * len(head))
+        for m in months:
+            label = m + (' (to date)' if m == current else '')
+            line = f'{label:<17}{due[m]:>16,}{missed[m]:>17,}{len(missed_customers[m]):>18,}'
+            if price:
+                line += f'{due[m] * price:>16,.2f}{missed[m] * price:>13,.2f}'
+            out(line)
+        out('Due reminders = every instalment that fell due (warn everyone 1-2 days before).')
+        out('Missed warnings = instalments not fully paid by the due date (warn only those a penalty would hit).')
+        out('Double the missed column if you send two warnings (on the due date and at the end of the grace period).\n')

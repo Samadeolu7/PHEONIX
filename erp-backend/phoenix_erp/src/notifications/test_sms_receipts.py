@@ -222,3 +222,30 @@ class EstimateCommandTests(_Env):
         csv_out = io.StringIO()
         call_command('estimate_sms_volume', '--csv', stdout=csv_out)
         self.assertIn('total_sms', csv_out.getvalue())
+
+
+from loans.tests import test_bulk_repair_task as _loan_fx  # module import: don't re-collect its tests
+
+
+class PenaltyWarningEstimateTests(TestCase):
+    setUp = _loan_fx.BulkRepairTaskTestCase.setUp
+    tearDown = _loan_fx.BulkRepairTaskTestCase.tearDown
+    _make_loan = _loan_fx.BulkRepairTaskTestCase._make_loan
+    _make_row = _loan_fx.BulkRepairTaskTestCase._make_row
+
+    def test_counts_due_and_missed_instalments(self):
+        import io
+        from django.core.management import call_command
+        today = timezone.localdate()
+        loan = self._make_loan('LN-WARN-001', status='active', outstanding_principal=Decimal('20000'))
+        d = today - timedelta(days=1)
+        self._make_row(loan, 1, d, Decimal('10000'), Decimal('10000'), 'paid')      # paid: reminder only
+        self._make_row(loan, 2, d, Decimal('10000'), Decimal('0'), 'overdue')       # missed
+        self._make_row(loan, 3, today + timedelta(days=5), Decimal('10000'), Decimal('0'), 'pending')  # future
+        out = io.StringIO()
+        set_current_tenant(None)
+        call_command('estimate_sms_volume', stdout=out)
+        text = out.getvalue()
+        section = text[text.index('Warnings before penalties'):]
+        line = next(l for l in section.splitlines() if l.startswith(d.strftime('%Y-%m')))
+        self.assertEqual(line.split()[-3:], ['2', '1', '1'], line)
