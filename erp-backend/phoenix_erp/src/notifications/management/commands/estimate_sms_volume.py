@@ -6,8 +6,8 @@ Counts the money movements that trigger a receipt (from the financial audit
 log, the same methods the receipts hook into):
   loan disbursements, loan repayments, savings deposits, savings withdrawals,
   loan approvals, registration/reactivation fees, penalties charged
-and keeps only customers with a valid Nigerian mobile number (others can't
-receive SMS). Every receipt fits in one SMS unit (160 GSM characters), so
+for EVERY customer, including those whose phone number is missing or invalid
+(those are shown separately so you know how many numbers to collect). Every receipt fits in one SMS unit (160 GSM characters), so
 messages = SMS units.
 
 It's a slight UPPER bound: it also counts postings made by scripts/imports,
@@ -93,17 +93,20 @@ class Command(BaseCommand):
         # month -> event -> count (sendable only); plus no-phone and customers
         sendable = defaultdict(lambda: defaultdict(int))
         no_phone = defaultdict(int)
+        missing_phone_customers = set()
         customers = defaultdict(set)
         by_branch = defaultdict(lambda: defaultdict(int))
         for event, rtype, rid, ts, branch in rows:
             key = (rtype, int(rid)) if str(rid).isdigit() else None
             info = owner.get(key)
             month = timezone.localtime(ts).strftime('%Y-%m') if timezone.is_aware(ts) else ts.strftime('%Y-%m')
+            sendable[month][event] += 1
+            if info:
+                customers[month].add(info[0])
             if not info or not info[1]:
                 no_phone[month] += 1
-                continue
-            sendable[month][event] += 1
-            customers[month].add(info[0])
+                if info:
+                    missing_phone_customers.add(info[0])
             by_branch[month][branch or '(no branch)'] += 1
 
         months = [(_month_start(today, b)).strftime('%Y-%m') for b in range(opts['months'], -1, -1)]
@@ -144,7 +147,8 @@ class Command(BaseCommand):
                 + (f'  ≈ NGN{avg * float(price):,.2f}/month' if price else ''))
             out(f'Peak full month: {max(full_totals):,} SMS. Plan for the peak plus ~20% headroom: '
                 f'{int(max(full_totals) * 1.2):,} SMS/month.')
-        out('\n"No phone" = events for customers without a valid Nigerian mobile number (they would get no SMS).')
+        out('\nEveryone is counted. "No phone" = how many of those SMS are for customers whose number is missing')
+        out(f'or invalid today. Numbers to collect: {len(missing_phone_customers):,} customers in this period.')
         out('Upper bound: also includes postings made by scripts/imports, which never send receipts.')
         receipt_now = ('loan_disburse', 'loan_repay', 'savings_deposit', 'savings_withdraw')
         for m in months:
@@ -185,32 +189,36 @@ class Command(BaseCommand):
         missed = defaultdict(int)
         missed_customers = defaultdict(set)
         phone_ok = {}
+        no_phone = defaultdict(int)
+        missing = set()
         missed_ids = set(qs.filter(missed_q).values_list('pk', flat=True))
         for pk, d, cid, phone in qs.values_list('pk', 'due_date', 'loan__client_id',
                                                 'loan__client__phone_primary').iterator(chunk_size=5000):
             if cid not in phone_ok:
                 phone_ok[cid] = bool(normalise_ng_mobile(phone))
-            if not phone_ok[cid]:
-                continue
             m = d.strftime('%Y-%m')
+            if not phone_ok[cid]:
+                no_phone[m] += 1
+                missing.add(cid)
             due[m] += 1
             if pk in missed_ids:
                 missed[m] += 1
                 missed_customers[m].add(cid)
         current = today.strftime('%Y-%m')
         price = opts['price']
-        out('Warnings before penalties (1 SMS per instalment, customers with a valid mobile only):')
-        head = f"{'Month':<17}{'Due reminders':>16}{'Missed warnings':>17}{'Customers missed':>18}"
+        out('Warnings before penalties (1 SMS per instalment, everyone counted):')
+        head = f"{'Month':<17}{'Due reminders':>16}{'Missed warnings':>17}{'Customers missed':>18}{'No phone':>10}"
         if price:
             head += f"{'Cost reminders':>16}{'Cost missed':>13}"
         out(head)
         out('-' * len(head))
         for m in months:
             label = m + (' (to date)' if m == current else '')
-            line = f'{label:<17}{due[m]:>16,}{missed[m]:>17,}{len(missed_customers[m]):>18,}'
+            line = f'{label:<17}{due[m]:>16,}{missed[m]:>17,}{len(missed_customers[m]):>18,}{no_phone[m]:>10,}'
             if price:
                 line += f'{due[m] * price:>16,.2f}{missed[m] * price:>13,.2f}'
             out(line)
+        out(f'"No phone" = reminders for customers with no valid number yet; {len(missing):,} customers to collect.')
         out('Due reminders = every instalment that fell due (warn everyone 1-2 days before).')
         out('Missed warnings = instalments not fully paid by the due date (warn only those a penalty would hit).')
         out('Double the missed column if you send two warnings (on the due date and at the end of the grace period).\n')

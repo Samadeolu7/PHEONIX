@@ -248,4 +248,19 @@ class PenaltyWarningEstimateTests(TestCase):
         text = out.getvalue()
         section = text[text.index('Warnings before penalties'):]
         line = next(l for l in section.splitlines() if l.startswith(d.strftime('%Y-%m')))
-        self.assertEqual(line.split()[-3:], ['2', '1', '1'], line)
+        self.assertEqual(line.split()[-4:], ['2', '1', '1', '0'], line)
+
+    def test_customers_without_a_phone_are_still_counted(self):
+        import io
+        from django.core.management import call_command
+        Client.all_objects.filter(pk=self.client_.pk).update(phone_primary='')
+        d = timezone.localdate() - timedelta(days=1)
+        loan = self._make_loan('LN-WARN-002', status='active', outstanding_principal=Decimal('10000'))
+        self._make_row(loan, 1, d, Decimal('10000'), Decimal('0'), 'overdue')
+        out = io.StringIO()
+        set_current_tenant(None)
+        call_command('estimate_sms_volume', stdout=out)
+        section = out.getvalue()[out.getvalue().index('Warnings before penalties'):]
+        line = next(l for l in section.splitlines() if l.startswith(d.strftime('%Y-%m')))
+        self.assertEqual(line.split()[-4:], ['1', '1', '1', '1'], line)
+        self.assertIn('1 customers to collect', section)
