@@ -20,6 +20,11 @@ ARG VITE_API_BASE_URL
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
+# Environment label: unset for production (no banner); 'staging' for the
+# staging build (.github/workflows/deploy-staging.yml) shows the STAGING bar.
+ARG VITE_ENV_LABEL
+ENV VITE_ENV_LABEL=$VITE_ENV_LABEL
+
 # Build arguments for brand white-labelling (all optional — see .env.example)
 ARG VITE_BRAND_COMPANY_NAME
 ARG VITE_BRAND_SHORT_NAME

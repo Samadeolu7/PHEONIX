@@ -6,6 +6,8 @@ import logging
 from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
 
+from common.staging import blocked_in_staging
+
 logger = logging.getLogger(__name__)
 
 
@@ -114,6 +116,7 @@ class EmailProvider(NotificationProvider):
 class SMSProvider(NotificationProvider):
     """SMS notification provider - supports multiple backends"""
     
+    @blocked_in_staging('SMS')
     def send(
         self,
         recipient: str,
@@ -274,6 +277,7 @@ class SMSProvider(NotificationProvider):
         
         return cleaned
     
+    @blocked_in_staging('SMS')
     def check_status(self, message_id: str, channel_config: dict = None) -> Dict:
         """Check SMS delivery status"""
         config = channel_config or {}
@@ -349,6 +353,7 @@ class SMSProvider(NotificationProvider):
 class WhatsAppProvider(NotificationProvider):
     """WhatsApp notification provider"""
     
+    @blocked_in_staging('WhatsApp')
     def send(
         self,
         recipient: str,
@@ -416,6 +421,7 @@ class WhatsAppProvider(NotificationProvider):
             'retryable': False
         }
     
+    @blocked_in_staging('WhatsApp')
     def check_status(self, message_id: str, channel_config: dict = None) -> Dict:
         """Check WhatsApp delivery status"""
         # Similar to SMS status checking
@@ -436,6 +442,7 @@ class TelegramProvider(NotificationProvider):
     to the TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID settings.
     """
 
+    @blocked_in_staging('Telegram')
     def send(
         self,
         recipient: str,
@@ -497,6 +504,7 @@ class TelegramProvider(NotificationProvider):
                 'retryable': True
             }
 
+    @blocked_in_staging('Telegram')
     def check_status(self, message_id: str, channel_config: dict = None) -> Dict:
         """Telegram's Bot API has no delivery-status lookup for sendMessage —
         a successful send is already treated as delivered above."""
@@ -510,6 +518,7 @@ class TelegramProvider(NotificationProvider):
 class PushProvider(NotificationProvider):
     """Push notification provider (Firebase, OneSignal, etc.)"""
     
+    @blocked_in_staging('Push')
     def send(
         self,
         recipient: str,
@@ -620,6 +629,7 @@ class PushProvider(NotificationProvider):
                 'retryable': True
             }
     
+    @blocked_in_staging('Push')
     def check_status(self, message_id: str, channel_config: dict = None) -> Dict:
         """Check push notification status"""
         return {

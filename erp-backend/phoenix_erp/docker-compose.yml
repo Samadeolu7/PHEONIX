@@ -1,9 +1,9 @@
-name: phoenix_kti
+name: ${STACK_PROJECT_NAME:-phoenix_kti}
 
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: phoenix_kti_postgres
+    container_name: ${STACK_CONTAINER_PREFIX:-phoenix_kti}_postgres
     restart: unless-stopped
     ulimits:
       nofile:
@@ -26,7 +26,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: phoenix_kti_redis
+    container_name: ${STACK_CONTAINER_PREFIX:-phoenix_kti}_redis
     restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
@@ -108,13 +108,13 @@ services:
       - traefik_public
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.phoenix-kti-api.rule=Host(`api.kti.krystartrust.ng`)"
-      - "traefik.http.routers.phoenix-kti-api.entrypoints=websecure"
-      - "traefik.http.routers.phoenix-kti-api.tls=true"
-      - "traefik.http.routers.phoenix-kti-api.tls.certresolver=letsencrypt"
-      - "traefik.http.services.phoenix-kti-api.loadbalancer.server.port=8000"
-      - "traefik.http.services.phoenix-kti-api.loadbalancer.healthcheck.path=/api/common/health/"
-      - "traefik.http.services.phoenix-kti-api.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-api.rule=Host(`${API_HOST:-api.kti.krystartrust.ng}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-api.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-api.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-phoenix-kti}-api.loadbalancer.server.port=8000"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-phoenix-kti}-api.loadbalancer.healthcheck.path=/api/common/health/"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-phoenix-kti}-api.loadbalancer.healthcheck.interval=10s"
       - "traefik.docker.network=traefik_public"
 
   # Real-time WebSocket notifications/thread updates (Django Channels) — a
@@ -159,18 +159,18 @@ services:
       - traefik_public
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.phoenix-kti-ws.rule=Host(`api.kti.krystartrust.ng`) && PathPrefix(`/ws`)"
-      - "traefik.http.routers.phoenix-kti-ws.entrypoints=websecure"
-      - "traefik.http.routers.phoenix-kti-ws.tls=true"
-      - "traefik.http.routers.phoenix-kti-ws.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-ws.rule=Host(`${API_HOST:-api.kti.krystartrust.ng}`) && PathPrefix(`/ws`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-ws.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-ws.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-ws.tls.certresolver=letsencrypt"
       # Explicit priority so /ws always wins over the plain Host(...) rule
       # on the `backend` service above. Traefik's default priority is the
       # rule string's length (Host(...) alone is ~31), so this must be a
       # number higher than that — not just "explicitly set" — or the
       # shorter, path-agnostic `backend` rule wins ties/comparisons and
       # WebSocket upgrades get routed to gunicorn, which can't handle them.
-      - "traefik.http.routers.phoenix-kti-ws.priority=100"
-      - "traefik.http.services.phoenix-kti-ws.loadbalancer.server.port=8001"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-ws.priority=100"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-phoenix-kti}-ws.loadbalancer.server.port=8001"
       - "traefik.docker.network=traefik_public"
 
   celery_worker:
@@ -180,7 +180,7 @@ services:
     command:
       - |
         cd /app/src
-        exec python -m celery -A phoenix worker --loglevel=info --concurrency=2
+        exec python -m celery -A phoenix worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}
     environment:
       - DJANGO_SETTINGS_MODULE=phoenix.settings
       - SECRET_KEY=${SECRET_KEY}
@@ -278,11 +278,11 @@ services:
       - traefik_public
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.phoenix-kti-flower.rule=Host(`flower.kti.krystartrust.ng`)"
-      - "traefik.http.routers.phoenix-kti-flower.entrypoints=websecure"
-      - "traefik.http.routers.phoenix-kti-flower.tls=true"
-      - "traefik.http.routers.phoenix-kti-flower.tls.certresolver=letsencrypt"
-      - "traefik.http.services.phoenix-kti-flower.loadbalancer.server.port=5555"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-flower.rule=Host(`${FLOWER_HOST:-flower.kti.krystartrust.ng}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-flower.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-flower.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-flower.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-phoenix-kti}-flower.loadbalancer.server.port=5555"
       - "traefik.docker.network=traefik_public"
 
   frontend:
@@ -293,31 +293,31 @@ services:
       - phoenix_kti_backend
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.phoenix-kti-frontend.rule=Host(`erp.krystartrust.ng`)"
-      - "traefik.http.routers.phoenix-kti-frontend.entrypoints=websecure"
-      - "traefik.http.routers.phoenix-kti-frontend.tls=true"
-      - "traefik.http.routers.phoenix-kti-frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.phoenix-kti-frontend.tls.domains[0].main=erp.krystartrust.ng"
-      - "traefik.http.services.phoenix-kti-frontend.loadbalancer.server.port=80"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-frontend.rule=Host(`${FRONTEND_HOST:-erp.krystartrust.ng}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-frontend.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-frontend.tls=true"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-frontend.tls.domains[0].main=${FRONTEND_HOST:-erp.krystartrust.ng}"
+      - "traefik.http.services.${TRAEFIK_PREFIX:-phoenix-kti}-frontend.loadbalancer.server.port=80"
       - "traefik.docker.network=traefik_public"
-      - "traefik.http.routers.phoenix-kti-frontend-http.rule=Host(`erp.krystartrust.ng`)"
-      - "traefik.http.routers.phoenix-kti-frontend-http.entrypoints=web"
-      - "traefik.http.routers.phoenix-kti-frontend-http.middlewares=kti-redirect-to-https"
-      - "traefik.http.middlewares.kti-redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-frontend-http.rule=Host(`${FRONTEND_HOST:-erp.krystartrust.ng}`)"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-frontend-http.entrypoints=web"
+      - "traefik.http.routers.${TRAEFIK_PREFIX:-phoenix-kti}-frontend-http.middlewares=${TRAEFIK_MIDDLEWARE_PREFIX:-kti}-redirect-to-https"
+      - "traefik.http.middlewares.${TRAEFIK_MIDDLEWARE_PREFIX:-kti}-redirect-to-https.redirectscheme.scheme=https"
 networks:
   phoenix_kti_backend:
     driver: bridge
     # Explicit name (not the Compose-project-prefixed default) so the
     # separate Bank-Recon compose stack can join it via `external: true`
     # without needing to guess the auto-generated name.
-    name: phoenix_kti_backend
+    name: ${BACKEND_NETWORK_NAME:-phoenix_kti_backend}
   traefik_public:
     external: true
     name: traefik_public
 volumes:
   kti_postgres_data:
     external: true
-    name: phoenix-kti_kti_postgres_data
+    name: ${PG_VOLUME_NAME:-phoenix-kti_kti_postgres_data}
   kti_redis_data:
   kti_static_files:
   kti_media_files:

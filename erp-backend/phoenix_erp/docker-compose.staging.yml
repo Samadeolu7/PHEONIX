@@ -1,0 +1,49 @@
+# Staging overlay — used ONLY in /opt/phoenix-kti-staging, together with the
+# main file:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.staging.yml
+#
+# docker-compose.yml holds every name that would clash with production
+# (project, containers, network, database volume, Traefik routers, hosts,
+# image tags) as ${VAR:-production value}; staging's .env overrides them
+# (see staging.env.example). This file only ADDS what staging
+# needs on top: the STAGING safety switch and staging URLs. Production never
+# reads this file. See docs/STAGING.md.
+
+services:
+  backend:
+    environment: &staging-env
+      # Safety switch: no email to clients, SMS/WhatsApp/Telegram/push disabled.
+      STAGING: "true"
+      STAGING_EMAIL_REDIRECT: ${STAGING_EMAIL_REDIRECT:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://staging.krystartrust.ng}
+      PORTAL_FRONTEND_URL: ${PORTAL_FRONTEND_URL:-https://staging.krystartrust.ng}
+
+  backend_ws:
+    environment:
+      <<: *staging-env
+
+  celery_worker:
+    environment:
+      <<: *staging-env
+      # Never send real Telegram alerts or call the production Bank-Recon service.
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CHAT_ID: ""
+      BANK_RECON_SERVICE_URL: ""
+      INTERNAL_SERVICE_TOKEN: ""
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-}
+      EMAIL_HOST: ${EMAIL_HOST:-}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
+
+  celery_beat:
+    environment:
+      <<: *staging-env
+
+  flower:
+    # Not started on staging (no public Flower). Run it by hand with
+    # `docker compose --profile flower up -d flower` if ever needed.
+    profiles: ["flower"]
