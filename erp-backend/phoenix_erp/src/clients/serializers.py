@@ -507,7 +507,14 @@ class ClientGroupSerializer(TenantModelSerializer):
 
 
 class ClientGroupListSerializer(TenantModelSerializer):
-    """Lightweight list serializer for ClientGroup dropdowns."""
+    """Lightweight list serializer for ClientGroup dropdowns and the groups table.
+
+    Must carry leader / leader_name / description: the Client Groups page
+    renders the Leader column and pre-fills its Edit form from list rows, so
+    omitting them made saved leaders show as "—" and blanked the description
+    on every edit.
+    """
+    leader_name = serializers.CharField(source='leader.full_name', read_only=True, default=None)
     member_count = serializers.SerializerMethodField()
     assigned_officer_name = serializers.SerializerMethodField(read_only=True)
     member_officer_names = serializers.SerializerMethodField(read_only=True)
@@ -515,7 +522,8 @@ class ClientGroupListSerializer(TenantModelSerializer):
     class Meta:
         model = ClientGroup
         fields = [
-            'id', 'name', 'code', 'meeting_day', 'is_active', 'member_count',
+            'id', 'name', 'code', 'meeting_day', 'leader', 'leader_name',
+            'description', 'is_active', 'member_count',
             'assigned_officer', 'assigned_officer_name',
             'member_officers', 'member_officer_names',
         ]
