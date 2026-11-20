@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Check, Loader2 } from 'lucide-react';
 import { useBranchOptions } from '../../hooks/useBranches';
@@ -12,13 +12,14 @@ import {
   useUpdateBorrowing,
 } from '../../hooks/useBankBorrowings';
 import type {
+  Borrowing,
   BorrowingInput,
   BorrowingPreview,
   BorrowingQuoteInput,
   BorrowingQuoteOption,
   InterestMethod,
 } from '../../types/bankBorrowing';
-import { apiErrorMessage, formatDay, frequencyLabel, naira, todayIso } from './treasuryFormat';
+import { addMonthsIso, apiErrorMessage, daysBetween, formatDay, frequencyLabel, naira, todayIso } from './treasuryFormat';
 
 const MONEY = /^\d{0,16}(?:\.\d{0,2})?$/;
 type Alloc = { amount: string; bank: number | '' };
@@ -54,11 +55,38 @@ function paymentsText(o: BorrowingQuoteOption): string {
   return `${naira(first)} × ${n - 1}, then ${naira(last)}`;
 }
 
+/** Months between payments for a frequency choice ('end' = the whole term). */
+const intervalFor = (frequency: string, tenorMonths: number) => (frequency === 'end' ? tenorMonths : Number(frequency));
+
 const BorrowingFormPage: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const editId = id ? Number(id) : null;
-  const { data: existing, isLoading: loadingExisting, error: existingError } = useBorrowing(editId ?? 0, editId !== null);
+  const { data: existing, isLoading, error } = useBorrowing(editId ?? 0, editId !== null);
+
+  if (editId === null) return <BorrowingForm />;
+  if (isLoading) return <div className="p-6 text-gray-500">Loading…</div>;
+  if (error || !existing) return <div className="p-6 text-red-600">Could not load this borrowing.</div>;
+  if (!existing.editable) {
+    return (
+      <div className="p-6 max-w-3xl mx-auto">
+        <button onClick={() => navigate(`/treasury/borrowings/${editId}`)} className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4">
+          <ArrowLeft className="w-5 h-5" /> Back to the borrowing
+        </button>
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-lg">
+          This borrowing can no longer be edited: an instalment or branch share has already been recorded (or it is paid off).
+          Ask accounts to correct it by journal.
+        </div>
+      </div>
+    );
+  }
+  return <BorrowingForm key={existing.id} initial={existing} />;
+};
+
+/** The form itself. `initial` = editing a saved borrowing (its values seed the fields). */
+const BorrowingForm: React.FC<{ initial?: Borrowing }> = ({ initial }) => {
+  const navigate = useNavigate();
+  const editId = initial ? initial.id : null;
   const { data: branches = [], isError: branchesFailed } = useBranchOptions();
   // All branches' accounts at once (the normal bank-account list follows the branch switcher).
   const { data: bankAccounts = [] } = useBankAccountChoices();
@@ -66,57 +94,55 @@ const BorrowingFormPage: React.FC = () => {
   const updateBorrowing = useUpdateBorrowing();
   const previewBorrowing = usePreviewBorrowing();
 
-  const [lender, setLender] = useState('');
-  const [reference, setReference] = useState('');
-  const [principal, setPrincipal] = useState('');
-  const [rate, setRate] = useState('');
+  const [lender, setLender] = useState(initial?.lender_name ?? '');
+  const [reference, setReference] = useState(initial?.reference ?? '');
+  const [principal, setPrincipal] = useState(initial ? String(Number(initial.principal)) : '');
+  const [rate, setRate] = useState(initial ? String(Number(initial.monthly_rate)) : '');
   // No default: banks differ, and a wrong guess silently changes the interest owed.
-  const [method, setMethod] = useState<InterestMethod | ''>('');
-  const [tenor, setTenor] = useState('12');
-  const [frequency, setFrequency] = useState('1');
-  const [firstDue, setFirstDue] = useState(todayIso());
-  const [debitBranch, setDebitBranch] = useState<number | ''>('');
-  const [debitBank, setDebitBank] = useState<number | ''>('');
-  const [leadDays, setLeadDays] = useState('3');
-  const [notes, setNotes] = useState('');
+  const [method, setMethod] = useState<InterestMethod | ''>(initial?.interest_method ?? '');
+  const [tenor, setTenor] = useState(initial ? String(initial.tenor_months) : '12');
+  const [frequency, setFrequency] = useState(() => {
+    if (!initial) return '1';
+    return initial.repayment_interval_months >= initial.tenor_months ? 'end' : String(initial.repayment_interval_months);
+  });
+  // The bank normally takes the first payment one repayment period after paying the loan out, so default to that
+  // and keep it in step with the frequency until the user types their own date.
+  const startIso = initial?.received_on ?? todayIso();
+  const [firstDue, setFirstDue] = useState(initial?.first_due_date ?? addMonthsIso(todayIso(), 1));
+  const [firstDueTouched, setFirstDueTouched] = useState(!!initial);
+  const [debitBranch, setDebitBranch] = useState<number | ''>(initial?.debit_branch ?? '');
+  const [debitBank, setDebitBank] = useState<number | ''>(initial?.debit_bank_account ?? '');
+  const [leadDays, setLeadDays] = useState(initial ? String(initial.contribution_lead_days) : '3');
+  const [notes, setNotes] = useState(initial?.notes ?? '');
   // branch id -> { amount, bank account id }
-  const [alloc, setAlloc] = useState<Record<number, Alloc>>({});
+  const [alloc, setAlloc] = useState<Record<number, Alloc>>(() =>
+    initial
+      ? Object.fromEntries(initial.allocations.map((a) => [a.branch, { amount: String(Number(a.amount)), bank: a.bank_account }]))
+      : {}
+  );
   const [preview, setPreview] = useState<BorrowingPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Load the saved borrowing into the form once.
-  const loaded = useRef(false);
-  useEffect(() => {
-    if (!existing || loaded.current) return;
-    loaded.current = true;
-    setLender(existing.lender_name);
-    setReference(existing.reference);
-    setPrincipal(String(Number(existing.principal)));
-    setRate(String(Number(existing.monthly_rate)));
-    setMethod(existing.interest_method);
-    setTenor(String(existing.tenor_months));
-    setFrequency(existing.repayment_interval_months >= existing.tenor_months ? 'end' : String(existing.repayment_interval_months));
-    setFirstDue(existing.first_due_date);
-    setDebitBranch(existing.debit_branch);
-    setDebitBank(existing.debit_bank_account);
-    setLeadDays(String(existing.contribution_lead_days));
-    setNotes(existing.notes);
-    setAlloc(Object.fromEntries(existing.allocations.map((a) => [a.branch, { amount: String(Number(a.amount)), bank: a.bank_account }])));
-  }, [existing]);
-
   /** Once the money has been received only the repayment terms can change. */
-  const termsOnly = existing?.edit_scope === 'terms';
+  const termsOnly = initial?.edit_scope === 'terms';
   const tenorNum = parseInt(tenor, 10) || 0;
-  const interval = frequency === 'end' ? tenorNum : Number(frequency);
+  const interval = intervalFor(frequency, tenorNum);
+  const startLabel = initial?.received_on ? `the funds arrived (${formatDay(startIso)})` : 'today';
+  const expectedFirstDue = interval > 0 ? addMonthsIso(startIso, interval) : null;
+  const firstDueTooEarly = !!firstDue && firstDue <= startIso;
+  const firstDueSoon = !firstDueTooEarly && !!expectedFirstDue && !!firstDue && daysBetween(firstDue, expectedFirstDue) > 7;
   const frequencyFits = tenorNum > 0 && interval > 0 && interval <= tenorNum && tenorNum % interval === 0;
 
   // Live comparison of every interest method on the current terms.
-  const quoteInput: BorrowingQuoteInput | null = useMemo(() => {
-    if (!(parseFloat(principal) > 0) || rate === '' || !(parseFloat(rate) >= 0) || !frequencyFits) return null;
-    return { principal, monthly_rate: rate, tenor_months: tenorNum, repayment_interval_months: interval };
-  }, [principal, rate, tenorNum, interval, frequencyFits]);
-  const debouncedQuoteInput = useDebounce(quoteInput, 350);
-  const { data: quote, isFetching: quoting, isError: quoteFailed } = useBorrowingQuote(debouncedQuoteInput);
+  // Debounced as a string: a fresh object every render would keep restarting the debounce timer.
+  const quoteReady = parseFloat(principal) > 0 && rate !== '' && parseFloat(rate) >= 0 && frequencyFits;
+  const quoteInput: BorrowingQuoteInput | null = quoteReady
+    ? { principal, monthly_rate: rate, tenor_months: tenorNum, repayment_interval_months: interval }
+    : null;
+  const debouncedQuoteKey = useDebounce(quoteInput ? JSON.stringify(quoteInput) : '', 350);
+  const { data: quote, isFetching: quoting, isError: quoteFailed } = useBorrowingQuote(
+    debouncedQuoteKey ? (JSON.parse(debouncedQuoteKey) as BorrowingQuoteInput) : null
+  );
   const chosen = quoteInput && quote?.find((o) => o.method === method && !o.error);
 
   const accountsFor = (branchId: number) => bankAccounts.filter((a) => a.branch === branchId);
@@ -143,6 +169,7 @@ const BorrowingFormPage: React.FC = () => {
     if (!tenor || tenorNum < 1) return 'Enter how many months the loan runs.';
     if (!frequencyFits) return `A ${tenorNum}-month loan cannot be repaid every ${interval} months. Pick a frequency that divides the term evenly.`;
     if (!method) return 'Choose how the bank charges interest.';
+    if (firstDueTooEarly) return `The first payment date must be after ${startLabel}.`;
     if (!debitBranch || !debitBank) return 'Choose the branch and bank account the bank will debit.';
     let allocations = (Object.entries(alloc) as [string, Alloc][])
       .filter(([, a]) => parseFloat(a.amount) > 0)
@@ -200,26 +227,14 @@ const BorrowingFormPage: React.FC = () => {
   };
 
   const clearPreview = () => setPreview(null);
+
+  /** Re-default the first payment date to one period after the start, unless the user picked a date. */
+  const syncFirstDue = (nextFrequency: string, nextTenor: number) => {
+    const step = intervalFor(nextFrequency, nextTenor);
+    if (!firstDueTouched && step > 0) setFirstDue(addMonthsIso(startIso, step));
+  };
   const saving = createBorrowing.isPending || updateBorrowing.isPending;
   const backTo = editId !== null ? `/treasury/borrowings/${editId}` : '/treasury/borrowings';
-
-  if (editId !== null) {
-    if (loadingExisting) return <div className="p-6 text-gray-500">Loading…</div>;
-    if (existingError || !existing) return <div className="p-6 text-red-600">Could not load this borrowing.</div>;
-    if (!existing.editable) {
-      return (
-        <div className="p-6 max-w-3xl mx-auto">
-          <button onClick={() => navigate(backTo)} className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4">
-            <ArrowLeft className="w-5 h-5" /> Back to the borrowing
-          </button>
-          <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-3 rounded-lg">
-            This borrowing can no longer be edited: an instalment or branch share has already been recorded (or it is paid off).
-            Ask accounts to correct it by journal.
-          </div>
-        </div>
-      );
-    }
-  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -256,9 +271,11 @@ const BorrowingFormPage: React.FC = () => {
               onChange={(e) => (setRate(e.target.value), clearPreview())} placeholder="e.g. 3" />
             <span className="text-xs text-gray-500">If the bank quotes a yearly rate, divide it by 12.</span></label>
           <label className="block"><span className="text-sm font-medium text-gray-700">Loan term (months) *</span>
-            <input className={field} type="number" min={1} value={tenor} onChange={(e) => (setTenor(e.target.value), clearPreview())} /></label>
+            <input className={field} type="number" min={1} value={tenor}
+              onChange={(e) => (setTenor(e.target.value), syncFirstDue(frequency, parseInt(e.target.value, 10) || 0), clearPreview())} /></label>
           <label className="block"><span className="text-sm font-medium text-gray-700">How often the bank is repaid *</span>
-            <select className={field} value={frequency} onChange={(e) => (setFrequency(e.target.value), clearPreview())}>
+            <select className={field} value={frequency}
+              onChange={(e) => (setFrequency(e.target.value), syncFirstDue(e.target.value, tenorNum), clearPreview())}>
               {FREQUENCIES.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
               {!FREQUENCIES.some((f) => f.value === frequency) && <option value={frequency}>Every {frequency} months</option>}
             </select>
@@ -266,7 +283,22 @@ const BorrowingFormPage: React.FC = () => {
               <span className="text-xs text-red-600">A {tenorNum}-month term doesn&apos;t divide into payments every {interval} months.</span>
             )}</label>
           <label className="block"><span className="text-sm font-medium text-gray-700">First payment date * <span className="text-gray-500 font-normal">(its day repeats each period)</span></span>
-            <input className={field} type="date" value={firstDue} onChange={(e) => (setFirstDue(e.target.value), clearPreview())} /></label>
+            <input className={field} type="date" value={firstDue}
+              onChange={(e) => (setFirstDue(e.target.value), setFirstDueTouched(true), clearPreview())} />
+            {firstDueTooEarly ? (
+              <span className="text-xs text-red-600">
+                The first payment can&apos;t be on or before {startLabel}: the bank charges a full period&apos;s interest on it.
+                Use the date in the offer letter.
+              </span>
+            ) : firstDueSoon ? (
+              <span className="text-xs text-amber-700">
+                Only {daysBetween(startIso, firstDue)} days after {startLabel}, but each payment carries {interval} month(s) of
+                interest. Banks normally take the first payment one period after paying out (about {formatDay(expectedFirstDue)}).
+                Check the offer letter.
+              </span>
+            ) : (
+              <span className="text-xs text-gray-500">Normally one repayment period after the bank pays out. Check the offer letter.</span>
+            )}</label>
           <label className="block"><span className="text-sm font-medium text-gray-700">Branch the bank debits *</span>
             <select className={field} value={debitBranch} disabled={termsOnly}
               onChange={(e) => {

@@ -109,11 +109,18 @@ const BorrowingDetailPage: React.FC = () => {
               When the money lands in {b.debit_bank_account_name}, confirm it here. The system records the receipt and
               moves each branch&apos;s share to its bank account.
             </p>
+            {b.first_due_date <= receivedOn && (
+              <p className="text-sm text-red-700 mt-2">
+                The first payment ({formatDay(b.first_due_date)}) is on or before this date, so the schedule starts too
+                early. <button type="button" className="underline font-medium" onClick={() => navigate(`/treasury/borrowings/${b.id}/edit`)}>
+                  Edit the first payment date</button> to match the bank&apos;s offer letter before confirming.
+              </p>
+            )}
           </div>
           <label className="text-sm">Date received
             <input type="date" max={todayIso()} className="block mt-1 px-3 py-2 border border-gray-300 rounded-lg" value={receivedOn} onChange={(e) => setReceivedOn(e.target.value)} />
           </label>
-          <button type="button" disabled={receive.isPending}
+          <button type="button" disabled={receive.isPending || b.first_due_date <= receivedOn}
             onClick={() => window.confirm(`Confirm ${naira(b.principal)} has been received and distribute it to the branches?`) &&
               run(receive.mutateAsync({ id: b.id, receivedOn }), 'Funds recorded and distributed to the branches.')}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50">

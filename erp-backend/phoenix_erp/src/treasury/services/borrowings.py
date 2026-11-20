@@ -392,6 +392,9 @@ def update_borrowing(borrowing, *, user, lender_name, reference, principal, mont
             raise ValidationError(
                 "The funds have already been received and shared out, so the amount, branches and bank accounts "
                 "cannot change. Only the repayment terms can be edited.")
+        if borrowing.received_on and first_due_date <= borrowing.received_on:
+            raise ValidationError(
+                f"The first payment must fall after the day the funds arrived ({borrowing.received_on:%d %b %Y}).")
         if (tenor_months <= 12) != (borrowing.tenor_months <= 12):
             raise ValidationError(
                 "This change would move the loan between short-term (12 months or less) and long-term "
@@ -450,6 +453,11 @@ def receive_borrowing(borrowing, user, received_on=None):
     if borrowing.status != BankBorrowing.STATUS_DRAFT:
         raise ValidationError("Funds for this borrowing have already been received.")
     received_on = _posting_date(received_on, "received")
+    if borrowing.first_due_date <= received_on:
+        raise ValidationError(
+            f"The first payment date ({borrowing.first_due_date:%d %b %Y}) is on or before the day the funds arrived "
+            f"({received_on:%d %b %Y}). Edit the borrowing and set the first payment date from the bank's offer "
+            f"letter (normally one repayment period after the money is paid out) before recording the receipt.")
     debit_branch = borrowing.debit_branch
     debit_gl = _gl_account(borrowing.debit_bank_account, "Debit bank account")
 

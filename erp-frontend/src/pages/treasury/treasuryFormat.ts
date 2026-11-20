@@ -59,3 +59,16 @@ export const INTEREST_METHOD_SHORT: Record<string, string> = {
   flat: 'flat',
   interest_only: 'interest only, amount repaid at the end',
 };
+
+/** ISO date `months` calendar months after `iso`, clamped to the month's last day (31 Jan + 1 = 28/29 Feb). */
+export function addMonthsIso(iso: string, months: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d, lastDay));
+  return target.toISOString().split('T')[0];
+}
+
+/** Whole days from `fromIso` to `toIso` (negative when `toIso` is earlier). */
+export const daysBetween = (fromIso: string, toIso: string): number =>
+  Math.round((Date.parse(`${toIso}T00:00:00Z`) - Date.parse(`${fromIso}T00:00:00Z`)) / 86400000);

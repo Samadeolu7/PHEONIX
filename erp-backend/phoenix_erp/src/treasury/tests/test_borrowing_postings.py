@@ -141,7 +141,7 @@ class BorrowingReviewFixTests(TestCase):
 
     def test_last_instalment_before_last_share_keeps_borrowing_open_for_the_share(self):
         b = make_borrowing(self.env, self.hq_bank, self.ik_bank, principal='1000.00', rate='2', tenor=2,
-                           first_due=timezone.localdate() - timedelta(days=1), hq_amount='400.00')
+                           first_due=timezone.localdate() + timedelta(days=10), hq_amount='400.00')
         for inst in b.instalments.order_by('number'):
             svc.record_instalment(inst, self.owner)  # HQ pays the bank before Ikeja sends anything
         b.refresh_from_db()

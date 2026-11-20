@@ -1,8 +1,10 @@
 """Editing a borrowing: drafts change freely; once funds are received only the repayment terms, until anything is recorded."""
+from datetime import timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 
 from common.managers import set_current_tenant
 from treasury.models import BankBorrowing, BorrowingContribution
@@ -85,6 +87,20 @@ class BorrowingEditTests(TestCase):
         b = self._borrowing(receive=True)
         with self.assertRaises(ValidationError):
             svc.update_borrowing(b, **self._kwargs(b, tenor_months=24))
+
+    def test_cannot_receive_funds_on_or_after_first_payment_date(self):
+        b = make_borrowing(self.env, self.hq_bank, self.ik_bank, principal='5000000.00', rate='2', tenor=12,
+                           hq_amount='4000000.00', first_due=timezone.localdate(), receive=False)
+        with self.assertRaises(ValidationError):
+            svc.receive_borrowing(b, self.owner)  # received today, first payment today
+        b = svc.update_borrowing(b, **self._kwargs(b, first_due_date=timezone.localdate() + timedelta(days=30)))
+        b = svc.receive_borrowing(b, self.owner)
+        self.assertEqual(b.status, BankBorrowing.STATUS_ACTIVE)
+
+    def test_active_first_payment_must_be_after_receipt(self):
+        b = self._borrowing(receive=True)
+        with self.assertRaises(ValidationError):
+            svc.update_borrowing(b, **self._kwargs(b, first_due_date=b.received_on))
 
     def test_locked_once_a_share_is_sent(self):
         b = self._borrowing(receive=True)
