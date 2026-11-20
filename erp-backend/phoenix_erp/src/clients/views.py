@@ -1991,7 +1991,7 @@ class ClientGroupViewSet(ScopedModelViewSet):
         return ClientGroupSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().select_related('leader', 'assigned_officer')
         is_active = self.request.query_params.get('is_active')
         search = self.request.query_params.get('search', '').strip()
         if is_active is not None:
