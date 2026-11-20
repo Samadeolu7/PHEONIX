@@ -21,6 +21,7 @@ from treasury.serializers import (
     BorrowingInputSerializer,
     BorrowingListSerializer,
     PaySerializer,
+    QuoteSerializer,
     ReceiveSerializer,
     TreasurySettingsSerializer,
 )
@@ -175,7 +176,10 @@ class BorrowingViewSet(ViewSet):
       GET  /api/treasury/borrowings/                     list
       GET  /api/treasury/borrowings/{id}/                detail (allocations, schedule, branch shares)
       POST /api/treasury/borrowings/preview/             schedule + per-branch shares, nothing saved
+      POST /api/treasury/borrowings/quote/               cost of each interest method on the given terms
       POST /api/treasury/borrowings/                     create (draft)
+      PUT  /api/treasury/borrowings/{id}/                edit (draft: everything; active: repayment terms
+                                                         only, until an instalment/share is recorded)
       POST /api/treasury/borrowings/{id}/receive/        funds arrived: post receipt + distribute to branches
       POST /api/treasury/borrowings/contributions/{id}/send/      branch share sent to the debit branch
       POST /api/treasury/borrowings/instalments/{id}/record/      bank debited the instalment
@@ -213,19 +217,46 @@ class BorrowingViewSet(ViewSet):
         ]
         return d, debit_branch, debit_bank, allocations
 
+    @staticmethod
+    def _service_kwargs(request, d, debit_branch, debit_bank, allocations):
+        return dict(
+            user=request.user, lender_name=d['lender_name'], reference=d.get('reference', ''),
+            principal=d['principal'], monthly_rate=d['monthly_rate'], tenor_months=d['tenor_months'],
+            first_due_date=d['first_due_date'], debit_branch=debit_branch, debit_bank_account=debit_bank,
+            allocations=allocations, contribution_lead_days=d.get('contribution_lead_days'),
+            notes=d.get('notes', ''), interest_method=d['interest_method'],
+            repayment_interval_months=d['repayment_interval_months'],
+        )
+
     def create(self, request):
         d, debit_branch, debit_bank, allocations = self._parse_input(request)
         try:
             borrowing = borrowing_service.create_borrowing(
-                user=request.user, lender_name=d['lender_name'], reference=d.get('reference', ''),
-                principal=d['principal'], monthly_rate=d['monthly_rate'], tenor_months=d['tenor_months'],
-                first_due_date=d['first_due_date'], debit_branch=debit_branch, debit_bank_account=debit_bank,
-                allocations=allocations, contribution_lead_days=d.get('contribution_lead_days'),
-                notes=d.get('notes', ''),
-            )
+                **self._service_kwargs(request, d, debit_branch, debit_bank, allocations))
         except DjangoValidationError as exc:
             raise _error(exc)
         return Response(BorrowingDetailSerializer(borrowing).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, pk=None):
+        obj = self._qs(request).filter(pk=pk).first()
+        if obj is None:
+            raise NotFound()
+        d, debit_branch, debit_bank, allocations = self._parse_input(request)
+        try:
+            borrowing = borrowing_service.update_borrowing(
+                obj, **self._service_kwargs(request, d, debit_branch, debit_bank, allocations))
+        except DjangoValidationError as exc:
+            raise _error(exc)
+        return Response(BorrowingDetailSerializer(borrowing).data)
+
+    def quote(self, request):
+        """Cost of every interest method on the given terms - no branches needed, nothing saved."""
+        _require_director(request.user)
+        ser = QuoteSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        d = ser.validated_data
+        return Response({'options': borrowing_service.quote(
+            d['principal'], d['monthly_rate'], d['tenor_months'], d['repayment_interval_months'])})
 
     def preview(self, request):
         d, debit_branch, debit_bank, allocations = self._parse_input(request)
@@ -234,11 +265,15 @@ class BorrowingViewSet(ViewSet):
         if lead is None:
             lead = settings_row.default_contribution_lead_days
         total = sum(a['amount'] for a in allocations)
-        rows = borrowing_service.preview_schedule(
-            d['principal'], d['monthly_rate'], d['tenor_months'], d['first_due_date'],
-            allocations=[{'branch_id': a['branch'].pk, 'amount': a['amount']} for a in allocations],
-            debit_branch_id=debit_branch.pk, lead_days=lead,
-        )
+        try:
+            rows = borrowing_service.preview_schedule(
+                d['principal'], d['monthly_rate'], d['tenor_months'], d['first_due_date'],
+                allocations=[{'branch_id': a['branch'].pk, 'amount': a['amount']} for a in allocations],
+                debit_branch_id=debit_branch.pk, lead_days=lead, interest_method=d['interest_method'],
+                repayment_interval_months=d['repayment_interval_months'],
+            )
+        except DjangoValidationError as exc:
+            raise _error(exc)
         names = {a['branch'].pk: a['branch'].name for a in allocations}
         for row in rows:
             for c in row['contributions']:

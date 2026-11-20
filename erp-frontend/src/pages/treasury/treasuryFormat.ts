@@ -44,3 +44,18 @@ export const STATUS_LABELS: Record<string, string> = {
   sent: 'Sent',
   paid: 'Paid',
 };
+
+/** "monthly", "every 3 months", "in one payment at the end"… */
+export function frequencyLabel(intervalMonths: number, tenorMonths: number): string {
+  if (intervalMonths >= tenorMonths) return 'in one payment at the end';
+  if (intervalMonths === 1) return 'monthly';
+  if (intervalMonths === 3) return 'quarterly';
+  if (intervalMonths === 12) return 'yearly';
+  return `every ${intervalMonths} months`;
+}
+
+export const INTEREST_METHOD_SHORT: Record<string, string> = {
+  reducing: 'reducing balance',
+  flat: 'flat',
+  interest_only: 'interest only, amount repaid at the end',
+};

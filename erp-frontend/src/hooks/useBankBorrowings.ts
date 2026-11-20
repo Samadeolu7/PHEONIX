@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { bankBorrowingService } from '../services/bankBorrowingService';
-import type { BorrowingInput, TreasurySettings } from '../types/bankBorrowing';
+import type { BorrowingInput, BorrowingQuoteInput, TreasurySettings } from '../types/bankBorrowing';
 
 export const bankBorrowingKeys = {
   all: ['bank-borrowings'] as const,
@@ -10,6 +10,7 @@ export const bankBorrowingKeys = {
   loanCheck: (loanId: number, stage: string) => [...bankBorrowingKeys.all, 'loan-check', loanId, stage] as const,
   settings: () => [...bankBorrowingKeys.all, 'settings'] as const,
   bankAccounts: () => [...bankBorrowingKeys.all, 'bank-accounts'] as const,
+  quote: (input: BorrowingQuoteInput | null) => [...bankBorrowingKeys.all, 'quote', input] as const,
 };
 
 export const useBorrowings = (status?: string) =>
@@ -37,6 +38,24 @@ export const useCreateBorrowing = () => {
     onSuccess: () => qc.invalidateQueries({ queryKey: bankBorrowingKeys.all }),
   });
 };
+
+export const useUpdateBorrowing = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: BorrowingInput }) => bankBorrowingService.updateBorrowing(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: bankBorrowingKeys.all }),
+  });
+};
+
+/** Cost of every interest method on these terms. Pass null while the terms are incomplete. */
+export const useBorrowingQuote = (input: BorrowingQuoteInput | null) =>
+  useQuery({
+    queryKey: bankBorrowingKeys.quote(input),
+    queryFn: () => bankBorrowingService.quoteBorrowing(input as BorrowingQuoteInput),
+    enabled: input !== null,
+    staleTime: 5 * 60 * 1000,
+    placeholderData: (prev) => prev,
+  });
 
 const useBorrowingAction = <T>(fn: (arg: T) => Promise<unknown>) => {
   const qc = useQueryClient();

@@ -8,6 +8,8 @@ import type {
   Borrowing,
   BorrowingInput,
   BorrowingPreview,
+  BorrowingQuoteInput,
+  BorrowingQuoteOption,
   BorrowingSummary,
   BankAccountChoice,
   LiquidityCheck,
@@ -32,6 +34,15 @@ export const bankBorrowingService = {
 
   async createBorrowing(data: BorrowingInput): Promise<Borrowing> {
     return api.post(`${BASE}/borrowings/`, data);
+  },
+
+  async updateBorrowing(id: number, data: BorrowingInput): Promise<Borrowing> {
+    return api.put(`${BASE}/borrowings/${id}/`, data);
+  },
+
+  async quoteBorrowing(data: BorrowingQuoteInput): Promise<BorrowingQuoteOption[]> {
+    const res = await api.post(`${BASE}/borrowings/quote/`, data);
+    return res?.options ?? [];
   },
 
   async deleteBorrowing(id: number): Promise<void> {

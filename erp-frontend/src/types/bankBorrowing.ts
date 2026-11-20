@@ -37,13 +37,27 @@ export interface BorrowingInstalment {
   contributions: BorrowingContribution[];
 }
 
+/**
+ * reducing: interest on the balance still owed (equal payments).
+ * flat: interest on the full amount for the whole term, spread evenly.
+ * interest_only: each payment is interest; the full amount is repaid with the last payment.
+ */
+export type InterestMethod = 'reducing' | 'flat' | 'interest_only';
+
+/** 'all' = draft, everything editable; 'terms' = funds received, only repayment terms; null = locked. */
+export type BorrowingEditScope = 'all' | 'terms' | null;
+
 export interface BorrowingSummary {
   id: number;
   lender_name: string;
   reference: string;
   principal: string;
   monthly_rate: string;
+  interest_method: InterestMethod;
   tenor_months: number;
+  /** Months between repayments (1 monthly, 3 quarterly…); equals tenor_months for one payment at the end. */
+  repayment_interval_months: number;
+  instalment_count: number;
   first_due_date: string;
   status: BorrowingStatus;
   debit_branch: number;
@@ -60,6 +74,8 @@ export interface Borrowing extends BorrowingSummary {
   notes: string;
   allocations: BorrowingAllocation[];
   instalments: BorrowingInstalment[];
+  editable: boolean;
+  edit_scope: BorrowingEditScope;
 }
 
 export interface BorrowingAllocationInput {
@@ -73,13 +89,34 @@ export interface BorrowingInput {
   reference?: string;
   principal: string;
   monthly_rate: string;
+  interest_method: InterestMethod;
   tenor_months: number;
+  repayment_interval_months: number;
   first_due_date: string;
   debit_branch: number;
   debit_bank_account: number;
   contribution_lead_days?: number;
   notes?: string;
   allocations: BorrowingAllocationInput[];
+}
+
+export interface BorrowingQuoteInput {
+  principal: string;
+  monthly_rate: string;
+  tenor_months: number;
+  repayment_interval_months: number;
+}
+
+/** What one interest method would cost on the given terms. `error` when the terms don't work for it. */
+export interface BorrowingQuoteOption {
+  method: InterestMethod;
+  label: string;
+  error?: string;
+  number_of_payments?: number;
+  first_payment?: string;
+  last_payment?: string;
+  total_interest?: string;
+  total_repayment?: string;
 }
 
 export interface BorrowingPreviewContribution {

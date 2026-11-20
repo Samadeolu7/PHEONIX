@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Pencil } from 'lucide-react';
 import {
   useBorrowing,
   useDeleteBorrowing,
@@ -9,7 +9,17 @@ import {
   useRecordInstalment,
   useSendContribution,
 } from '../../hooks/useBankBorrowings';
-import { STATUS_LABELS, STATUS_STYLES, apiErrorMessage, formatDay, isPast, naira, todayIso } from './treasuryFormat';
+import {
+  INTEREST_METHOD_SHORT,
+  STATUS_LABELS,
+  STATUS_STYLES,
+  apiErrorMessage,
+  formatDay,
+  frequencyLabel,
+  isPast,
+  naira,
+  todayIso,
+} from './treasuryFormat';
 
 const Badge: React.FC<{ status: string }> = ({ status }) => (
   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_STYLES[status] ?? 'bg-gray-100 text-gray-700'}`}>
@@ -44,6 +54,13 @@ const BorrowingDetailPage: React.FC = () => {
 
   const nextPending = b.instalments.find((i) => i.status === 'pending');
   const totalInterest = b.instalments.reduce((s, i) => s + Number(i.interest_due), 0);
+  const totalRepayment = b.instalments.reduce((s, i) => s + Number(i.total_due), 0);
+  const first = b.instalments[0];
+  const last = b.instalments[b.instalments.length - 1];
+  const paymentsText = !first ? '—'
+    : b.instalments.length === 1 ? `${naira(first.total_due)} once`
+    : Math.abs(Number(first.total_due) - Number(last.total_due)) < 1 ? `${naira(first.total_due)} × ${b.instalments.length}`
+    : `${naira(first.total_due)} × ${b.instalments.length - 1}, then ${naira(last.total_due)}`;
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -51,15 +68,38 @@ const BorrowingDetailPage: React.FC = () => {
         <button onClick={() => navigate('/treasury/borrowings')} className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-3">
           <ArrowLeft className="w-5 h-5" /> Back to Bank Borrowings
         </button>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-3xl font-bold text-gray-900">{b.lender_name}{b.reference ? ` · ${b.reference}` : ''}</h1>
           <Badge status={b.status} />
+          {b.editable && (
+            <button type="button" onClick={() => navigate(`/treasury/borrowings/${b.id}/edit`)}
+              className="ml-auto flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300 text-gray-800 hover:bg-gray-50"
+              title={b.edit_scope === 'terms' ? 'Funds received: only the repayment terms can be changed' : undefined}>
+              <Pencil className="w-4 h-4" /> {b.edit_scope === 'terms' ? 'Edit repayment terms' : 'Edit'}
+            </button>
+          )}
         </div>
         <p className="text-gray-600 mt-1">
-          {naira(b.principal)} at {Number(b.monthly_rate)}% a month over {b.tenor_months} months · total interest {naira(totalInterest)} ·
+          {naira(b.principal)} at {Number(b.monthly_rate)}% a month ({INTEREST_METHOD_SHORT[b.interest_method] ?? b.interest_method}),
+          repaid {frequencyLabel(b.repayment_interval_months, b.tenor_months)} over {b.tenor_months} months ·
           debited from {b.debit_branch_name} ({b.debit_bank_account_name})
         </p>
       </div>
+
+      <section className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-sm text-gray-600">Payments to the bank</p>
+          <p className="text-lg font-semibold text-gray-900 mt-1">{paymentsText}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-sm text-gray-600">Total interest</p>
+          <p className="text-lg font-semibold text-gray-900 mt-1">{naira(totalInterest)}</p>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <p className="text-sm text-gray-600">Total repaid by the end</p>
+          <p className="text-lg font-semibold text-gray-900 mt-1">{naira(totalRepayment)}</p>
+        </div>
+      </section>
 
       {b.status === 'draft' && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-wrap items-end gap-4">
@@ -139,7 +179,7 @@ const BorrowingDetailPage: React.FC = () => {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="font-semibold text-gray-900">
-                      Instalment {i.number} of {b.tenor_months} · due {formatDay(i.due_date)} {overdue && <span className="text-red-700">(overdue)</span>}
+                      Instalment {i.number} of {b.instalment_count} · due {formatDay(i.due_date)} {overdue && <span className="text-red-700">(overdue)</span>}
                     </p>
                     <p className="text-sm text-gray-600">
                       {naira(i.total_due)} = principal {naira(i.principal_due)} + interest {naira(i.interest_due)}

@@ -101,7 +101,7 @@ def collect_alerts(today=None):
         b = i.borrowing
         unsent = i.contributions.filter(status=BorrowingContribution.STATUS_PENDING).count()
         extra = f"; {unsent} branch share(s) still unsent" if unsent else ""
-        add(i, b.debit_branch, f"Bank instalment: {b.lender_name} {i.number}/{b.tenor_months} "
+        add(i, b.debit_branch, f"Bank instalment: {b.lender_name} {i.number}/{b.instalment_count} "
                                f"{_naira(i.total_due)} from {b.debit_branch.name} ({_when(i.due_date, today)}){extra}")
 
     open_statuses = (

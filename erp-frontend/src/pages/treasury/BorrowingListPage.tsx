@@ -73,7 +73,7 @@ const BorrowingListPage: React.FC = () => {
                 <td className="px-4 py-3 text-right">{naira(b.principal)}</td>
                 <td className="px-4 py-3 text-right">{Number(b.monthly_rate)}%</td>
                 <td className="px-4 py-3">{b.debit_branch_name}</td>
-                <td className="px-4 py-3">{b.paid_instalments} / {b.tenor_months}</td>
+                <td className="px-4 py-3">{b.paid_instalments} / {b.instalment_count}</td>
                 <td className="px-4 py-3">{b.status === 'active' ? formatDay(b.next_due_date) : '—'}</td>
                 <td className="px-4 py-3">
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_STYLES[b.status]}`}>

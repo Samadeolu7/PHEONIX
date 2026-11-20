@@ -14,7 +14,9 @@ urlpatterns = [
 
     path('borrowings/', borrowings.as_view({'get': 'list', 'post': 'create'}), name='borrowing-list'),
     path('borrowings/preview/', borrowings.as_view({'post': 'preview'}), name='borrowing-preview'),
-    path('borrowings/<int:pk>/', borrowings.as_view({'get': 'retrieve', 'delete': 'destroy'}), name='borrowing-detail'),
+    path('borrowings/quote/', borrowings.as_view({'post': 'quote'}), name='borrowing-quote'),
+    path('borrowings/<int:pk>/', borrowings.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}),
+         name='borrowing-detail'),
     path('borrowings/<int:pk>/receive/', borrowings.as_view({'post': 'receive'}), name='borrowing-receive'),
     path('borrowings/contributions/<int:pk>/send/',
          borrowings.as_view({'post': 'send_contribution'}), name='borrowing-contribution-send'),

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from treasury.models import (
@@ -69,13 +71,14 @@ class BorrowingListSerializer(serializers.ModelSerializer):
     debit_branch_name = serializers.CharField(source='debit_branch.name', read_only=True)
     paid_instalments = serializers.SerializerMethodField()
     next_due_date = serializers.SerializerMethodField()
+    instalment_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = BankBorrowing
         fields = [
-            'id', 'lender_name', 'reference', 'principal', 'monthly_rate', 'tenor_months',
-            'first_due_date', 'status', 'debit_branch', 'debit_branch_name', 'received_on',
-            'paid_instalments', 'next_due_date',
+            'id', 'lender_name', 'reference', 'principal', 'monthly_rate', 'interest_method', 'tenor_months',
+            'repayment_interval_months', 'instalment_count', 'first_due_date', 'status', 'debit_branch',
+            'debit_branch_name', 'received_on', 'paid_instalments', 'next_due_date',
         ]
 
     def get_paid_instalments(self, obj):
@@ -90,12 +93,26 @@ class BorrowingDetailSerializer(BorrowingListSerializer):
     allocations = AllocationSerializer(many=True, read_only=True)
     instalments = InstalmentSerializer(many=True, read_only=True)
     debit_bank_account_name = serializers.SerializerMethodField()
+    editable = serializers.SerializerMethodField()
+    edit_scope = serializers.SerializerMethodField()
 
     class Meta(BorrowingListSerializer.Meta):
         fields = BorrowingListSerializer.Meta.fields + [
             'debit_bank_account', 'debit_bank_account_name', 'contribution_lead_days',
-            'notes', 'allocations', 'instalments',
+            'notes', 'allocations', 'instalments', 'editable', 'edit_scope',
         ]
+
+    def get_edit_scope(self, obj):
+        """'all' (draft), 'terms' (funds received, nothing recorded yet) or None (locked)."""
+        from treasury.services.borrowings import anything_recorded
+        if obj.status == BankBorrowing.STATUS_DRAFT:
+            return 'all'
+        if obj.status == BankBorrowing.STATUS_ACTIVE and not anything_recorded(obj):
+            return 'terms'
+        return None
+
+    def get_editable(self, obj):
+        return self.get_edit_scope(obj) is not None
 
     def get_debit_bank_account_name(self, obj):
         return str(obj.debit_bank_account)
@@ -113,13 +130,23 @@ class BorrowingInputSerializer(serializers.Serializer):
     reference = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
     principal = serializers.DecimalField(max_digits=18, decimal_places=2)
     monthly_rate = serializers.DecimalField(max_digits=7, decimal_places=3)
+    interest_method = serializers.ChoiceField(
+        choices=BankBorrowing.INTEREST_METHOD_CHOICES, required=False, default=BankBorrowing.METHOD_REDUCING)
     tenor_months = serializers.IntegerField(min_value=1, max_value=360)
+    repayment_interval_months = serializers.IntegerField(min_value=1, max_value=360, required=False, default=1)
     first_due_date = serializers.DateField()
     debit_branch = serializers.IntegerField()
     debit_bank_account = serializers.IntegerField()
     contribution_lead_days = serializers.IntegerField(min_value=0, max_value=60, required=False)
     notes = serializers.CharField(required=False, allow_blank=True, default='')
     allocations = AllocationInputSerializer(many=True, allow_empty=False)
+
+
+class QuoteSerializer(serializers.Serializer):
+    principal = serializers.DecimalField(max_digits=18, decimal_places=2, min_value=Decimal('0.01'))
+    monthly_rate = serializers.DecimalField(max_digits=7, decimal_places=3, min_value=Decimal('0'))
+    tenor_months = serializers.IntegerField(min_value=1, max_value=360)
+    repayment_interval_months = serializers.IntegerField(min_value=1, max_value=360, required=False, default=1)
 
 
 class ReceiveSerializer(serializers.Serializer):

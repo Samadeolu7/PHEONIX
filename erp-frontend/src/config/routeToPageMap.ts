@@ -39,6 +39,7 @@ export const ROUTE_TO_PAGE: Record<string, RouteMapping> = {
   '/treasury/borrowings': { module: 'bank-borrowings', page: 'borrowings', action: 'view' },
   '/treasury/borrowings/new': { module: 'bank-borrowings', page: 'borrowings', action: 'view' },
   '/treasury/borrowings/:id': { module: 'bank-borrowings', page: 'borrowings', action: 'view' },
+  '/treasury/borrowings/:id/edit': { module: 'bank-borrowings', page: 'borrowings', action: 'view' },
   '/treasury/liquidity': { module: 'bank-borrowings', page: 'branch-liquidity', action: 'view' },
   '/accounts': { module: 'accounts', page: 'chart-of-accounts', action: 'view' },
   '/accounts-payable': { module: 'liabilities', page: 'accounts-payable', action: 'view' },

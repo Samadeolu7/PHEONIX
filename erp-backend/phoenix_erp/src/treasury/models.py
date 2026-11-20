@@ -49,12 +49,29 @@ class BankBorrowing(TimeStampedModel, SoftDeleteModel):
         (STATUS_PAID_OFF, 'Paid off'),
     ]
 
+    METHOD_REDUCING = 'reducing'
+    METHOD_FLAT = 'flat'
+    METHOD_INTEREST_ONLY = 'interest_only'
+    INTEREST_METHOD_CHOICES = [
+        (METHOD_REDUCING, 'Reducing balance (equal payments, interest on what is still owed)'),
+        (METHOD_FLAT, 'Flat (interest on the full amount for the whole term)'),
+        (METHOD_INTEREST_ONLY, 'Interest only, full amount repaid with the last payment'),
+    ]
+
     lender_name = models.CharField(max_length=200)
     reference = models.CharField(max_length=100, blank=True)
     principal = models.DecimalField(max_digits=18, decimal_places=2)
     monthly_rate = models.DecimalField(
-        max_digits=7, decimal_places=3, help_text="Interest % per month on the reducing balance.")
-    tenor_months = models.PositiveSmallIntegerField()
+        max_digits=7, decimal_places=3,
+        help_text="Interest % per month - on the reducing balance or on the full principal, per interest_method.")
+    interest_method = models.CharField(
+        max_length=20, choices=INTEREST_METHOD_CHOICES, default=METHOD_REDUCING,
+        help_text="How the bank works out interest. Flat: principal x rate x months.")
+    tenor_months = models.PositiveSmallIntegerField(help_text="Length of the loan in months.")
+    repayment_interval_months = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="Months between repayments: 1 monthly, 3 quarterly, 6, 12; equal to tenor_months for one "
+                  "payment at the end. tenor_months must be a whole number of intervals.")
     first_due_date = models.DateField(help_text="First instalment date. Its day-of-month repeats every month.")
     debit_branch = models.ForeignKey('branches.Branch', on_delete=models.PROTECT, related_name='debit_borrowings')
     debit_bank_account = models.ForeignKey(
@@ -74,6 +91,10 @@ class BankBorrowing(TimeStampedModel, SoftDeleteModel):
 
     def __str__(self):
         return f"{self.lender_name} {self.reference} ({self.principal})"
+
+    @property
+    def instalment_count(self):
+        return self.tenor_months // (self.repayment_interval_months or 1)
 
 
 class BorrowingAllocation(TimeStampedModel, SoftDeleteModel):

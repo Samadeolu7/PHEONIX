@@ -385,6 +385,7 @@ class FinancialAuditLog(models.Model):
     BORROWING_RECEIVE = 'borrowing_receive'
     BORROWING_CONTRIBUTION = 'borrowing_contribution'
     BORROWING_INSTALMENT = 'borrowing_instalment'
+    BORROWING_UPDATE = 'borrowing_update'
     LIQUIDITY_OVERRIDE = 'liquidity_override'
     RECON_RESOLUTION = 'recon_resolution'
 
@@ -393,6 +394,7 @@ class FinancialAuditLog(models.Model):
         (BORROWING_RECEIVE, 'Bank Borrowing Received'),
         (BORROWING_CONTRIBUTION, 'Bank Borrowing Branch Share Sent'),
         (BORROWING_INSTALMENT, 'Bank Borrowing Instalment Paid'),
+        (BORROWING_UPDATE, 'Bank Borrowing Terms Edited'),
         (LIQUIDITY_OVERRIDE, 'Liquidity Block Overridden / Acknowledged'),
         (LOAN_APPROVE,      'Loan Approved'),
         (LOAN_DISBURSE,     'Loan Disbursed'),

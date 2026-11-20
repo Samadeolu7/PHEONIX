@@ -1647,6 +1647,14 @@ function App() {
                                   }
                                 />
                                 <Route
+                                  path="/treasury/borrowings/:id/edit"
+                                  element={
+                                    <ProtectedRoute module="bank-borrowings" page="borrowings">
+                                      <BorrowingFormPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                <Route
                                   path="/treasury/borrowings/:id"
                                   element={
                                     <ProtectedRoute module="bank-borrowings" page="borrowings">

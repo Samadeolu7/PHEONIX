@@ -38,7 +38,7 @@ from accounts.utils.account_creation import (
 from common.models import FinancialAuditLog, log_financial_event
 from interbranch.models import InterBranchClearingAccount
 from interbranch.services import create_interbranch_transfer, get_or_create_clearing_account
-from loans.schedule_service import reducing_balance_schedule
+from loans.schedule_service import flat_schedule, reducing_balance_schedule
 from transactions.models import Transaction, TransactionEntry, TransactionSeries
 from treasury.models import (
     BankBorrowing,
@@ -138,8 +138,74 @@ def _create_liability_account(borrowing, user):
 
 # ── Schedule ────────────────────────────────────────────────────────────────
 
+def instalment_rows(principal, monthly_rate, tenor_months, interest_method=BankBorrowing.METHOD_REDUCING,
+                    repayment_interval_months=1):
+    """
+    Principal/interest split of each repayment. The rate is always quoted per MONTH; the loan runs
+    tenor_months and is repaid every repayment_interval_months (1 monthly, 3 quarterly, ...,
+    tenor_months = one payment at the end).
+
+    reducing:      rate x interval on the balance still owed each period, equal payments (annuity).
+    flat:          rate on the full principal for every month of the term (principal x rate x months),
+                   spread evenly over the payments.
+    interest_only: each payment is rate x interval on the full principal; the principal is repaid
+                   with the last payment.
+    """
+    principal, rate = Decimal(principal), Decimal(monthly_rate)
+    tenor, step = int(tenor_months), int(repayment_interval_months)
+    if tenor < 1:
+        raise ValidationError("The loan must run for at least one month.")
+    if step < 1 or step > tenor or tenor % step:
+        raise ValidationError(
+            f"A {tenor}-month loan cannot be repaid every {step} month(s): the term must divide into whole "
+            f"repayment periods.")
+    n = tenor // step
+    period_rate = rate * step
+
+    if interest_method == BankBorrowing.METHOD_FLAT:
+        # flat_schedule takes the TOTAL flat % over the whole loan.
+        return flat_schedule(principal, rate * tenor, n)
+    if interest_method == BankBorrowing.METHOD_REDUCING:
+        return reducing_balance_schedule(principal, period_rate, n)
+    if interest_method == BankBorrowing.METHOD_INTEREST_ONLY:
+        if n > 1 and rate == 0:
+            raise ValidationError(
+                "Interest-only at 0% would leave payments of nothing; choose 'one payment at the end' instead.")
+        interest = _q(principal * period_rate / Decimal('100'))
+        rows = [{'principal_due': Decimal('0.00'), 'interest_due': interest, 'total_due': interest}
+                for _ in range(n - 1)]
+        rows.append({'principal_due': principal, 'interest_due': interest, 'total_due': principal + interest})
+        return rows
+    raise ValidationError(f"Unknown interest method '{interest_method}'.")
+
+
+def quote(principal, monthly_rate, tenor_months, repayment_interval_months=1):
+    """
+    What each interest method would cost on these terms, so the user can match it to the bank's offer
+    letter before choosing. No branches or DB needed.
+    """
+    out = []
+    for method, label in BankBorrowing.INTEREST_METHOD_CHOICES:
+        entry = {'method': method, 'label': label}
+        try:
+            rows = instalment_rows(principal, monthly_rate, tenor_months, method, repayment_interval_months)
+        except ValidationError as exc:
+            entry['error'] = ' '.join(exc.messages)
+            out.append(entry)
+            continue
+        entry.update({
+            'number_of_payments': len(rows),
+            'first_payment': rows[0]['total_due'],
+            'last_payment': rows[-1]['total_due'],
+            'total_interest': sum(r['interest_due'] for r in rows),
+            'total_repayment': sum(r['total_due'] for r in rows),
+        })
+        out.append(entry)
+    return out
+
+
 def preview_schedule(principal, monthly_rate, tenor_months, first_due_date, allocations=None, debit_branch_id=None,
-                     lead_days=3):
+                     lead_days=3, interest_method=BankBorrowing.METHOD_REDUCING, repayment_interval_months=1):
     """
     Pure preview (no DB writes). Returns instalment rows and, when allocations are given,
     each non-debit branch's share of every instalment.
@@ -147,11 +213,12 @@ def preview_schedule(principal, monthly_rate, tenor_months, first_due_date, allo
     allocations: [{'branch_id': int, 'amount': Decimal}]
     """
     principal = Decimal(principal)
-    rows = reducing_balance_schedule(principal, Decimal(monthly_rate), int(tenor_months))
+    step = int(repayment_interval_months)
+    rows = instalment_rows(principal, monthly_rate, tenor_months, interest_method, step)
     out = []
     cum_principal = {}
     for i, row in enumerate(rows):
-        due = first_due_date + relativedelta(months=i)
+        due = first_due_date + relativedelta(months=i * step)
         inst = {
             'number': i + 1,
             'due_date': due,
@@ -182,25 +249,21 @@ def preview_schedule(principal, monthly_rate, tenor_months, first_due_date, allo
     return out
 
 
-@transaction.atomic
-def create_borrowing(*, user, lender_name, reference, principal, monthly_rate, tenor_months, first_due_date,
-                     debit_branch, debit_bank_account, allocations, contribution_lead_days=None, notes=''):
-    """
-    allocations: [{'branch': Branch, 'amount': Decimal, 'bank_account': BankAccount}]
-    The allocation total must equal the principal. Branches that get nothing are simply omitted.
-    """
-    principal = _q(principal)
-    monthly_rate = Decimal(monthly_rate)
+def _validate_terms(*, principal, monthly_rate, tenor_months, interest_method, repayment_interval_months):
     if principal <= 0:
         raise ValidationError("Principal must be greater than zero.")
-    if tenor_months < 1:
-        raise ValidationError("Tenor must be at least one month.")
     if monthly_rate < 0:
         raise ValidationError("Interest rate cannot be negative.")
+    if interest_method not in dict(BankBorrowing.INTEREST_METHOD_CHOICES):
+        raise ValidationError(f"Unknown interest method '{interest_method}'.")
+    # Raises a readable error for a bad term / frequency combination.
+    instalment_rows(principal, monthly_rate, tenor_months, interest_method, repayment_interval_months)
+
+
+def _validate_allocations(principal, debit_branch, debit_bank_account, allocations):
     if debit_bank_account.branch_id != debit_branch.pk:
         raise ValidationError("The debit bank account must belong to the debit branch.")
     _gl_account(debit_bank_account, "Debit bank account")
-
     if not allocations:
         raise ValidationError("Allocate the proceeds to at least one branch.")
     seen = set()
@@ -222,38 +285,159 @@ def create_borrowing(*, user, lender_name, reference, principal, monthly_rate, t
         raise ValidationError(
             f"Allocations total {total:,.2f} but the borrowing is {principal:,.2f}. They must match exactly.")
 
+
+def _build_schedule(borrowing, user):
+    """(Re)create the instalments and branch shares from the borrowing's current terms and allocations."""
+    tenant = borrowing.tenant
+    alloc_objs = {a.branch_id: a for a in borrowing.allocations.select_related('branch', 'bank_account')}
+    plan = preview_schedule(
+        borrowing.principal, borrowing.monthly_rate, borrowing.tenor_months, borrowing.first_due_date,
+        allocations=[{'branch_id': bid, 'amount': a.amount} for bid, a in alloc_objs.items()],
+        debit_branch_id=borrowing.debit_branch_id, lead_days=borrowing.contribution_lead_days,
+        interest_method=borrowing.interest_method, repayment_interval_months=borrowing.repayment_interval_months,
+    )
+    for row in plan:
+        inst = BorrowingInstalment.objects.create(
+            tenant=tenant, owner=user, created_by=user, borrowing=borrowing,
+            number=row['number'], due_date=row['due_date'], principal_due=row['principal_due'],
+            interest_due=row['interest_due'], total_due=row['total_due'])
+        for c in row['contributions']:
+            alloc = alloc_objs[c['branch_id']]
+            BorrowingContribution.objects.create(
+                tenant=tenant, owner=user, created_by=user, instalment=inst,
+                branch=alloc.branch, bank_account=alloc.bank_account,
+                principal_part=c['principal_part'], interest_part=c['interest_part'],
+                amount=c['amount'], due_date=c['due_date'])
+
+
+@transaction.atomic
+def create_borrowing(*, user, lender_name, reference, principal, monthly_rate, tenor_months, first_due_date,
+                     debit_branch, debit_bank_account, allocations, contribution_lead_days=None, notes='',
+                     interest_method=BankBorrowing.METHOD_REDUCING, repayment_interval_months=1):
+    """
+    allocations: [{'branch': Branch, 'amount': Decimal, 'bank_account': BankAccount}]
+    The allocation total must equal the principal. Branches that get nothing are simply omitted.
+    """
+    principal = _q(principal)
+    monthly_rate = Decimal(monthly_rate)
+    _validate_terms(principal=principal, monthly_rate=monthly_rate, tenor_months=tenor_months,
+                    interest_method=interest_method, repayment_interval_months=repayment_interval_months)
+    _validate_allocations(principal, debit_branch, debit_bank_account, allocations)
+
     settings_row = TreasurySettings.get_for(debit_branch.tenant)
     lead = settings_row.default_contribution_lead_days if contribution_lead_days is None else contribution_lead_days
 
     borrowing = BankBorrowing.objects.create(
         tenant=debit_branch.tenant, owner=user, created_by=user,
         lender_name=lender_name, reference=reference or '', principal=principal,
-        monthly_rate=monthly_rate, tenor_months=tenor_months, first_due_date=first_due_date,
-        debit_branch=debit_branch, debit_bank_account=debit_bank_account,
+        monthly_rate=monthly_rate, interest_method=interest_method, tenor_months=tenor_months,
+        repayment_interval_months=repayment_interval_months,
+        first_due_date=first_due_date, debit_branch=debit_branch, debit_bank_account=debit_bank_account,
         contribution_lead_days=lead, notes=notes or '',
     )
-    alloc_objs = {}
     for a in allocations:
-        alloc_objs[a['branch'].pk] = BorrowingAllocation.objects.create(
+        BorrowingAllocation.objects.create(
             tenant=debit_branch.tenant, owner=user, created_by=user,
             borrowing=borrowing, branch=a['branch'], amount=_q(a['amount']), bank_account=a['bank_account'])
+    _build_schedule(borrowing, user)
+    return borrowing
 
-    plan = preview_schedule(
-        principal, monthly_rate, tenor_months, first_due_date,
-        allocations=[{'branch_id': a['branch'].pk, 'amount': _q(a['amount'])} for a in allocations],
-        debit_branch_id=debit_branch.pk, lead_days=lead,
+
+def anything_recorded(borrowing):
+    """True once any instalment has been paid or any branch share sent (the schedule is then in the books)."""
+    return (
+        borrowing.instalments.exclude(status=BorrowingInstalment.STATUS_PENDING).exists()
+        or BorrowingContribution.objects.filter(instalment__borrowing=borrowing)
+        .exclude(status=BorrowingContribution.STATUS_PENDING).exists()
     )
-    for row in plan:
-        inst = BorrowingInstalment.objects.create(
-            tenant=debit_branch.tenant, owner=user, created_by=user, borrowing=borrowing,
-            number=row['number'], due_date=row['due_date'], principal_due=row['principal_due'],
-            interest_due=row['interest_due'], total_due=row['total_due'])
-        for c in row['contributions']:
-            BorrowingContribution.objects.create(
-                tenant=debit_branch.tenant, owner=user, created_by=user, instalment=inst,
-                branch=alloc_objs[c['branch_id']].branch, bank_account=alloc_objs[c['branch_id']].bank_account,
-                principal_part=c['principal_part'], interest_part=c['interest_part'],
-                amount=c['amount'], due_date=c['due_date'])
+
+
+_TERM_FIELDS = ('lender_name', 'reference', 'principal', 'monthly_rate', 'interest_method', 'tenor_months',
+                'repayment_interval_months', 'first_due_date', 'contribution_lead_days', 'notes')
+
+
+@transaction.atomic
+def update_borrowing(borrowing, *, user, lender_name, reference, principal, monthly_rate, tenor_months,
+                     first_due_date, debit_branch, debit_bank_account, allocations, contribution_lead_days=None,
+                     notes='', interest_method=BankBorrowing.METHOD_REDUCING, repayment_interval_months=1):
+    """
+    Correct a borrowing's terms and rebuild its schedule.
+
+    Draft (nothing posted): everything can change.
+    Active (funds received, so the receipt and branch transfers are posted): only the repayment terms
+    (rate, method, frequency, term, dates) - and only while no instalment has been paid and no branch
+    share sent, because those posted amounts came from the old schedule. The amount, branches and
+    bank accounts are fixed once the money has moved.
+    """
+    borrowing = BankBorrowing.objects.select_for_update().get(pk=borrowing.pk)
+    if borrowing.status == BankBorrowing.STATUS_PAID_OFF:
+        raise ValidationError("This borrowing is paid off and can no longer be edited.")
+
+    principal = _q(principal)
+    monthly_rate = Decimal(monthly_rate)
+    _validate_terms(principal=principal, monthly_rate=monthly_rate, tenor_months=tenor_months,
+                    interest_method=interest_method, repayment_interval_months=repayment_interval_months)
+    if contribution_lead_days is None:
+        contribution_lead_days = borrowing.contribution_lead_days
+
+    if borrowing.status == BankBorrowing.STATUS_ACTIVE:
+        if anything_recorded(borrowing):
+            raise ValidationError(
+                "An instalment or branch share has already been recorded for this borrowing, so its terms can "
+                "no longer be changed here. Ask accounts to correct it by journal.")
+        current = {(a.branch_id, a.amount, a.bank_account_id) for a in borrowing.allocations.all()}
+        wanted = {(a['branch'].pk, _q(a['amount']), a['bank_account'].pk) for a in allocations}
+        if (principal != borrowing.principal or debit_branch.pk != borrowing.debit_branch_id
+                or debit_bank_account.pk != borrowing.debit_bank_account_id or current != wanted):
+            raise ValidationError(
+                "The funds have already been received and shared out, so the amount, branches and bank accounts "
+                "cannot change. Only the repayment terms can be edited.")
+        if (tenor_months <= 12) != (borrowing.tenor_months <= 12):
+            raise ValidationError(
+                "This change would move the loan between short-term (12 months or less) and long-term "
+                "borrowings, but its liability account is already set up. Ask accounts to reclassify it by journal.")
+    else:
+        _validate_allocations(principal, debit_branch, debit_bank_account, allocations)
+
+    before = {f: str(getattr(borrowing, f)) for f in _TERM_FIELDS}
+    before['allocations'] = {str(a.branch_id): str(a.amount) for a in borrowing.allocations.all()}
+
+    borrowing.lender_name = lender_name
+    borrowing.reference = reference or ''
+    borrowing.principal = principal
+    borrowing.monthly_rate = monthly_rate
+    borrowing.interest_method = interest_method
+    borrowing.tenor_months = tenor_months
+    borrowing.repayment_interval_months = repayment_interval_months
+    borrowing.first_due_date = first_due_date
+    borrowing.contribution_lead_days = contribution_lead_days
+    borrowing.notes = notes or ''
+    borrowing.debit_branch = debit_branch
+    borrowing.debit_bank_account = debit_bank_account
+    borrowing.save()
+
+    if borrowing.status == BankBorrowing.STATUS_DRAFT:
+        borrowing.allocations.update(is_deleted=True)
+        for a in allocations:
+            BorrowingAllocation.objects.create(
+                tenant=borrowing.tenant, owner=user, created_by=user,
+                borrowing=borrowing, branch=a['branch'], amount=_q(a['amount']), bank_account=a['bank_account'])
+    elif borrowing.liability_account_id:
+        label = f"{borrowing.lender_name} {borrowing.reference}".strip()
+        Account.objects.filter(pk=borrowing.liability_account_id).update(name=f"Bank Loan Payable - {label}"[:100])
+
+    BorrowingContribution.objects.filter(instalment__borrowing=borrowing).update(is_deleted=True)
+    borrowing.instalments.update(is_deleted=True)
+    _build_schedule(borrowing, user)
+
+    after = {f: str(getattr(borrowing, f)) for f in _TERM_FIELDS}
+    after['allocations'] = {str(a.branch_id): str(_q(a['amount'])) for a in allocations}
+    log_financial_event(
+        FinancialAuditLog.BORROWING_UPDATE, acted_by=user, record_type='BankBorrowing',
+        record_id=str(borrowing.pk), amount=borrowing.principal,
+        description=f"Bank borrowing terms edited: {borrowing.lender_name} {borrowing.reference}".strip(),
+        extra={'status': borrowing.status, 'before': before, 'after': after},
+    )
     return borrowing
 
 
@@ -395,7 +579,7 @@ def record_instalment(instalment, user, paid_on=None):
     txn = _post_journal(
         series_code='BRWPM', series_description='Bank Borrowing Instalment', branch=borrowing.debit_branch,
         date=paid_on, user=user, reference=f"BRW-{borrowing.pk}-{instalment.number}",
-        description=f"Bank loan instalment {instalment.number}/{borrowing.tenor_months} - "
+        description=f"Bank loan instalment {instalment.number}/{borrowing.instalment_count} - "
                     f"{borrowing.lender_name} {borrowing.reference}".strip(),
         entries=[
             (borrowing.liability_account, DR, instalment.principal_due),
