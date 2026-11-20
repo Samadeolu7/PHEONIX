@@ -434,7 +434,7 @@ def update_borrowing(borrowing, *, user, lender_name, reference, principal, mont
     _build_schedule(borrowing, user)
 
     after = {f: str(getattr(borrowing, f)) for f in _TERM_FIELDS}
-    after['allocations'] = {str(a.branch_id): str(_q(a['amount'])) for a in allocations}
+    after['allocations'] = {str(a['branch'].pk): str(_q(a['amount'])) for a in allocations}
     log_financial_event(
         FinancialAuditLog.BORROWING_UPDATE, acted_by=user, record_type='BankBorrowing',
         record_id=str(borrowing.pk), amount=borrowing.principal,
