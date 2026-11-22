@@ -209,6 +209,42 @@ export interface LiquidityCheck {
   override: { by: string | null; by_id: number | null; reason: string; at: string } | null;
 }
 
+/** One loan waiting for approval, in the pending-approvals heads-up. */
+export interface PendingApprovalLoan {
+  loan_id: number;
+  loan_number: string;
+  client_name: string;
+  product_name: string;
+  amount: string;
+  application_date: string | null;
+  days_waiting: number | null;
+  /** Could be approved on its own with today's available cash. */
+  fits_alone: boolean;
+  /** Still fits once every older application ahead of it is approved. */
+  fits_in_order: boolean;
+}
+
+/** Per-branch heads-up: do all pending applications fit in what the branch can lend today? */
+export interface PendingApprovalsHeadsUp {
+  branch_id: number;
+  branch_name: string;
+  today: string;
+  available_today: string;
+  cash_now: string;
+  committed_outflows_total: string;
+  pending_count: number;
+  pending_total: string;
+  shortfall: string;
+  over_capacity: boolean;
+  message: string;
+  loans: PendingApprovalLoan[];
+}
+
+export interface PendingApprovalsHeadsUpResponse {
+  is_director: boolean;
+  branches: PendingApprovalsHeadsUp[];
+}
+
 /** 409 body returned by loan approve / disburse when the liquidity gate stops the action. */
 export interface LiquidityGatePayload {
   code:

@@ -23,6 +23,7 @@ import { LoanAccountList, loanService, BulkScheduleRepairSummary } from '../../s
 import { useLoanAccounts } from '../../hooks/useLoans';
 import { ClientAvatar } from '../../components/ui/ClientAvatar';
 import { usePermission } from '../../hooks/usePermissions';
+import { PendingApprovalsLiquidityBanner } from '../../components/treasury/PendingApprovalsLiquidityBanner';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -287,7 +288,8 @@ export default function LoanAccountsPage() {
   const [page, setPage] = useState(1);
   const [showBulkRepairModal, setShowBulkRepairModal] = useState(false);
   const { hasPageAccess } = usePermission();
-  const canRepairSchedules = hasPageAccess('loans', 'loan-accounts', 'approve');
+  const canApproveLoans = hasPageAccess('loans', 'loan-accounts', 'approve');
+  const canRepairSchedules = canApproveLoans;
 
   // Keep the URL's ?status= in sync so links like the Loan Pipeline tiles
   // pre-filter this list, and manual dropdown changes update the URL too.
@@ -349,6 +351,11 @@ export default function LoanAccountsPage() {
           </Link>
         </div>
       </div>
+
+      {/* Heads-up for approvers when pending applications exceed what the branch can lend today */}
+      {canApproveLoans && (
+        <PendingApprovalsLiquidityBanner defaultExpanded={statusFilter === 'pending'} />
+      )}
 
       {/* Filters */}
       <div className="mb-4 flex flex-wrap items-end gap-3">

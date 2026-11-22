@@ -266,3 +266,80 @@ def enforce_disbursement(loan, user, acknowledge_impact=False, note='') -> Optio
             _summary(a, "Review before disbursing:") + " Confirm you accept this impact to continue.")
 
     return record_decision(loan, stage, LiquidityDecision.OUTCOME_ACKNOWLEDGED, user, note, a)
+
+
+# ── Heads-up: pending approvals vs. what the branch can lend ───────────────
+
+def pending_approvals_heads_up(branch, today=None) -> dict:
+    """
+    Read-only heads-up for whoever approves loans in `branch`: do all loans currently waiting for
+    approval fit in what the branch can lend today?
+
+    Each loan is checked on its own at approval time, so four loans can each look affordable while
+    together they are not: approving one uses up cash the next one was counting on. This sums every
+    pending application against `available_today` (which already sets aside approved-but-undisbursed
+    loans and committed payouts) so the approver knows up front to prioritise.
+
+    Loans are listed oldest application first. `fits_alone` says whether a loan could be approved on its
+    own today; `fits_in_order` whether it still fits after every older application ahead of it.
+    """
+    from loans.models import LoanAccount
+
+    f = branch_forecast(branch, today=today)
+    available = f['available_today']
+    loans = (LoanAccount.objects.filter(branch=branch, status='pending', is_deleted=False)
+             .select_related('client', 'product__product')
+             .order_by('application_date', 'pk'))
+
+    rows = []
+    total = Decimal('0.00')
+    running = Decimal('0.00')
+    for loan in loans:
+        amount = Decimal(loan.requested_amount or 0)
+        total += amount
+        running += amount
+        client = loan.client
+        product = getattr(getattr(loan, 'product', None), 'product', None)
+        rows.append({
+            'loan_id': loan.pk,
+            'loan_number': loan.loan_number,
+            'client_name': (getattr(client, 'full_name', None) or str(client)) if client else '',
+            'product_name': getattr(product, 'name', '') or '',
+            'amount': amount,
+            'application_date': loan.application_date,
+            'days_waiting': (f['today'] - loan.application_date).days if loan.application_date else None,
+            'fits_alone': amount <= available,
+            'fits_in_order': running <= available,
+        })
+
+    shortfall = max(Decimal('0.00'), total - available)
+    over = bool(rows) and total > available
+    message = ''
+    if over:
+        fit_alone = sum(1 for r in rows if r['fits_alone'])
+        message = (
+            f"{len(rows)} loan{'s' if len(rows) != 1 else ''} totalling {_naira(total)} "
+            f"{'are' if len(rows) != 1 else 'is'} waiting for approval, but {f['branch_name']} can only lend "
+            f"{_naira(available)} today ({_naira(shortfall)} short). Approving one reduces what is left for "
+            f"the others, so decide which to approve first."
+        )
+        if available <= 0:
+            message += " Nothing can be lent today without touching committed payments."
+        elif fit_alone < len(rows):
+            message += (f" {len(rows) - fit_alone} of them cannot be funded today even on "
+                        f"{'its' if len(rows) - fit_alone == 1 else 'their'} own.")
+
+    return {
+        'branch_id': f['branch_id'],
+        'branch_name': f['branch_name'],
+        'today': f['today'],
+        'available_today': available,
+        'cash_now': f['cash_now'],
+        'committed_outflows_total': f['committed_outflows_total'],
+        'pending_count': len(rows),
+        'pending_total': total,
+        'shortfall': shortfall,
+        'over_capacity': over,
+        'message': message,
+        'loans': rows,
+    }

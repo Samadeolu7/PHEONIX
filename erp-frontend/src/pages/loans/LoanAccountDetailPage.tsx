@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { LoanApprovalLiquidityDialog } from '../../components/treasury/LoanApprovalLiquidityDialog';
+import { PendingApprovalsLiquidityBanner } from '../../components/treasury/PendingApprovalsLiquidityBanner';
 import { asLiquidityGate, type LiquidityGatePayload } from '../../types/bankBorrowing';
 import { useLoanLiquidityCheck } from '../../hooks/useBankBorrowings';
 import {
@@ -1928,6 +1929,16 @@ export default function LoanAccountDetailPage() {
       </div>
 
       <div className="mx-auto max-w-7xl space-y-6 p-6">
+        {/* Heads-up: other pending loans in this branch compete for the same cash */}
+        {loan.status === 'pending' && hasPageAccess('loans', 'loan-accounts', 'approve') && (
+          <PendingApprovalsLiquidityBanner
+            branchId={loan.branch ?? undefined}
+            currentLoanId={loan.id}
+            enabled={!!loan.branch}
+            defaultExpanded
+          />
+        )}
+
         {/* Summary Grid */}
         <div className="grid gap-6 lg:grid-cols-3">
           {/* Loan Summary */}

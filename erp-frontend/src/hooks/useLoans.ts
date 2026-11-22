@@ -422,6 +422,8 @@ export const useApproveLoan = (
       const id = typeof vars === 'number' ? vars : vars.id;
       queryClient.invalidateQueries({ queryKey: loanKeys.accountDetail(id) });
       queryClient.invalidateQueries({ queryKey: loanKeys.accountLists() });
+      // The pending-approvals liquidity heads-up changes once a loan leaves "pending".
+      queryClient.invalidateQueries({ queryKey: ['bank-borrowings', 'pending-approvals'] });
     },
     ...options,
   });
@@ -436,6 +438,7 @@ export const useRejectLoan = (
     onSuccess: (_data, { id }) => {
       queryClient.invalidateQueries({ queryKey: loanKeys.accountDetail(id) });
       queryClient.invalidateQueries({ queryKey: loanKeys.accountLists() });
+      queryClient.invalidateQueries({ queryKey: ['bank-borrowings', 'pending-approvals'] });
     },
     ...options,
   });
