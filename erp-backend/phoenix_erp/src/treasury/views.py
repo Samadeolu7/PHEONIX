@@ -133,6 +133,37 @@ class LoanLiquidityCheckView(APIView):
         })
 
 
+class PendingApprovalsHeadsUpView(APIView):
+    """
+    GET /api/treasury/liquidity-check/pending-approvals/?branch=<id>
+
+    Heads-up for approvers: do all loans waiting for approval in the branch fit in what it can lend today?
+    Non-directors get their own branch. Directors may pass ?branch=; without it they get every branch that
+    has loans waiting. Response: {is_director, branches: [heads-up, ...]}.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        branch_id = request.query_params.get('branch')
+        if is_elevated_user(user):
+            if branch_id:
+                branches = [_get_branch(user, branch_id)]
+            else:
+                ids = (LoanAccount.all_objects.filter(tenant=_tenant(user), is_deleted=False, status='pending')
+                       .exclude(branch__isnull=True).values_list('branch_id', flat=True).distinct())
+                branches = list(Branch.all_objects.filter(pk__in=list(ids), is_deleted=False).order_by('name'))
+        else:
+            branch = getattr(user, 'branch', None)
+            if branch is None or (branch_id and str(branch.pk) != str(branch_id)):
+                raise PermissionDenied('You can only view your own branch.')
+            branches = [branch]
+        return Response({
+            'is_director': is_elevated_user(user),
+            'branches': [liquidity_gate.pending_approvals_heads_up(b) for b in branches],
+        })
+
+
 class BankAccountChoicesView(APIView):
     """
     GET /api/treasury/bank-accounts/ - every active bank account in the tenant with its branch (directors only).

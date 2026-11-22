@@ -9,6 +9,8 @@ borrowings = views.BorrowingViewSet
 urlpatterns = [
     path('forecast/', views.ForecastView.as_view(), name='forecast'),
     path('liquidity-check/loan/<int:loan_id>/', views.LoanLiquidityCheckView.as_view(), name='loan-liquidity-check'),
+    path('liquidity-check/pending-approvals/', views.PendingApprovalsHeadsUpView.as_view(),
+         name='pending-approvals-heads-up'),
     path('settings/', views.TreasurySettingsView.as_view(), name='settings'),
     path('bank-accounts/', views.BankAccountChoicesView.as_view(), name='bank-accounts'),
 

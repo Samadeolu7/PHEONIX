@@ -8,6 +8,7 @@ export const bankBorrowingKeys = {
   borrowing: (id: number) => [...bankBorrowingKeys.all, 'borrowing', id] as const,
   forecast: (branchId?: number, days?: number) => [...bankBorrowingKeys.all, 'forecast', branchId, days] as const,
   loanCheck: (loanId: number, stage: string) => [...bankBorrowingKeys.all, 'loan-check', loanId, stage] as const,
+  pendingApprovals: (branchId?: number) => [...bankBorrowingKeys.all, 'pending-approvals', branchId] as const,
   settings: () => [...bankBorrowingKeys.all, 'settings'] as const,
   bankAccounts: () => [...bankBorrowingKeys.all, 'bank-accounts'] as const,
   quote: (input: BorrowingQuoteInput | null) => [...bankBorrowingKeys.all, 'quote', input] as const,
@@ -95,6 +96,15 @@ export const useLoanLiquidityCheck = (loanId: number, stage: 'approval' | 'disbu
     queryFn: () => bankBorrowingService.checkLoan(loanId, stage),
     enabled: enabled && !!loanId,
     staleTime: 0,
+  });
+
+export const usePendingApprovalsHeadsUp = (branchId?: number, enabled = true) =>
+  useQuery({
+    queryKey: bankBorrowingKeys.pendingApprovals(branchId),
+    queryFn: () => bankBorrowingService.getPendingApprovalsHeadsUp(branchId),
+    enabled,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
 export const useBankAccountChoices = (enabled = true) =>

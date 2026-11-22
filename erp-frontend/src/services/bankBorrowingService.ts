@@ -13,6 +13,7 @@ import type {
   BorrowingSummary,
   BankAccountChoice,
   LiquidityCheck,
+  PendingApprovalsHeadsUpResponse,
   TreasurySettings,
 } from '../types/bankBorrowing';
 
@@ -72,6 +73,13 @@ export const bankBorrowingService = {
 
   async checkLoan(loanId: number, stage: 'approval' | 'disbursement'): Promise<LiquidityCheck> {
     return api.get(`${BASE}/liquidity-check/loan/${loanId}/`, { params: { stage } });
+  },
+
+  /** Do all loans waiting for approval fit in what the branch can lend today? */
+  async getPendingApprovalsHeadsUp(branchId?: number): Promise<PendingApprovalsHeadsUpResponse> {
+    return api.get(`${BASE}/liquidity-check/pending-approvals/`, {
+      params: branchId ? { branch: branchId } : undefined,
+    });
   },
 
   async getSettings(): Promise<TreasurySettings> {
