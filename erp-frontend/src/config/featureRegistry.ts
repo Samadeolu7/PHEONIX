@@ -744,6 +744,18 @@ export const FEATURE_REGISTRY: FeatureCard[] = [
     isNew: true,
   },
   {
+    id: 'user-permission-overrides',
+    title: 'User Overrides & Branch Access',
+    description:
+      'Give one user extra permissions or temporary access to another branch (they keep their own permissions and can switch between branches)',
+    path: '/admin/user-overrides',
+    icon: GitBranch,
+    requiredPermission: 'user-list',
+    moduleId: 'administration',
+    category: 'Admin Management',
+    isNew: true,
+  },
+  {
     id: 'online-portal-settings',
     title: 'Online Portal Settings',
     description:
