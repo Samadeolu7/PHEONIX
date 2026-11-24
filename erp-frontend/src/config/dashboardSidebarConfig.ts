@@ -365,6 +365,7 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('User Management', '/admin/users'),
         leaf('Role Management', '/admin/roles'),
         leaf('Permission Setup', '/admin/permission-setup'),
+        leaf('User Overrides & Branch Access', '/admin/user-overrides'),
         leaf('Online Portal Settings', '/admin/online-portal'),
         leaf('SMS Receipts', '/admin/sms-receipts'),
       ]),
