@@ -1,0 +1,144 @@
+"""
+Regression tests for check_savings_requirement.
+
+Production bug: clients who clearly had enough Regular Savings were blocked
+from new loans with "Insufficient Regular Savings balance: required
+₦10,000.00, available ₦0.00". The check only looked at an account that was
+(a) status='active' and (b) on the exact savings Product row the requirement
+referenced. It missed:
+  - accounts the legacy importer had marked 'dormant' (zero balance at import
+    time, never flipped back after later deposits), and
+  - accounts on another branch's copy of "Regular Savings" (products are
+    cloned per branch, so every branch has its own SAV-REG row).
+"""
+from datetime import date
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError
+from django.test import TestCase
+
+from common.managers import set_current_tenant
+from users.models import Tenant, User
+from branches.models import Branch
+from accounts.models import Account
+from products.models import Product
+from clients.models import Client
+from loans.models import LoanProduct, LoanProductSavingsRequirement
+from loans.services import check_savings_requirement
+from savings.models import SavingsAccount
+
+
+def _acct(user, branch, name, code, account_type, level=Account.LEVEL_PARENT, parent=None):
+    return Account.objects.create(
+        name=name, code=code, account_type=account_type, account_level=level,
+        parent=parent, owner=user, created_by=user, branch=branch,
+    )
+
+
+class SavingsRequirementTests(TestCase):
+    def setUp(self):
+        set_current_tenant(None)
+        self.user = User.objects.create_user(username="savreq", password="pass")
+        self.tenant = Tenant.objects.create(name="T-savreq", slug="t-savreq", owner=self.user)
+        self.user.tenant = self.tenant
+        self.user.save()
+        self.branch_a = Branch.objects.create(name="A", code="SRA", tenant=self.tenant, owner=self.user)
+        self.branch_b = Branch.objects.create(name="B", code="SRB", tenant=self.tenant, owner=self.user)
+        self.user.branch = self.branch_a
+        self.user.save()
+        set_current_tenant(self.tenant)
+
+        self.loan_parent = _acct(self.user, self.branch_a, "Loans", "1300", Account.LOAN)
+        self.cash = _acct(self.user, self.branch_a, "Cash", "1000", Account.ASSET)
+        self.income = _acct(self.user, self.branch_a, "Interest Income", "4100", Account.INCOME)
+        self.savings_parent = _acct(self.user, self.branch_a, "Member Savings", "2140", Account.SAVINGS)
+
+        # Each branch has its own clone of Regular Savings.
+        self.sav_a = Product.objects.create(
+            name="Regular Savings", code="SAV-REG", product_type="SAVINGS",
+            owner=self.user, branch=self.branch_a,
+        )
+        self.sav_b = Product.objects.create(
+            name="Regular Savings", code="SAV-REG", product_type="SAVINGS",
+            owner=self.user, branch=self.branch_b,
+        )
+
+        loan_gl_product = Product.objects.create(
+            name="Weekly Loan", code="LOAN-WK", product_type="LOAN",
+            owner=self.user, branch=self.branch_a,
+        )
+        self.loan_product = LoanProduct.objects.create(
+            product=loan_gl_product,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash,
+            interest_income_account=self.income,
+            default_interest_rate=Decimal("18.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("300000.00"),
+            owner=self.user, branch=self.branch_a,
+        )
+        # Requirement points at branch A's Regular Savings.
+        LoanProductSavingsRequirement.objects.create(
+            loan_product=self.loan_product, savings_product=self.sav_a,
+            requirement_type="fixed", value=Decimal("10000.00"),
+            owner=self.user, branch=self.branch_a,
+        )
+
+        self.client_obj = Client.objects.create(
+            client_id="CLI-SR1", first_name="Test", last_name="Client",
+            gender="female", phone_primary="08000000001", tenant=self.tenant,
+            owner=self.user, branch=self.branch_a,
+        )
+        # Drop any default savings account auto-opened by the client signal so
+        # each test controls exactly which account exists.
+        SavingsAccount.all_objects.filter(client=self.client_obj).delete()
+        self._n = 0
+
+    def _savings(self, product, balance, status="active"):
+        self._n += 1
+        gl = _acct(
+            self.user, self.branch_a, f"Sav {self._n}", f"2140-9{self._n:04d}",
+            Account.SAVINGS, level=Account.LEVEL_CHILD, parent=self.savings_parent,
+        )
+        Account.objects.filter(pk=gl.pk).update(balance=balance)
+        return SavingsAccount.objects.create(
+            client=self.client_obj, product=product, account=gl,
+            account_number=gl.code, opened_on=date.today(), status=status,
+            interest_rate=Decimal("0"), interest_calculation_method="monthly",
+            owner=self.user, branch=self.branch_a,
+        )
+
+    def test_active_account_with_enough_balance_passes(self):
+        self._savings(self.sav_a, Decimal("10000.00"))
+        check_savings_requirement(self.client_obj, self.loan_product, Decimal("50000"))
+
+    def test_dormant_account_with_enough_balance_passes(self):
+        self._savings(self.sav_a, Decimal("10000.00"), status="dormant")
+        check_savings_requirement(self.client_obj, self.loan_product, Decimal("50000"))
+
+    def test_other_branch_copy_of_product_counts(self):
+        self._savings(self.sav_b, Decimal("12000.00"))
+        check_savings_requirement(self.client_obj, self.loan_product, Decimal("50000"))
+
+    def test_frozen_account_does_not_count(self):
+        self._savings(self.sav_a, Decimal("10000.00"), status="frozen")
+        with self.assertRaises(ValidationError) as ctx:
+            check_savings_requirement(self.client_obj, self.loan_product, Decimal("50000"))
+        self.assertIn("available ₦0.00", str(ctx.exception))
+
+    def test_genuinely_short_balance_still_blocks(self):
+        self._savings(self.sav_a, Decimal("9999.99"))
+        with self.assertRaises(ValidationError) as ctx:
+            check_savings_requirement(self.client_obj, self.loan_product, Decimal("50000"))
+        self.assertIn("available ₦9,999.99", str(ctx.exception))
+
+    def test_deposit_reactivates_dormant_account(self):
+        acct = self._savings(self.sav_a, Decimal("0.00"), status="dormant")
+        till_gl = _acct(
+            self.user, self.branch_a, "Till", "1001", Account.ASSET,
+            level=Account.LEVEL_CHILD, parent=self.cash,
+        )
+        acct.deposit(Decimal("500.00"), cashier_account=till_gl, transacted_by=self.user)
+        acct.refresh_from_db()
+        self.assertEqual(acct.status, "active")

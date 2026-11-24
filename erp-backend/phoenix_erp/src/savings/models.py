@@ -209,7 +209,13 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         journal_entry.post()
 
         self.last_transaction_date = timezone.now().date()
-        self.save(update_fields=['last_transaction_date'])
+        update_fields = ['last_transaction_date']
+        # A deposit brings a dormant account back to life (legacy import
+        # marked every zero-balance account dormant; nothing else revives it).
+        if self.status == 'dormant':
+            self.status = 'active'
+            update_fields.append('status')
+        self.save(update_fields=update_fields)
 
         from common.models import FinancialAuditLog, log_financial_event
         log_financial_event(
