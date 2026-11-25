@@ -111,14 +111,6 @@ def resolve_effective_branch(request):
 
 
 # Create your views here.
-@extend_schema_view(
-    list=extend_schema(description="List all objects accessible to the current user."),
-    create=extend_schema(description="Create a new object for the current user."),
-    retrieve=extend_schema(description="Retrieve a specific object if accessible to the current user."),
-    update=extend_schema(description="Update an object if accessible to the current user."),
-    partial_update=extend_schema(description="Partially update an object if accessible to the current user."),
-    destroy=extend_schema(description="Delete an object if accessible to the current user.")
-)
 def customer_branch_from(source, field_names):
     """
     Return the branch of the first customer record (client, loan, savings
@@ -136,6 +128,14 @@ def customer_branch_from(source, field_names):
     return None
 
 
+@extend_schema_view(
+    list=extend_schema(description="List all objects accessible to the current user."),
+    create=extend_schema(description="Create a new object for the current user."),
+    retrieve=extend_schema(description="Retrieve a specific object if accessible to the current user."),
+    update=extend_schema(description="Update an object if accessible to the current user."),
+    partial_update=extend_schema(description="Partially update an object if accessible to the current user."),
+    destroy=extend_schema(description="Delete an object if accessible to the current user.")
+)
 class ScopedModelViewSet(viewsets.ModelViewSet):
     """
     Base viewset that automatically filters queryset by owner/branch and sets tenant fields.
