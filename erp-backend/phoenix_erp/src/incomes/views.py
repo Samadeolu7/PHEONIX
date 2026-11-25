@@ -13,7 +13,7 @@ from django.utils import timezone
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 import logging
-from common.views import ScopedModelViewSet, resolve_effective_branch
+from common.views import ScopedModelViewSet, resolve_effective_branch, branch_copy_of
 from .models import (
     IncomeCategory, Income, FeeStructure, ServiceItem, Invoice,
     FeeEntitlement, EntitlementPaymentLog, EntitlementUsageLog,
@@ -556,6 +556,40 @@ class InvoiceViewSet(ScopedModelViewSet):
         
         return queryset.select_related('client', 'fee_structure')
 
+    def _acting_branch(self):
+        """Branch the staff member is working in: a temporarily granted (or,
+        for directors, selected) branch from the branch switcher, else their
+        assigned home branch."""
+        return self._get_director_branch_override() or getattr(self.request.user, 'branch', None)
+
+    def _invoice_branch(self, data):
+        """An invoice belongs to its CLIENT's branch, not the staff member's
+        (staff get moved between branches temporarily)."""
+        client = data.get('client')
+        return getattr(client, 'branch', None) or self._acting_branch()
+
+    def _use_branch_copies(self, data, branch):
+        """
+        Fee structures, service items and inventory items are cloned per branch,
+        each pointing at that branch's income/sales GL accounts, and a journal
+        entry can only post to accounts in its own branch. Swap in ``branch``'s
+        copies of whatever the form offered. Invoices don't move stock (stock
+        stays with the allocation/store it was issued from), so this only
+        changes which branch's revenue accounts are credited.
+        """
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from common.views import branch_copy_of
+        try:
+            if data.get('fee_structure') is not None:
+                data['fee_structure'] = branch_copy_of(data['fee_structure'], branch)
+            for item in data.get('items') or []:
+                if item.get('service_item') is not None:
+                    item['service_item'] = branch_copy_of(item['service_item'], branch)
+                if item.get('inventory_item') is not None:
+                    item['inventory_item'] = branch_copy_of(item['inventory_item'], branch, key='sku')
+        except ValidationError as exc:
+            raise DRFValidationError({'detail': exc.messages})
+
     def perform_create(self, serializer):
         """Auto-generate invoice_number and register in ReferenceTracking"""
         from common.services.reference_service import ReferenceService
@@ -564,13 +598,15 @@ class InvoiceViewSet(ScopedModelViewSet):
 
         user = self.request.user
         tenant = getattr(user, 'tenant', user)
+        branch = self._invoice_branch(serializer.validated_data)
+        self._use_branch_copies(serializer.validated_data, branch)
 
         # Generate unique invoice number OUTSIDE the transaction
         invoice_number = ReferenceService.generate_reference(
             module='incomes',
             model_name='invoice',
             tenant=tenant,
-            branch=user.branch
+            branch=branch
         )
         
         logger.info(f"Creating invoice with number: {invoice_number}")
@@ -583,7 +619,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                     invoice = serializer.save(
                         invoice_number=invoice_number,
                         owner=user,
-                        branch=user.branch,
+                        branch=branch,
                         tenant=tenant
                     )
                     
@@ -596,7 +632,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                         model_name='invoice',
                         object_id=invoice.id,
                         tenant=tenant,
-                        branch=user.branch,
+                        branch=branch,
                         created_by=user,
                         status=invoice.status,
                         amount=invoice.total_amount if invoice.total_amount else None,
@@ -621,7 +657,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                         module='incomes',
                         model_name='invoice',
                         tenant=tenant,
-                        branch=user.branch
+                        branch=branch
                     )
                     logger.info(f"Retrying with new invoice number: {invoice_number}")
                 else:
@@ -1570,12 +1606,17 @@ class InvoiceViewSet(ScopedModelViewSet):
         with transaction.atomic():
             for client in clients:
                 try:
+                    # Each invoice belongs to its client's branch, on that
+                    # branch's copy of the fee structure (its income account).
+                    branch = self._invoice_branch({'client': client})
+                    client_fee_structure = branch_copy_of(fee_structure, branch)
+
                     # Generate invoice number
                     invoice_number = ReferenceService.generate_reference(
                         module='incomes',
                         model_name='invoice',
                         tenant=request.user.tenant if hasattr(request.user, 'tenant') else request.user,
-                        branch=request.user.branch
+                        branch=branch
                     )
                     
                     # Format description
@@ -1592,11 +1633,11 @@ class InvoiceViewSet(ScopedModelViewSet):
                         invoice_date=invoice_date,
                         due_date=due_date,
                         description=description,
-                        amount=fee_structure.base_amount,
-                        fee_structure=fee_structure,
+                        amount=client_fee_structure.base_amount,
+                        fee_structure=client_fee_structure,
                         metadata=period_context,
                         owner=request.user,
-                        branch=request.user.branch,
+                        branch=branch,
                         tenant=request.user.tenant if hasattr(request.user, 'tenant') else None,
                         status='draft'
                     )
@@ -1608,7 +1649,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                         model_name='invoice',
                         object_id=invoice.id,
                         tenant=request.user.tenant if hasattr(request.user, 'tenant') else request.user,
-                        branch=request.user.branch,
+                        branch=branch,
                         created_by=request.user,
                         status=invoice.status,
                         amount=invoice.amount,
@@ -2062,7 +2103,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                 term_id=serializer.validated_data['term_id'],
                 classification_id=serializer.validated_data['classification_id'],
                 fee_structure_id=serializer.validated_data['fee_structure_id'],
-                branch=request.user.branch,
+                branch=self._acting_branch(),
                 owner=request.user,
                 due_date=serializer.validated_data.get('due_date'),
                 notes=serializer.validated_data.get('notes', ''),
@@ -2257,7 +2298,7 @@ class InvoiceViewSet(ScopedModelViewSet):
         try:
             result = BulkInvoiceService.approve_batch(
                 batch_id=batch_id,
-                branch=request.user.branch,
+                branch=self._acting_branch(),
                 approver=request.user,
                 notes=serializer.validated_data.get('notes', ''),
                 approved_discount_invoice_ids=serializer.validated_data.get('approved_discount_invoice_ids')
@@ -2304,7 +2345,7 @@ class InvoiceViewSet(ScopedModelViewSet):
         try:
             result = BulkInvoiceService.reject_batch(
                 batch_id=batch_id,
-                branch=request.user.branch,
+                branch=self._acting_branch(),
                 rejector=request.user,
                 reason=reason
             )

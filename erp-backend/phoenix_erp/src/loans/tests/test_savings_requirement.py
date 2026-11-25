@@ -351,3 +351,38 @@ class CustomerBranchTests(_LoanEnvTestCase):
         self.assertEqual(resp.status_code, 200, resp.content)
         imported = Client.objects.get(phone_primary="08099990000")
         self.assertEqual(imported.branch_id, self.branch_b.pk)
+
+    def test_invoice_follows_client_branch_with_branch_copies(self):
+        """Fee/service invoice: booked in the client's branch, on that branch's
+        copy of the service item (so revenue credits that branch's account)."""
+        from rest_framework.test import APIClient
+        from incomes.models import Invoice, ServiceItem
+        cat_a = self._income_category(self.branch_a)
+        cat_b = self._income_category(self.branch_b)
+        svc_a = ServiceItem.objects.create(
+            name="Passbook", code="PASS", category=cat_a, default_price=Decimal("300"),
+            owner=self.user, branch=self.branch_a)
+        svc_b = ServiceItem.objects.create(
+            name="Passbook", code="PASS", category=cat_b, default_price=Decimal("300"),
+            owner=self.user, branch=self.branch_b)
+        Client.objects.filter(pk=self.client_obj.pk).update(branch=self.branch_b)
+
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.post(
+            "/api/incomes/invoices/",
+            {
+                "client": self.client_obj.pk, "invoice_date": str(date.today()),
+                "due_date": str(date.today()), "description": "Passbook",
+                "items": [{
+                    "item_type": "service", "service_item": svc_a.pk,
+                    "description": "Passbook", "quantity": "1", "unit_price": "300.00",
+                }],
+            },
+            format="json",
+            HTTP_X_BRANCH_ID=str(self.branch_a.pk),  # staff working in branch A
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        invoice = Invoice.objects.get(client=self.client_obj)
+        self.assertEqual(invoice.branch_id, self.branch_b.pk)
+        self.assertEqual(invoice.items.get().service_item_id, svc_b.pk)

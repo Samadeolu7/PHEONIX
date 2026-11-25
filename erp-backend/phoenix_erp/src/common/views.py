@@ -128,6 +128,34 @@ def customer_branch_from(source, field_names):
     return None
 
 
+def branch_copy_of(obj, branch, key='code'):
+    """
+    Return ``branch``'s own copy of a per-branch setup record (fee structure,
+    service item, inventory item, ...). BranchCloneService gives every branch
+    its own copy, matched on ``key`` (code / sku), each pointing at that
+    branch's GL accounts. A record already in ``branch``, or tenant-wide (no
+    branch), is returned unchanged.
+
+    Raises django ValidationError if ``branch`` has no copy.
+    """
+    from django.core.exceptions import ValidationError as DjangoValidationError
+
+    if obj is None or branch is None or getattr(obj, 'branch_id', None) in (None, branch.pk):
+        return obj
+    model = type(obj)
+    manager = getattr(model, 'objects', model._default_manager)
+    lookup = {key: getattr(obj, key), 'branch': branch}
+    if any(f.name == 'is_deleted' for f in model._meta.fields):
+        lookup['is_deleted'] = False
+    copy = manager.filter(**lookup).first()
+    if copy is None:
+        raise DjangoValidationError(
+            f"{model._meta.verbose_name.capitalize()} '{obj}' is not set up in "
+            f"{branch.name}. Set it up there first."
+        )
+    return copy
+
+
 @extend_schema_view(
     list=extend_schema(description="List all objects accessible to the current user."),
     create=extend_schema(description="Create a new object for the current user."),
