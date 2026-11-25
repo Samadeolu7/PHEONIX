@@ -1,3 +1,4 @@
+from permissions.testing import grant_page_permissions
 from django.urls import reverse
 from rest_framework.test import APITestCase
 from rest_framework import status
@@ -86,6 +87,7 @@ class TransactionAPITests(APITestCase):
         )
         
         # Authenticate
+        grant_page_permissions(self.admin_user, 'transactions', 'transactions')
         self.client.force_authenticate(user=self.admin_user)
 
     def test_create_transaction(self):
@@ -275,7 +277,10 @@ class TransactionAPITests(APITestCase):
             ]
         }
         
+        before = Transaction.objects.count()
         response = self.client.post(url, data, format='json')
-        # Cross-branch transactions may be allowed in this system
-        # If they should be blocked, add validation to the serializer
-        self.assertIn(response.status_code, [status.HTTP_201_CREATED, status.HTTP_400_BAD_REQUEST])
+        # Every journal entry must stay inside one branch (money that truly
+        # moves between branches goes through Due To/Due From instead), so a
+        # manual journal mixing two branches' accounts is rejected outright.
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.content)
+        self.assertEqual(Transaction.objects.count(), before)

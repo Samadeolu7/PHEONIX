@@ -8,6 +8,7 @@ Tests cover:
 - Error handling and rollback
 """
 
+from transactions.testing import post_opening_balance
 from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -52,8 +53,8 @@ class CreateTransactionServiceTest(TransactionTestCase):
             name='Cash',
             account_level=Account.LEVEL_PARENT,
             account_type=Account.ASSET,
-            balance=Decimal('10000.00')
         )
+        post_opening_balance(self.cash, Decimal('10000.00'))
         
         self.income = Account.objects.create(
             owner=self.user,
@@ -62,7 +63,6 @@ class CreateTransactionServiceTest(TransactionTestCase):
             name='Income',
             account_level=Account.LEVEL_PARENT,
             account_type=Account.INCOME,
-            balance=Decimal('0.00')
         )
     
     def test_create_simple_transaction(self):
@@ -194,8 +194,8 @@ class BatchTransactionServiceTest(TransactionTestCase):
             name='Cash',
             account_level=Account.LEVEL_PARENT,
             account_type=Account.ASSET,
-            balance=Decimal('10000.00')
         )
+        post_opening_balance(self.cash, Decimal('10000.00'))
         
         self.income = Account.objects.create(
             owner=self.user,
@@ -204,7 +204,6 @@ class BatchTransactionServiceTest(TransactionTestCase):
             name='Income',
             account_level=Account.LEVEL_PARENT,
             account_type=Account.INCOME,
-            balance=Decimal('0.00')
         )
     
     def test_create_batch_transactions(self):

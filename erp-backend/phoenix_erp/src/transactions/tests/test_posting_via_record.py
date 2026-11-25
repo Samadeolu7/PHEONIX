@@ -87,5 +87,6 @@ class RecordPaymentPostingTest(TestCase):
 
         self.assertTrue(tx.approved)
         self.assertEqual(cash_after - cash_before, Decimal('100.00'))
-        # Income account balance should decrease by 100 (stored as negative increase)
-        self.assertEqual(income_after - income_before, Decimal('-100.00'))
+        # Balances are stored positive on each account's natural side
+        # (TransactionEntry.get_balance_effect): a credit INCREASES income.
+        self.assertEqual(income_after - income_before, Decimal('100.00'))

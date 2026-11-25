@@ -38,9 +38,24 @@ class SoftDeleteManager(models.Manager):
         self.include_deleted = include_deleted
         super().__init__(**kwargs)
 
+    def _hides_deleted(self):
+        """Filter out soft-deleted rows — only on models that have the flag.
+
+        Some models use these managers without being soft-deletable (e.g.
+        LoanRepaymentRequest, declared with include_deleted=True). Django
+        builds related managers (``obj.<relation>.all()``) from the manager
+        CLASS with default arguments, which dropped include_deleted and
+        filtered on a missing ``is_deleted`` field — crashing every related
+        lookup into such a model (e.g. the GL reverse action's linked-records
+        check).
+        """
+        return not self.include_deleted and any(
+            f.name == 'is_deleted' for f in self.model._meta.concrete_fields
+        )
+
     def get_queryset(self):
         qs = SoftDeleteQuerySet(self.model, using=self._db)
-        if not self.include_deleted:
+        if self._hides_deleted():
             qs = qs.alive()
         return qs
 
@@ -88,7 +103,7 @@ class OwnerBranchManager(SoftDeleteManager):
     def get_queryset(self):
         # Base queryset with soft-delete handling
         qs = OwnerBranchQuerySet(self.model, using=self._db)
-        if not self.include_deleted:
+        if self._hides_deleted():
             qs = qs.alive()
         
         # Automatically filter by tenant if model has tenant field
@@ -121,7 +136,7 @@ class OwnerBranchManager(SoftDeleteManager):
             raise PermissionDenied("User must be authenticated.")
 
         qs = OwnerBranchQuerySet(self.model, using=self._db)
-        if not self.include_deleted:
+        if self._hides_deleted():
             qs = qs.alive()
 
         # System admin bypass
@@ -182,6 +197,6 @@ class OwnerBranchManager(SoftDeleteManager):
         """Get queryset without tenant filtering (admin use only)"""
         # Create fresh queryset without tenant filter
         qs = OwnerBranchQuerySet(self.model, using=self._db)
-        if not self.include_deleted:
+        if self._hides_deleted():
             qs = qs.alive()
         return qs

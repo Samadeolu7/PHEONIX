@@ -11,6 +11,7 @@ Tests cover:
 - Validation and error handling
 """
 
+from permissions.testing import grant_page_permissions
 from django.test import TestCase, override_settings
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -76,7 +77,6 @@ class TransactionAPITest(TestCase):
             name='Cash',
             account_level=Account.LEVEL_PARENT,
             account_type=Account.ASSET,
-            balance=Decimal('10000.00')
         )
         
         self.income = Account.objects.create(
@@ -86,9 +86,9 @@ class TransactionAPITest(TestCase):
             name='Income',
             account_level=Account.LEVEL_PARENT,
             account_type=Account.INCOME,
-            balance=Decimal('0.00')
         )
         
+        grant_page_permissions(self.user, 'transactions', 'transactions')
         self.client.force_authenticate(user=self.user)
     
     def test_create_transaction(self):
@@ -347,7 +347,7 @@ class TransactionAPITest(TestCase):
             format='json'
         )
         
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
         
         tx.refresh_from_db()
         self.assertTrue(tx.is_reversed)
@@ -415,6 +415,7 @@ class TransactionSeriesAPITest(TestCase):
             branch=self.branch
         )
         
+        grant_page_permissions(self.user, 'transactions', 'transaction-series')
         self.client.force_authenticate(user=self.user)
     
     def test_create_series(self):
@@ -424,13 +425,14 @@ class TransactionSeriesAPITest(TestCase):
             'description': 'Invoices'
         }
         
+        before = TransactionSeries.objects.count()  # setup signals create some series
         response = self.client.post('/api/transactions/transaction-series/', data, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(TransactionSeries.objects.count(), 1)
+        self.assertEqual(TransactionSeries.objects.count(), before + 1)
         
-        series = TransactionSeries.objects.first()
-        self.assertEqual(series.code, 'INV')
+        series = TransactionSeries.objects.get(code='INV')
+        self.assertEqual(series.description, 'Invoices')
     
     def test_list_series(self):
         """Test listing transaction series via API."""
@@ -438,10 +440,12 @@ class TransactionSeriesAPITest(TestCase):
         TransactionSeries.objects.create(code='CA', description='Cash')
         TransactionSeries.objects.create(code='SA', description='Sales')
         
-        response = self.client.get('/api/transactions/transaction-series/')
+        response = self.client.get('/api/transactions/transaction-series/', {'page_size': 500})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['results']), 3)
+        # Series are system-wide and setup signals add their own; check ours are listed.
+        codes = {row['code'] for row in response.data['results']}
+        self.assertTrue({'GJ', 'CA', 'SA'} <= codes)
     
     def test_prevent_duplicate_series_code(self):
         """Test that duplicate series codes are rejected."""

@@ -37,9 +37,6 @@ class TransactionBalanceEnforcementTests(TestCase):
         self.series = TransactionSeries.objects.create(
             code='TEST',
             description='Test Series',
-            next_number=1,
-            owner=self.user,
-            branch=self.branch
         )
         
         # Create test accounts
@@ -47,7 +44,7 @@ class TransactionBalanceEnforcementTests(TestCase):
             code='1000',
             name='Cash',
             account_type=Account.ASSET,
-            account_level=Account.LEVEL_CHILD,
+            account_level=Account.LEVEL_PARENT,  # top-level leaf: may post while it has no children
             owner=self.user,
             branch=self.branch
         )
@@ -56,7 +53,7 @@ class TransactionBalanceEnforcementTests(TestCase):
             code='4000',
             name='Revenue',
             account_type=Account.INCOME,
-            account_level=Account.LEVEL_CHILD,
+            account_level=Account.LEVEL_PARENT,  # top-level leaf: may post while it has no children
             owner=self.user,
             branch=self.branch
         )
@@ -65,7 +62,7 @@ class TransactionBalanceEnforcementTests(TestCase):
             code='5000',
             name='Expenses',
             account_type=Account.EXPENSE,
-            account_level=Account.LEVEL_CHILD,
+            account_level=Account.LEVEL_PARENT,  # top-level leaf: may post while it has no children
             owner=self.user,
             branch=self.branch
         )
@@ -255,7 +252,12 @@ class TransactionBalanceEnforcementTests(TestCase):
         self.assertIn('already posted', str(ctx.exception).lower())
     
     def test_save_validates_balance(self):
-        """Test that save() enforces balance validation"""
+        """An unbalanced entry can never take effect.
+
+        Drafts are saved before their lines are added (that is how every
+        posting is built), so balance is enforced when POSTING: post() must
+        refuse, leave balances untouched and leave the entry unposted.
+        """
         transaction = Transaction.objects.create(
             series=self.series,
             description='Test save validation',
@@ -277,11 +279,16 @@ class TransactionBalanceEnforcementTests(TestCase):
             amount=Decimal('75.00')  # Unbalanced!
         )
         
-        # Trying to save should raise ValidationError
         with self.assertRaises(ValidationError) as ctx:
-            transaction.save()
-        
+            transaction.post()
+
         self.assertIn('UNBALANCED', str(ctx.exception).upper())
+        transaction.refresh_from_db()
+        self.assertFalse(transaction.approved)
+        self.cash_account.refresh_from_db()
+        self.revenue_account.refresh_from_db()
+        self.assertEqual(self.cash_account.balance, Decimal('0.00'))
+        self.assertEqual(self.revenue_account.balance, Decimal('0.00'))
 
 
 class GRNMandatoryPostingTests(TestCase):

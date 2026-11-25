@@ -6,8 +6,10 @@ This test suite verifies the fundamental accounting equation:
 
 And ensures that:
 1. Debits always equal credits in every transaction
-2. Trial balance always sums to zero
-3. Account balances follow proper sign conventions
+2. The trial balance balances: debit-natural balances (assets + expenses)
+   equal credit-natural balances (liabilities + equity + income)
+3. Account balances follow the system's convention: every balance is stored
+   POSITIVE on its account's natural side (TransactionEntry.get_balance_effect)
 4. No unbalanced transactions can be posted
 """
 
@@ -20,6 +22,7 @@ from accounts.models import Account
 from branches.models import Branch
 from users.models import Tenant
 from transactions.models import Transaction, TransactionEntry, TransactionSeries
+from transactions.testing import post_opening_balance
 
 User = get_user_model()
 
@@ -54,16 +57,29 @@ class AccountingSignConventionTests(TestCase):
             description="Journal Entry"
         )
         
-        # Create chart of accounts
+        # Create chart of accounts: one parent per section, detail (child)
+        # accounts under it — postings go to the children.
+        parents = {}
+        for code, name, acct_type in (
+            ("1000", "Assets", Account.ASSET), ("2000", "Liabilities", Account.LIABILITY),
+            ("3000", "Equity", Account.EQUITY), ("4000", "Income", Account.INCOME),
+            ("5000", "Expenses", Account.EXPENSE),
+        ):
+            parents[acct_type] = Account.objects.create(
+                code=code, name=name, account_type=acct_type,
+                account_level=Account.LEVEL_PARENT, branch=self.branch,
+                owner=self.user, tenant=self.tenant,
+            )
+
         self.cash = Account.objects.create(
             code="1010",
             name="Cash",
             account_type=Account.ASSET,
             account_level=Account.LEVEL_CHILD,
+            parent=parents[Account.ASSET],
             branch=self.branch,
             owner=self.user,
             tenant=self.tenant,
-            balance=Decimal('0.00')
         )
         
         self.accounts_receivable = Account.objects.create(
@@ -71,10 +87,10 @@ class AccountingSignConventionTests(TestCase):
             name="Accounts Receivable",
             account_type=Account.ASSET,
             account_level=Account.LEVEL_CHILD,
+            parent=parents[Account.ASSET],
             branch=self.branch,
             owner=self.user,
             tenant=self.tenant,
-            balance=Decimal('0.00')
         )
         
         self.inventory = Account.objects.create(
@@ -82,10 +98,10 @@ class AccountingSignConventionTests(TestCase):
             name="Inventory",
             account_type=Account.ASSET,
             account_level=Account.LEVEL_CHILD,
+            parent=parents[Account.ASSET],
             branch=self.branch,
             owner=self.user,
             tenant=self.tenant,
-            balance=Decimal('0.00')
         )
         
         self.accounts_payable = Account.objects.create(
@@ -93,10 +109,10 @@ class AccountingSignConventionTests(TestCase):
             name="Accounts Payable",
             account_type=Account.LIABILITY,
             account_level=Account.LEVEL_CHILD,
+            parent=parents[Account.LIABILITY],
             branch=self.branch,
             owner=self.user,
             tenant=self.tenant,
-            balance=Decimal('0.00')
         )
         
         self.capital = Account.objects.create(
@@ -104,10 +120,10 @@ class AccountingSignConventionTests(TestCase):
             name="Owner's Capital",
             account_type=Account.EQUITY,
             account_level=Account.LEVEL_CHILD,
+            parent=parents[Account.EQUITY],
             branch=self.branch,
             owner=self.user,
             tenant=self.tenant,
-            balance=Decimal('0.00')
         )
         
         self.revenue = Account.objects.create(
@@ -115,10 +131,10 @@ class AccountingSignConventionTests(TestCase):
             name="Sales Revenue",
             account_type=Account.INCOME,
             account_level=Account.LEVEL_CHILD,
+            parent=parents[Account.INCOME],
             branch=self.branch,
             owner=self.user,
             tenant=self.tenant,
-            balance=Decimal('0.00')
         )
         
         self.cogs = Account.objects.create(
@@ -126,10 +142,10 @@ class AccountingSignConventionTests(TestCase):
             name="Cost of Goods Sold",
             account_type=Account.EXPENSE,
             account_level=Account.LEVEL_CHILD,
+            parent=parents[Account.EXPENSE],
             branch=self.branch,
             owner=self.user,
             tenant=self.tenant,
-            balance=Decimal('0.00')
         )
     
     def test_debit_increases_asset_account(self):
@@ -168,18 +184,16 @@ class AccountingSignConventionTests(TestCase):
         
         # Cash (asset) should INCREASE with debit
         self.assertEqual(self.cash.balance, Decimal('1000.00'))
-        # Capital (equity) should INCREASE with credit (stored as negative)
-        self.assertEqual(self.capital.balance, Decimal('-1000.00'))
+        # Capital (equity) should INCREASE with credit (stored positive)
+        self.assertEqual(self.capital.balance, Decimal('1000.00'))
         
-        # Trial balance should sum to zero
-        trial_balance = self.cash.balance + self.capital.balance
-        self.assertEqual(trial_balance, Decimal('0.00'))
+        # Trial balance: debit-natural side equals credit-natural side
+        self.assertEqual(self.cash.balance, self.capital.balance)
     
     def test_credit_decreases_asset_account(self):
         """Test that crediting an asset account decreases its balance"""
-        # Setup: Cash starts with 1000 (use queryset update to bypass ORM protection)
-        Account.objects.filter(pk=self.cash.pk).update(balance=Decimal('1000.00'))
-        self.cash.refresh_from_db()
+        # Setup: Cash starts with 1000 (posted opening balance)
+        post_opening_balance(self.cash, Decimal('1000.00'), self.user)
         
         # Create transaction: Cr Cash 300 (payment)
         txn = Transaction.objects.create(
@@ -251,21 +265,17 @@ class AccountingSignConventionTests(TestCase):
         
         # Inventory (asset) should INCREASE with debit
         self.assertEqual(self.inventory.balance, Decimal('500.00'))
-        # AP (liability) should INCREASE with credit (stored as negative)
-        self.assertEqual(self.accounts_payable.balance, Decimal('-500.00'))
+        # AP (liability) should INCREASE with credit (stored positive)
+        self.assertEqual(self.accounts_payable.balance, Decimal('500.00'))
         
-        # Trial balance
-        trial_balance = self.inventory.balance + self.accounts_payable.balance
-        self.assertEqual(trial_balance, Decimal('0.00'))
+        # Trial balance: debit-natural side equals credit-natural side
+        self.assertEqual(self.inventory.balance, self.accounts_payable.balance)
     
     def test_debit_decreases_liability_account(self):
         """Test that debiting a liability account decreases its balance"""
-        # Setup: AP has balance of -500 (we owe 500)
-        Account.objects.filter(pk=self.accounts_payable.pk).update(balance=Decimal('-500.00'))
-        self.accounts_payable.refresh_from_db()
-
-        Account.objects.filter(pk=self.cash.pk).update(balance=Decimal('1000.00'))
-        self.cash.refresh_from_db()
+        # Setup: we owe 500 (AP) and hold 1000 cash (posted opening balances)
+        post_opening_balance(self.accounts_payable, Decimal('500.00'), self.user)
+        post_opening_balance(self.cash, Decimal('1000.00'), self.user)
         
         # Create transaction: pay off liability
         txn = Transaction.objects.create(
@@ -298,9 +308,8 @@ class AccountingSignConventionTests(TestCase):
         # Refresh account
         self.accounts_payable.refresh_from_db()
         
-        # AP should DECREASE (become less negative) with debit
-        # Was -500, debited 200, now -300
-        self.assertEqual(self.accounts_payable.balance, Decimal('-300.00'))
+        # AP should DECREASE with debit: was 500, debited 200, now 300
+        self.assertEqual(self.accounts_payable.balance, Decimal('300.00'))
     
     def test_credit_increases_revenue_account(self):
         """Test that crediting a revenue account increases income"""
@@ -338,12 +347,11 @@ class AccountingSignConventionTests(TestCase):
         
         # AR (asset) should INCREASE with debit
         self.assertEqual(self.accounts_receivable.balance, Decimal('750.00'))
-        # Revenue (income) should INCREASE with credit (stored as negative)
-        self.assertEqual(self.revenue.balance, Decimal('-750.00'))
+        # Revenue (income) should INCREASE with credit (stored positive)
+        self.assertEqual(self.revenue.balance, Decimal('750.00'))
         
-        # Trial balance
-        trial_balance = self.accounts_receivable.balance + self.revenue.balance
-        self.assertEqual(trial_balance, Decimal('0.00'))
+        # Trial balance: debit-natural side equals credit-natural side
+        self.assertEqual(self.accounts_receivable.balance, self.revenue.balance)
     
     def test_debit_increases_expense_account(self):
         """Test that debiting an expense account increases expenses"""
@@ -521,45 +529,24 @@ class AccountingSignConventionTests(TestCase):
             account_level=Account.LEVEL_CHILD
         )
         
-        trial_balance = sum(acc.balance for acc in all_accounts)
-        
-        # Trial balance MUST equal zero
+        debit_natural = sum(
+            acc.balance for acc in all_accounts
+            if acc.account_type in (Account.ASSET, Account.EXPENSE)
+        )
+        credit_natural = sum(
+            acc.balance for acc in all_accounts
+            if acc.account_type in (Account.LIABILITY, Account.EQUITY, Account.INCOME)
+        )
+
+        # Trial balance: Assets + Expenses = Liabilities + Equity + Income
         self.assertEqual(
-            trial_balance,
-            Decimal('0.00'),
-            f"Trial balance should be zero, got {trial_balance}"
+            debit_natural, credit_natural,
+            f"Trial balance out: debit side {debit_natural} != credit side {credit_natural}",
         )
-        
-        # Verify accounting equation: Assets = Liabilities + Equity
-        assets = sum(
-            acc.balance for acc in all_accounts
-            if acc.account_type in [Account.ASSET]
-        )
-        
-        liabilities = sum(
-            acc.balance for acc in all_accounts
-            if acc.account_type == Account.LIABILITY
-        )
-        
-        equity = sum(
-            acc.balance for acc in all_accounts
-            if acc.account_type in [Account.EQUITY, Account.INCOME]
-        )
-        
-        expenses = sum(
-            acc.balance for acc in all_accounts
-            if acc.account_type == Account.EXPENSE
-        )
-        
-        # Assets + Expenses = Liabilities + Equity + Revenue
-        # In signed form: Assets + Expenses + Liabilities + Equity + Revenue = 0
-        accounting_equation = assets + expenses + liabilities + equity
-        self.assertEqual(
-            accounting_equation,
-            Decimal('0.00'),
-            f"Accounting equation violated: {assets} + {expenses} + {liabilities} + {equity} = {accounting_equation}"
-        )
-    
+        # Concretely: cash 10000 + inventory 2000 + AR 8000 + COGS 3000
+        #           = capital 10000 + AP 5000 + revenue 8000
+        self.assertEqual(debit_natural, Decimal('23000.00'))
+
     def test_verify_trial_balance_impact_method(self):
         """Test the Transaction.verify_trial_balance_impact() method"""
         # Create balanced transaction
