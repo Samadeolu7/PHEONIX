@@ -51,6 +51,61 @@ def _client_savings_balance_for_product(client, savings_product) -> Decimal:
     return sum((acct.current_balance for acct in qs), Decimal('0.00'))
 
 
+def loan_product_for_branch(loan_product, branch):
+    """
+    Return ``branch``'s own copy of ``loan_product``.
+
+    Loan products (and their GL accounts) are cloned per branch. A loan must be
+    booked in the customer's branch, but the staff member keying it in picks
+    from their own branch's product list — so swap in the customer branch's
+    clone (matched by product code). Tenant-wide products (no branch) and
+    products already in ``branch`` are returned unchanged.
+
+    Raises ValidationError if the customer's branch has no copy of the product.
+    """
+    from .models import LoanProduct
+
+    if branch is None or loan_product.branch_id in (None, branch.pk):
+        return loan_product
+
+    match = (
+        LoanProduct.objects
+        .filter(
+            product__code=loan_product.product.code,
+            product__product_type=loan_product.product.product_type,
+            branch=branch,
+            is_deleted=False,
+        )
+        .select_related('product', 'parent_account')
+        .first()
+    )
+    if match is None:
+        raise ValidationError(
+            f"Loan product '{loan_product.product.name}' is not set up in the "
+            f"client's branch ({branch.name}). Set it up there before booking "
+            f"this loan."
+        )
+    return match
+
+
+def remap_fee_routing(fee_routing: dict, from_product, to_product) -> dict:
+    """
+    fee_routing is keyed by LoanProductFee pk of the product the form showed.
+    When the loan is booked on another branch's copy of the product, re-key it
+    to that copy's fee lines (matched by fee name).
+    """
+    if not fee_routing or from_product.pk == to_product.pk:
+        return fee_routing
+    names = dict(from_product.fee_lines.values_list('pk', 'name'))
+    target = dict(to_product.fee_lines.values_list('name', 'pk'))
+    remapped = {}
+    for fee_pk, route in fee_routing.items():
+        new_pk = target.get(names.get(fee_pk))
+        if new_pk is not None:
+            remapped[new_pk] = route
+    return remapped
+
+
 def check_savings_requirement(client, loan_product, requested_amount: Decimal) -> None:
     """
     Hard-block check: raise ValidationError if the client does not hold enough

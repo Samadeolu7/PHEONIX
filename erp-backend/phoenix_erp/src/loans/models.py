@@ -881,7 +881,26 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             description=f'Loan {self.loan_number} approved',
             extra={'loan_number': self.loan_number, 'client_id': str(self.client_id)},
         )
-    
+
+    def _check_disbursement_gl_config(self):
+        """
+        Refuse to disburse when the product lacks GL accounts it needs (see the
+        "Required GL account guard" comment in disburse()). Kept as its own
+        method so tests can reproduce loans disbursed before this guard existed.
+        """
+        if not self.product.interest_income_account:
+            raise ValidationError(
+                f"Cannot disburse: {self.product} has no interest_income_account configured. "
+                "Interest collected on this loan would have nowhere valid to be recognized as "
+                "income. Configure interest_income_account on the loan product before disbursing."
+            )
+        if self.product.late_payment_penalty and self.product.late_payment_penalty > 0 and not self.product.penalty_income_account:
+            raise ValidationError(
+                f"Cannot disburse: {self.product} charges a late payment penalty "
+                f"({self.product.late_payment_penalty}) but has no penalty_income_account "
+                "configured. Configure penalty_income_account on the loan product before disbursing."
+            )
+
     @transaction.atomic
     def disburse(self, disbursement_date=None, disbursement_account=None, disbursed_by=None):
         """
@@ -954,18 +973,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         # any GL entry for this disbursement is written, means the whole
         # disburse() call rolls back (already @transaction.atomic) instead
         # of quietly creating another loan with the same defect.
-        if not self.product.interest_income_account:
-            raise ValidationError(
-                f"Cannot disburse: {self.product} has no interest_income_account configured. "
-                "Interest collected on this loan would have nowhere valid to be recognized as "
-                "income. Configure interest_income_account on the loan product before disbursing."
-            )
-        if self.product.late_payment_penalty and self.product.late_payment_penalty > 0 and not self.product.penalty_income_account:
-            raise ValidationError(
-                f"Cannot disburse: {self.product} charges a late payment penalty "
-                f"({self.product.late_payment_penalty}) but has no penalty_income_account "
-                "configured. Configure penalty_income_account on the loan product before disbursing."
-            )
+        self._check_disbursement_gl_config()
 
         self.status = 'disbursed'
         self.disbursement_date = disbursement_date or timezone.now().date()

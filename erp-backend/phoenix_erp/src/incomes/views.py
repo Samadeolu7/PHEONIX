@@ -198,6 +198,9 @@ class IncomeViewSet(ScopedModelViewSet):
     permission_page = 'incomes'
     queryset = Income.objects.all()
     serializer_class = IncomeSerializer
+    # Staff-side record (company bookkeeping: income category/GL accounts come from the staff branch), so keep the
+    # staff member's branch rather than the client's.
+    customer_branch_fields = ()
     permission_classes = [IsAuthenticated]
     officer_client_lookup = 'client__assigned_officer'
     

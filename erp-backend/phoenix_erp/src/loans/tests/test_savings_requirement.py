@@ -35,7 +35,7 @@ def _acct(user, branch, name, code, account_type, level=Account.LEVEL_PARENT, pa
     )
 
 
-class SavingsRequirementTests(TestCase):
+class _LoanEnvTestCase(TestCase):
     def setUp(self):
         set_current_tenant(None)
         self.user = User.objects.create_user(username="savreq", password="pass")
@@ -109,6 +109,7 @@ class SavingsRequirementTests(TestCase):
             owner=self.user, branch=self.branch_a,
         )
 
+class SavingsRequirementTests(_LoanEnvTestCase):
     def test_active_account_with_enough_balance_passes(self):
         self._savings(self.sav_a, Decimal("10000.00"))
         check_savings_requirement(self.client_obj, self.loan_product, Decimal("50000"))
@@ -142,3 +143,105 @@ class SavingsRequirementTests(TestCase):
         acct.deposit(Decimal("500.00"), cashier_account=till_gl, transacted_by=self.user)
         acct.refresh_from_db()
         self.assertEqual(acct.status, "active")
+
+
+class CustomerBranchTests(_LoanEnvTestCase):
+    """Customer-owned records follow the CUSTOMER's branch, not the staff's."""
+
+    def _loan_product_in(self, branch, code="LOAN-WK"):
+        gl_product = Product.objects.create(
+            name="Weekly Loan", code=code, product_type="LOAN",
+            owner=self.user, branch=branch,
+        )
+        return LoanProduct.objects.create(
+            product=gl_product,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash,
+            interest_income_account=self.income,
+            default_interest_rate=Decimal("18.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("300000.00"),
+            owner=self.user, branch=branch,
+        )
+
+    def test_loan_product_swapped_for_customer_branch_copy(self):
+        from loans.services import loan_product_for_branch
+        branch_b_copy = self._loan_product_in(self.branch_b)
+        # Staff in branch A picked branch A's product; client is in branch B.
+        self.assertEqual(
+            loan_product_for_branch(self.loan_product, self.branch_b).pk,
+            branch_b_copy.pk,
+        )
+        # Same branch → unchanged.
+        self.assertEqual(
+            loan_product_for_branch(self.loan_product, self.branch_a).pk,
+            self.loan_product.pk,
+        )
+
+    def test_missing_copy_in_customer_branch_is_a_clear_error(self):
+        from loans.services import loan_product_for_branch
+        with self.assertRaises(ValidationError) as ctx:
+            loan_product_for_branch(self.loan_product, self.branch_b)
+        self.assertIn("not set up in the client's branch (B)", str(ctx.exception))
+
+    def test_fee_routing_rekeyed_to_customer_branch_fee_lines(self):
+        from loans.models import LoanProductFee
+        from loans.services import remap_fee_routing
+        branch_b_copy = self._loan_product_in(self.branch_b)
+        common = dict(
+            fee_type="fixed", fixed_amount=Decimal("500"), gl_income_account=self.income,
+            owner=self.user,
+        )
+        fee_a = LoanProductFee.objects.create(
+            loan_product=self.loan_product, name="Form Fee", branch=self.branch_a, **common)
+        fee_b = LoanProductFee.objects.create(
+            loan_product=branch_b_copy, name="Form Fee", branch=self.branch_b, **common)
+        route = {"destination": "savings", "savings_account_id": None}
+        self.assertEqual(
+            remap_fee_routing({fee_a.pk: route}, self.loan_product, branch_b_copy),
+            {fee_b.pk: route},
+        )
+
+    def test_customer_branch_from_prefers_customer_record(self):
+        from common.views import customer_branch_from
+        self.client_obj.branch = self.branch_b
+        self.assertEqual(
+            customer_branch_from({'client': self.client_obj}, ('loan', 'client')),
+            self.branch_b,
+        )
+        self.assertIsNone(customer_branch_from({}, ('loan', 'client')))
+
+    def test_loan_request_scope_uses_loan_branch_over_staff_branch(self):
+        from types import SimpleNamespace
+        from loans.views import _resolve_scope
+        loan = SimpleNamespace(branch=self.branch_b, tenant=self.tenant)
+        # self.user is posted to branch A.
+        _, branch = _resolve_scope(self.user, loan)
+        self.assertEqual(branch, self.branch_b)
+
+    def test_opening_savings_account_books_it_in_customer_branch(self):
+        """Open Savings Account: GL account + record land in the CLIENT's branch."""
+        from rest_framework.test import APIClient
+        # Client belongs to branch B; branch B has its own 2140 parent.
+        Client.objects.filter(pk=self.client_obj.pk).update(branch=self.branch_b)
+        self.client_obj.refresh_from_db()
+        _acct(self.user, self.branch_b, "Member Savings", "2140", Account.SAVINGS)
+
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.post(
+            "/api/savings/accounts/",
+            {
+                "client": self.client_obj.pk, "product": self.sav_b.pk,
+                "opened_on": str(date.today()), "interest_rate": "0.00",
+                "interest_calculation_method": "monthly",
+            },
+            format="json",
+            HTTP_X_BRANCH_ID=str(self.branch_a.pk),  # staff is working in branch A
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        acct = SavingsAccount.objects.get(pk=resp.json()["id"])
+        self.assertEqual(acct.branch_id, self.branch_b.pk)
+        self.assertEqual(acct.account.branch_id, self.branch_b.pk)
+        self.assertEqual(acct.account_number, acct.account.code)

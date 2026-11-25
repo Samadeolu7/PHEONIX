@@ -1416,6 +1416,9 @@ class InventoryAllocationViewSet(ScopedModelViewSet):
     permission_page = 'allocations'
     queryset = InventoryAllocation.objects.all()
     serializer_class = InventoryAllocationSerializer
+    # Staff-side record (stock is issued from the staff member's own branch store), so keep the
+    # staff member's branch rather than the client's.
+    customer_branch_fields = ()
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):

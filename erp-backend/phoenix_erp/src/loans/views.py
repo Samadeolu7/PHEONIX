@@ -48,10 +48,12 @@ def _resolve_scope(user, fallback_obj=None):
     Return (tenant, branch) for direct objects.create() calls inside action
     methods that bypass ScopedModelViewSet.perform_create().
 
-    Priority: request.user → fallback_obj (e.g. a related LoanAccount).
+    Branch priority: fallback_obj (e.g. the related LoanAccount) → request.user.
+    Records about a customer's loan belong to the loan's (i.e. the customer's)
+    branch, not to whichever branch the staff member is currently posted to.
     """
     tenant = getattr(user, 'tenant', None) or getattr(fallback_obj, 'tenant', None)
-    branch = getattr(user, 'branch', None) or getattr(fallback_obj, 'branch', None)
+    branch = getattr(fallback_obj, 'branch', None) or getattr(user, 'branch', None)
     return tenant, branch
 
 
@@ -1985,12 +1987,28 @@ class LoanAccountViewSet(ScopedModelViewSet):
         from django.db import transaction as db_transaction
         from django.utils import timezone as tz
         from accounts.models import Account as GlAccount
-        from .services import check_savings_requirement, apply_loan_fees
+        from .services import (
+            check_savings_requirement, apply_loan_fees,
+            loan_product_for_branch, remap_fee_routing,
+        )
 
         validated = serializer.validated_data
         client = validated.get('client')
         product = validated.get('product')  # LoanProduct instance
         requested_amount = Decimal(str(validated.get('requested_amount', '0') or '0'))
+
+        # The loan belongs to the CLIENT's branch, not the branch of the staff
+        # member keying it in (staff are sometimes moved between branches
+        # temporarily). Book it there, on that branch's copy of the product.
+        user, branch, tenant = self._resolve_create_scope()
+        if client is not None and client.branch_id:
+            branch = client.branch
+        form_product = product
+        if product is not None:
+            try:
+                product = loan_product_for_branch(product, branch)
+            except ValidationError as exc:
+                raise DRFValidationError({'product': exc.messages})
 
         if client and product:
             try:
@@ -2007,8 +2025,8 @@ class LoanAccountViewSet(ScopedModelViewSet):
                 raw_routing = {}
         # Normalise keys to integers (JSON keys are always strings)
         fee_routing = {int(k): v for k, v in raw_routing.items() if str(k).isdigit()}
-
-        user, branch, tenant = self._resolve_create_scope()
+        if form_product is not None and product is not None:
+            fee_routing = remap_fee_routing(fee_routing, form_product, product)
 
         with db_transaction.atomic():
             # Generate a unique loan number
@@ -2051,6 +2069,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             )
 
             loan = serializer.save(
+                product=product,
                 account=gl_account,
                 loan_number=loan_number,
                 interest_rate=product.default_interest_rate,
@@ -3171,6 +3190,9 @@ class LoanDisbursementCorrectionViewSet(ScopedModelViewSet):
 
     def perform_create(self, serializer):
         user, branch, tenant = self._resolve_create_scope()
+        # The correction belongs to the original loan's (customer's) branch.
+        original_loan = serializer.validated_data.get('original_loan')
+        branch = getattr(original_loan, 'branch', None) or branch
         serializer.save(requested_by=user, owner=user, branch=branch, tenant=tenant)
 
     @action(detail=True, methods=['post'])

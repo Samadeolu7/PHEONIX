@@ -12,6 +12,7 @@ outstanding_interest started as the sum of every future installment's
 interest rather than just the one being paid.
 """
 from decimal import Decimal
+from unittest import mock
 
 from django.core.management import call_command
 from django.test import TestCase
@@ -26,6 +27,16 @@ from loans.models import LoanProduct, LoanAccount
 from transactions.models import Transaction, TransactionEntry, TransactionSeries
 
 from .test_deferred_interest import _make_env, _make_account
+
+
+def _disburse_as_legacy(loan, cash_account, approver):
+    """
+    Disburse the way these production loans were: before disburse() started
+    refusing products with no interest_income_account. The guard is skipped
+    only here, to reproduce that pre-existing state.
+    """
+    with mock.patch.object(LoanAccount, '_check_disbursement_gl_config'):
+        loan.disburse(disbursement_account=cash_account, disbursed_by=approver)
 
 
 class PaymentAllocationFollowsScheduleTestCase(TestCase):
@@ -88,7 +99,7 @@ class PaymentAllocationFollowsScheduleTestCase(TestCase):
             branch=self.branch,
         )
         loan.approve(user=self.approver)
-        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        _disburse_as_legacy(loan, self.cash_account, self.approver)
 
         # Confirms this loan is genuinely on the fallback path (product had no
         # income account at disbursement time).
@@ -199,7 +210,7 @@ class CorrectFrontloadedInterestAllocationTestCase(TestCase):
             branch=self.branch,
         )
         loan.approve(user=self.approver)
-        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        _disburse_as_legacy(loan, self.cash_account, self.approver)
         self.assertFalse(loan.interest_recognized_at_disbursement)
         self.assertFalse(loan.interest_deferral_active)
 
@@ -335,7 +346,7 @@ class CorrectFrontloadedInterestAllocationPartiallyFixedRowsTestCase(TestCase):
             branch=self.branch,
         )
         loan.approve(user=self.approver)
-        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        _disburse_as_legacy(loan, self.cash_account, self.approver)
         self.assertFalse(loan.interest_recognized_at_disbursement)
 
         self.product.interest_income_account = self.interest_income_account

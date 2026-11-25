@@ -128,6 +128,59 @@ class SavingsAccountViewSet(ScopedModelViewSet):
     officer_group_lookup = 'client__group__assigned_officer'
     officer_group_members_lookup = 'client__group__member_officers'
 
+    def perform_create(self, serializer):
+        """
+        Open a savings account in the CLIENT's branch, with its own child GL
+        account under 2140 (Customer Savings Deposits) — the same way the
+        automatic Regular Savings account is opened for new clients
+        (savings/signals.py). The serializer has no 'account' field, so
+        without this every manual "open savings account" failed on the
+        required GL account link.
+        """
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from accounts.models import Account
+
+        user, branch, tenant = self._resolve_create_scope()
+        client = serializer.validated_data['client']
+        product = serializer.validated_data['product']
+        branch = client.branch or branch
+        tenant = client.tenant or tenant
+
+        if SavingsAccount.objects.filter(
+            client=client, product=product,
+        ).exclude(status='closed').exists():
+            raise DRFValidationError(
+                {'product': 'This client already has an open savings account for this product.'}
+            )
+
+        with transaction.atomic():
+            try:
+                gl_account = Account.create_with_parent(
+                    parent_code='2140',
+                    child_data={
+                        'name': f'Savings – {client.full_name}',
+                        'allow_manual_entries': True,
+                        'owner': user,
+                        'branch': branch,
+                        'tenant': tenant,
+                        'created_by': user,
+                    },
+                )
+            except Account.DoesNotExist:
+                raise DRFValidationError({
+                    'detail': (
+                        f"Branch {getattr(branch, 'name', '')} has no 2140 Customer "
+                        "Savings Deposits GL account to open this savings account under."
+                    )
+                })
+            serializer.save(
+                account=gl_account,
+                account_number=gl_account.code,
+                owner=user,
+                branch=branch,
+                tenant=tenant,
+            )
+
     def get_queryset(self):
         qs = super().get_queryset()
         params = self.request.query_params

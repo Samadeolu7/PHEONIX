@@ -119,6 +119,23 @@ def resolve_effective_branch(request):
     partial_update=extend_schema(description="Partially update an object if accessible to the current user."),
     destroy=extend_schema(description="Delete an object if accessible to the current user.")
 )
+def customer_branch_from(source, field_names):
+    """
+    Return the branch of the first customer record (client, loan, savings
+    account, ...) found under ``field_names`` in ``source`` (a dict such as
+    serializer.validated_data, or a model instance), or None.
+    """
+    for name in field_names:
+        if isinstance(source, dict):
+            obj = source.get(name)
+        else:
+            obj = getattr(source, name, None)
+        branch = getattr(obj, 'branch', None) if obj is not None else None
+        if branch is not None:
+            return branch
+    return None
+
+
 class ScopedModelViewSet(viewsets.ModelViewSet):
     """
     Base viewset that automatically filters queryset by owner/branch and sets tenant fields.
@@ -163,6 +180,22 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # subclasses get action-level enforcement without manual changes.
     # Opt out per-viewset by setting skip_action_permission = True.
     skip_action_permission: bool = False
+
+    # Customer-owned records live in the CUSTOMER's branch, not the branch of
+    # whichever staff member happens to key them in (staff get moved between
+    # branches temporarily). On create, the first of these fields present in
+    # the validated data whose value has a branch decides the new record's
+    # branch; the staff member's branch is only the fallback. Set to () on a
+    # viewset whose records genuinely belong to the staff side (e.g. stock
+    # issued from the staff's own branch store).
+    customer_branch_fields = (
+        'loan', 'loan_account', 'original_loan', 'savings_account',
+        'client', 'from_client', 'leader',
+    )
+
+    def get_customer_branch(self, validated_data):
+        """Branch of the customer record a new record belongs to, or None."""
+        return customer_branch_from(validated_data, self.customer_branch_fields)
 
     def get_permissions(self):
         base = super().get_permissions()
@@ -549,7 +582,8 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
             model = None
 
         user, branch, tenant = self._resolve_create_scope(model=model)
-        
+        branch = self.get_customer_branch(serializer.validated_data) or branch
+
         try:
             # Save the instance and explicitly set tenant from authenticated user
             # Ensure thread-local tenant is set so model managers filter correctly

@@ -16,6 +16,7 @@ LoanProduct GL configuration:
 """
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.db.models import Sum
 from django.test import TestCase
@@ -160,20 +161,16 @@ class DeferredInterestTestCase(TestCase):
 
     # ── No income account configured at all ────────────────────────────────
 
-    def test_no_account_product_never_recognizes_interest(self):
-        loan = self._make_loan(self.no_account_product, "LN-NOACC-1")
-        self.assertFalse(loan.interest_recognized_at_disbursement)
-        self.assertFalse(loan.interest_deferral_active)
-
-        schedule_row = loan.repayment_schedule.order_by("due_date").first()
-        loan.record_payment(
-            amount=schedule_row.interest_due,
-            payment_account=self.cash_account,
-            received_by=self.approver,
+    def test_no_account_product_cannot_be_disbursed(self):
+        # A product with no interest income account used to disburse and then
+        # silently fold collected interest into Loan Receivable (never booked
+        # as income). disburse() now refuses it outright, before any GL entry.
+        with self.assertRaises(ValidationError) as ctx:
+            self._make_loan(self.no_account_product, "LN-NOACC-1")
+        self.assertIn("no interest_income_account configured", str(ctx.exception))
+        self.assertFalse(
+            LoanAccount.objects.filter(loan_number="LN-NOACC-1", status="active").exists()
         )
-        self.interest_income_account.refresh_from_db()
-        # Nothing recognized — the payment folds entirely into Loan Receivable.
-        self.assertEqual(self.interest_income_account.balance, Decimal("0.00"))
 
     # ── Default: recognize in full at disbursement (matches legacy system) ─
 
@@ -400,12 +397,16 @@ class BackfillLegacyLoanOriginTestCase(TestCase):
 
         self.loan_parent = _make_account(self.owner, self.branch, "Loans Receivable", "1300", Account.LOAN)
         self.cash_account = _make_account(self.owner, self.branch, "Bank", "1001", Account.ASSET)
+        # disburse() refuses a product with no interest income account.
+        self.interest_income_account = _make_account(
+            self.owner, self.branch, "Interest Income", "4100", Account.INCOME)
 
         gl_product = Product.objects.create(name="Backfill Loan", code="LOAN-BACKF", product_type="LOAN", owner=self.owner, branch=self.branch)
         self.product = LoanProduct.objects.create(
             product=gl_product,
             parent_account=self.loan_parent,
             disbursement_account=self.cash_account,
+            interest_income_account=self.interest_income_account,
             default_interest_rate=Decimal("10.00"),
             interest_calculation_method="flat",
             min_loan_amount=Decimal("1000.00"),
