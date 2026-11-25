@@ -861,12 +861,10 @@ class InvoiceViewSet(ScopedModelViewSet):
                 )
                 
                 # Dr. Bank/Cash (increase cash)
-                JournalEntryLine.objects.create(
-                    transaction=journal_entry,
-                    account=bank_account,
-                    side=JournalEntryLine.DEBIT,
-                    amount=amount
-                )
+                # The bank/till may be in another branch than this entry; add_entry
+                # routes it through Due To/Due From so both branches balance.
+                from interbranch.services import add_entry
+                add_entry(journal_entry, bank_account, JournalEntryLine.DEBIT, amount)
                 
                 # Cr. Accounts Receivable (reduce receivable)
                 JournalEntryLine.objects.create(
@@ -1265,6 +1263,32 @@ class InvoiceViewSet(ScopedModelViewSet):
                         amount=entry.amount,
                     )
 
+                # If the payment went into another branch's bank/till, its
+                # other-branch leg (Due To/Due From) must be reversed too;
+                # draft a reversing leg for each, posted with draft_je.
+                for leg in original_je.interbranch_legs.all():
+                    draft_leg = JournalEntry.objects.create(
+                        series=series,
+                        date=original_je.date,
+                        description=f'{draft_je.description} [inter-branch]'[:255],
+                        workflow_reference=draft_je.reference_number,
+                        owner=leg.owner,
+                        branch=leg.branch,
+                        created_by=request.user,
+                        tenant=leg.tenant,
+                        is_reversal=True,
+                        reverses_transaction=leg,
+                        interbranch_parent=draft_je,
+                    )
+                    for entry in leg.entries.all():
+                        TransactionEntry.objects.create(
+                            transaction=draft_leg,
+                            account=entry.account,
+                            side=(TransactionEntry.CREDIT if entry.side == TransactionEntry.DEBIT
+                                  else TransactionEntry.DEBIT),
+                            amount=entry.amount,
+                        )
+
                 # Record the reversal request
                 reversal_request = PaymentReversalRequest.objects.create(
                     invoice=invoice,
@@ -1402,6 +1426,20 @@ class InvoiceViewSet(ScopedModelViewSet):
                     'is_reversed', 'reversed_at', 'reversed_by',
                     'reversal_reason', 'reversal_transaction',
                 ])
+                # ...and its other-branch legs (their reversing legs were
+                # posted with draft_je above).
+                for draft_leg in draft_je.interbranch_legs.all():
+                    leg = draft_leg.reverses_transaction
+                    if leg is not None:
+                        leg.is_reversed = True
+                        leg.reversed_at = original_je.reversed_at
+                        leg.reversed_by = request.user
+                        leg.reversal_reason = reversal_request.reason
+                        leg.reversal_transaction = draft_leg
+                        leg.save(update_fields=[
+                            'is_reversed', 'reversed_at', 'reversed_by',
+                            'reversal_reason', 'reversal_transaction',
+                        ])
 
                 # 3. Roll back per-line-item allocations
                 for item_payment in item_payments:

@@ -342,12 +342,10 @@ class IncomeAccountingService:
                 )
                 
                 # Dr. Cash/Bank
-                JournalEntryLine.objects.create(
-                    transaction=payment_entry,
-                    account=bank_account,
-                    side=JournalEntryLine.DEBIT,
-                    amount=amount,
-                )
+                # The bank/till may be in another branch than this entry; add_entry
+                # routes it through Due To/Due From so both branches balance.
+                from interbranch.services import add_entry
+                add_entry(payment_entry, bank_account, JournalEntryLine.DEBIT, amount)
 
                 # Cr. Accounts Receivable
                 JournalEntryLine.objects.create(
@@ -378,12 +376,10 @@ class IncomeAccountingService:
             )
 
             # Dr. Cash/Bank
-            JournalEntryLine.objects.create(
-                transaction=journal_entry,
-                account=bank_account,
-                side=JournalEntryLine.DEBIT,
-                amount=amount,
-            )
+            # The bank/till may be in another branch than this entry; add_entry
+            # routes it through Due To/Due From so both branches balance.
+            from interbranch.services import add_entry
+            add_entry(journal_entry, bank_account, JournalEntryLine.DEBIT, amount)
 
             # Cr. Income Account
             JournalEntryLine.objects.create(
@@ -419,12 +415,10 @@ class IncomeAccountingService:
             )
 
             # Dr. Cash/Bank
-            JournalEntryLine.objects.create(
-                transaction=journal_entry,
-                account=bank_account,
-                side=JournalEntryLine.DEBIT,
-                amount=amount,
-            )
+            # The bank/till may be in another branch than this entry; add_entry
+            # routes it through Due To/Due From so both branches balance.
+            from interbranch.services import add_entry
+            add_entry(journal_entry, bank_account, JournalEntryLine.DEBIT, amount)
 
             # Cr. Accounts Receivable
             JournalEntryLine.objects.create(
@@ -630,12 +624,10 @@ class IncomeAccountingService:
             tenant=entitlement.tenant,
         )
         
-        JournalEntryLine.objects.create(
-            transaction=payment_entry,
-            account=bank_account,
-            side=JournalEntryLine.DEBIT,
-            amount=amount,
-        )
+        # The bank/till may be in another branch than this entry; add_entry
+        # routes it through Due To/Due From so both branches balance.
+        from interbranch.services import add_entry
+        add_entry(payment_entry, bank_account, JournalEntryLine.DEBIT, amount)
 
         # Cr. AR
         JournalEntryLine.objects.create(

@@ -368,12 +368,10 @@ def apply_loan_fees(
             created_by=posted_by,
         )
 
-        JournalEntryLine.objects.create(
-            transaction=journal,
-            account=debit_account,
-            side=JournalEntryLine.DEBIT,
-            amount=amount,
-        )
+        # The bank/till may be in another branch than this entry; add_entry
+        # routes it through Due To/Due From so both branches balance.
+        from interbranch.services import add_entry
+        add_entry(journal, debit_account, JournalEntryLine.DEBIT, amount)
         JournalEntryLine.objects.create(
             transaction=journal,
             account=fee.gl_income_account,

@@ -135,7 +135,22 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         related_name='reversed_by_transaction',
         help_text="The original transaction (if this is a reversal)"
     )
-    
+    # A journal entry may only touch accounts in its own branch. When one
+    # business event moves money/stock between branches (e.g. a branch-A bank
+    # account paying out a branch-B customer's loan), the other branch's side
+    # is posted as its own "leg" transaction, balanced against Due To/Due From
+    # clearing accounts (interbranch.services.add_entry). Each leg points at
+    # the main transaction so posting and reversing the main one also posts
+    # and reverses its legs — keeping every branch's balance sheet balanced.
+    interbranch_parent = models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='interbranch_legs',
+        help_text="Main transaction this inter-branch leg belongs to",
+    )
+
     @txt.atomic
     def post(self):
         """
@@ -184,6 +199,10 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.approved = True
         self.approved_at = timezone.now()
         self.save(update_fields=['approved', 'approved_at'])
+
+        # Post the other branches' legs of this event together with it.
+        for leg in self.interbranch_legs.filter(approved=False):
+            leg.post()
     
     def validate_entries(self) -> bool:
         """
@@ -385,7 +404,7 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         return found
 
     @txt.atomic
-    def reverse(self, user, reason=''):
+    def reverse(self, user, reason='', _from_parent=False):
         """
         Reverse this entire transaction by creating an opposite transaction.
         This is the RECOMMENDED approach for financial integrity.
@@ -404,6 +423,13 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         
         if self.is_reversal:
             raise ValidationError("Cannot reverse a reversal transaction")
+
+        if self.interbranch_parent_id and not _from_parent:
+            raise ValidationError(
+                "This is another branch's side of an inter-branch entry. Reverse "
+                f"the main transaction ({self.interbranch_parent.reference_number}) "
+                "instead, so both branches are reversed together."
+            )
         
         # Check period closure
         Period = get_period_model()
@@ -486,6 +512,13 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
                 'is_reversed', 'reversed_at', 'reversed_by', 
                 'reversal_reason', 'reversal_transaction'
             ])
+
+            # Reverse the other branches' legs too, so no branch is left with
+            # a one-sided Due To/Due From balance.
+            for leg in self.interbranch_legs.filter(approved=True, is_reversed=False):
+                leg_reversal = leg.reverse(user, reason, _from_parent=True)
+                leg_reversal.interbranch_parent = reversal_txn
+                leg_reversal.save(update_fields=['interbranch_parent'])
             
             return reversal_txn
     
@@ -503,7 +536,11 @@ class Transaction(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """
         if self.is_reversed:
             raise ValidationError("This transaction has already been reversed")
-        
+
+        # Void the other branches' legs of this event along with it.
+        for leg in self.interbranch_legs.all():
+            leg.void(user, reason)
+
         if not self.approved:
             # If not approved yet, just delete it
             self.delete()

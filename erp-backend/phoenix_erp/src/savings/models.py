@@ -190,13 +190,10 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             tenant=self.tenant,
         )
 
-        # Debit: Cashier / Cash account (ASSET) — cash received
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=cashier_account,
-            side=JournalEntryLine.DEBIT,
-            amount=amount,
-        )
+        # Debit: Cashier / Cash account (ASSET) — cash received. The till may
+        # be in another branch than the savings account (Due To/Due From).
+        from interbranch.services import add_entry
+        add_entry(journal_entry, cashier_account, JournalEntryLine.DEBIT, amount)
 
         # Credit: Member Savings (SAVINGS/LIABILITY) — balance increases
         JournalEntryLine.objects.create(
@@ -349,13 +346,10 @@ class SavingsAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             amount=amount,
         )
 
-        # Credit: Cashier / Cash account (ASSET) — cash paid out
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=cashier_account,
-            side=JournalEntryLine.CREDIT,
-            amount=amount,
-        )
+        # Credit: Cashier / Cash account (ASSET) — cash paid out. The till may
+        # be in another branch than the savings account (Due To/Due From).
+        from interbranch.services import add_entry
+        add_entry(journal_entry, cashier_account, JournalEntryLine.CREDIT, amount)
 
         journal_entry.post()
 

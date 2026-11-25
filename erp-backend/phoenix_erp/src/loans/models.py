@@ -1030,13 +1030,11 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             amount=self.disbursed_amount,
         )
 
-        # Credit: Cash / Bank account (ASSET type) — balance DECREASES
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=cash_account,
-            side=JournalEntryLine.CREDIT,
-            amount=self.disbursed_amount,
-        )
+        # Credit: Cash / Bank account (ASSET type) — balance DECREASES.
+        # The paying account may sit in another branch than the customer's
+        # loan; add_entry routes that through Due To/Due From.
+        from interbranch.services import add_entry
+        add_entry(journal_entry, cash_account, JournalEntryLine.CREDIT, self.disbursed_amount)
 
         # ── Interest recognition at disbursement ────────────────────────────
         # Two mutually exclusive options, both opt-in via product GL config:
@@ -1418,12 +1416,10 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         # Debit: Cash received — total collected from client (loan portion + any spillover)
         _spillover_amount = spillover_amount or Decimal('0.00')
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=payment_account,
-            side=JournalEntryLine.DEBIT,
-            amount=amount + _spillover_amount,
-        )
+        # The receiving bank/till may be in another branch than the loan;
+        # add_entry routes that through Due To/Due From.
+        from interbranch.services import add_entry
+        add_entry(journal_entry, payment_account, JournalEntryLine.DEBIT, amount + _spillover_amount)
 
         # ── Credit entries (must collectively equal the debit) ────────────
         # Amounts that lack a dedicated income account are credited to the
