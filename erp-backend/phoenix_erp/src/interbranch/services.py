@@ -284,7 +284,11 @@ def add_entry(journal, account, side, amount):
         leg = Transaction.objects.create(
             series=journal.series,
             date=journal.date,
-            description=f"{journal.description} [inter-branch: {home_branch.name}]"[:255],
+            # Same wording as the main entry: a leg can carry a customer's own
+            # account line (e.g. a fee taken from their savings held in another
+            # branch), and client-facing statements must not show internal
+            # bookkeeping notes. The link is interbranch_parent.
+            description=journal.description,
             workflow_reference=journal.reference_number,
             owner=journal.owner,
             branch=account_branch,

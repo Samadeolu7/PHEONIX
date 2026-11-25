@@ -204,33 +204,11 @@ class IncomeViewSet(ScopedModelViewSet):
     # branch stays the same. With none of these linked, it falls back to the
     # branch the staff member is working in (ScopedModelViewSet).
     customer_branch_fields = ('client', 'invoice', 'inventory_allocation')
+    # Income categories (and their GL income accounts) are per-branch: book
+    # on the target branch's copy of the one the form offered.
+    branch_copy_fields = {'category': 'code'}
     permission_classes = [IsAuthenticated]
     officer_client_lookup = 'client__assigned_officer'
-
-    def perform_create(self, serializer):
-        # Income categories (and their GL income accounts) are cloned per
-        # branch, and a journal entry can only post to accounts in its own
-        # branch — so book the income on the target branch's copy of the
-        # category the form offered.
-        from rest_framework.exceptions import ValidationError as DRFValidationError
-
-        _, working_branch, _ = self._resolve_create_scope()
-        branch = self.get_customer_branch(serializer.validated_data) or working_branch
-        category = serializer.validated_data.get('category')
-        if category is not None and branch is not None and category.branch_id not in (None, branch.pk):
-            match = IncomeCategory.objects.filter(
-                code=category.code, branch=branch, is_deleted=False,
-            ).first()
-            if match is None:
-                raise DRFValidationError({
-                    'category': (
-                        f"Income category '{category.name}' is not set up in "
-                        f"{branch.name}, the branch this income is for. Set it up "
-                        f"there first."
-                    )
-                })
-            serializer.validated_data['category'] = match
-        super().perform_create(serializer)
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -1270,7 +1248,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                     draft_leg = JournalEntry.objects.create(
                         series=series,
                         date=original_je.date,
-                        description=f'{draft_je.description} [inter-branch]'[:255],
+                        description=draft_je.description,
                         workflow_reference=draft_je.reference_number,
                         owner=leg.owner,
                         branch=leg.branch,
@@ -2713,7 +2691,9 @@ class FeeEntitlementViewSet(ScopedModelViewSet):
                 minimum_deposit_percent=serializer.validated_data.get('minimum_deposit_percent', Decimal('0')),
                 installment_config=serializer.validated_data.get('installment_config'),
                 owner=request.user,
-                branch=request.user.branch,
+                # Branch the staff member is acting in (temporary grant /
+                # branch switcher), not always their home branch.
+                branch=self._get_director_branch_override() or request.user.branch,
                 created_by=request.user
             )
             

@@ -221,9 +221,28 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
         'client', 'from_client', 'leader',
     )
 
+    # Per-branch setup records (cloned per branch by BranchCloneService, each
+    # pointing at that branch's GL accounts) that a new record references,
+    # as {field: matching key}. On create they are swapped for the copies
+    # belonging to the record's final branch, since a journal entry can only
+    # post to accounts in its own branch.
+    branch_copy_fields = {}
+
     def get_customer_branch(self, validated_data):
         """Branch of the customer record a new record belongs to, or None."""
         return customer_branch_from(validated_data, self.customer_branch_fields)
+
+    def use_branch_copies(self, validated_data, branch):
+        """Swap ``branch_copy_fields`` references for ``branch``'s own copies."""
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        for field, key in self.branch_copy_fields.items():
+            if validated_data.get(field) is None:
+                continue
+            try:
+                validated_data[field] = branch_copy_of(validated_data[field], branch, key=key)
+            except DjangoValidationError as exc:
+                raise DRFValidationError({field: exc.messages})
 
     def get_permissions(self):
         base = super().get_permissions()
@@ -611,6 +630,7 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
 
         user, branch, tenant = self._resolve_create_scope(model=model)
         branch = self.get_customer_branch(serializer.validated_data) or branch
+        self.use_branch_copies(serializer.validated_data, branch)
 
         try:
             # Save the instance and explicitly set tenant from authenticated user

@@ -233,7 +233,7 @@ class CustomerBranchTests(_LoanEnvTestCase):
         resp = api.post(
             "/api/savings/accounts/",
             {
-                "client": self.client_obj.pk, "product": self.sav_b.pk,
+                "client": self.client_obj.pk, "product": self.sav_a.pk,  # staff's branch copy
                 "opened_on": str(date.today()), "interest_rate": "0.00",
                 "interest_calculation_method": "monthly",
             },
@@ -245,6 +245,7 @@ class CustomerBranchTests(_LoanEnvTestCase):
         self.assertEqual(acct.branch_id, self.branch_b.pk)
         self.assertEqual(acct.account.branch_id, self.branch_b.pk)
         self.assertEqual(acct.account_number, acct.account.code)
+        self.assertEqual(acct.product_id, self.sav_b.pk)  # client's branch copy
 
     def _income_category(self, branch):
         from incomes.models import IncomeCategory

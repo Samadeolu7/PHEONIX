@@ -142,9 +142,17 @@ class SavingsAccountViewSet(ScopedModelViewSet):
 
         user, branch, tenant = self._resolve_create_scope()
         client = serializer.validated_data['client']
-        product = serializer.validated_data['product']
         branch = client.branch or branch
         tenant = client.tenant or tenant
+        # Savings products are cloned per branch; open the account on the
+        # client's branch's copy (its rates, rules and GL setup).
+        from common.views import branch_copy_of
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            product = branch_copy_of(serializer.validated_data['product'], branch)
+        except DjangoValidationError as exc:
+            raise DRFValidationError({'product': exc.messages})
+        serializer.validated_data['product'] = product
 
         if SavingsAccount.objects.filter(
             client=client, product=product,
