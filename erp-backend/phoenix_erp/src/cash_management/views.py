@@ -224,6 +224,17 @@ class CashCollectionViewSet(ScopedModelViewSet):
     def perform_create(self, serializer):
         cashier_account = serializer.validated_data['cashier_account']
         client = serializer.validated_data['client']
+
+        # A collection belongs to the CLIENT's branch, not the branch of the
+        # till the staff member happened to pick (staff get moved between
+        # branches temporarily). Its journal entry can only touch accounts in
+        # one branch, so use the same cashier's till in the client's branch,
+        # creating it if they don't have one there yet.
+        if client is not None and client.branch_id and cashier_account.branch_id != client.branch_id:
+            from cash_management.services.payment_routing import PaymentRoutingService
+            cashier_account = PaymentRoutingService.get_or_create_cashier_account(
+                cashier_account.cashier, branch=client.branch,
+            )
         amount_due = serializer.validated_data['amount_due']
         amount_collected = serializer.validated_data['amount_collected']
         payment_purpose = serializer.validated_data['payment_purpose']
@@ -238,9 +249,16 @@ class CashCollectionViewSet(ScopedModelViewSet):
             collection_date=serializer.validated_data.get('collection_date'),
             notes=serializer.validated_data.get('notes', ''),
             collection_mode=serializer.validated_data.get('collection_mode', 'cash'),
-            credit_account=serializer.validated_data.get('credit_account')
+            credit_account=serializer.validated_data.get('credit_account'),
+            # The form requires a receivable; it used to be dropped here, so
+            # collections were saved with no link to what they paid.
+            receivable=serializer.validated_data.get('receivable'),
         )
-        
+
+        # The record is created by the service, not serializer.save(), so hand
+        # it to the serializer — otherwise building the response read the raw
+        # input dict, crashed with a 500, and rolled the collection back.
+        serializer.instance = collection
         return collection
     
     @action(detail=True, methods=['post'])

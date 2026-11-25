@@ -636,7 +636,9 @@ class ClientViewSet(ScopedModelViewSet):
                         Client.objects.create(
                             tenant=request.tenant,
                             owner=request.user,
-                            branch=request.user.branch if hasattr(request.user, 'branch') else None,
+                            # Branch the staff member is acting in (home branch, or a
+                            # temporarily granted one picked in the branch switcher).
+                            branch=self._get_director_branch_override() or getattr(request.user, 'branch', None),
                             **data
                         )
                         created_count += 1
@@ -984,7 +986,9 @@ class ClientViewSet(ScopedModelViewSet):
         # so it can be None on multipart/form-data requests. user.tenant is always
         # authoritative once the request is authenticated.
         tenant = getattr(request, 'tenant', None) or getattr(user, 'tenant', None)
-        branch = getattr(user, 'branch', None)
+        # Branch the staff member is acting in: a temporarily granted branch
+        # picked in the branch switcher, else their assigned home branch.
+        branch = self._get_director_branch_override() or getattr(user, 'branch', None)
 
         if not tenant:
             return Response(

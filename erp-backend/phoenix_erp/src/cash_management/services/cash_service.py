@@ -32,7 +32,8 @@ class CashCollectionService:
         receipt_number=None,
         notes='',
         collection_mode='cash',
-        credit_account=None
+        credit_account=None,
+        receivable=None,
     ):
         """
         Record cash collection from a client
@@ -47,6 +48,7 @@ class CashCollectionService:
             collection_date: Date of collection (defaults to today)
             receipt_number: Receipt number (auto-generated if not provided)
             credit_account: Account to credit (e.g., Income, Loan Receivable)
+            receivable: CustomerReceivable being paid (invoice/loan/entitlement)
         
         Returns:
             CashCollection instance
@@ -78,6 +80,7 @@ class CashCollectionService:
         collection = CashCollection.objects.create(
             cashier_account=cashier_account,
             client=client,
+            receivable=receivable,
             receipt_number=receipt_number,
             collection_date=collection_date,
             amount_due=amount_due,

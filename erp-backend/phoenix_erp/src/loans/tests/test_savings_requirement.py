@@ -297,3 +297,57 @@ class CustomerBranchTests(_LoanEnvTestCase):
         resp = self._post_income(cat_a, client=self.client_obj.pk)
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertIn("not set up in B", str(resp.content))
+
+    def test_cash_collection_uses_cashiers_till_in_clients_branch(self):
+        from rest_framework.test import APIClient
+        from cash_management.models import CashCollection
+        from cash_management.services.payment_routing import PaymentRoutingService
+        from django.contrib.contenttypes.models import ContentType
+        from receivables.models import CustomerReceivable
+        till_a = PaymentRoutingService.get_or_create_cashier_account(self.user, branch=self.branch_a)
+        Client.objects.filter(pk=self.client_obj.pk).update(branch=self.branch_b)
+        receivable = CustomerReceivable.objects.create(
+            client=self.client_obj, receivable_type=CustomerReceivable._meta.get_field(
+                'receivable_type').choices[0][0],
+            content_type=ContentType.objects.get_for_model(Client), object_id=self.client_obj.pk,
+            reference_number="RCV-1", original_amount=Decimal("1000.00"),
+            balance=Decimal("1000.00"), due_date=date.today(),
+            owner=self.user, branch=self.branch_b,
+        )
+
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.post(
+            "/api/cash-management/cash-collections/",
+            {
+                "cashier_account": till_a.pk, "client": self.client_obj.pk,
+                "receivable": receivable.pk,
+                "amount_due": "1000.00", "amount_collected": "1000.00",
+                "payment_purpose": "Loan Payment", "collection_date": str(date.today()),
+            },
+            format="json",
+            HTTP_X_BRANCH_ID=str(self.branch_a.pk),
+        )
+        self.assertIn(resp.status_code, (200, 201), resp.content)
+        collection = CashCollection.objects.get(client=self.client_obj)
+        self.assertEqual(collection.branch_id, self.branch_b.pk)
+        self.assertEqual(collection.cashier_account.branch_id, self.branch_b.pk)
+        self.assertEqual(collection.cashier_account.cashier_id, self.user.pk)
+        self.assertEqual(collection.cashier_account.account.branch_id, self.branch_b.pk)
+        self.assertEqual(collection.receivable_id, receivable.pk)
+
+    def test_client_import_uses_branch_staff_is_acting_in(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from rest_framework.test import APIClient
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        csv_bytes = b"first_name,last_name,phone_primary,gender\nAmina,Bello,08099990000,female\n"
+        resp = api.post(
+            "/api/clients/clients/bulk_import/",
+            {"file": SimpleUploadedFile("clients.csv", csv_bytes, content_type="text/csv")},
+            format="multipart",
+            HTTP_X_BRANCH_ID=str(self.branch_b.pk),  # acting in branch B
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        imported = Client.objects.get(phone_primary="08099990000")
+        self.assertEqual(imported.branch_id, self.branch_b.pk)
