@@ -299,15 +299,27 @@ class CustomerBranchTests(_LoanEnvTestCase):
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertIn("not set up in B", str(resp.content))
 
-    def test_cash_collection_uses_cashiers_till_in_clients_branch(self):
+    def _post_collection(self, till, receivable, acting_branch):
         from rest_framework.test import APIClient
-        from cash_management.models import CashCollection
-        from cash_management.services.payment_routing import PaymentRoutingService
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        return api.post(
+            "/api/cash-management/cash-collections/",
+            {
+                "cashier_account": till.pk, "client": self.client_obj.pk,
+                "receivable": receivable.pk,
+                "amount_due": "1000.00", "amount_collected": "1000.00",
+                "payment_purpose": "Loan Payment", "collection_date": str(date.today()),
+            },
+            format="json",
+            HTTP_X_BRANCH_ID=str(acting_branch.pk),
+        )
+
+    def _client_in_b_with_receivable(self):
         from django.contrib.contenttypes.models import ContentType
         from receivables.models import CustomerReceivable
-        till_a = PaymentRoutingService.get_or_create_cashier_account(self.user, branch=self.branch_a)
         Client.objects.filter(pk=self.client_obj.pk).update(branch=self.branch_b)
-        receivable = CustomerReceivable.objects.create(
+        return CustomerReceivable.objects.create(
             client=self.client_obj, receivable_type=CustomerReceivable._meta.get_field(
                 'receivable_type').choices[0][0],
             content_type=ContentType.objects.get_for_model(Client), object_id=self.client_obj.pk,
@@ -316,25 +328,27 @@ class CustomerBranchTests(_LoanEnvTestCase):
             owner=self.user, branch=self.branch_b,
         )
 
-        api = APIClient()
-        api.force_authenticate(user=self.user)
-        resp = api.post(
-            "/api/cash-management/cash-collections/",
-            {
-                "cashier_account": till_a.pk, "client": self.client_obj.pk,
-                "receivable": receivable.pk,
-                "amount_due": "1000.00", "amount_collected": "1000.00",
-                "payment_purpose": "Loan Payment", "collection_date": str(date.today()),
-            },
-            format="json",
-            HTTP_X_BRANCH_ID=str(self.branch_a.pk),
-        )
+    def test_cash_collection_refused_for_client_of_another_branch(self):
+        from cash_management.models import CashCollection
+        from cash_management.services.payment_routing import PaymentRoutingService
+        receivable = self._client_in_b_with_receivable()
+        till_a = PaymentRoutingService.get_or_create_cashier_account(self.user, branch=self.branch_a)
+        resp = self._post_collection(till_a, receivable, acting_branch=self.branch_a)
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertIn("Switch to B", str(resp.content))
+        self.assertFalse(CashCollection.objects.filter(client=self.client_obj).exists())
+
+    def test_cash_collection_when_acting_in_clients_branch_uses_till_there(self):
+        from cash_management.models import CashCollection
+        from cash_management.services.payment_routing import PaymentRoutingService
+        receivable = self._client_in_b_with_receivable()
+        till_a = PaymentRoutingService.get_or_create_cashier_account(self.user, branch=self.branch_a)
+        resp = self._post_collection(till_a, receivable, acting_branch=self.branch_b)
         self.assertIn(resp.status_code, (200, 201), resp.content)
         collection = CashCollection.objects.get(client=self.client_obj)
         self.assertEqual(collection.branch_id, self.branch_b.pk)
         self.assertEqual(collection.cashier_account.branch_id, self.branch_b.pk)
         self.assertEqual(collection.cashier_account.cashier_id, self.user.pk)
-        self.assertEqual(collection.cashier_account.account.branch_id, self.branch_b.pk)
         self.assertEqual(collection.receivable_id, receivable.pk)
 
     def test_client_import_uses_branch_staff_is_acting_in(self):

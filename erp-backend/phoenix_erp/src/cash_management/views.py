@@ -225,15 +225,29 @@ class CashCollectionViewSet(ScopedModelViewSet):
         cashier_account = serializer.validated_data['cashier_account']
         client = serializer.validated_data['client']
 
-        # A collection belongs to the CLIENT's branch, not the branch of the
-        # till the staff member happened to pick (staff get moved between
-        # branches temporarily). Its journal entry can only touch accounts in
-        # one branch, so use the same cashier's till in the client's branch,
-        # creating it if they don't have one there yet.
-        if client is not None and client.branch_id and cashier_account.branch_id != client.branch_id:
+        # Cash is received at a physical till, so staff may only receive from
+        # customers of the branch they are ACTING in (their home branch, or a
+        # temporarily granted one selected in the branch switcher). That keeps
+        # the cash, the till and the customer's records in one branch — no
+        # cash ever sits in one branch's drawer but another branch's books.
+        acting_branch = self._get_director_branch_override() or getattr(self.request.user, 'branch', None)
+        if client is not None and client.branch_id and (
+            acting_branch is None or client.branch_id != acting_branch.pk
+        ):
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            raise DRFValidationError({
+                'client': (
+                    f"{client.full_name} belongs to {client.branch.name}, but you are "
+                    f"working in {getattr(acting_branch, 'name', 'no branch')}. Switch to "
+                    f"{client.branch.name} in the branch switcher (if you have been "
+                    f"given access) to receive this payment."
+                )
+            })
+        # Post to the cashier's own till in that branch (created on first use).
+        if cashier_account.branch_id != acting_branch.pk:
             from cash_management.services.payment_routing import PaymentRoutingService
             cashier_account = PaymentRoutingService.get_or_create_cashier_account(
-                cashier_account.cashier, branch=client.branch,
+                cashier_account.cashier, branch=acting_branch,
             )
         amount_due = serializer.validated_data['amount_due']
         amount_collected = serializer.validated_data['amount_collected']
