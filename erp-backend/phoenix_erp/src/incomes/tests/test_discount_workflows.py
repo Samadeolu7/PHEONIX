@@ -2,7 +2,6 @@
 """
 Comprehensive tests for discount workflow integration
 """
-import pytest
 from decimal import Decimal
 from django.test import TestCase
 from django.contrib.auth import get_user_model
@@ -23,7 +22,6 @@ from branches.models import Branch
 User = get_user_model()
 
 
-@pytest.mark.django_db
 class TestDiscountProgramWorkflowValidation(TestCase):
     """Test workflow validation in DiscountProgram model"""
     
@@ -179,7 +177,6 @@ class TestDiscountProgramWorkflowValidation(TestCase):
         self.assertIn('eligibility_workflow_required', serializer.errors)
 
 
-@pytest.mark.django_db
 class TestDiscountWorkflowService(TestCase):
     """Test DiscountWorkflowService functionality"""
     
@@ -349,7 +346,6 @@ class TestDiscountWorkflowService(TestCase):
         self.assertIn('clients', preview)
 
 
-@pytest.mark.django_db
 class TestDiscountProgramAPI(TestCase):
     """Test DiscountProgram API endpoints"""
     
@@ -512,7 +508,6 @@ class TestDiscountProgramAPI(TestCase):
         self.assertIn('total_discount', response.data)
 
 
-@pytest.mark.django_db
 class TestReceivablesServiceWorkflowIntegration(TestCase):
     """Test workflow integration in ReceivablesService"""
     
@@ -717,7 +712,6 @@ class TestReceivablesServiceWorkflowIntegration(TestCase):
         self.assertEqual(details['gpa'], 3.8)
 
 
-@pytest.mark.django_db
 class TestWorkflowExecutionIntegration(TestCase):
     """Integration tests for workflow execution"""
     
@@ -807,9 +801,3 @@ class TestWorkflowExecutionIntegration(TestCase):
         # Check that workflow run was created
         workflow_runs = WorkflowRun.objects.filter(template=workflow)
         self.assertGreater(workflow_runs.count(), 0)
-
-
-# Run tests with pytest
-if __name__ == '__main__':
-    pytest.main([__file__, '-v'])
-

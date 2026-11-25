@@ -401,6 +401,30 @@ class Client(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         """Alias for full_name for backward compatibility"""
         return self.full_name
 
+    # Loans that no longer tie the customer to the books.
+    _SETTLED_LOAN_STATUSES = ('paid_off', 'rejected', 'cancelled')
+
+    def deletion_blockers(self):
+        """
+        Reasons this customer must not be deleted (an empty list means it may).
+
+        Deleting (soft-deleting) a customer hides them everywhere while their
+        loans and savings carry on in the ledger, so a customer who still owes
+        or holds money — including a written-off loan that may yet be
+        recovered — must stay. Settle or close those first.
+        """
+        from decimal import Decimal
+        blockers = []
+        open_loans = self.loan_accounts.exclude(status__in=self._SETTLED_LOAN_STATUSES)
+        if open_loans.exists():
+            numbers = ', '.join(open_loans.values_list('loan_number', flat=True)[:5])
+            blockers.append(f"has loans that are not settled ({numbers})")
+        savings = self.savings_accounts.exclude(status='closed').select_related('account')
+        funded = [s.account_number for s in savings if s.account and s.account.balance != Decimal('0')]
+        if funded:
+            blockers.append(f"has savings accounts with a balance ({', '.join(funded[:5])})")
+        return blockers
+
     @property
     def age(self):
         """Calculate client's current age"""

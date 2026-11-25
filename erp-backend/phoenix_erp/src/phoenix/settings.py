@@ -93,6 +93,10 @@ TESTING = (
     'pytest' in sys.argv[0] if sys.argv else False
 )
 
+# Reset request-scoped state (thread-local tenant) before each test, the way
+# a fresh request does in production — see common/test_runner.py.
+TEST_RUNNER = 'common.test_runner.IsolatedTestRunner'
+
 # Check if running dev server
 RUNNING_DEVSERVER = ('runserver' in sys.argv)
 

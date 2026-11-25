@@ -104,6 +104,21 @@ class ClientViewSet(ScopedModelViewSet):
     officer_group_lookup = 'group__assigned_officer'
     officer_group_members_lookup = 'group__member_officers'
 
+    def perform_destroy(self, instance):
+        """Refuse to delete a customer who still owes or holds money
+        (Client.deletion_blockers); otherwise soft-delete as usual."""
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        blockers = instance.deletion_blockers()
+        if blockers:
+            raise DRFValidationError({
+                'detail': (
+                    f"{instance.full_name} cannot be deleted: they "
+                    + "; ".join(blockers)
+                    + ". Settle or close these first."
+                )
+            })
+        super().perform_destroy(instance)
+
     def get_queryset(self):
         # Get the base scoped + officer-scoped queryset from parent class
         queryset = super().get_queryset()
@@ -171,8 +186,10 @@ class ClientViewSet(ScopedModelViewSet):
                     branch=client.branch,
                     cashier_account_id=self.request.data.get('cashier_account_id'),
                 )
-            except ValidationError:
-                raise DRFValidationError({'detail': 'Cashier account not found.'})
+            except ValidationError as exc:
+                # Pass the real reason through (e.g. the cash custody rule's
+                # "switch branch" message), not a generic "not found".
+                raise DRFValidationError({'detail': exc.messages})
 
             config = get_active_registration_config(owner=client.owner, branch=client.branch)
             if not config:
@@ -268,8 +285,10 @@ class ClientViewSet(ScopedModelViewSet):
                 branch=client.branch,
                 cashier_account_id=request.data.get('cashier_account_id'),
             )
-        except ValidationError:
-            return Response({'detail': 'Cashier account not found.'}, status=status.HTTP_400_BAD_REQUEST)
+        except ValidationError as exc:
+            # Pass the real reason through (e.g. the cash custody rule's
+            # "switch branch" message), not a generic "not found".
+            return Response({'detail': ' '.join(exc.messages)}, status=status.HTTP_400_BAD_REQUEST)
 
         config = get_active_registration_config(owner=client.owner, branch=client.branch)
         if not config:
