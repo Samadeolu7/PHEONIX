@@ -198,12 +198,40 @@ class IncomeViewSet(ScopedModelViewSet):
     permission_page = 'incomes'
     queryset = Income.objects.all()
     serializer_class = IncomeSerializer
-    # Staff-side record (company bookkeeping: income category/GL accounts come from the staff branch), so keep the
-    # staff member's branch rather than the client's.
-    customer_branch_fields = ()
+    # An income record belongs to the branch of what it is FOR (the client,
+    # invoice or allocation it relates to), not the branch of the staff member
+    # keying it in — staff get moved around temporarily while their assigned
+    # branch stays the same. With none of these linked, it falls back to the
+    # branch the staff member is working in (ScopedModelViewSet).
+    customer_branch_fields = ('client', 'invoice', 'inventory_allocation')
     permission_classes = [IsAuthenticated]
     officer_client_lookup = 'client__assigned_officer'
-    
+
+    def perform_create(self, serializer):
+        # Income categories (and their GL income accounts) are cloned per
+        # branch, and a journal entry can only post to accounts in its own
+        # branch — so book the income on the target branch's copy of the
+        # category the form offered.
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        _, working_branch, _ = self._resolve_create_scope()
+        branch = self.get_customer_branch(serializer.validated_data) or working_branch
+        category = serializer.validated_data.get('category')
+        if category is not None and branch is not None and category.branch_id not in (None, branch.pk):
+            match = IncomeCategory.objects.filter(
+                code=category.code, branch=branch, is_deleted=False,
+            ).first()
+            if match is None:
+                raise DRFValidationError({
+                    'category': (
+                        f"Income category '{category.name}' is not set up in "
+                        f"{branch.name}, the branch this income is for. Set it up "
+                        f"there first."
+                    )
+                })
+            serializer.validated_data['category'] = match
+        super().perform_create(serializer)
+
     def get_queryset(self):
         queryset = super().get_queryset()
         

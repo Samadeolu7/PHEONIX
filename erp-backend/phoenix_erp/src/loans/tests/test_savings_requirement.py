@@ -245,3 +245,55 @@ class CustomerBranchTests(_LoanEnvTestCase):
         self.assertEqual(acct.branch_id, self.branch_b.pk)
         self.assertEqual(acct.account.branch_id, self.branch_b.pk)
         self.assertEqual(acct.account_number, acct.account.code)
+
+    def _income_category(self, branch):
+        from incomes.models import IncomeCategory
+        income_gl = _acct(self.user, branch, "Fee Income", "4200", Account.INCOME)
+        return IncomeCategory.objects.create(
+            name="Form Fee", code="FORM", income_account=income_gl,
+            owner=self.user, branch=branch,
+        )
+
+    def _post_income(self, category, **extra):
+        from rest_framework.test import APIClient
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        return api.post(
+            "/api/incomes/incomes/",
+            {
+                "category": category.pk, "reference_number": f"INC-{category.pk}-{len(extra)}",
+                "income_date": str(date.today()), "description": "Form fee",
+                "amount": "500.00", **extra,
+            },
+            format="json",
+            HTTP_X_BRANCH_ID=str(self.branch_a.pk),  # staff is working in branch A
+        )
+
+    def test_income_for_a_client_is_booked_in_the_clients_branch(self):
+        from incomes.models import Income
+        cat_a = self._income_category(self.branch_a)
+        cat_b = self._income_category(self.branch_b)
+        Client.objects.filter(pk=self.client_obj.pk).update(branch=self.branch_b)
+
+        resp = self._post_income(cat_a, client=self.client_obj.pk)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        income = Income.objects.get(pk=resp.json()["id"])
+        self.assertEqual(income.branch_id, self.branch_b.pk)
+        # Switched to branch B's copy of the category (its GL income account).
+        self.assertEqual(income.category_id, cat_b.pk)
+
+    def test_income_without_a_client_uses_the_branch_staff_is_working_in(self):
+        from incomes.models import Income
+        cat_a = self._income_category(self.branch_a)
+        resp = self._post_income(cat_a)
+        self.assertEqual(resp.status_code, 201, resp.content)
+        income = Income.objects.get(pk=resp.json()["id"])
+        self.assertEqual(income.branch_id, self.branch_a.pk)
+        self.assertEqual(income.category_id, cat_a.pk)
+
+    def test_income_category_missing_in_clients_branch_is_a_clear_error(self):
+        cat_a = self._income_category(self.branch_a)
+        Client.objects.filter(pk=self.client_obj.pk).update(branch=self.branch_b)
+        resp = self._post_income(cat_a, client=self.client_obj.pk)
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertIn("not set up in B", str(resp.content))
