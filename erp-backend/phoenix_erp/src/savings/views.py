@@ -1,4 +1,5 @@
 import calendar
+from cash_management.services.cash_custody import acting_branch as cash_acting_branch
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -531,7 +532,7 @@ class SavingsAccountViewSet(ScopedModelViewSet):
                 cashier_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id, branch=account.branch)
             else:
                 cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
-                    request.user,
+                    request.user, acting_branch=cash_acting_branch(request),
                     owner=account.owner,
                     branch=account.branch,
                     cashier_account_id=cashier_account_id,
@@ -729,7 +730,7 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
         from django.core.exceptions import ValidationError as DjangoValidationError
         try:
             cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
-                request.user,
+                request.user, acting_branch=cash_acting_branch(request),
                 owner=schedule.savings_account.owner,
                 branch=schedule.savings_account.branch,
                 cashier_account_id=cashier_account_id,

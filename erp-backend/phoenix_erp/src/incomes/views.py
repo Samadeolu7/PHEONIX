@@ -2,6 +2,7 @@
 """
 ViewSets for income, invoices, and fee entitlements
 """
+from cash_management.services.cash_custody import acting_branch as cash_acting_branch
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -285,6 +286,7 @@ class IncomeViewSet(ScopedModelViewSet):
                 
                 # Record payment with accounting entries
                 journal_entry = IncomeAccountingService.record_income_receipt(
+                    acting_branch=cash_acting_branch(request),
                     income=income,
                     amount=amount,
                     payment_method=serializer.validated_data.get('payment_method', 'cash'),
@@ -790,6 +792,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                 else:
                     # No bank account selected â†’ fall back to configured default account
                     bank_account = IncomeAccountingService.get_cash_account(
+                        acting_branch=cash_acting_branch(request),
                         owner=invoice.owner,
                         branch=invoice.branch,
                         payment_method=payment_method,
@@ -2759,6 +2762,7 @@ class FeeEntitlementViewSet(ScopedModelViewSet):
             
             # Record payment with accounting entries
             journal_entry = IncomeAccountingService.record_entitlement_payment(
+                acting_branch=cash_acting_branch(request),
                 entitlement=entitlement,
                 amount=amount,
                 payment_method=serializer.validated_data.get('payment_method', 'cash'),
@@ -3059,6 +3063,7 @@ class PaymentPlanInstallmentViewSet(ScopedModelViewSet):
                 # Create GL journal entry for this installment payment
                 entitlement = installment.payment_plan.entitlement
                 journal_entry = IncomeAccountingService.record_entitlement_payment(
+                    acting_branch=cash_acting_branch(request),
                     entitlement=entitlement,
                     amount=amount,
                     payment_method=payment_method,

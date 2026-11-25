@@ -335,7 +335,7 @@ class CustomerBranchTests(_LoanEnvTestCase):
         till_a = PaymentRoutingService.get_or_create_cashier_account(self.user, branch=self.branch_a)
         resp = self._post_collection(till_a, receivable, acting_branch=self.branch_a)
         self.assertEqual(resp.status_code, 400, resp.content)
-        self.assertIn("Switch to B", str(resp.content))
+        self.assertIn("switch to B", str(resp.content))
         self.assertFalse(CashCollection.objects.filter(client=self.client_obj).exists())
 
     def test_cash_collection_when_acting_in_clients_branch_uses_till_there(self):
@@ -401,3 +401,92 @@ class CustomerBranchTests(_LoanEnvTestCase):
         invoice = Invoice.objects.get(client=self.client_obj)
         self.assertEqual(invoice.branch_id, self.branch_b.pk)
         self.assertEqual(invoice.items.get().service_item_id, svc_b.pk)
+
+
+class CashCustodyRuleTests(_LoanEnvTestCase):
+    """
+    CASH CUSTODY RULE (cash_management/services/cash_custody.py): staff may
+    only handle cash for customers of the branch they are acting in, always
+    through their own till in that branch. Enforced inside the shared till
+    helpers so every cash path (loan repayment/disbursement/fees, savings
+    deposit/withdrawal, income/invoice/entitlement receipts) follows it.
+    """
+
+    def test_till_refused_when_acting_in_another_branch(self):
+        from django.core.exceptions import ValidationError
+        from cash_management.services.payment_routing import PaymentRoutingService
+        with self.assertRaises(ValidationError) as ctx:
+            PaymentRoutingService.resolve_cashier_gl_account(
+                self.user, acting_branch=self.branch_a, branch=self.branch_b)
+        self.assertIn("switch to B", str(ctx.exception))
+
+    def test_till_refused_when_no_branch_selected(self):
+        from django.core.exceptions import ValidationError
+        from cash_management.services.payment_routing import PaymentRoutingService
+        with self.assertRaises(ValidationError) as ctx:
+            PaymentRoutingService.resolve_cashier_gl_account(
+                self.user, acting_branch=None, branch=self.branch_b)
+        self.assertIn("Select B in the branch switcher", str(ctx.exception))
+
+    def test_till_in_other_branch_swapped_for_own_till_in_customer_branch(self):
+        from cash_management.services.payment_routing import PaymentRoutingService
+        till_a = PaymentRoutingService.get_or_create_cashier_account(self.user, branch=self.branch_a)
+        gl = PaymentRoutingService.resolve_cashier_gl_account(
+            self.user, acting_branch=self.branch_b, branch=self.branch_b,
+            cashier_account_id=till_a.account_id)
+        self.assertEqual(gl.branch_id, self.branch_b.pk)
+        self.assertNotEqual(gl.pk, till_a.account_id)
+
+    def test_own_second_branch_till_is_accepted(self):
+        """Previously only the user's FIRST till counted as 'their own'."""
+        from cash_management.services.payment_routing import PaymentRoutingService
+        PaymentRoutingService.get_or_create_cashier_account(self.user, branch=self.branch_a)
+        till_b = PaymentRoutingService.get_or_create_cashier_account(self.user, branch=self.branch_b)
+        gl = PaymentRoutingService.resolve_cashier_gl_account(
+            self.user, acting_branch=self.branch_b, branch=self.branch_b,
+            cashier_account_id=till_b.account_id)
+        self.assertEqual(gl.pk, till_b.account_id)
+
+    def test_income_cash_account_refused_when_acting_in_another_branch(self):
+        from django.core.exceptions import ValidationError
+        from incomes.services.accounting_integration import IncomeAccountingService
+        with self.assertRaises(ValidationError):
+            IncomeAccountingService.get_cash_account(
+                self.user, self.branch_b, 'cash', user=self.user, acting_branch=self.branch_a)
+
+    def test_helpers_require_acting_branch_argument(self):
+        """The standard: no cash path can call the till helpers without it."""
+        from cash_management.services.payment_routing import PaymentRoutingService
+        from incomes.services.accounting_integration import IncomeAccountingService
+        with self.assertRaises(TypeError):
+            PaymentRoutingService.resolve_cashier_gl_account(self.user, branch=self.branch_a)
+        with self.assertRaises(TypeError):
+            IncomeAccountingService.get_cash_account(self.user, self.branch_a, 'cash', user=self.user)
+
+    def test_savings_cash_deposit_uses_own_till_in_customer_branch(self):
+        from rest_framework.test import APIClient
+        Client.objects.filter(pk=self.client_obj.pk).update(branch=self.branch_b)
+        _acct(self.user, self.branch_b, "Member Savings", "2140", Account.SAVINGS)
+        savings_parent_b = Account.objects.get(code="2140", branch=self.branch_b)
+        gl = _acct(self.user, self.branch_b, "Sav B", "2140-90099", Account.SAVINGS,
+                   level=Account.LEVEL_CHILD, parent=savings_parent_b)
+        acct = SavingsAccount.objects.create(
+            client=self.client_obj, product=self.sav_b, account=gl, account_number=gl.code,
+            opened_on=date.today(), status="active", interest_rate=Decimal("0"),
+            interest_calculation_method="monthly", owner=self.user, branch=self.branch_b,
+        )
+        api = APIClient()
+        api.force_authenticate(user=self.user)
+        resp = api.post(
+            f"/api/savings/accounts/{acct.pk}/deposit/",
+            {"amount": "2500.00", "payment_method": "cash"},
+            format="json",
+            HTTP_X_BRANCH_ID=str(self.branch_b.pk),  # acting in the customer's branch
+        )
+        self.assertIn(resp.status_code, (200, 201), resp.content)
+        gl.refresh_from_db()
+        self.assertEqual(gl.balance, Decimal("2500.00"))
+        from cash_management.models import CashierAccount
+        till_b = CashierAccount.objects.get(cashier=self.user, branch=self.branch_b)
+        till_b.account.refresh_from_db()
+        self.assertEqual(till_b.account.balance, Decimal("2500.00"))

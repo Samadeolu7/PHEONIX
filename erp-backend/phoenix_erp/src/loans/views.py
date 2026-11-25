@@ -1,5 +1,6 @@
 import logging
 
+from cash_management.services.cash_custody import acting_branch as cash_acting_branch
 from django.shortcuts import render
 from django.db.models import Q
 from django.core.exceptions import ValidationError
@@ -233,7 +234,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
     def _resolve_cashier_account(self, loan, cashier_account_id=None):
         try:
             return PaymentRoutingService.resolve_cashier_gl_account(
-                self.request.user,
+                self.request.user, acting_branch=cash_acting_branch(self.request),
                 owner=loan.owner,
                 branch=loan.branch,
                 cashier_account_id=cashier_account_id,
@@ -936,7 +937,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             cashier_account_id = request.data.get('cashier_account_id')
             try:
                 payment_account = PaymentRoutingService.resolve_cashier_gl_account(
-                    request.user,
+                    request.user, acting_branch=cash_acting_branch(request),
                     owner=loan.owner,
                     branch=loan.branch,
                     cashier_account_id=cashier_account_id,
@@ -1229,7 +1230,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             if payment_mode == 'cash':
                 try:
                     payment_account = PaymentRoutingService.resolve_cashier_gl_account(
-                        request.user,
+                        request.user, acting_branch=cash_acting_branch(request),
                         owner=loan.owner,
                         branch=loan.branch,
                     )
@@ -2365,7 +2366,7 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
             if _needs_cashier:
                 try:
                     _cashier_acct = PaymentRoutingService.resolve_cashier_gl_account(
-                        request.user, owner=loan.owner, branch=loan.branch,
+                        request.user, acting_branch=cash_acting_branch(request), owner=loan.owner, branch=loan.branch,
                     )
                 except ValidationError as exc:
                     _fee_warnings.append(
@@ -2449,7 +2450,7 @@ class LoanDisbursementViewSet(ScopedModelViewSet):
             if _needs_cashier:
                 try:
                     _cashier_acct = PaymentRoutingService.resolve_cashier_gl_account(
-                        request.user, owner=loan.owner, branch=loan.branch,
+                        request.user, acting_branch=cash_acting_branch(request), owner=loan.owner, branch=loan.branch,
                     )
                 except ValidationError as exc:
                     _fee_warnings.append(f"Could not resolve cashier for fees: {exc}.")
@@ -2592,7 +2593,7 @@ class LoanFeeApplicationViewSet(ScopedModelViewSet):
         cashier_account_id = request.data.get('cashier_account_id') or request.query_params.get('cashier_account_id')
         try:
             cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
-                request.user,
+                request.user, acting_branch=cash_acting_branch(request),
                 owner=loan.owner,
                 branch=loan.branch,
                 cashier_account_id=cashier_account_id,
@@ -3037,7 +3038,7 @@ class OfflinePaymentRecordViewSet(ScopedModelViewSet):
             cashier_account_id = request.data.get('cashier_account_id')
             try:
                 payment_account = PaymentRoutingService.resolve_cashier_gl_account(
-                    request.user,
+                    request.user, acting_branch=cash_acting_branch(request),
                     owner=loan.owner,
                     branch=loan.branch,
                     cashier_account_id=cashier_account_id,
