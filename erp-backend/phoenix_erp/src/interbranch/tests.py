@@ -236,3 +236,95 @@ class ConsolidatedTrialBalanceTests(InterBranchTransferTestBase):
         tb_a = FinancialStatementService(self.owner, branch=self.branch_a).generate_trial_balance()
         due_from_entry = next(a for a in tb_a['accounts'] if a['name'] == f'Due from {self.branch_b.name}')
         self.assertEqual(Decimal(due_from_entry['balance']), Decimal('40000.00'))
+
+
+class AddEntryCrossBranchTests(InterBranchTransferTestBase):
+    """
+    interbranch.services.add_entry: one business event that pays out of
+    branch A's cash for a branch-B record (e.g. disbursing a B customer's loan
+    from A's till) is split into single-branch, balanced transactions through
+    Due From / Due To, and reversing the main transaction reverses both.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.loans_b = self._make_account(self.branch_b, '1300', 'Loans Receivable B', Account.ASSET)
+        self.series, _ = TransactionSeries.objects.get_or_create(code='TST', defaults={'description': 'Test'})
+
+    def _payout_from_a_for_b(self, amount):
+        from interbranch.services import add_entry
+        txn = Transaction.objects.create(
+            series=self.series, description='Loan disbursement (B customer)', branch=self.branch_b,
+            owner=self.owner, created_by=self.owner, tenant=self.tenant,
+        )
+        TransactionEntry.objects.create(transaction=txn, account=self.loans_b, side=TransactionEntry.DEBIT, amount=amount)
+        add_entry(txn, self.cash_a, TransactionEntry.CREDIT, amount)
+        txn.post()
+        return txn
+
+    def _clearing(self, branch, counterparty, direction):
+        acct = InterBranchClearingAccount.objects.get(
+            branch=branch, counterparty_branch=counterparty, direction=direction).account
+        acct.refresh_from_db()
+        return acct
+
+    def _assert_both_branches_balance(self):
+        for branch in (self.branch_a, self.branch_b):
+            tb = FinancialStatementService(self.owner, branch=branch).generate_trial_balance()
+            self.assertTrue(tb['is_balanced'], f"{branch.name} trial balance does not balance")
+
+    def test_payout_from_other_branch_is_split_and_balanced(self):
+        txn = self._payout_from_a_for_b(Decimal('30000.00'))
+
+        # Main (B) transaction touches only B accounts and is posted.
+        self.assertEqual({e.account.branch_id for e in txn.entries.all()}, {self.branch_b.pk})
+        leg = txn.interbranch_legs.get()
+        self.assertEqual(leg.branch_id, self.branch_a.pk)
+        self.assertTrue(leg.approved)
+        self.assertEqual({e.account.branch_id for e in leg.entries.all()}, {self.branch_a.pk})
+
+        self.cash_a.refresh_from_db()
+        self.loans_b.refresh_from_db()
+        self.assertEqual(self.cash_a.balance, Decimal('70000.00'))
+        self.assertEqual(self.loans_b.balance, Decimal('30000.00'))
+        # A is owed by B; B owes A — equal and opposite.
+        self.assertEqual(self._clearing(self.branch_a, self.branch_b, InterBranchClearingAccount.DUE_FROM).balance,
+                         Decimal('30000.00'))
+        self.assertEqual(self._clearing(self.branch_b, self.branch_a, InterBranchClearingAccount.DUE_TO).balance,
+                         Decimal('30000.00'))
+        self._assert_both_branches_balance()
+
+    def test_reversing_main_transaction_reverses_other_branch_leg(self):
+        txn = self._payout_from_a_for_b(Decimal('30000.00'))
+        txn.reverse(self.owner, 'entered in error')
+
+        leg = txn.interbranch_legs.get()
+        leg.refresh_from_db()
+        self.assertTrue(leg.is_reversed)
+        self.cash_a.refresh_from_db()
+        self.loans_b.refresh_from_db()
+        self.assertEqual(self.cash_a.balance, Decimal('100000.00'))
+        self.assertEqual(self.loans_b.balance, Decimal('0.00'))
+        self.assertEqual(self._clearing(self.branch_a, self.branch_b, InterBranchClearingAccount.DUE_FROM).balance,
+                         Decimal('0.00'))
+        self.assertEqual(self._clearing(self.branch_b, self.branch_a, InterBranchClearingAccount.DUE_TO).balance,
+                         Decimal('0.00'))
+        self._assert_both_branches_balance()
+
+    def test_leg_cannot_be_reversed_on_its_own(self):
+        from django.core.exceptions import ValidationError
+        txn = self._payout_from_a_for_b(Decimal('1000.00'))
+        with self.assertRaises(ValidationError):
+            txn.interbranch_legs.get().reverse(self.owner, 'nope')
+
+    def test_same_branch_account_is_posted_directly(self):
+        from interbranch.services import add_entry
+        txn = Transaction.objects.create(
+            series=self.series, description='Same-branch', branch=self.branch_a,
+            owner=self.owner, created_by=self.owner, tenant=self.tenant,
+        )
+        TransactionEntry.objects.create(transaction=txn, account=self.equity_a, side=TransactionEntry.DEBIT, amount=Decimal('5'))
+        add_entry(txn, self.cash_a, TransactionEntry.CREDIT, Decimal('5'))
+        txn.post()
+        self.assertFalse(txn.interbranch_legs.exists())
+        self.assertFalse(InterBranchClearingAccount.objects.exists())

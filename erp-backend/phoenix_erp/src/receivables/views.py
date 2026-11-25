@@ -1,3 +1,4 @@
+from cash_management.services.cash_custody import acting_branch as cash_acting_branch
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -128,6 +129,7 @@ class CustomerReceivableViewSet(ScopedModelViewSet):
                     from django.utils import timezone as tz
 
                     resolved_account = bank_account or IncomeAccountingService.get_cash_account(
+                        acting_branch=cash_acting_branch(request),
                         owner=invoice.owner,
                         branch=invoice.branch,
                         payment_method=payment_method,
@@ -175,6 +177,7 @@ class CustomerReceivableViewSet(ScopedModelViewSet):
                     from incomes.services.accounting_integration import IncomeAccountingService
                     payment_date = serializer.validated_data.get('payment_date')
                     journal_entry = IncomeAccountingService.record_entitlement_payment(
+                        acting_branch=cash_acting_branch(request),
                         entitlement=source,
                         amount=amount,
                         payment_method=payment_method,

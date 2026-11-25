@@ -157,13 +157,10 @@ def handle_first_deposit_income(
         tenant=savings_account.tenant,
     )
 
-    # Debit: Cash / Cashier account (ASSET)
-    TransactionEntry.objects.create(
-        transaction=journal,
-        account=cashier_account,
-        side=TransactionEntry.DEBIT,
-        amount=income_amount,
-    )
+    # Debit: Cash / Cashier account (ASSET) — may be another branch's till
+    # (routed through Due To/Due From).
+    from interbranch.services import add_entry
+    add_entry(journal, cashier_account, TransactionEntry.DEBIT, income_amount)
 
     # Credit: Income account (does NOT touch savings balance)
     TransactionEntry.objects.create(

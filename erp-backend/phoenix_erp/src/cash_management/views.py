@@ -224,6 +224,24 @@ class CashCollectionViewSet(ScopedModelViewSet):
     def perform_create(self, serializer):
         cashier_account = serializer.validated_data['cashier_account']
         client = serializer.validated_data['client']
+
+        # CASH CUSTODY RULE (cash_management/services/cash_custody.py): only
+        # staff acting in the client's branch may receive their cash, on their
+        # own till in that branch.
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from cash_management.services.cash_custody import acting_branch, require_cash_custody
+        acting = acting_branch(self.request)
+        try:
+            require_cash_custody(acting, getattr(client, 'branch', None), client)
+        except DjangoValidationError as exc:
+            raise DRFValidationError({'client': exc.messages})
+        till_branch = getattr(client, 'branch', None) or acting
+        if till_branch is not None and cashier_account.branch_id != till_branch.pk:
+            from cash_management.services.payment_routing import PaymentRoutingService
+            cashier_account = PaymentRoutingService.get_or_create_cashier_account(
+                cashier_account.cashier, branch=till_branch,
+            )
         amount_due = serializer.validated_data['amount_due']
         amount_collected = serializer.validated_data['amount_collected']
         payment_purpose = serializer.validated_data['payment_purpose']
@@ -238,9 +256,16 @@ class CashCollectionViewSet(ScopedModelViewSet):
             collection_date=serializer.validated_data.get('collection_date'),
             notes=serializer.validated_data.get('notes', ''),
             collection_mode=serializer.validated_data.get('collection_mode', 'cash'),
-            credit_account=serializer.validated_data.get('credit_account')
+            credit_account=serializer.validated_data.get('credit_account'),
+            # The form requires a receivable; it used to be dropped here, so
+            # collections were saved with no link to what they paid.
+            receivable=serializer.validated_data.get('receivable'),
         )
-        
+
+        # The record is created by the service, not serializer.save(), so hand
+        # it to the serializer — otherwise building the response read the raw
+        # input dict, crashed with a 500, and rolled the collection back.
+        serializer.instance = collection
         return collection
     
     @action(detail=True, methods=['post'])

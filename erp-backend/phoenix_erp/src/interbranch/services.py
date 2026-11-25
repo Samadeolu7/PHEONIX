@@ -238,3 +238,80 @@ def reverse_interbranch_transfer(transfer, user, reason):
     transfer.reversal_reason = reason
     transfer.save(update_fields=['status', 'reversed_by', 'reversed_at', 'reversal_reason'])
     return transfer
+
+
+def add_entry(journal, account, side, amount):
+    """
+    Add one journal line to ``journal`` — routing it through Due To/Due From
+    when ``account`` belongs to another branch.
+
+    A journal entry may only touch accounts in its own branch, but one business
+    event can genuinely move money between branches: e.g. a branch-A bank
+    account paying out (or receiving) for a branch-B customer's loan, savings
+    or invoice. Then the foreign account's line goes on that branch's own leg
+    transaction (``interbranch_parent=journal``), balanced there by a clearing
+    account, and ``journal`` gets the reciprocal clearing line instead:
+
+        foreign line CREDIT (value leaves branch F):
+            F leg:    Cr account            / Dr Due from <journal branch>
+            journal:  Cr Due to <F>
+        foreign line DEBIT (value arrives in branch F):
+            F leg:    Dr account            / Cr Due to <journal branch>
+            journal:  Dr Due from <F>
+
+    Every transaction stays single-branch and balanced, so each branch's
+    balance sheet balances on its own, and the Due To/Due From pair nets to
+    zero across branches. ``journal.post()`` / ``reverse()`` post and reverse
+    the legs with it.
+
+    Use this ONLY where an account from another branch is legitimate (cash,
+    bank, till, stock). Misconfigured product GL accounts must still fail the
+    normal same-branch check rather than silently become inter-branch debts.
+    """
+    account_branch = getattr(account, 'branch', None)
+    home_branch = journal.branch
+    if (account_branch is None or home_branch is None
+            or account_branch.pk == home_branch.pk):
+        return TransactionEntry.objects.create(
+            transaction=journal, account=account, side=side, amount=amount,
+        )
+
+    if account_branch.tenant_id != home_branch.tenant_id:
+        raise ValidationError("Cannot post between branches of different organisations.")
+
+    leg = journal.interbranch_legs.filter(branch=account_branch, approved=False).first()
+    if leg is None:
+        leg = Transaction.objects.create(
+            series=journal.series,
+            date=journal.date,
+            # Same wording as the main entry: a leg can carry a customer's own
+            # account line (e.g. a fee taken from their savings held in another
+            # branch), and client-facing statements must not show internal
+            # bookkeeping notes. The link is interbranch_parent.
+            description=journal.description,
+            workflow_reference=journal.reference_number,
+            owner=journal.owner,
+            branch=account_branch,
+            created_by=journal.created_by,
+            tenant=account_branch.tenant,
+            interbranch_parent=journal,
+        )
+
+    if side == TransactionEntry.CREDIT:
+        leg_clearing = get_or_create_clearing_account(
+            account_branch, home_branch, InterBranchClearingAccount.DUE_FROM)
+        home_clearing = get_or_create_clearing_account(
+            home_branch, account_branch, InterBranchClearingAccount.DUE_TO)
+        leg_offset_side = TransactionEntry.DEBIT
+    else:
+        leg_clearing = get_or_create_clearing_account(
+            account_branch, home_branch, InterBranchClearingAccount.DUE_TO)
+        home_clearing = get_or_create_clearing_account(
+            home_branch, account_branch, InterBranchClearingAccount.DUE_FROM)
+        leg_offset_side = TransactionEntry.CREDIT
+
+    TransactionEntry.objects.create(transaction=leg, account=account, side=side, amount=amount)
+    TransactionEntry.objects.create(transaction=leg, account=leg_clearing, side=leg_offset_side, amount=amount)
+    return TransactionEntry.objects.create(
+        transaction=journal, account=home_clearing, side=side, amount=amount,
+    )

@@ -152,24 +152,37 @@ class PaymentRoutingService:
     def resolve_cashier_gl_account(
         user: User,
         *,
+        acting_branch,
         owner=None,
         branch=None,
         cashier_account_id: Optional[int] = None,
     ) -> Account:
         """
-        Resolve the GL ASSET account to use for cash-collected postings.
+        Resolve the till (cashier GL ASSET account) for cash received from or
+        paid to a customer.
 
-        Resolution order:
-        1. Explicit cashier_account_id (if supplied)
-        2. User cashier account (auto-created when missing)
+        Enforces the CASH CUSTODY RULE (cash_management/services/cash_custody.py):
+        ``branch`` is the customer record's branch (loan / savings account /
+        client) and must be the branch the staff member is acting in —
+        pass ``acting_branch=cash_custody.acting_branch(request)``. It is a
+        required argument so no cash path can skip the rule.
+
+        Resolution order (always a till in ``branch``):
+        1. Explicit cashier_account_id: that till, or — if it is in another
+           branch — the same cashier's till in ``branch``.
+        2. The user's own till in ``branch`` (auto-created when missing).
         """
+        from cash_management.services.cash_custody import require_cash_custody
+
+        require_cash_custody(acting_branch, branch)
+        branch = branch or acting_branch
+
         if cashier_account_id:
-            own_cashier = CashierAccount.objects.filter(
-                cashier=user,
-                is_active=True,
-                is_suspended=False
-            ).first()
-            own_gl_account_id = own_cashier.account_id if own_cashier else None
+            own_gl_account_ids = set(
+                CashierAccount.objects.filter(
+                    cashier=user, is_active=True, is_suspended=False,
+                ).values_list('account_id', flat=True)
+            )
 
             filters = {
                 'pk': cashier_account_id,
@@ -188,9 +201,10 @@ class PaymentRoutingService:
             except Account.DoesNotExist as exc:
                 raise ValidationError('Cashier account not found.') from exc
 
-            # Non-directors cannot post into another staff member's cashier GL account.
+            # Non-directors cannot post into another staff member's cashier GL
+            # account (any of their own per-branch tills is fine).
             if (
-                explicit_account.id != own_gl_account_id
+                explicit_account.id not in own_gl_account_ids
                 and not PaymentRoutingService._is_director(user)
             ):
                 raise ValidationError(
@@ -198,7 +212,15 @@ class PaymentRoutingService:
                     'Use your own cashier account instead.'
                 )
 
-            return explicit_account
+            if branch is None or explicit_account.branch_id == branch.pk:
+                return explicit_account
+
+            # The chosen till is in another branch: use the same cashier's
+            # till in this branch, so the cash stays in this branch's books.
+            till = CashierAccount.objects.filter(account_id=explicit_account.pk).first()
+            cashier_user = till.cashier if till else user
+            cashier = PaymentRoutingService.get_or_create_cashier_account(cashier_user, branch=branch)
+            return cashier.account
 
         cashier = PaymentRoutingService.get_or_create_cashier_account(user, branch=branch)
         if cashier and cashier.account:

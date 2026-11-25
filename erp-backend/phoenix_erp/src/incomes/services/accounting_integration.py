@@ -50,9 +50,16 @@ class IncomeAccountingService:
         return IncomeAccountingConfig.get_config(owner, branch)
     
     @staticmethod
-    def get_cash_account(owner, branch=None, payment_method='cash', income_category=None, user=None):
+    def get_cash_account(owner, branch=None, payment_method='cash', income_category=None, user=None,
+                         *, acting_branch):
         """
         Get cash/bank account based on payment method and configuration
+
+        For cash, enforces the CASH CUSTODY RULE
+        (cash_management/services/cash_custody.py): ``branch`` (the record's
+        branch) must be the branch the staff member is acting in. Pass
+        ``acting_branch=cash_custody.acting_branch(request)`` — required, so
+        no cash path can skip the rule.
 
         If payment_method is 'cash' and user is provided, auto-creates a CashierAccount
         if one doesn't exist for that user.
@@ -63,6 +70,10 @@ class IncomeAccountingService:
         3. Default cash account from config
         4. Auto-create cashier account for cash payments (even without config, using default 101)
         """
+        if payment_method == 'cash':
+            from cash_management.services.cash_custody import require_cash_custody
+            require_cash_custody(acting_branch, branch)
+
         # Try to get accounting config, but do NOT raise yet — fall back gracefully if missing
         config = None
         try:
@@ -217,7 +228,9 @@ class IncomeAccountingService:
         payment_method: str,
         user,
         bank_account: Account = None,
-        notes: str = ''
+        notes: str = '',
+        *,
+        acting_branch,
     ) -> JournalEntry:
         """
         Record income receipt with proper accounting entries
@@ -246,6 +259,13 @@ class IncomeAccountingService:
         Returns:
             JournalEntry: Created journal entry
         """
+        # CASH CUSTODY RULE (cash_management/services/cash_custody.py): checked
+        # first — before anything is posted — and not only inside
+        # get_cash_account(), whose fallback below swallows errors.
+        if payment_method == 'cash':
+            from cash_management.services.cash_custody import require_cash_custody
+            require_cash_custody(acting_branch, income.branch, getattr(income, 'client', None))
+
         # Get income account from category
         income_account = income.category.income_account
         
@@ -277,7 +297,8 @@ class IncomeAccountingService:
                     income.branch,
                     payment_method,
                     income_category=getattr(income, 'category', None),
-                    user=user  # Pass user for auto-creation of cashier account
+                    user=user,  # Pass user for auto-creation of cashier account
+                    acting_branch=acting_branch,
                 )
             except Exception:
                 bank_account = None
@@ -342,12 +363,10 @@ class IncomeAccountingService:
                 )
                 
                 # Dr. Cash/Bank
-                JournalEntryLine.objects.create(
-                    transaction=payment_entry,
-                    account=bank_account,
-                    side=JournalEntryLine.DEBIT,
-                    amount=amount,
-                )
+                # The bank/till may be in another branch than this entry; add_entry
+                # routes it through Due To/Due From so both branches balance.
+                from interbranch.services import add_entry
+                add_entry(payment_entry, bank_account, JournalEntryLine.DEBIT, amount)
 
                 # Cr. Accounts Receivable
                 JournalEntryLine.objects.create(
@@ -378,12 +397,10 @@ class IncomeAccountingService:
             )
 
             # Dr. Cash/Bank
-            JournalEntryLine.objects.create(
-                transaction=journal_entry,
-                account=bank_account,
-                side=JournalEntryLine.DEBIT,
-                amount=amount,
-            )
+            # The bank/till may be in another branch than this entry; add_entry
+            # routes it through Due To/Due From so both branches balance.
+            from interbranch.services import add_entry
+            add_entry(journal_entry, bank_account, JournalEntryLine.DEBIT, amount)
 
             # Cr. Income Account
             JournalEntryLine.objects.create(
@@ -419,12 +436,10 @@ class IncomeAccountingService:
             )
 
             # Dr. Cash/Bank
-            JournalEntryLine.objects.create(
-                transaction=journal_entry,
-                account=bank_account,
-                side=JournalEntryLine.DEBIT,
-                amount=amount,
-            )
+            # The bank/till may be in another branch than this entry; add_entry
+            # routes it through Due To/Due From so both branches balance.
+            from interbranch.services import add_entry
+            add_entry(journal_entry, bank_account, JournalEntryLine.DEBIT, amount)
 
             # Cr. Accounts Receivable
             JournalEntryLine.objects.create(
@@ -516,7 +531,9 @@ class IncomeAccountingService:
         payment_method: str,
         user,
         bank_account: Account = None,
-        notes: str = ''
+        notes: str = '',
+        *,
+        acting_branch,
     ) -> JournalEntry:
         """
         Record payment for fee entitlement
@@ -536,6 +553,13 @@ class IncomeAccountingService:
         Returns:
             JournalEntry: Created journal entry
         """
+        # CASH CUSTODY RULE (cash_management/services/cash_custody.py): checked
+        # first — before anything is posted — and not only inside
+        # get_cash_account(), whose fallback below swallows errors.
+        if payment_method == 'cash':
+            from cash_management.services.cash_custody import require_cash_custody
+            require_cash_custody(acting_branch, entitlement.branch, getattr(entitlement, 'client', None))
+
         # Get income account from fee structure
         income_account = entitlement.fee_structure.category.income_account
         
@@ -599,7 +623,8 @@ class IncomeAccountingService:
                     entitlement.branch,
                     payment_method,
                     income_category=getattr(entitlement.fee_structure, 'category', None),
-                    user=user  # Pass user for auto-creation of cashier account
+                    user=user,  # Pass user for auto-creation of cashier account
+                    acting_branch=acting_branch,
                 )
             except Exception:
                 bank_account = None
@@ -630,12 +655,10 @@ class IncomeAccountingService:
             tenant=entitlement.tenant,
         )
         
-        JournalEntryLine.objects.create(
-            transaction=payment_entry,
-            account=bank_account,
-            side=JournalEntryLine.DEBIT,
-            amount=amount,
-        )
+        # The bank/till may be in another branch than this entry; add_entry
+        # routes it through Due To/Due From so both branches balance.
+        from interbranch.services import add_entry
+        add_entry(payment_entry, bank_account, JournalEntryLine.DEBIT, amount)
 
         # Cr. AR
         JournalEntryLine.objects.create(

@@ -16,6 +16,96 @@ from .models import LoanAccount, LoanProductFee, LoanFeeApplication, LoanProduct
 logger = logging.getLogger(__name__)
 
 
+# Savings account statuses whose balance counts towards a loan's savings
+# requirement. 'dormant' is included on purpose: the legacy importer marked
+# every zero-balance account dormant and nothing flips it back on deposit, so
+# clients who later saved up were seen as having ₦0 and blocked from loans.
+_REQUIREMENT_COUNTABLE_STATUSES = ('active', 'dormant')
+
+
+def _client_savings_balance_for_product(client, savings_product) -> Decimal:
+    """
+    Balance the client holds in the savings product a requirement points at.
+
+    Products are cloned per branch (branches/services.py), so the same
+    "Regular Savings" (SAV-REG) exists once per branch. The requirement's
+    savings_product may be a different branch's copy from the one the client's
+    account was opened on; match on product code + type so either copy counts
+    (the client's own accounts are already confined to its tenant).
+    """
+    from savings.models import SavingsAccount
+
+    qs = SavingsAccount.objects.filter(
+        client=client,
+        status__in=_REQUIREMENT_COUNTABLE_STATUSES,
+    ).select_related('account')
+
+    if savings_product.code:
+        qs = qs.filter(
+            product__code=savings_product.code,
+            product__product_type=savings_product.product_type,
+        )
+    else:
+        qs = qs.filter(product=savings_product)
+
+    return sum((acct.current_balance for acct in qs), Decimal('0.00'))
+
+
+def loan_product_for_branch(loan_product, branch):
+    """
+    Return ``branch``'s own copy of ``loan_product``.
+
+    Loan products (and their GL accounts) are cloned per branch. A loan must be
+    booked in the customer's branch, but the staff member keying it in picks
+    from their own branch's product list — so swap in the customer branch's
+    clone (matched by product code). Tenant-wide products (no branch) and
+    products already in ``branch`` are returned unchanged.
+
+    Raises ValidationError if the customer's branch has no copy of the product.
+    """
+    from .models import LoanProduct
+
+    if branch is None or loan_product.branch_id in (None, branch.pk):
+        return loan_product
+
+    match = (
+        LoanProduct.objects
+        .filter(
+            product__code=loan_product.product.code,
+            product__product_type=loan_product.product.product_type,
+            branch=branch,
+            is_deleted=False,
+        )
+        .select_related('product', 'parent_account')
+        .first()
+    )
+    if match is None:
+        raise ValidationError(
+            f"Loan product '{loan_product.product.name}' is not set up in the "
+            f"client's branch ({branch.name}). Set it up there before booking "
+            f"this loan."
+        )
+    return match
+
+
+def remap_fee_routing(fee_routing: dict, from_product, to_product) -> dict:
+    """
+    fee_routing is keyed by LoanProductFee pk of the product the form showed.
+    When the loan is booked on another branch's copy of the product, re-key it
+    to that copy's fee lines (matched by fee name).
+    """
+    if not fee_routing or from_product.pk == to_product.pk:
+        return fee_routing
+    names = dict(from_product.fee_lines.values_list('pk', 'name'))
+    target = dict(to_product.fee_lines.values_list('name', 'pk'))
+    remapped = {}
+    for fee_pk, route in fee_routing.items():
+        new_pk = target.get(names.get(fee_pk))
+        if new_pk is not None:
+            remapped[new_pk] = route
+    return remapped
+
+
 def check_savings_requirement(client, loan_product, requested_amount: Decimal) -> None:
     """
     Hard-block check: raise ValidationError if the client does not hold enough
@@ -36,19 +126,9 @@ def check_savings_requirement(client, loan_product, requested_amount: Decimal) -
     if not requirements.exists():
         return
 
-    # Import here to avoid circular imports
-    from savings.models import SavingsAccount
-
     errors = []
     for req in requirements:
-        # Find the client's savings account for the required product
-        savings_account = (
-            SavingsAccount.objects
-            .filter(client=client, product=req.savings_product, status='active')
-            .select_related('account')
-            .first()
-        )
-        current_balance = savings_account.current_balance if savings_account else Decimal('0.00')
+        current_balance = _client_savings_balance_for_product(client, req.savings_product)
         minimum_required = req.required_amount(requested_amount)
 
         if current_balance < minimum_required:
@@ -206,7 +286,8 @@ def apply_loan_fees(
             if savings_account_id:
                 savings_record = (
                     SavingsAccount.objects
-                    .filter(pk=savings_account_id, client=client, status='active')
+                    .filter(pk=savings_account_id, client=client,
+                            status__in=_REQUIREMENT_COUNTABLE_STATUSES)
                     .select_related('account')
                     .first()
                 )
@@ -216,8 +297,9 @@ def apply_loan_fees(
                     SavingsAccount.objects
                     .filter(
                         client=client,
-                        product=fee.default_savings_product,
-                        status='active',
+                        product__code=fee.default_savings_product.code,
+                        product__product_type=fee.default_savings_product.product_type,
+                        status__in=_REQUIREMENT_COUNTABLE_STATUSES,
                     )
                     .select_related('account')
                     .first()
@@ -226,7 +308,7 @@ def apply_loan_fees(
                 # Last resort: first active savings account for this client
                 savings_record = (
                     SavingsAccount.objects
-                    .filter(client=client, status='active')
+                    .filter(client=client, status__in=_REQUIREMENT_COUNTABLE_STATUSES)
                     .select_related('account')
                     .order_by('opened_on')
                     .first()
@@ -286,12 +368,10 @@ def apply_loan_fees(
             created_by=posted_by,
         )
 
-        JournalEntryLine.objects.create(
-            transaction=journal,
-            account=debit_account,
-            side=JournalEntryLine.DEBIT,
-            amount=amount,
-        )
+        # The bank/till may be in another branch than this entry; add_entry
+        # routes it through Due To/Due From so both branches balance.
+        from interbranch.services import add_entry
+        add_entry(journal, debit_account, JournalEntryLine.DEBIT, amount)
         JournalEntryLine.objects.create(
             transaction=journal,
             account=fee.gl_income_account,

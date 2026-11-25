@@ -2,6 +2,7 @@
 """
 ViewSets for income, invoices, and fee entitlements
 """
+from cash_management.services.cash_custody import acting_branch as cash_acting_branch
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.decorators import action
@@ -13,7 +14,7 @@ from django.utils import timezone
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 import logging
-from common.views import ScopedModelViewSet, resolve_effective_branch
+from common.views import ScopedModelViewSet, resolve_effective_branch, branch_copy_of
 from .models import (
     IncomeCategory, Income, FeeStructure, ServiceItem, Invoice,
     FeeEntitlement, EntitlementPaymentLog, EntitlementUsageLog,
@@ -198,9 +199,18 @@ class IncomeViewSet(ScopedModelViewSet):
     permission_page = 'incomes'
     queryset = Income.objects.all()
     serializer_class = IncomeSerializer
+    # An income record belongs to the branch of what it is FOR (the client,
+    # invoice or allocation it relates to), not the branch of the staff member
+    # keying it in — staff get moved around temporarily while their assigned
+    # branch stays the same. With none of these linked, it falls back to the
+    # branch the staff member is working in (ScopedModelViewSet).
+    customer_branch_fields = ('client', 'invoice', 'inventory_allocation')
+    # Income categories (and their GL income accounts) are per-branch: book
+    # on the target branch's copy of the one the form offered.
+    branch_copy_fields = {'category': 'code'}
     permission_classes = [IsAuthenticated]
     officer_client_lookup = 'client__assigned_officer'
-    
+
     def get_queryset(self):
         queryset = super().get_queryset()
         
@@ -276,6 +286,7 @@ class IncomeViewSet(ScopedModelViewSet):
                 
                 # Record payment with accounting entries
                 journal_entry = IncomeAccountingService.record_income_receipt(
+                    acting_branch=cash_acting_branch(request),
                     income=income,
                     amount=amount,
                     payment_method=serializer.validated_data.get('payment_method', 'cash'),
@@ -525,6 +536,40 @@ class InvoiceViewSet(ScopedModelViewSet):
         
         return queryset.select_related('client', 'fee_structure')
 
+    def _acting_branch(self):
+        """Branch the staff member is working in: a temporarily granted (or,
+        for directors, selected) branch from the branch switcher, else their
+        assigned home branch."""
+        return self._get_director_branch_override() or getattr(self.request.user, 'branch', None)
+
+    def _invoice_branch(self, data):
+        """An invoice belongs to its CLIENT's branch, not the staff member's
+        (staff get moved between branches temporarily)."""
+        client = data.get('client')
+        return getattr(client, 'branch', None) or self._acting_branch()
+
+    def _use_branch_copies(self, data, branch):
+        """
+        Fee structures, service items and inventory items are cloned per branch,
+        each pointing at that branch's income/sales GL accounts, and a journal
+        entry can only post to accounts in its own branch. Swap in ``branch``'s
+        copies of whatever the form offered. Invoices don't move stock (stock
+        stays with the allocation/store it was issued from), so this only
+        changes which branch's revenue accounts are credited.
+        """
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from common.views import branch_copy_of
+        try:
+            if data.get('fee_structure') is not None:
+                data['fee_structure'] = branch_copy_of(data['fee_structure'], branch)
+            for item in data.get('items') or []:
+                if item.get('service_item') is not None:
+                    item['service_item'] = branch_copy_of(item['service_item'], branch)
+                if item.get('inventory_item') is not None:
+                    item['inventory_item'] = branch_copy_of(item['inventory_item'], branch, key='sku')
+        except ValidationError as exc:
+            raise DRFValidationError({'detail': exc.messages})
+
     def perform_create(self, serializer):
         """Auto-generate invoice_number and register in ReferenceTracking"""
         from common.services.reference_service import ReferenceService
@@ -533,13 +578,15 @@ class InvoiceViewSet(ScopedModelViewSet):
 
         user = self.request.user
         tenant = getattr(user, 'tenant', user)
+        branch = self._invoice_branch(serializer.validated_data)
+        self._use_branch_copies(serializer.validated_data, branch)
 
         # Generate unique invoice number OUTSIDE the transaction
         invoice_number = ReferenceService.generate_reference(
             module='incomes',
             model_name='invoice',
             tenant=tenant,
-            branch=user.branch
+            branch=branch
         )
         
         logger.info(f"Creating invoice with number: {invoice_number}")
@@ -552,7 +599,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                     invoice = serializer.save(
                         invoice_number=invoice_number,
                         owner=user,
-                        branch=user.branch,
+                        branch=branch,
                         tenant=tenant
                     )
                     
@@ -565,7 +612,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                         model_name='invoice',
                         object_id=invoice.id,
                         tenant=tenant,
-                        branch=user.branch,
+                        branch=branch,
                         created_by=user,
                         status=invoice.status,
                         amount=invoice.total_amount if invoice.total_amount else None,
@@ -590,7 +637,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                         module='incomes',
                         model_name='invoice',
                         tenant=tenant,
-                        branch=user.branch
+                        branch=branch
                     )
                     logger.info(f"Retrying with new invoice number: {invoice_number}")
                 else:
@@ -745,6 +792,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                 else:
                     # No bank account selected â†’ fall back to configured default account
                     bank_account = IncomeAccountingService.get_cash_account(
+                        acting_branch=cash_acting_branch(request),
                         owner=invoice.owner,
                         branch=invoice.branch,
                         payment_method=payment_method,
@@ -794,12 +842,10 @@ class InvoiceViewSet(ScopedModelViewSet):
                 )
                 
                 # Dr. Bank/Cash (increase cash)
-                JournalEntryLine.objects.create(
-                    transaction=journal_entry,
-                    account=bank_account,
-                    side=JournalEntryLine.DEBIT,
-                    amount=amount
-                )
+                # The bank/till may be in another branch than this entry; add_entry
+                # routes it through Due To/Due From so both branches balance.
+                from interbranch.services import add_entry
+                add_entry(journal_entry, bank_account, JournalEntryLine.DEBIT, amount)
                 
                 # Cr. Accounts Receivable (reduce receivable)
                 JournalEntryLine.objects.create(
@@ -1198,6 +1244,32 @@ class InvoiceViewSet(ScopedModelViewSet):
                         amount=entry.amount,
                     )
 
+                # If the payment went into another branch's bank/till, its
+                # other-branch leg (Due To/Due From) must be reversed too;
+                # draft a reversing leg for each, posted with draft_je.
+                for leg in original_je.interbranch_legs.all():
+                    draft_leg = JournalEntry.objects.create(
+                        series=series,
+                        date=original_je.date,
+                        description=draft_je.description,
+                        workflow_reference=draft_je.reference_number,
+                        owner=leg.owner,
+                        branch=leg.branch,
+                        created_by=request.user,
+                        tenant=leg.tenant,
+                        is_reversal=True,
+                        reverses_transaction=leg,
+                        interbranch_parent=draft_je,
+                    )
+                    for entry in leg.entries.all():
+                        TransactionEntry.objects.create(
+                            transaction=draft_leg,
+                            account=entry.account,
+                            side=(TransactionEntry.CREDIT if entry.side == TransactionEntry.DEBIT
+                                  else TransactionEntry.DEBIT),
+                            amount=entry.amount,
+                        )
+
                 # Record the reversal request
                 reversal_request = PaymentReversalRequest.objects.create(
                     invoice=invoice,
@@ -1335,6 +1407,20 @@ class InvoiceViewSet(ScopedModelViewSet):
                     'is_reversed', 'reversed_at', 'reversed_by',
                     'reversal_reason', 'reversal_transaction',
                 ])
+                # ...and its other-branch legs (their reversing legs were
+                # posted with draft_je above).
+                for draft_leg in draft_je.interbranch_legs.all():
+                    leg = draft_leg.reverses_transaction
+                    if leg is not None:
+                        leg.is_reversed = True
+                        leg.reversed_at = original_je.reversed_at
+                        leg.reversed_by = request.user
+                        leg.reversal_reason = reversal_request.reason
+                        leg.reversal_transaction = draft_leg
+                        leg.save(update_fields=[
+                            'is_reversed', 'reversed_at', 'reversed_by',
+                            'reversal_reason', 'reversal_transaction',
+                        ])
 
                 # 3. Roll back per-line-item allocations
                 for item_payment in item_payments:
@@ -1539,12 +1625,17 @@ class InvoiceViewSet(ScopedModelViewSet):
         with transaction.atomic():
             for client in clients:
                 try:
+                    # Each invoice belongs to its client's branch, on that
+                    # branch's copy of the fee structure (its income account).
+                    branch = self._invoice_branch({'client': client})
+                    client_fee_structure = branch_copy_of(fee_structure, branch)
+
                     # Generate invoice number
                     invoice_number = ReferenceService.generate_reference(
                         module='incomes',
                         model_name='invoice',
                         tenant=request.user.tenant if hasattr(request.user, 'tenant') else request.user,
-                        branch=request.user.branch
+                        branch=branch
                     )
                     
                     # Format description
@@ -1561,11 +1652,11 @@ class InvoiceViewSet(ScopedModelViewSet):
                         invoice_date=invoice_date,
                         due_date=due_date,
                         description=description,
-                        amount=fee_structure.base_amount,
-                        fee_structure=fee_structure,
+                        amount=client_fee_structure.base_amount,
+                        fee_structure=client_fee_structure,
                         metadata=period_context,
                         owner=request.user,
-                        branch=request.user.branch,
+                        branch=branch,
                         tenant=request.user.tenant if hasattr(request.user, 'tenant') else None,
                         status='draft'
                     )
@@ -1577,7 +1668,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                         model_name='invoice',
                         object_id=invoice.id,
                         tenant=request.user.tenant if hasattr(request.user, 'tenant') else request.user,
-                        branch=request.user.branch,
+                        branch=branch,
                         created_by=request.user,
                         status=invoice.status,
                         amount=invoice.amount,
@@ -2031,7 +2122,7 @@ class InvoiceViewSet(ScopedModelViewSet):
                 term_id=serializer.validated_data['term_id'],
                 classification_id=serializer.validated_data['classification_id'],
                 fee_structure_id=serializer.validated_data['fee_structure_id'],
-                branch=request.user.branch,
+                branch=self._acting_branch(),
                 owner=request.user,
                 due_date=serializer.validated_data.get('due_date'),
                 notes=serializer.validated_data.get('notes', ''),
@@ -2226,7 +2317,7 @@ class InvoiceViewSet(ScopedModelViewSet):
         try:
             result = BulkInvoiceService.approve_batch(
                 batch_id=batch_id,
-                branch=request.user.branch,
+                branch=self._acting_branch(),
                 approver=request.user,
                 notes=serializer.validated_data.get('notes', ''),
                 approved_discount_invoice_ids=serializer.validated_data.get('approved_discount_invoice_ids')
@@ -2273,7 +2364,7 @@ class InvoiceViewSet(ScopedModelViewSet):
         try:
             result = BulkInvoiceService.reject_batch(
                 batch_id=batch_id,
-                branch=request.user.branch,
+                branch=self._acting_branch(),
                 rejector=request.user,
                 reason=reason
             )
@@ -2603,7 +2694,9 @@ class FeeEntitlementViewSet(ScopedModelViewSet):
                 minimum_deposit_percent=serializer.validated_data.get('minimum_deposit_percent', Decimal('0')),
                 installment_config=serializer.validated_data.get('installment_config'),
                 owner=request.user,
-                branch=request.user.branch,
+                # Branch the staff member is acting in (temporary grant /
+                # branch switcher), not always their home branch.
+                branch=self._get_director_branch_override() or request.user.branch,
                 created_by=request.user
             )
             
@@ -2669,6 +2762,7 @@ class FeeEntitlementViewSet(ScopedModelViewSet):
             
             # Record payment with accounting entries
             journal_entry = IncomeAccountingService.record_entitlement_payment(
+                acting_branch=cash_acting_branch(request),
                 entitlement=entitlement,
                 amount=amount,
                 payment_method=serializer.validated_data.get('payment_method', 'cash'),
@@ -2969,6 +3063,7 @@ class PaymentPlanInstallmentViewSet(ScopedModelViewSet):
                 # Create GL journal entry for this installment payment
                 entitlement = installment.payment_plan.entitlement
                 journal_entry = IncomeAccountingService.record_entitlement_payment(
+                    acting_branch=cash_acting_branch(request),
                     entitlement=entitlement,
                     amount=amount,
                     payment_method=payment_method,

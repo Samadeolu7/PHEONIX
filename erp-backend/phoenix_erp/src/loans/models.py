@@ -881,7 +881,26 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             description=f'Loan {self.loan_number} approved',
             extra={'loan_number': self.loan_number, 'client_id': str(self.client_id)},
         )
-    
+
+    def _check_disbursement_gl_config(self):
+        """
+        Refuse to disburse when the product lacks GL accounts it needs (see the
+        "Required GL account guard" comment in disburse()). Kept as its own
+        method so tests can reproduce loans disbursed before this guard existed.
+        """
+        if not self.product.interest_income_account:
+            raise ValidationError(
+                f"Cannot disburse: {self.product} has no interest_income_account configured. "
+                "Interest collected on this loan would have nowhere valid to be recognized as "
+                "income. Configure interest_income_account on the loan product before disbursing."
+            )
+        if self.product.late_payment_penalty and self.product.late_payment_penalty > 0 and not self.product.penalty_income_account:
+            raise ValidationError(
+                f"Cannot disburse: {self.product} charges a late payment penalty "
+                f"({self.product.late_payment_penalty}) but has no penalty_income_account "
+                "configured. Configure penalty_income_account on the loan product before disbursing."
+            )
+
     @transaction.atomic
     def disburse(self, disbursement_date=None, disbursement_account=None, disbursed_by=None):
         """
@@ -954,18 +973,7 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         # any GL entry for this disbursement is written, means the whole
         # disburse() call rolls back (already @transaction.atomic) instead
         # of quietly creating another loan with the same defect.
-        if not self.product.interest_income_account:
-            raise ValidationError(
-                f"Cannot disburse: {self.product} has no interest_income_account configured. "
-                "Interest collected on this loan would have nowhere valid to be recognized as "
-                "income. Configure interest_income_account on the loan product before disbursing."
-            )
-        if self.product.late_payment_penalty and self.product.late_payment_penalty > 0 and not self.product.penalty_income_account:
-            raise ValidationError(
-                f"Cannot disburse: {self.product} charges a late payment penalty "
-                f"({self.product.late_payment_penalty}) but has no penalty_income_account "
-                "configured. Configure penalty_income_account on the loan product before disbursing."
-            )
+        self._check_disbursement_gl_config()
 
         self.status = 'disbursed'
         self.disbursement_date = disbursement_date or timezone.now().date()
@@ -1022,13 +1030,11 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
             amount=self.disbursed_amount,
         )
 
-        # Credit: Cash / Bank account (ASSET type) — balance DECREASES
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=cash_account,
-            side=JournalEntryLine.CREDIT,
-            amount=self.disbursed_amount,
-        )
+        # Credit: Cash / Bank account (ASSET type) — balance DECREASES.
+        # The paying account may sit in another branch than the customer's
+        # loan; add_entry routes that through Due To/Due From.
+        from interbranch.services import add_entry
+        add_entry(journal_entry, cash_account, JournalEntryLine.CREDIT, self.disbursed_amount)
 
         # ── Interest recognition at disbursement ────────────────────────────
         # Two mutually exclusive options, both opt-in via product GL config:
@@ -1410,12 +1416,10 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         # Debit: Cash received — total collected from client (loan portion + any spillover)
         _spillover_amount = spillover_amount or Decimal('0.00')
-        JournalEntryLine.objects.create(
-            transaction=journal_entry,
-            account=payment_account,
-            side=JournalEntryLine.DEBIT,
-            amount=amount + _spillover_amount,
-        )
+        # The receiving bank/till may be in another branch than the loan;
+        # add_entry routes that through Due To/Due From.
+        from interbranch.services import add_entry
+        add_entry(journal_entry, payment_account, JournalEntryLine.DEBIT, amount + _spillover_amount)
 
         # ── Credit entries (must collectively equal the debit) ────────────
         # Amounts that lack a dedicated income account are credited to the

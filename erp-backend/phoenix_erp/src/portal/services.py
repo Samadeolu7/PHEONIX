@@ -555,8 +555,9 @@ def convert_application(
         cashier_account = None
         if needs_cashier:
             from cash_management.services.payment_routing import PaymentRoutingService
+            from cash_management.services.cash_custody import acting_branch as cash_acting_branch
             cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
-                staff_user, owner=loan.owner, branch=loan.branch, cashier_account_id=cashier_account_id,
+                staff_user, acting_branch=cash_acting_branch(request), owner=loan.owner, branch=loan.branch, cashier_account_id=cashier_account_id,
             )
         apply_loan_fees(
             loan, trigger='registration', posted_by=staff_user,

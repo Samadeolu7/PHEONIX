@@ -111,6 +111,51 @@ def resolve_effective_branch(request):
 
 
 # Create your views here.
+def customer_branch_from(source, field_names):
+    """
+    Return the branch of the first customer record (client, loan, savings
+    account, ...) found under ``field_names`` in ``source`` (a dict such as
+    serializer.validated_data, or a model instance), or None.
+    """
+    for name in field_names:
+        if isinstance(source, dict):
+            obj = source.get(name)
+        else:
+            obj = getattr(source, name, None)
+        branch = getattr(obj, 'branch', None) if obj is not None else None
+        if branch is not None:
+            return branch
+    return None
+
+
+def branch_copy_of(obj, branch, key='code'):
+    """
+    Return ``branch``'s own copy of a per-branch setup record (fee structure,
+    service item, inventory item, ...). BranchCloneService gives every branch
+    its own copy, matched on ``key`` (code / sku), each pointing at that
+    branch's GL accounts. A record already in ``branch``, or tenant-wide (no
+    branch), is returned unchanged.
+
+    Raises django ValidationError if ``branch`` has no copy.
+    """
+    from django.core.exceptions import ValidationError as DjangoValidationError
+
+    if obj is None or branch is None or getattr(obj, 'branch_id', None) in (None, branch.pk):
+        return obj
+    model = type(obj)
+    manager = getattr(model, 'objects', model._default_manager)
+    lookup = {key: getattr(obj, key), 'branch': branch}
+    if any(f.name == 'is_deleted' for f in model._meta.fields):
+        lookup['is_deleted'] = False
+    copy = manager.filter(**lookup).first()
+    if copy is None:
+        raise DjangoValidationError(
+            f"{model._meta.verbose_name.capitalize()} '{obj}' is not set up in "
+            f"{branch.name}. Set it up there first."
+        )
+    return copy
+
+
 @extend_schema_view(
     list=extend_schema(description="List all objects accessible to the current user."),
     create=extend_schema(description="Create a new object for the current user."),
@@ -163,6 +208,41 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
     # subclasses get action-level enforcement without manual changes.
     # Opt out per-viewset by setting skip_action_permission = True.
     skip_action_permission: bool = False
+
+    # Customer-owned records live in the CUSTOMER's branch, not the branch of
+    # whichever staff member happens to key them in (staff get moved between
+    # branches temporarily). On create, the first of these fields present in
+    # the validated data whose value has a branch decides the new record's
+    # branch; the staff member's branch is only the fallback. Set to () on a
+    # viewset whose records genuinely belong to the staff side (e.g. stock
+    # issued from the staff's own branch store).
+    customer_branch_fields = (
+        'loan', 'loan_account', 'original_loan', 'savings_account',
+        'client', 'from_client', 'leader',
+    )
+
+    # Per-branch setup records (cloned per branch by BranchCloneService, each
+    # pointing at that branch's GL accounts) that a new record references,
+    # as {field: matching key}. On create they are swapped for the copies
+    # belonging to the record's final branch, since a journal entry can only
+    # post to accounts in its own branch.
+    branch_copy_fields = {}
+
+    def get_customer_branch(self, validated_data):
+        """Branch of the customer record a new record belongs to, or None."""
+        return customer_branch_from(validated_data, self.customer_branch_fields)
+
+    def use_branch_copies(self, validated_data, branch):
+        """Swap ``branch_copy_fields`` references for ``branch``'s own copies."""
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        for field, key in self.branch_copy_fields.items():
+            if validated_data.get(field) is None:
+                continue
+            try:
+                validated_data[field] = branch_copy_of(validated_data[field], branch, key=key)
+            except DjangoValidationError as exc:
+                raise DRFValidationError({field: exc.messages})
 
     def get_permissions(self):
         base = super().get_permissions()
@@ -549,7 +629,9 @@ class ScopedModelViewSet(viewsets.ModelViewSet):
             model = None
 
         user, branch, tenant = self._resolve_create_scope(model=model)
-        
+        branch = self.get_customer_branch(serializer.validated_data) or branch
+        self.use_branch_copies(serializer.validated_data, branch)
+
         try:
             # Save the instance and explicitly set tenant from authenticated user
             # Ensure thread-local tenant is set so model managers filter correctly

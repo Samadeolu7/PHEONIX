@@ -1,4 +1,5 @@
 import calendar
+from cash_management.services.cash_custody import acting_branch as cash_acting_branch
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -127,6 +128,67 @@ class SavingsAccountViewSet(ScopedModelViewSet):
     officer_client_lookup = 'client__assigned_officer'
     officer_group_lookup = 'client__group__assigned_officer'
     officer_group_members_lookup = 'client__group__member_officers'
+
+    def perform_create(self, serializer):
+        """
+        Open a savings account in the CLIENT's branch, with its own child GL
+        account under 2140 (Customer Savings Deposits) — the same way the
+        automatic Regular Savings account is opened for new clients
+        (savings/signals.py). The serializer has no 'account' field, so
+        without this every manual "open savings account" failed on the
+        required GL account link.
+        """
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from accounts.models import Account
+
+        user, branch, tenant = self._resolve_create_scope()
+        client = serializer.validated_data['client']
+        branch = client.branch or branch
+        tenant = client.tenant or tenant
+        # Savings products are cloned per branch; open the account on the
+        # client's branch's copy (its rates, rules and GL setup).
+        from common.views import branch_copy_of
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            product = branch_copy_of(serializer.validated_data['product'], branch)
+        except DjangoValidationError as exc:
+            raise DRFValidationError({'product': exc.messages})
+        serializer.validated_data['product'] = product
+
+        if SavingsAccount.objects.filter(
+            client=client, product=product,
+        ).exclude(status='closed').exists():
+            raise DRFValidationError(
+                {'product': 'This client already has an open savings account for this product.'}
+            )
+
+        with transaction.atomic():
+            try:
+                gl_account = Account.create_with_parent(
+                    parent_code='2140',
+                    child_data={
+                        'name': f'Savings – {client.full_name}',
+                        'allow_manual_entries': True,
+                        'owner': user,
+                        'branch': branch,
+                        'tenant': tenant,
+                        'created_by': user,
+                    },
+                )
+            except Account.DoesNotExist:
+                raise DRFValidationError({
+                    'detail': (
+                        f"Branch {getattr(branch, 'name', '')} has no 2140 Customer "
+                        "Savings Deposits GL account to open this savings account under."
+                    )
+                })
+            serializer.save(
+                account=gl_account,
+                account_number=gl_account.code,
+                owner=user,
+                branch=branch,
+                tenant=tenant,
+            )
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -470,7 +532,7 @@ class SavingsAccountViewSet(ScopedModelViewSet):
                 cashier_account = PaymentRoutingService.resolve_bank_gl_account(bank_account_id, branch=account.branch)
             else:
                 cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
-                    request.user,
+                    request.user, acting_branch=cash_acting_branch(request),
                     owner=account.owner,
                     branch=account.branch,
                     cashier_account_id=cashier_account_id,
@@ -668,7 +730,7 @@ class ContributionScheduleViewSet(ScopedModelViewSet):
         from django.core.exceptions import ValidationError as DjangoValidationError
         try:
             cashier_account = PaymentRoutingService.resolve_cashier_gl_account(
-                request.user,
+                request.user, acting_branch=cash_acting_branch(request),
                 owner=schedule.savings_account.owner,
                 branch=schedule.savings_account.branch,
                 cashier_account_id=cashier_account_id,
