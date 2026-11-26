@@ -1538,6 +1538,19 @@ class LoanAccountViewSet(ScopedModelViewSet):
             new_term = int(request.data['new_term'])
         except (ValueError, TypeError):
             return Response({'detail': 'new_term must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+        if new_term <= 0:
+            return Response({'detail': 'new_term must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Catch a term the loan's rate column can't hold (usually the wrong
+        # unit) now, rather than when a director tries to approve it.
+        if loan.term_months and loan.term_months > 0:
+            try:
+                loan.validate_restructure_rate(loan.derive_restructure_rate(new_term), new_term)
+            except ValidationError as exc:
+                return Response(
+                    {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         effective_date_raw = request.data.get('effective_date')
         if effective_date_raw:

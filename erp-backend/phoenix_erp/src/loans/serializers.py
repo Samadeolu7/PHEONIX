@@ -742,8 +742,7 @@ class LoanRestructureRequestSerializer(TenantModelSerializer):
             if not old_term:
                 return None
             from decimal import Decimal
-            rate_per_unit = old_rate / Decimal(str(old_term))
-            new_rate = (rate_per_unit * Decimal(str(obj.new_term))).quantize(Decimal('0.01'))
+            new_rate = loan.derive_restructure_rate(obj.new_term)
             balance = loan.outstanding_principal
             total_new_interest = (balance * new_rate / Decimal('100')).quantize(Decimal('0.01'))
             normal_interest_amount = (balance * old_rate / Decimal('100')).quantize(Decimal('0.01'))

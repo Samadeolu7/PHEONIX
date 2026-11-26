@@ -250,3 +250,31 @@ class RestructureGLFallbackTestCase(TestCase):
         # new interest (₦0) = ₦20,000 total, unchanged from before.
         self.assertEqual(restructure.carried_interest, Decimal("20000.00"))
         self.assertEqual(loan.outstanding_interest, Decimal("20000.00"))
+
+    def test_restructure_rejects_rate_too_large_to_store(self):
+        """12% over 6 months, re-termed to 600 (e.g. days typed for a monthly
+        loan) derives 1,200%, which interest_rate (5,2) can't hold. It used to
+        surface as a raw 'numeric field overflow' on approval; now it's a
+        clear ValidationError and the loan is left untouched."""
+        product_gl = Product.objects.create(name="Overflow Loan", code="LOAN-OVERFLOW", product_type="LOAN", owner=self.owner, branch=self.branch)
+        product = LoanProduct.objects.create(
+            product=product_gl,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            interest_income_account=self.interest_income_account,
+            default_interest_rate=Decimal("12.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            owner=self.owner, branch=self.branch,
+        )
+        loan = self._make_loan(product, "LN-OVERFLOW-1", term_months=6)
+
+        self.assertEqual(LoanAccount.max_interest_rate(), Decimal("999.99"))
+        with self.assertRaisesMessage(ValidationError, "maximum allowed is 999.99%"):
+            loan.restructure(new_term=600, restructured_by=self.approver)
+
+        loan.refresh_from_db()
+        self.assertEqual(loan.term_months, 6)
+        self.assertEqual(loan.interest_rate, Decimal("12.00"))
+        self.assertFalse(loan.repayment_schedule.filter(status='restructured').exists())
