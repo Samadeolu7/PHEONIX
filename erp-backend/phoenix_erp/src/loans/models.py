@@ -2362,9 +2362,10 @@ class LoanRestructureRequest(TimeStampedModel, BranchScopedModel):
 
     Workflow:
       1. Officer submits a proposed new_term (status='pending') — no schedule
-         or GL change yet. The rate is never typed in; it's derived from the
-         loan's current rate/term by LoanAccount.restructure() at approval
-         time (see that method's docstring for the formula).
+         or GL change yet — and optionally the new total interest rate. If
+         the rate is left blank it's derived from the loan's current
+         rate/term by LoanAccount.restructure() at approval time (see that
+         method's docstring for the formula).
       2. Director approves: LoanAccount.restructure() runs, the new schedule
          is generated, and the resulting LoanRestructure audit record is
          linked here. status='approved'.
@@ -2388,6 +2389,11 @@ class LoanRestructureRequest(TimeStampedModel, BranchScopedModel):
         related_name='restructure_requests',
     )
     new_term = models.PositiveIntegerField(help_text="Proposed new term value, in the loan's current term_unit.")
+    new_interest_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Total interest rate (%) for the new term, as set by the officer. "
+                  "Blank = derive it pro rata from the loan's current rate/term at approval.",
+    )
     effective_date = models.DateField(null=True, blank=True, help_text='Defaults to today at approval time if left blank.')
     reason = models.TextField(blank=True)
     notes = models.TextField(blank=True)

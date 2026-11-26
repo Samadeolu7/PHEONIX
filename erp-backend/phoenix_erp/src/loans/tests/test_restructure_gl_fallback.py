@@ -17,7 +17,8 @@ from users.models import User
 from accounts.models import Account
 from products.models import Product
 from clients.models import Client
-from loans.models import LoanProduct, LoanAccount
+from loans.models import LoanProduct, LoanAccount, LoanRestructureRequest
+from rest_framework.test import APIClient
 from transactions.models import TransactionEntry
 
 from .test_deferred_interest import _make_env, _make_account
@@ -278,3 +279,50 @@ class RestructureGLFallbackTestCase(TestCase):
         self.assertEqual(loan.term_months, 6)
         self.assertEqual(loan.interest_rate, Decimal("12.00"))
         self.assertFalse(loan.repayment_schedule.filter(status='restructured').exists())
+
+    def test_officer_set_rate_is_used_on_approval(self):
+        """The officer can type the new rate instead of the derived one, and
+        approval applies exactly that rate."""
+        product_gl = Product.objects.create(name="Typed Rate Loan", code="LOAN-TYPED", product_type="LOAN", owner=self.owner, branch=self.branch)
+        product = LoanProduct.objects.create(
+            product=product_gl,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            interest_income_account=self.interest_income_account,
+            default_interest_rate=Decimal("12.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            owner=self.owner, branch=self.branch,
+        )
+        loan = self._make_loan(product, "LN-TYPED-1", term_months=6)
+
+        api = APIClient()
+        api.force_authenticate(user=self.owner)
+        url = f"/api/loans/accounts/{loan.pk}/propose_restructure/"
+
+        # Derived rate (12% / 6 * 600 = 1,200%) is refused when no rate is typed…
+        resp = api.post(url, {"new_term": 600}, format="json")
+        self.assertEqual(resp.status_code, 400, resp.content)
+        # …and so is a typed rate above the limit.
+        resp = api.post(url, {"new_term": 10, "new_interest_rate": "1500"}, format="json")
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+        resp = api.post(url, {"new_term": 10, "new_interest_rate": "15.50"}, format="json")
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(Decimal(str(resp.json()["new_interest_rate"])), Decimal("15.50"))
+        self.assertEqual(Decimal(str(resp.json()["preview"]["new_interest_rate"])), Decimal("15.50"))
+        req = LoanRestructureRequest.objects.get(pk=resp.json()["id"])
+        # Maker-checker: attribute the proposal to another officer so the
+        # (fully permitted) owner may approve it.
+        LoanRestructureRequest.objects.filter(pk=req.pk).update(requested_by=self.approver)
+
+        approver_api = APIClient()
+        approver_api.force_authenticate(user=self.owner)
+        resp = approver_api.post(f"/api/loans/restructure-requests/{req.pk}/approve/", format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        loan.refresh_from_db()
+        self.assertEqual(loan.term_months, 10)
+        self.assertEqual(loan.interest_rate, Decimal("15.50"))
+

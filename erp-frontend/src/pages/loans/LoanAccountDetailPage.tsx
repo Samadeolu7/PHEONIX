@@ -112,16 +112,27 @@ interface RestructurePreviewEstimate {
  * by LoanAccount.restructure() at approval time (same formula, Decimal-precise).
  * This just lets the officer see roughly what they're proposing before they submit.
  */
-function estimateRestructurePreview(loan: LoanAccount, newTermRaw: string): RestructurePreviewEstimate | null {
+/** Total rate for newTerm, pro rata to the loan's current rate/term (what the backend derives). */
+function deriveRestructureRate(loan: LoanAccount, newTermRaw: string): number | null {
   const oldRate = parseFloat(loan.interest_rate);
   const oldTerm = loan.term_months;
   const newTerm = parseInt(newTermRaw, 10);
-  const balance = parseFloat(loan.outstanding_principal);
-  if (!oldTerm || oldTerm <= 0 || !Number.isFinite(oldRate) || !Number.isFinite(balance)) return null;
+  if (!oldTerm || oldTerm <= 0 || !Number.isFinite(oldRate)) return null;
   if (!newTermRaw || isNaN(newTerm) || newTerm <= 0) return null;
+  return round2((oldRate / oldTerm) * newTerm);
+}
 
-  const ratePerUnit = oldRate / oldTerm;
-  const newRate = round2(ratePerUnit * newTerm);
+function estimateRestructurePreview(
+  loan: LoanAccount, newTermRaw: string, newRateRaw: string,
+): RestructurePreviewEstimate | null {
+  const oldRate = parseFloat(loan.interest_rate);
+  const balance = parseFloat(loan.outstanding_principal);
+  if (!Number.isFinite(oldRate) || !Number.isFinite(balance)) return null;
+  const typedRate = parseFloat(newRateRaw);
+  const newRate = newRateRaw.trim() !== '' && Number.isFinite(typedRate)
+    ? round2(typedRate)
+    : deriveRestructureRate(loan, newTermRaw);
+  if (newRate === null) return null;
   const totalNewInterest = round2((balance * newRate) / 100);
   const normalInterestAmount = round2((balance * oldRate) / 100);
   const restructureInterestAmount = round2(totalNewInterest - normalInterestAmount);
@@ -422,6 +433,13 @@ interface RestructureModalProps {
 
 function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
   const [newTerm, setNewTerm] = useState(String(loan.term_months));
+  // Pre-filled with the derived rate; the officer can overwrite it. Once
+  // edited by hand it no longer follows term changes.
+  const [newRate, setNewRate] = useState(() => {
+    const derived = deriveRestructureRate(loan, String(loan.term_months));
+    return derived === null ? '' : derived.toFixed(2);
+  });
+  const [rateEdited, setRateEdited] = useState(false);
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
@@ -429,7 +447,16 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  const preview = useMemo(() => estimateRestructurePreview(loan, newTerm), [loan, newTerm]);
+  const derivedRate = useMemo(() => deriveRestructureRate(loan, newTerm), [loan, newTerm]);
+  const preview = useMemo(() => estimateRestructurePreview(loan, newTerm, newRate), [loan, newTerm, newRate]);
+
+  function handleTermChange(value: string) {
+    setNewTerm(value);
+    if (!rateEdited) {
+      const derived = deriveRestructureRate(loan, value);
+      setNewRate(derived === null ? '' : derived.toFixed(2));
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -437,11 +464,17 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
       setError('New term is required.');
       return;
     }
+    const rate = parseFloat(newRate);
+    if (newRate.trim() === '' || !Number.isFinite(rate) || rate < 0 || rate > 999.99) {
+      setError('Enter the new interest rate (0 – 999.99%).');
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const payload: ProposeRestructurePayload = {
         new_term: parseInt(newTerm, 10),
+        new_interest_rate: rate,
         effective_date: effectiveDate,
         reason,
         notes,
@@ -471,8 +504,8 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
         </p>
         <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
           This submits a proposal for director approval — nothing changes on the loan yet.
-          The new interest rate isn't typed in: it's derived from the loan's current rate/term
-          scaled to the new term you propose (e.g. 12% over 6 months implies 20% over 10 months).
+          The new interest rate is suggested from the loan's current rate/term scaled to the new
+          term (e.g. 12% over 6 months suggests 20% over 10 months); you can change it.
           Any interest/penalties already owed are folded into the new schedule's installments,
           not collected separately.
         </div>
@@ -488,10 +521,29 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
               <label htmlFor="rs-term" className="mb-1 block text-sm font-medium text-gray-700">
                 New Term ({loan.term_unit ?? 'months'})
               </label>
-              <input id="rs-term" type="number" min="1" title="Proposed new loan term" value={newTerm} onChange={e => setNewTerm(e.target.value)}
+              <input id="rs-term" type="number" min="1" title="Proposed new loan term" value={newTerm} onChange={e => handleTermChange(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
               <p className="mt-1 text-xs text-gray-400">
                 Currently {loan.term_months} {loan.term_unit ?? 'months'} at {loan.interest_rate}%.
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="rs-rate" className="mb-1 block text-sm font-medium text-gray-700">
+                New Interest Rate (% for the whole new term)
+              </label>
+              <input id="rs-rate" type="number" min="0" max="999.99" step="0.01" inputMode="decimal"
+                title="Total interest rate for the new term" value={newRate}
+                onChange={e => { setNewRate(e.target.value); setRateEdited(true); }}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
+              <p className="mt-1 text-xs text-gray-400">
+                {derivedRate !== null ? <>Suggested: {derivedRate.toFixed(2)}%. </> : null}
+                {rateEdited && derivedRate !== null && (
+                  <button type="button" className="text-blue-600 hover:underline"
+                    onClick={() => { setNewRate(derivedRate.toFixed(2)); setRateEdited(false); }}>
+                    Use suggested rate
+                  </button>
+                )}
               </p>
             </div>
 
