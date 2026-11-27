@@ -1032,6 +1032,8 @@ export interface LoanRestructure {
 /** Submitted by an officer — the interest rate is derived at approval time, never typed in. */
 export interface ProposeRestructurePayload {
   new_term: number;
+  /** Total rate (%) for the new term. Omit to derive it from the current rate/term. */
+  new_interest_rate?: number;
   effective_date?: string;
   reason?: string;
   notes?: string;
@@ -1055,6 +1057,7 @@ export interface LoanRestructureRequest {
   current_interest_rate: string;
   outstanding_principal: string;
   new_term: number;
+  new_interest_rate: string | number | null;
   effective_date: string | null;
   reason: string;
   notes: string;

@@ -1978,6 +1978,35 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         self.save(update_fields=['interest_suspended', 'updated_at'])
 
     @transaction.atomic
+    def derive_restructure_rate(self, new_term) -> Decimal:
+        """Total interest rate (%) for new_term, pro rata to the current rate/term."""
+        rate_per_unit = self.interest_rate / Decimal(str(self.term_months))
+        return (rate_per_unit * Decimal(str(new_term))).quantize(Decimal('0.01'))
+
+    @classmethod
+    def max_interest_rate(cls) -> Decimal:
+        """Largest rate the interest_rate column can store (999.99 for 5,2)."""
+        field = cls._meta.get_field('interest_rate')
+        whole_digits = field.max_digits - field.decimal_places
+        return Decimal(10) ** whole_digits - Decimal(1).scaleb(-field.decimal_places)
+
+    def validate_restructure_rate(self, new_rate: Decimal, new_term) -> None:
+        """
+        Reject a restructure whose total rate can't be stored, with a message
+        staff can act on, instead of a raw database "numeric field overflow".
+        A rate this large almost always means new_term was entered in the
+        wrong unit (e.g. days for a loan whose term is in months).
+        """
+        limit = self.max_interest_rate()
+        if new_rate > limit:
+            raise ValidationError(
+                f"A new term of {new_term} {self.term_unit} would give a total interest "
+                f"rate of {new_rate:,}% (current: {self.interest_rate}% over "
+                f"{self.term_months} {self.term_unit}). The maximum allowed is {limit}%. "
+                f"Check that the new term is in {self.term_unit}, then reject this "
+                f"request and submit a corrected one."
+            )
+
     def restructure(
         self,
         new_term: int,
@@ -2067,12 +2096,11 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
         # ── Derive the new rate proportionally from the CURRENT rate/term,
         # unless an explicit new_rate override was supplied ──────────────
         old_rate = self.interest_rate
-        old_term = Decimal(str(self.term_months))
         if new_rate is not None:
             new_rate = Decimal(str(new_rate)).quantize(Decimal('0.01'))
         else:
-            rate_per_unit = old_rate / old_term
-            new_rate = (rate_per_unit * Decimal(str(new_term))).quantize(Decimal('0.01'))
+            new_rate = self.derive_restructure_rate(new_term)
+        self.validate_restructure_rate(new_rate, new_term)
 
         balance = self.outstanding_principal
         total_new_interest = (balance * new_rate / Decimal('100')).quantize(Decimal('0.01'))
@@ -2334,9 +2362,10 @@ class LoanRestructureRequest(TimeStampedModel, BranchScopedModel):
 
     Workflow:
       1. Officer submits a proposed new_term (status='pending') — no schedule
-         or GL change yet. The rate is never typed in; it's derived from the
-         loan's current rate/term by LoanAccount.restructure() at approval
-         time (see that method's docstring for the formula).
+         or GL change yet — and optionally the new total interest rate. If
+         the rate is left blank it's derived from the loan's current
+         rate/term by LoanAccount.restructure() at approval time (see that
+         method's docstring for the formula).
       2. Director approves: LoanAccount.restructure() runs, the new schedule
          is generated, and the resulting LoanRestructure audit record is
          linked here. status='approved'.
@@ -2360,6 +2389,11 @@ class LoanRestructureRequest(TimeStampedModel, BranchScopedModel):
         related_name='restructure_requests',
     )
     new_term = models.PositiveIntegerField(help_text="Proposed new term value, in the loan's current term_unit.")
+    new_interest_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Total interest rate (%) for the new term, as set by the officer. "
+                  "Blank = derive it pro rata from the loan's current rate/term at approval.",
+    )
     effective_date = models.DateField(null=True, blank=True, help_text='Defaults to today at approval time if left blank.')
     reason = models.TextField(blank=True)
     notes = models.TextField(blank=True)

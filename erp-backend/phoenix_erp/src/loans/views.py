@@ -1513,11 +1513,13 @@ class LoanAccountViewSet(ScopedModelViewSet):
     def propose_restructure(self, request, pk=None):
         """
         Submit a restructure proposal for director approval — does NOT touch
-        the loan's schedule or GL. Only a new term is supplied; the interest
-        rate is derived at approval time (see LoanAccount.restructure()).
+        the loan's schedule or GL. The officer may set the new total rate;
+        if they don't, it's derived at approval time (see LoanAccount.restructure()).
 
         Body:
           new_term        (int, required) — proposed new term, in the loan's current term_unit
+          new_interest_rate (decimal, optional) — total rate (%) for the new term;
+                          blank = derived pro rata from the current rate/term
           effective_date  (YYYY-MM-DD, optional — defaults to today at approval time)
           reason          (str, optional)
           notes           (str, optional)
@@ -1538,6 +1540,35 @@ class LoanAccountViewSet(ScopedModelViewSet):
             new_term = int(request.data['new_term'])
         except (ValueError, TypeError):
             return Response({'detail': 'new_term must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+        if new_term <= 0:
+            return Response({'detail': 'new_term must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Optional officer-set total rate for the new term; blank = derive it.
+        new_interest_rate = None
+        raw_rate = request.data.get('new_interest_rate')
+        if raw_rate not in (None, ''):
+            from decimal import Decimal, InvalidOperation
+            try:
+                new_interest_rate = Decimal(str(raw_rate)).quantize(Decimal('0.01'))
+            except (InvalidOperation, ValueError):
+                return Response({'detail': 'new_interest_rate must be a number.'}, status=status.HTTP_400_BAD_REQUEST)
+            if new_interest_rate < 0:
+                return Response({'detail': 'new_interest_rate cannot be negative.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Catch a rate the loan's rate column can't hold (usually a term in
+        # the wrong unit) now, rather than when a director tries to approve it.
+        if new_interest_rate is not None or (loan.term_months and loan.term_months > 0):
+            rate_to_check = (
+                new_interest_rate if new_interest_rate is not None
+                else loan.derive_restructure_rate(new_term)
+            )
+            try:
+                loan.validate_restructure_rate(rate_to_check, new_term)
+            except ValidationError as exc:
+                return Response(
+                    {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         effective_date_raw = request.data.get('effective_date')
         if effective_date_raw:
@@ -1553,6 +1584,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
         req = LoanRestructureRequest.objects.create(
             loan=loan,
             new_term=new_term,
+            new_interest_rate=new_interest_rate,
             effective_date=effective_date,
             reason=request.data.get('reason', ''),
             notes=request.data.get('notes', ''),
@@ -2898,6 +2930,7 @@ class LoanRestructureRequestViewSet(ScopedModelViewSet):
         try:
             restructure_record = req.loan.restructure(
                 new_term=req.new_term,
+                new_rate=req.new_interest_rate,
                 effective_date=req.effective_date,
                 restructured_by=request.user,
                 reason=req.reason,

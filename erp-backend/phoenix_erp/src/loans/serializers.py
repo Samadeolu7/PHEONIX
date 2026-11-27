@@ -489,6 +489,7 @@ class LoanAccountCreateSerializer(TenantModelSerializer):
                         f"Allowed frequencies: {', '.join(allowed)}."
                     )
                 })
+
         return attrs
 
 
@@ -739,11 +740,13 @@ class LoanRestructureRequestSerializer(TenantModelSerializer):
         try:
             old_rate = loan.interest_rate
             old_term = loan.term_months
-            if not old_term:
+            if not old_term and obj.new_interest_rate is None:
                 return None
             from decimal import Decimal
-            rate_per_unit = old_rate / Decimal(str(old_term))
-            new_rate = (rate_per_unit * Decimal(str(obj.new_term))).quantize(Decimal('0.01'))
+            if obj.new_interest_rate is not None:
+                new_rate = obj.new_interest_rate
+            else:
+                new_rate = loan.derive_restructure_rate(obj.new_term)
             balance = loan.outstanding_principal
             total_new_interest = (balance * new_rate / Decimal('100')).quantize(Decimal('0.01'))
             normal_interest_amount = (balance * old_rate / Decimal('100')).quantize(Decimal('0.01'))
@@ -762,7 +765,7 @@ class LoanRestructureRequestSerializer(TenantModelSerializer):
         fields = [
             'id', 'loan', 'loan_number', 'client_name', 'client_image',
             'current_term', 'current_term_unit', 'current_interest_rate', 'outstanding_principal',
-            'new_term', 'effective_date', 'reason', 'notes', 'preview',
+            'new_term', 'new_interest_rate', 'effective_date', 'reason', 'notes', 'preview',
             'requested_by', 'requested_by_name',
             'status', 'reviewed_by', 'reviewed_by_name',
             'reviewed_at', 'rejection_reason', 'restructure',
