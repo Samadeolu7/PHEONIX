@@ -2434,6 +2434,23 @@ class LoanRepaymentSchedule(TimeStampedModel, BranchScopedModel, SoftDeleteModel
     """
     Individual repayment installment
     """
+
+    @staticmethod
+    def contractual_interest(schedule_qs) -> Decimal:
+        """
+        Total interest the client is contracted to pay across these rows.
+
+        A restructure cancels the open installments (status 'restructured')
+        and carries their UNPAID interest into the new installments. So a
+        restructured row only contributes the interest actually collected
+        on it; counting its full interest_due as well would count the
+        carried amount twice.
+        """
+        totals = schedule_qs.aggregate(
+            live_due=Sum('interest_due', filter=~Q(status='restructured')),
+            restructured_paid=Sum('interest_paid', filter=Q(status='restructured')),
+        )
+        return (totals['live_due'] or Decimal('0')) + (totals['restructured_paid'] or Decimal('0'))
     loan = models.ForeignKey(
         LoanAccount,
         on_delete=models.CASCADE,

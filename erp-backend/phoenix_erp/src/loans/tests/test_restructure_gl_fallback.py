@@ -326,3 +326,64 @@ class RestructureGLFallbackTestCase(TestCase):
         self.assertEqual(loan.term_months, 10)
         self.assertEqual(loan.interest_rate, Decimal("15.50"))
 
+
+    def test_contractual_interest_not_double_counted_after_restructure(self):
+        """Replays LN-20261125-8F008D: N150k for 1 day at 20% (N30k interest),
+        N6k paid, restructured to 60 days at 20% (N30k new + N24k carried),
+        then N3k paid. Contractual interest is N60k (6k collected + 54k on the
+        new schedule), not N84k (the old row's 30k counted on top)."""
+        from datetime import timedelta
+        from django.utils import timezone
+        from loans.models import LoanRepaymentSchedule
+        from loans.serializers import LoanAccountDetailSerializer
+
+        product_gl = Product.objects.create(name="Daily Loan", code="LOAN-DAILY", product_type="LOAN", owner=self.owner, branch=self.branch)
+        product = LoanProduct.objects.create(
+            product=product_gl,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            interest_income_account=self.interest_income_account,
+            default_interest_rate=Decimal("20.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            term_unit="days", min_term_months=1, max_term_months=365,
+            allowed_repayment_frequencies=["daily"],
+            owner=self.owner, branch=self.branch,
+        )
+        account = Account.objects.create(
+            name="LN-DAILY-1 Loan Account", code="139901",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        loan = LoanAccount.objects.create(
+            client=self.client, product=product, account=account,
+            loan_number="LN-DAILY-1", requested_amount=Decimal("150000.00"),
+            interest_rate=Decimal("20.00"), term_months=1, term_unit="days",
+            repayment_frequency="daily", status="pending",
+            owner=self.owner, branch=self.branch,
+        )
+        loan.approve(user=self.approver)
+        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        today = timezone.now().date()
+
+        loan.record_payment(Decimal("6000.00"), payment_date=today, payment_account=self.cash_account, received_by=self.approver)
+        loan.refresh_from_db()
+        loan.restructure(new_term=60, new_rate=Decimal("20.00"), restructured_by=self.approver, effective_date=today)
+        loan.refresh_from_db()
+        loan.record_payment(Decimal("3000.00"), payment_date=today + timedelta(days=1), payment_account=self.cash_account, received_by=self.approver)
+        loan.refresh_from_db()
+
+        # The rest of the loan page's figures, as seen live.
+        self.assertEqual(loan.outstanding_principal, Decimal("147900.00"))
+        self.assertEqual(loan.outstanding_interest, Decimal("53100.00"))
+        self.assertEqual(loan.total_paid, Decimal("9000.00"))
+
+        self.assertEqual(
+            LoanRepaymentSchedule.contractual_interest(loan.repayment_schedule.all()),
+            Decimal("60000.00"),
+        )
+        self.assertEqual(
+            Decimal(LoanAccountDetailSerializer(loan).get_contractual_interest_total(loan)),
+            Decimal("60000.00"),
+        )

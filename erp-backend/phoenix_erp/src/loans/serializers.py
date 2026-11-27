@@ -415,10 +415,9 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
         ]
 
     def get_contractual_interest_total(self, obj):
-        """Total future interest due from all schedule rows (paid + remaining)."""
-        from django.db.models import Sum
-        result = obj.repayment_schedule.aggregate(t=Sum('interest_due'))['t']
-        return str(result) if result is not None else '0.00'
+        """Total contractual interest (paid + remaining), not double-counting restructures."""
+        from .models import LoanRepaymentSchedule
+        return str(LoanRepaymentSchedule.contractual_interest(obj.repayment_schedule.all()))
 
     def get_unearned_interest_remaining(self, obj):
         """Sum of interest_due from schedule rows not yet recognized as earned."""

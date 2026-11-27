@@ -1616,7 +1616,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
             'schedule': schedule_data,
             'summary': {
                 'total_contractual_interest': str(
-                    schedule.aggregate(t=Sum('interest_due'))['t'] or 0
+                    LoanRepaymentSchedule.contractual_interest(schedule)
                 ),
                 'interest_paid': str(loan.interest_paid),
                 'interest_outstanding': str(loan.outstanding_interest),
@@ -1977,7 +1977,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         schedule_qs = LoanRepaymentSchedule.objects.filter(loan__in=active_qs)
 
-        total_interest_due = schedule_qs.aggregate(t=Sum('interest_due'))['t'] or Decimal('0')
+        total_interest_due = LoanRepaymentSchedule.contractual_interest(schedule_qs)
         interest_collected = schedule_qs.aggregate(t=Sum('interest_paid'))['t'] or Decimal('0')
         interest_receivable = total_interest_due - interest_collected
 
