@@ -73,7 +73,8 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('Payroll List', '/hr/payroll'),
         leaf('New Payroll Run', '/hr/payroll/create'),
         leaf('Attendance', '/hr/attendance'),
-        leaf('Clock In / Out', '/hr/attendance/clock'),
+        leaf('My Clock In / Out', '/hr/attendance/clock'),
+        leaf('Clock Staff In / Out', '/hr/clock'),
         leaf('Leave Requests', '/hr/leave-requests'),
         leaf('New Leave Request', '/hr/leave-requests/create'),
         leaf('Leave Balances', '/hr/leave-balances'),
@@ -370,8 +371,8 @@ export const DASHBOARD_SIDEBAR_CONFIG: SidebarConfig = {
         leaf('SMS Receipts', '/admin/sms-receipts'),
       ]),
       grp('btn-admin-office', 'OFFICE SPACE', 'file-text', [
-        leaf('Clock In', '/hr/attendance/clock'),
-        leaf('Clock Out', '/hr/attendance/clock'),
+        leaf('Clock In / Out', '/hr/attendance/clock'),
+        leaf('Office Locations', '/admin/office-locations'),
       ]),
       grp('btn-admin-ops', 'OPERATIONS', 'file-text', [
         leaf('Transaction Reversal', '/admin/transaction-reversal'),

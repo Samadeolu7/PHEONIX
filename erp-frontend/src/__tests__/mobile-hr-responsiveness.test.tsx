@@ -12,6 +12,8 @@ jest.mock('../hooks/useBonusDeductionRequests', () => ({
 
 jest.mock('../hooks/useClock', () => ({
   useCurrentAttendanceStatus: () => ({ data: null, isLoading: false }),
+  useMyClockStatus: () => ({ data: undefined, isLoading: false, isError: false }),
+  clockErrorMessage: (_err: unknown, fallback: string) => fallback,
   useClockIn: () => ({ mutate: jest.fn(), isPending: false }),
   useClockOut: () => ({ mutate: jest.fn(), isPending: false }),
 }));

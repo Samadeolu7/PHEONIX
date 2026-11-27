@@ -478,6 +478,15 @@ TIME_ZONE = os.environ.get('TIME_ZONE', 'UTC')
 USE_I18N = False  # App is English-only; disabling saves per-request locale overhead
 USE_TZ = True
 
+# Local time zone staff clock in/out in: decides which calendar day a
+# clock-in belongs to and the times stored on Attendance. TIME_ZONE stays
+# UTC by default for everything else; set ATTENDANCE_TIME_ZONE (or a
+# non-UTC TIME_ZONE) to change it.
+ATTENDANCE_TIME_ZONE = os.environ.get(
+    'ATTENDANCE_TIME_ZONE',
+    TIME_ZONE if TIME_ZONE != 'UTC' else 'Africa/Lagos',
+)
+
 # ==================================================
 # STATIC FILES CONFIGURATION
 # ==================================================

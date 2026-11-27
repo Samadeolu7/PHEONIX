@@ -1035,9 +1035,13 @@ class AttendanceViewSet(ScopedModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         staff_id = self.request.query_params.get('staff')
-        date_from = self.request.query_params.get('date_from')
-        date_to = self.request.query_params.get('date_to')
-        
+        params = self.request.query_params
+        date_from = params.get('date_from') or params.get('date__gte')
+        date_to = params.get('date_to') or params.get('date__lte')
+        date_exact = self.request.query_params.get('date')
+
+        if date_exact:
+            queryset = queryset.filter(date=date_exact)
         if staff_id:
             if str(staff_id).isdigit():
                 queryset = queryset.filter(staff_id=int(staff_id))
@@ -1050,171 +1054,197 @@ class AttendanceViewSet(ScopedModelViewSet):
         
         return queryset.order_by('-date')
     
+    # Clocking yourself in/out and reading your own attendance is for every
+    # staff member, not just those granted the HR attendance page — the
+    # action-level permission is applied only when clocking someone else.
+    SELF_SERVICE_ACTIONS = ('clock_in', 'clock_out', 'my_status', 'my_attendance')
+
+    def get_permissions(self):
+        if getattr(self, 'action', None) in self.SELF_SERVICE_ACTIONS:
+            from common.serializers import IsTenantUser
+            return [IsAuthenticated(), IsTenantUser()]
+        return super().get_permissions()
+
     def create(self, request, *args, **kwargs):
         """Create or update attendance record (upsert behavior)"""
         staff_id = request.data.get('staff')
         date = request.data.get('date')
-        
+
         if not staff_id or not date:
             return super().create(request, *args, **kwargs)
-        
-        # Check if record exists
-        try:
-            attendance = Attendance.objects.get(
-                staff_id=staff_id,
-                date=date,
-                owner=request.user,
-                branch=request.user.branch
-            )
-            # Update existing record
-            serializer = self.get_serializer(attendance, data=request.data, partial=False)
-            serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except Attendance.DoesNotExist:
-            # Create new record
+
+        # (staff, date) is unique regardless of who keyed the record in or
+        # which branch it was booked in, so look it up on exactly that.
+        attendance = Attendance.objects.filter(staff_id=staff_id, date=date).first()
+        if attendance is None:
             return super().create(request, *args, **kwargs)
-    
+        serializer = self.get_serializer(attendance, data=request.data, partial=False)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        self._refresh_hours(serializer.instance)
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        self._refresh_hours(serializer.instance)
+
+    @staticmethod
+    def _refresh_hours(instance):
+        from hr.services.attendance_clock import refresh_hours
+        if instance is None:
+            return
+        refresh_hours(instance)
+        instance.save(update_fields=['hours_worked', 'overtime_hours', 'updated_at'])
+
+    # ------------------------------------------------------------------
+    # Clock in / out
+    # ------------------------------------------------------------------
+
+    def _own_staff(self, request):
+        return Staff.objects.filter(user=request.user).first()
+
+    def _resolve_clock_staff(self, request):
+        """
+        The staff member being clocked. Without a ``staff`` id (or with the
+        caller's own id) it's the caller. Clocking anyone else is an HR
+        action and needs create permission on the attendance page.
+        """
+        from permissions.permission_classes import HasActionPermission
+
+        own = self._own_staff(request)
+        staff_id = request.data.get('staff')
+        if not staff_id or (own is not None and str(own.pk) == str(staff_id)):
+            if own is None:
+                return None, Response(
+                    {'error': 'No staff profile is linked to your account.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return own, None
+
+        checker = HasActionPermission()
+        if not checker.has_permission(request, self):
+            return None, Response(
+                {'error': 'You can only clock yourself in or out.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        qs = Staff.objects.all()
+        tenant = getattr(request.user, 'tenant', None)
+        if tenant is not None:
+            qs = qs.filter(tenant=tenant)
+        staff = qs.filter(pk=staff_id).first() if str(staff_id).isdigit() else None
+        if staff is None:
+            return None, Response({'error': 'Staff member not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return staff, None
+
+    def _clock_branch(self, request, staff):
+        # Acting branch (branch switcher / temporary grant), never just the
+        # user's home branch; directors in "All branches" mode fall back to
+        # the staff member's own branch.
+        return resolve_effective_branch(request) or staff.branch or getattr(request.user, 'branch', None)
+
+    @staticmethod
+    def _gps(request):
+        return (
+            request.data.get('latitude'),
+            request.data.get('longitude'),
+            request.data.get('accuracy'),
+        )
+
     @action(detail=False, methods=['post'])
     def clock_in(self, request):
-        """Clock in for attendance with GPS validation"""
-        from hr.utils import validate_attendance_location
-        
-        staff_id = request.data.get('staff')
-        date = request.data.get('date', timezone.now().date())
-        latitude = request.data.get('latitude')
-        longitude = request.data.get('longitude')
-        
-        if not staff_id:
-            return Response(
-                {'error': 'Staff ID is required'},
-                status=status.HTTP_400_BAD_REQUEST
+        """Clock in (today, server time) with GPS validation against the acting branch."""
+        from hr.services.attendance_clock import ClockError, clock_in
+
+        staff, error = self._resolve_clock_staff(request)
+        if error is not None:
+            return error
+        latitude, longitude, accuracy = self._gps(request)
+        try:
+            record = clock_in(
+                staff=staff,
+                branch=self._clock_branch(request, staff),
+                actor=request.user,
+                latitude=latitude,
+                longitude=longitude,
+                accuracy=accuracy,
             )
-        
-        # Validate GPS location if branch has coordinates configured
-        branch = request.user.branch
-        is_valid, distance, message = validate_attendance_location(
-            branch, latitude, longitude
-        )
-        
-        if not is_valid:
-            return Response(
-                {
-                    'error': message,
-                    'distance': f"{distance:.2f}" if distance else None,
-                    'requires_gps': True
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Check if already clocked in today
-        existing = Attendance.objects.filter(
-            staff_id=staff_id,
-            date=date,
-            owner=request.user,
-            branch=request.user.branch
-        ).first()
-        
-        if existing:
-            if existing.clock_in:
-                return Response(
-                    {'error': 'Already clocked in today'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            existing.clock_in = timezone.now().time()
-            existing.status = 'present'
-            existing.save()
-            return Response(self.get_serializer(existing).data)
-        
-        # Create new attendance record
-        attendance = Attendance.objects.create(
-            tenant=getattr(request.user, 'tenant', None),
-            staff_id=staff_id,
-            date=date,
-            clock_in=timezone.now().time(),
-            status='present',
-            owner=request.user,
-            branch=request.user.branch
-        )
-        
-        return Response(
-            self.get_serializer(attendance).data,
-            status=status.HTTP_201_CREATED
-        )
-    
+        except ClockError as exc:
+            return Response(exc.as_response_data(), status=exc.status_code)
+        return Response(self.get_serializer(record).data, status=status.HTTP_201_CREATED)
+
     @action(detail=False, methods=['post'])
     def clock_out(self, request):
-        """Clock out for attendance with GPS validation"""
-        from hr.utils import validate_attendance_location
-        
-        staff_id = request.data.get('staff')
-        date = request.data.get('date', timezone.now().date())
-        latitude = request.data.get('latitude')
-        longitude = request.data.get('longitude')
-        
-        if not staff_id:
-            return Response(
-                {'error': 'Staff ID is required'},
-                status=status.HTTP_400_BAD_REQUEST
+        """Clock out of the open attendance record (today's, or last night's shift)."""
+        from hr.services.attendance_clock import ClockError, clock_out
+
+        staff, error = self._resolve_clock_staff(request)
+        if error is not None:
+            return error
+        latitude, longitude, accuracy = self._gps(request)
+        try:
+            record = clock_out(
+                staff=staff,
+                actor=request.user,
+                latitude=latitude,
+                longitude=longitude,
+                accuracy=accuracy,
             )
-        
-        # Validate GPS location if branch has coordinates configured
-        branch = request.user.branch
-        is_valid, distance, message = validate_attendance_location(
-            branch, latitude, longitude
-        )
-        
-        if not is_valid:
+        except ClockError as exc:
+            return Response(exc.as_response_data(), status=exc.status_code)
+        return Response(self.get_serializer(record).data)
+
+    @action(detail=False, methods=['get'], url_path='my-status')
+    def my_status(self, request):
+        """
+        The caller's clock state: today's record, any open (not clocked-out)
+        record, and the branch whose location the next clock-in is checked
+        against.
+        """
+        from hr.services.attendance_clock import attendance_now, get_open_record, get_today_record
+
+        staff = self._own_staff(request)
+        if staff is None:
             return Response(
-                {
-                    'error': message,
-                    'distance': f"{distance:.2f}" if distance else None,
-                    'requires_gps': True
-                },
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': 'No staff profile is linked to your account.'},
+                status=status.HTTP_404_NOT_FOUND,
             )
-        
-        attendance = Attendance.objects.filter(
-            staff_id=staff_id,
-            date=date,
-            owner=request.user,
-            branch=request.user.branch
-        ).first()
-        
-        if not attendance:
-            return Response(
-                {'error': 'No clock-in record found for today'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        if not attendance.clock_in:
-            return Response(
-                {'error': 'Must clock in first'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if attendance.clock_out:
-            return Response(
-                {'error': 'Already clocked out'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        attendance.clock_out = timezone.now().time()
-        attendance.save()
-        
-        return Response(self.get_serializer(attendance).data)
+        today = get_today_record(staff)
+        open_record = get_open_record(staff)
+        branch = self._clock_branch(request, staff)
+        now = attendance_now()
+        return Response({
+            'staff': {
+                'id': staff.pk,
+                'staff_id': staff.staff_id,
+                'name': (staff.user.get_full_name() if staff.user else '') or f'{staff.first_name} {staff.last_name}'.strip(),
+            },
+            'date': now.date().isoformat(),
+            'server_time': now.isoformat(),
+            'today': self.get_serializer(today).data if today else None,
+            'open_record': self.get_serializer(open_record).data if open_record else None,
+            'is_clocked_in': open_record is not None,
+            'branch': {
+                'id': branch.pk,
+                'name': branch.name,
+                'has_location': branch.latitude is not None and branch.longitude is not None,
+                'attendance_radius_meters': getattr(branch, 'attendance_radius_meters', None),
+            } if branch else None,
+        })
 
     @action(detail=False, methods=['get'], url_path='my-attendance')
     def my_attendance(self, request):
         """Return attendance records for the authenticated user's staff profile."""
-        try:
-            staff = Staff.objects.get(user=request.user)
-        except Staff.DoesNotExist:
+        staff = self._own_staff(request)
+        if staff is None:
             return Response(
                 {'error': 'No staff profile linked to your account.'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        records = self.get_queryset().filter(staff=staff).order_by('-date')[:60]
+        # All of the caller's own days, whichever branch they clocked in at.
+        records = Attendance.objects.filter(staff=staff).order_by('-date')[:60]
         serializer = self.get_serializer(records, many=True)
         return Response(serializer.data)
 

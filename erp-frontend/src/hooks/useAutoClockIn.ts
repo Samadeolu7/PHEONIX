@@ -10,43 +10,23 @@
 // above ToastProvider and before the login page can possibly submit, so the
 // 'auth:login' listener is always registered in time.
 import { useEffect } from 'react';
-import { hrService } from '../services/hrService';
 import { clockService } from '../services/clockService';
-
-function getCurrentLocation(): Promise<{ latitude: number; longitude: number }> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('Geolocation is not supported by this browser'));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      position => {
-        resolve({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
-      },
-      geoError => reject(geoError),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-    );
-  });
-}
+import { getDevicePosition } from '../utils/geolocation';
 
 export function useAutoClockIn() {
   useEffect(() => {
     const attemptAutoClockIn = async () => {
       try {
-        const staff = await hrService.getMyProfile();
-        if (!staff?.id) return;
+        const status = await clockService.getMyStatus();
+        if (!status?.staff || status.is_clocked_in || status.today?.clock_in) return;
 
-        const location = await getCurrentLocation();
-        const today = new Date().toISOString().split('T')[0];
-
+        const position = await getDevicePosition();
+        // No staff id: the server clocks in the signed-in user, on today's
+        // date and time in the organisation's time zone.
         await clockService.clockIn({
-          staff: staff.id,
-          date: today,
-          latitude: location.latitude,
-          longitude: location.longitude,
+          latitude: position.latitude,
+          longitude: position.longitude,
+          accuracy: position.accuracy,
         });
 
         console.info('[attendance] Clocked in automatically on login');

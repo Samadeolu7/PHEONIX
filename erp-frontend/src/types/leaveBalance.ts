@@ -25,10 +25,9 @@ export interface LeaveBalancesResponse {
 
 export interface AttendanceRecord {
   id: number;
-  staff: {
-    id: number;
-    full_name: string;
-  };
+  staff: number;
+  staff_id?: string;
+  staff_name?: string;
   date: string;
   clock_in: string | null;
   clock_out: string | null;
@@ -43,18 +42,34 @@ export interface AttendanceResponse {
   results: AttendanceRecord[];
 }
 
+/**
+ * Omit `staff` to clock yourself; passing someone else's id needs HR
+ * attendance permission. The server decides the date and time (in the
+ * organisation's time zone) — any `date` sent is ignored.
+ */
 export interface ClockInRequest {
-  staff: number;
-  date?: string;
+  staff?: number;
   latitude?: number;
   longitude?: number;
+  /** Device-reported GPS accuracy in meters; gives imprecise phones some extra room. */
+  accuracy?: number;
 }
 
-export interface ClockOutRequest {
-  staff: number;
-  date?: string;
-  latitude?: number;
-  longitude?: number;
+export type ClockOutRequest = ClockInRequest;
+
+export interface MyClockStatus {
+  staff: { id: number; staff_id?: string; name: string };
+  date: string;
+  server_time: string;
+  today: AttendanceRecord | null;
+  open_record: AttendanceRecord | null;
+  is_clocked_in: boolean;
+  branch: {
+    id: number;
+    name: string;
+    has_location: boolean;
+    attendance_radius_meters: number | null;
+  } | null;
 }
 
 export interface ClockInResponse {

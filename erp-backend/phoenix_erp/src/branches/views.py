@@ -2,7 +2,10 @@
 import logging
 
 from rest_framework.permissions import IsAuthenticated
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
 from rest_framework import serializers, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -21,6 +24,26 @@ class BranchSerializer(serializers.ModelSerializer):
             'latitude', 'longitude', 'attendance_radius_meters', 'main_bank_account',
         ]
         read_only_fields = ['id', 'tenant', 'is_deleted', 'created_at', 'updated_at']
+
+    def to_internal_value(self, data):
+        # Browsers report coordinates with ~15 decimal places; the model
+        # stores 6 (~11 cm). Round instead of rejecting "Use my current
+        # location" with a "no more than 6 decimal places" error.
+        if hasattr(data, 'copy'):
+            data = data.copy()
+        for field in ('latitude', 'longitude'):
+            value = data.get(field) if hasattr(data, 'get') else None
+            if value in (None, ''):
+                if field in data:
+                    data[field] = None
+                continue
+            try:
+                data[field] = str(
+                    Decimal(str(value)).quantize(Decimal('0.000001'), rounding=ROUND_HALF_UP)
+                )
+            except (InvalidOperation, ValueError):
+                pass  # let the field report the bad value
+        return super().to_internal_value(data)
 
 
 class BranchViewSet(ScopedModelViewSet):
@@ -61,6 +84,33 @@ class BranchViewSet(ScopedModelViewSet):
 
         # Fallback: return empty queryset if user has no tenant
         return qs.none()
+
+    # The office location staff clock in/out against. Only admins and
+    # directors may set or move it — otherwise anyone could move "the
+    # office" to wherever they happen to be.
+    LOCATION_FIELDS = ('latitude', 'longitude', 'attendance_radius_meters')
+
+    def _guard_location_change(self, serializer):
+        data = serializer.validated_data
+        instance = serializer.instance
+        if instance is None:
+            changed = any(data.get(f) is not None for f in ('latitude', 'longitude'))
+        else:
+            changed = any(
+                f in data and data[f] != getattr(instance, f) for f in self.LOCATION_FIELDS
+            )
+        if changed and not self._is_elevated_user(self.request.user):
+            raise PermissionDenied(
+                'Only administrators and directors can set a branch\'s office location.'
+            )
+
+    def perform_create(self, serializer):
+        self._guard_location_change(serializer)
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        self._guard_location_change(serializer)
+        super().perform_update(serializer)
 
     @action(detail=False, methods=['post'], url_path='clone-config')
     def clone_config(self, request):

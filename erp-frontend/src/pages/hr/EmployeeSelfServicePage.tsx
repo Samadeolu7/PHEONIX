@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { User, FileText, Calendar, Clock, DollarSign, Plus, AlertCircle } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import hrService from '../../services/hrService';
+import ClockInOutWidget from '../../components/hr/ClockInOutWidget';
 import type { Staff, Payslip, LeaveBalance, LeaveRequest, Attendance } from '../../types/hr';
 
 type Tab = 'overview' | 'payslips' | 'leave' | 'attendance';
@@ -153,6 +154,7 @@ const EmployeeSelfServicePage: React.FC = () => {
       {/* ─── Overview Tab ──────────────────────────────────────────────── */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
+          <ClockInOutWidget compact />
           {/* Quick Stats */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white border rounded-lg p-4">
@@ -400,6 +402,8 @@ const EmployeeSelfServicePage: React.FC = () => {
 
       {/* ─── Attendance Tab ────────────────────────────────────────────── */}
       {activeTab === 'attendance' && (
+        <div className="space-y-6">
+        <ClockInOutWidget />
         <div className="bg-white border rounded-lg overflow-hidden">
           <div className="px-5 py-4 border-b">
             <h3 className="font-semibold">Recent Attendance</h3>
@@ -438,6 +442,7 @@ const EmployeeSelfServicePage: React.FC = () => {
               </tbody>
             </table>
           )}
+        </div>
         </div>
       )}
     </div>

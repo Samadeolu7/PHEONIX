@@ -214,7 +214,7 @@ body:not(.show-ledger) .ledger-detail{display:none;}
       <li><a href="#howto-petty-cash-bank" data-kw="petty cash bank transfer disbursement mode switch fund"><span class="num">↻</span><span>Switch petty cash to bank transfer</span></a></li>
       <li><a href="#howto-staff-guarantors" data-kw="hr staff guarantor guarantors document upload id passport employment"><span class="num">↻</span><span>Add a staff guarantor & upload documents</span></a></li>
       <li><a href="#howto-leave-requests" data-kw="hr leave request annual sick vacation apply submit approve reject cancel balance carryover"><span class="num">↻</span><span>Request, approve & cancel leave</span></a></li>
-      <li><a href="#howto-attendance-location" data-kw="attendance clock in clock out gps geofence location radius branch auto login"><span class="num">↻</span><span>Set up branch location & auto clock-in</span></a></li>
+      <li><a href="#howto-attendance-location" data-kw="attendance clock in clock out gps geofence location radius branch auto login office locations accuracy"><span class="num">↻</span><span>Set up branch location & auto clock-in</span></a></li>
     </ul>
   </aside>
 
@@ -916,17 +916,19 @@ body:not(.show-ledger) .ledger-detail{display:none;}
 
         <div class="callout note">
           <span class="tag">Where to do this</span>
-          <p>Administration → Branches → open the branch → Edit, under <strong>Attendance Location</strong>. You'll need branch-edit rights, usually a branch manager, operations, or admin.</p>
+          <p><strong>Admin → Office Space → Office Locations</strong> lists every branch with its office point and radius. Only administrators and directors can change them; everyone else sees them read-only. (The same fields are also on the branch's own edit form under <strong>Attendance Location</strong>.)</p>
         </div>
 
         <h2>Setting the branch's location</h2>
         <div class="steps">
-          <li>Go to <strong>Administration → Branches</strong> and open the branch you want to configure.</li>
-          <li>Click <strong>Edit</strong>.</li>
-          <li>Under <strong>Attendance Location</strong>, click <strong>Use my current location</strong> while standing at the branch — this fills in Latitude and Longitude from your browser's GPS. You can also type coordinates in directly.</li>
-          <li>Set the <strong>Allowed Radius (meters)</strong> — how far from that point staff may clock in or out. Defaults to 1,500m; tighten it for a single small office, widen it for a larger compound.</li>
-          <li>Save the branch.</li>
+          <li>Stand inside the branch office with a phone that has GPS / location turned on, and open <strong>Office Locations</strong>.</li>
+          <li>On that branch's card, tap <strong>Use my current location</strong>. It waits a few seconds for a precise fix and shows how accurate it was; if it says the fix is worse than about ±50 m, move near a window and try again. You can also type coordinates in directly, and use <strong>Check on map</strong> to confirm the pin.</li>
+          <li>Set the <strong>Allowed radius (meters)</strong> — how far from that point staff may clock in or out. 100–300 m suits most offices; widen it for a larger compound.</li>
+          <li>Tap <strong>Save</strong>. <strong>Clear</strong> removes the location, which turns the check off for that branch.</li>
         </div>
+
+        <h2>Room for phones with weaker GPS</h2>
+        <p>Every phone reports how precise its location is (e.g. "±80 m"). Indoors that number can be large even when the person is at their desk, so Phoenix adds the phone's reported accuracy to the radius — capped at 300 m so a very poor (or faked) reading can't stretch the fence across town. Example: radius 200 m, phone accurate to ±80 m → allowed up to 280 m away. If someone is still refused, the message tells them how far away they appeared to be and, when their fix was very poor, to switch on GPS and try again.</p>
 
         <div class="callout warn">
           <span class="tag">No location set = no GPS check</span>
@@ -940,8 +942,10 @@ body:not(.show-ledger) .ledger-detail{display:none;}
         </div>
         <ul>
           <li><strong>Automatic, on login</strong> — the moment someone logs in, the browser silently checks their location; if they're within the branch's radius, they're clocked in with no button press. If they're outside it, deny location access, or the browser can't get a GPS fix, nothing happens — no error is shown, since this is a background convenience, not a required step.</li>
-          <li><strong>Manual, any time</strong> — the Clock In/Out widget on the dashboard always works as a fallback (or as the only method, for branches with no location configured). It asks for location permission and shows a clear error if you're too far from the branch.</li>
+          <li><strong>Manual, any time</strong> — every staff member can clock themselves in and out from <strong>Admin → Office Space → Clock In / Out</strong> (or <strong>HR → My Clock In / Out</strong>, or the Attendance tab of Employee Self-Service). No HR permission is needed for your own attendance. It asks for location permission and shows a clear error if you're too far from the branch.</li>
+          <li><strong>HR clocking someone else</strong> — <strong>HR → Clock Staff In / Out</strong> lets anyone with attendance permission clock a colleague in or out; the location checked is the HR user's device.</li>
         </ul>
+        <p>The check uses the branch you're <em>acting</em> in (the branch switcher, or a temporary branch grant), so staff moved to another branch for the day clock in there. Clock-out is checked against the branch you clocked in at. The date and times recorded are the server's, in the organisation's local time — the phone's clock can't change them. A shift that runs past midnight clocks out of the previous day's record. Hours worked (and overtime beyond the HR Configuration's working hours per day) are calculated at clock-out.</p>
         <p>Clocking <em>out</em> is never automatic either way — staff always clock out manually, whether or not a location is configured.</p>
 
         <div class="callout note">

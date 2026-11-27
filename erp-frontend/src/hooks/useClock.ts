@@ -35,28 +35,41 @@ export const useCurrentAttendanceStatus = (staffId: number, date?: string) => {
   });
 };
 
+export const useMyClockStatus = (enabled = true) => {
+  return useQuery({
+    queryKey: ['my-clock-status'],
+    queryFn: () => clockService.getMyStatus(),
+    enabled,
+    refetchInterval: 60000,
+    retry: false,
+  });
+};
+
+/** The server's reason for a failed clock-in/out, e.g. "You are 820 m from Head Office…". */
+export const clockErrorMessage = (err: any, fallback: string): string => {
+  const data = err?.response?.data || err?.details;
+  return data?.error || data?.detail || data?.message || err?.message || fallback;
+};
+
+const invalidateClockQueries = (queryClient: ReturnType<typeof useQueryClient>) => {
+  queryClient.invalidateQueries({ queryKey: ['attendance'] });
+  queryClient.invalidateQueries({ queryKey: ['current-attendance-status'] });
+  queryClient.invalidateQueries({ queryKey: ['my-clock-status'] });
+  queryClient.invalidateQueries({ queryKey: ['my-attendance'] });
+};
+
 export const useClockIn = () => {
   const queryClient = useQueryClient();
   const { success, error } = useToast();
 
   return useMutation({
     mutationFn: (data: ClockInRequest) => clockService.clockIn(data),
-    onSuccess: (_, { staff }) => {
-      queryClient.invalidateQueries({ queryKey: ['attendance'] });
-      queryClient.invalidateQueries({ queryKey: ['current-attendance-status', staff] });
+    onSuccess: () => {
+      invalidateClockQueries(queryClient);
       success('Successfully clocked in');
     },
     onError: (err: any) => {
-      // Extract GPS-specific error messages
-      const errorData = err.response?.data;
-      const errorMessage = errorData?.error || errorData?.message || 'Failed to clock in';
-
-      // If there's a distance value, show it
-      if (errorData?.distance) {
-        error(`${errorMessage} (Distance: ${errorData.distance} km)`);
-      } else {
-        error(errorMessage);
-      }
+      error(clockErrorMessage(err, 'Failed to clock in'));
     },
   });
 };
@@ -67,22 +80,12 @@ export const useClockOut = () => {
 
   return useMutation({
     mutationFn: (data: ClockOutRequest) => clockService.clockOut(data),
-    onSuccess: (_, { staff }) => {
-      queryClient.invalidateQueries({ queryKey: ['attendance'] });
-      queryClient.invalidateQueries({ queryKey: ['current-attendance-status', staff] });
+    onSuccess: () => {
+      invalidateClockQueries(queryClient);
       success('Successfully clocked out');
     },
     onError: (err: any) => {
-      // Extract GPS-specific error messages
-      const errorData = err.response?.data;
-      const errorMessage = errorData?.error || errorData?.message || 'Failed to clock out';
-
-      // If there's a distance value, show it
-      if (errorData?.distance) {
-        error(`${errorMessage} (Distance: ${errorData.distance} km)`);
-      } else {
-        error(errorMessage);
-      }
+      error(clockErrorMessage(err, 'Failed to clock out'));
     },
   });
 };

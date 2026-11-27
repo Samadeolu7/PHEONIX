@@ -7,8 +7,10 @@ import {
   ClockOutResponse,
   BulkAttendanceRequest,
   BulkAttendanceResponse,
+  MyClockStatus,
 } from '../types/leaveBalance';
 import { api } from './api';
+import { localDateString } from '../utils/geolocation';
 
 export const clockService = {
   // Attendance CRUD
@@ -41,6 +43,11 @@ export const clockService = {
     return response;
   },
 
+  // The signed-in staff member's own clock state
+  async getMyStatus(): Promise<MyClockStatus> {
+    return api.get('/hr/attendance/my-status/');
+  },
+
   // Bulk attendance
   async bulkCreateAttendance(data: BulkAttendanceRequest): Promise<BulkAttendanceResponse> {
     const response = await api.post('/hr/attendance/bulk_create/', data);
@@ -52,7 +59,7 @@ export const clockService = {
     staffId: number,
     date?: string
   ): Promise<AttendanceRecord | null> {
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date || localDateString();
     const response = await api.get('/hr/attendance/', {
       params: {
         staff: staffId,

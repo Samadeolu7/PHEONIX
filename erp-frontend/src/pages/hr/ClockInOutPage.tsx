@@ -5,6 +5,7 @@ import ClockInOutWidget from '../../components/hr/ClockInOutWidget';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import { staffService } from '../../services/staffService';
+import { localDateString } from '../../utils/geolocation';
 
 interface Staff {
   id: number;
@@ -43,7 +44,7 @@ const ClockInOutPage: React.FC = () => {
   const navigate = useNavigate();
   const [selectedStaffId, setSelectedStaffId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState<string>(localDateString());
 
   // Fetch staff list
   const { data: staffData, isLoading } = useQuery({
@@ -101,6 +102,16 @@ const ClockInOutPage: React.FC = () => {
             <p className="text-sm sm:text-base text-gray-600">
               Record attendance for staff members
             </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Your device's location is checked against the branch office.{' '}
+              <button onClick={() => navigate('/hr/attendance/clock')} className="text-blue-600 hover:underline">
+                Clock yourself in
+              </button>
+              {' · '}
+              <button onClick={() => navigate('/admin/office-locations')} className="text-blue-600 hover:underline">
+                Office locations
+              </button>
+            </p>
           </div>
         </div>
 
@@ -121,11 +132,11 @@ const ClockInOutPage: React.FC = () => {
               className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent w-full sm:w-auto"
             />
             <div className="text-sm text-gray-600">
-              {selectedDate === new Date().toISOString().split('T')[0] ? (
+              {selectedDate === localDateString() ? (
                 <span className="text-green-600 font-medium">Today</span>
               ) : (
                 <span>
-                  {new Date(selectedDate).toLocaleDateString('en-US', {
+                  {new Date(`${selectedDate}T00:00:00`).toLocaleDateString('en-US', {
                     weekday: 'long',
                     year: 'numeric',
                     month: 'long',
@@ -323,7 +334,7 @@ const ClockInOutPage: React.FC = () => {
                           />
                           <div>
                             <p className="font-medium text-gray-900 text-sm">
-                              {new Date(record.date).toLocaleDateString('en-US', {
+                              {new Date(`${record.date}T00:00:00`).toLocaleDateString('en-US', {
                                 weekday: 'short',
                                 month: 'short',
                                 day: 'numeric',

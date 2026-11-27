@@ -1,14 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, LogIn, LogOut, User } from 'lucide-react';
-import { useCurrentAttendanceStatus, useClockIn, useClockOut } from '../../hooks/useClock';
+import { Clock, LogIn, LogOut, User, MapPin } from 'lucide-react';
+import {
+  useCurrentAttendanceStatus,
+  useMyClockStatus,
+  useClockIn,
+  useClockOut,
+  clockErrorMessage,
+} from '../../hooks/useClock';
+import { getDevicePosition, localDateString } from '../../utils/geolocation';
 import { ManualLink } from '../help';
 
 interface ClockInOutWidgetProps {
-  staffId: number;
+  /**
+   * Staff member to clock (HR use; needs attendance permission). Omit to
+   * clock the signed-in user themselves.
+   */
+  staffId?: number;
   staffName?: string;
   compact?: boolean;
   selectedDate?: string;
 }
+
+const formatClockTime = (date: string, time: string | null | undefined) =>
+  time
+    ? new Date(`${date}T${time}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null;
 
 const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
   staffId,
@@ -16,83 +32,57 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
   compact = false,
   selectedDate,
 }) => {
+  const selfMode = !staffId;
   const [currentTime, setCurrentTime] = useState(new Date());
   const [locationError, setLocationError] = useState<string | null>(null);
   const [fetchingLocation, setFetchingLocation] = useState(false);
+  const [lastAccuracy, setLastAccuracy] = useState<number | null>(null);
 
-  // Use selectedDate or default to today
-  const workingDate = selectedDate || new Date().toISOString().split('T')[0];
-  const isToday = workingDate === new Date().toISOString().split('T')[0];
+  const today = localDateString();
+  const workingDate = selectedDate || today;
+  const isToday = workingDate === today;
 
-  const { data: currentStatus, isLoading } = useCurrentAttendanceStatus(staffId, workingDate);
+  const staffStatus = useCurrentAttendanceStatus(staffId || 0, workingDate);
+  const myStatus = useMyClockStatus(selfMode);
   const clockInMutation = useClockIn();
   const clockOutMutation = useClockOut();
 
-  // Update current time every second
   useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const getCurrentLocation = (): Promise<{ latitude: number; longitude: number }> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error('Geolocation is not supported by your browser'));
-        return;
-      }
+  // Self mode: an open record (possibly last night's shift) wins over today's.
+  const record = selfMode
+    ? myStatus.data?.open_record || myStatus.data?.today || null
+    : staffStatus.data || null;
+  const isLoading = selfMode ? myStatus.isLoading : staffStatus.isLoading;
+  const isClocked = selfMode
+    ? Boolean(myStatus.data?.is_clocked_in)
+    : Boolean(record?.clock_in && !record?.clock_out);
+  const doneForToday = Boolean(record?.clock_in && record?.clock_out);
+  const displayName = staffName || (selfMode ? myStatus.data?.staff?.name : undefined);
+  const branch = selfMode ? myStatus.data?.branch : null;
+  const profileMissing = selfMode && myStatus.isError;
+  const hoursWorked = record?.hours_worked ? parseFloat(record.hours_worked) : 0;
+  const busy = clockInMutation.isPending || clockOutMutation.isPending || fetchingLocation;
 
-      navigator.geolocation.getCurrentPosition(
-        position => {
-          resolve({
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          });
-        },
-        error => {
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              reject(
-                new Error(
-                  'Location permission denied. Please enable location access in your browser settings.'
-                )
-              );
-              break;
-            case error.POSITION_UNAVAILABLE:
-              reject(
-                new Error('Location information is unavailable. Please check your GPS settings.')
-              );
-              break;
-            case error.TIMEOUT:
-              reject(new Error('Location request timed out. Please try again.'));
-              break;
-            default:
-              reject(new Error('An unknown error occurred while fetching location.'));
-          }
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0,
-        }
-      );
-    });
-  };
-
-  const handleClockIn = async () => {
+  const handleClock = async () => {
     setLocationError(null);
+    clockInMutation.reset();
+    clockOutMutation.reset();
     setFetchingLocation(true);
-
     try {
-      const location = await getCurrentLocation();
-      clockInMutation.mutate({
-        staff: staffId,
-        date: workingDate,
-        latitude: location.latitude,
-        longitude: location.longitude,
-      });
+      const position = await getDevicePosition();
+      setLastAccuracy(Math.round(position.accuracy));
+      const payload = {
+        ...(staffId ? { staff: staffId } : {}),
+        latitude: position.latitude,
+        longitude: position.longitude,
+        accuracy: position.accuracy,
+      };
+      if (isClocked) clockOutMutation.mutate(payload);
+      else clockInMutation.mutate(payload);
     } catch (error) {
       setLocationError(error instanceof Error ? error.message : 'Failed to get location');
     } finally {
@@ -100,45 +90,14 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
     }
   };
 
-  const handleClockOut = async () => {
-    setLocationError(null);
-    setFetchingLocation(true);
+  const serverError =
+    (clockInMutation.isError && clockErrorMessage(clockInMutation.error, 'Clock in failed')) ||
+    (clockOutMutation.isError && clockErrorMessage(clockOutMutation.error, 'Clock out failed')) ||
+    null;
 
-    try {
-      const location = await getCurrentLocation();
-      clockOutMutation.mutate({
-        staff: staffId,
-        date: workingDate,
-        latitude: location.latitude,
-        longitude: location.longitude,
-      });
-    } catch (error) {
-      setLocationError(error instanceof Error ? error.message : 'Failed to get location');
-    } finally {
-      setFetchingLocation(false);
-    }
-  };
-
-  const formatTime = (time: Date) => {
-    return time.toLocaleTimeString('en-US', {
-      hour12: true,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-  };
-
-  const formatDate = (time: Date) => {
-    return time.toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    });
-  };
-
-  const isClocked = currentStatus?.clock_in && !currentStatus?.clock_out;
-  const hoursWorked = currentStatus?.hours_worked ? parseFloat(currentStatus.hours_worked) : 0;
+  const buttonDisabled = busy || !isToday || profileMissing || (doneForToday && !isClocked);
+  const buttonLabel =
+    doneForToday && !isClocked ? 'Done for today' : isClocked ? 'Clock Out' : 'Clock In';
 
   if (isLoading) {
     return (
@@ -151,6 +110,28 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
     );
   }
 
+  const errors = (
+    <>
+      {profileMissing && (
+        <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-xs sm:text-sm text-yellow-800">
+          {clockErrorMessage(myStatus.error, 'No staff profile is linked to your account.')} Ask HR
+          to link your login to your staff record.
+        </div>
+      )}
+      {locationError && (
+        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-xs sm:text-sm text-red-800">{locationError}</p>
+        </div>
+      )}
+      {serverError && !locationError && (
+        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-xs sm:text-sm text-red-800 font-medium">Clock In/Out Failed</p>
+          <p className="text-xs sm:text-sm text-red-700 mt-1">{serverError}</p>
+        </div>
+      )}
+    </>
+  );
+
   if (compact) {
     return (
       <div className="bg-white rounded-lg shadow-sm border p-4">
@@ -160,33 +141,25 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
             <span className="text-sm font-medium">{isClocked ? 'Clocked In' : 'Clocked Out'}</span>
           </div>
           <button
-            onClick={isClocked ? handleClockOut : handleClockIn}
-            disabled={clockInMutation.isPending || clockOutMutation.isPending || fetchingLocation}
+            onClick={handleClock}
+            disabled={buttonDisabled}
             className={`px-3 py-1 rounded text-sm font-medium disabled:opacity-50 ${
               isClocked
                 ? 'bg-red-100 text-red-700 hover:bg-red-200'
                 : 'bg-green-100 text-green-700 hover:bg-green-200'
             }`}
           >
-            {fetchingLocation ? 'Getting location...' : isClocked ? 'Clock Out' : 'Clock In'}
+            {fetchingLocation ? 'Getting location...' : buttonLabel}
           </button>
         </div>
-        {currentStatus?.clock_in && (
+        {record?.clock_in && (
           <div className="mt-2 text-xs text-gray-500">
-            In: {new Date(`${currentStatus.date}T${currentStatus.clock_in}`).toLocaleTimeString()}
+            In: {formatClockTime(record.date, record.clock_in)}
+            {record.clock_out && ` • Out: ${formatClockTime(record.date, record.clock_out)}`}
             {hoursWorked > 0 && ` • ${hoursWorked.toFixed(1)}h worked`}
           </div>
         )}
-        {locationError && (
-          <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
-            {locationError}
-          </div>
-        )}
-        {(clockInMutation.isError || clockOutMutation.isError) && (
-          <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-800">
-            {clockInMutation.error?.message || clockOutMutation.error?.message}
-          </div>
-        )}
+        {errors}
       </div>
     );
   }
@@ -200,13 +173,16 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="text-base sm:text-lg font-semibold text-gray-900">Time Clock</h3>
-          {staffName && (
+          {displayName && (
             <p className="text-xs sm:text-sm text-gray-600 flex items-center gap-1 truncate">
               <User className="h-3 w-3 flex-shrink-0" />
-              <span className="truncate">{staffName}</span>
+              <span className="truncate">{displayName}</span>
             </p>
           )}
-          <ManualLink topic="howto-attendance-location" className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline">
+          <ManualLink
+            topic="howto-attendance-location"
+            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline"
+          >
             How does clock-in work?
           </ManualLink>
         </div>
@@ -217,14 +193,26 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
         {isToday ? (
           <>
             <div className="text-2xl sm:text-3xl font-bold text-gray-900 mb-1">
-              {formatTime(currentTime)}
+              {currentTime.toLocaleTimeString('en-US', {
+                hour12: true,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              })}
             </div>
-            <div className="text-xs sm:text-sm text-gray-600">{formatDate(currentTime)}</div>
+            <div className="text-xs sm:text-sm text-gray-600">
+              {currentTime.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              })}
+            </div>
           </>
         ) : (
           <>
             <div className="text-lg sm:text-2xl font-bold text-blue-600 mb-1">
-              {new Date(workingDate).toLocaleDateString('en-US', {
+              {new Date(`${workingDate}T00:00:00`).toLocaleDateString('en-US', {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'long',
@@ -257,43 +245,35 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
             </>
           )}
         </div>
+        {branch && (
+          <p className="mt-2 flex items-center justify-center gap-1 text-xs text-gray-500">
+            <MapPin className="h-3 w-3" />
+            {branch.has_location
+              ? `Must be within ${branch.attendance_radius_meters ?? 1500} m of ${branch.name}`
+              : `${branch.name} has no office location set — location isn't checked`}
+          </p>
+        )}
       </div>
 
       {/* Date Summary */}
-      {currentStatus && (
+      {record && (
         <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-gray-50 rounded-lg">
           <h4 className="text-xs sm:text-sm font-medium text-gray-700 mb-3">
-            {isToday
+            {record.date === today
               ? "Today's Summary"
-              : `Summary for ${new Date(workingDate).toLocaleDateString()}`}
+              : `Summary for ${new Date(`${record.date}T00:00:00`).toLocaleDateString()}`}
           </h4>
           <div className="grid grid-cols-2 gap-3 sm:gap-4 text-xs sm:text-sm">
             <div>
               <p className="text-gray-600">Clock In</p>
               <p className="font-medium text-xs sm:text-sm">
-                {currentStatus.clock_in
-                  ? new Date(`${currentStatus.date}T${currentStatus.clock_in}`).toLocaleTimeString(
-                      [],
-                      {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      }
-                    )
-                  : 'Not clocked in'}
+                {formatClockTime(record.date, record.clock_in) || 'Not clocked in'}
               </p>
             </div>
             <div>
               <p className="text-gray-600">Clock Out</p>
               <p className="font-medium text-xs sm:text-sm">
-                {currentStatus.clock_out
-                  ? new Date(`${currentStatus.date}T${currentStatus.clock_out}`).toLocaleTimeString(
-                      [],
-                      {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      }
-                    )
-                  : 'Not clocked out'}
+                {formatClockTime(record.date, record.clock_out) || 'Not clocked out'}
               </p>
             </div>
             <div>
@@ -306,14 +286,14 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
               <p className="text-gray-600">Status</p>
               <p
                 className={`font-medium capitalize text-xs sm:text-sm ${
-                  currentStatus.status === 'present'
+                  record.status === 'present'
                     ? 'text-green-600'
-                    : currentStatus.status === 'late'
+                    : record.status === 'late'
                       ? 'text-orange-600'
                       : 'text-gray-600'
                 }`}
               >
-                {currentStatus.status}
+                {record.status?.replace('_', ' ')}
               </p>
             </div>
           </div>
@@ -322,10 +302,8 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
 
       {/* Action Button - Mobile Optimized */}
       <button
-        onClick={isClocked ? handleClockOut : handleClockIn}
-        disabled={
-          clockInMutation.isPending || clockOutMutation.isPending || fetchingLocation || !isToday
-        }
+        onClick={handleClock}
+        disabled={buttonDisabled}
         className={`w-full py-4 px-4 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-base sm:text-lg touch-manipulation ${
           isClocked
             ? 'bg-red-600 text-white hover:bg-red-700 active:bg-red-800'
@@ -333,7 +311,7 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
         }`}
         style={{ minHeight: '48px' }} // Ensure minimum touch target size
       >
-        {clockInMutation.isPending || clockOutMutation.isPending || fetchingLocation ? (
+        {busy ? (
           <div className="flex items-center gap-2">
             <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
             <span className="text-sm sm:text-base">
@@ -343,34 +321,23 @@ const ClockInOutWidget: React.FC<ClockInOutWidgetProps> = ({
         ) : (
           <>
             {isClocked ? <LogOut className="h-5 w-5" /> : <LogIn className="h-5 w-5" />}
-            <span>{isClocked ? 'Clock Out' : 'Clock In'}</span>
+            <span>{buttonLabel}</span>
           </>
         )}
       </button>
 
-      {/* Location Error Display */}
-      {locationError && (
-        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-xs sm:text-sm text-red-800">{locationError}</p>
-        </div>
+      {lastAccuracy !== null && (
+        <p className="mt-2 text-center text-xs text-gray-400">
+          Last location fix accurate to about ±{lastAccuracy} m
+        </p>
       )}
 
-      {/* Distance Error Display from Backend */}
-      {(clockInMutation.isError || clockOutMutation.isError) && (
-        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-xs sm:text-sm text-red-800 font-medium">Clock In/Out Failed</p>
-          <p className="text-xs sm:text-sm text-red-700 mt-1">
-            {clockInMutation.error?.message ||
-              clockOutMutation.error?.message ||
-              'An error occurred'}
-          </p>
-        </div>
-      )}
+      {errors}
 
       {!isToday && (
         <div className="mt-3 text-center">
           <p className="text-xs sm:text-sm text-gray-500">
-            Clock in/out is only available for today's date.
+            Clock in/out is only available for today&apos;s date.
             <br className="hidden sm:inline" />
             <span className="sm:hidden"> </span>
             Use the attendance form to record historical attendance.

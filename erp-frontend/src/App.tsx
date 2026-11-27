@@ -382,6 +382,8 @@ const BulkStaffDebitPage = lazy(() => import('./pages/hr/BulkStaffDebitPage'));
 const StaffIOUDetailPage = lazy(() => import('./pages/hr/StaffIOUDetailPage'));
 const LeaveBalancesListPage = lazy(() => import('./pages/hr/LeaveBalancesListPage'));
 const ClockInOutPage = lazy(() => import('./pages/hr/ClockInOutPage'));
+const MyClockPage = lazy(() => import('./pages/hr/MyClockPage'));
+const OfficeLocationsPage = lazy(() => import('./pages/admin/OfficeLocationsPage'));
 const PayslipDetailPage = lazy(() => import('./pages/hr/PayslipDetailPage'));
 const PayslipListPage = lazy(() => import('./pages/hr/PayslipListPage'));
 const LeaveTypesListPage = lazy(() => import('./pages/hr/LeaveTypesListPage'));
@@ -2297,6 +2299,26 @@ function App() {
                                 />
 
                                 {/* Attendance Management routes */}
+                                {/* Every staff member's own clock in / out — no HR permission needed
+                                    (the backend checks it's their own record). */}
+                                <Route
+                                  path="/hr/attendance/clock"
+                                  element={
+                                    <ProtectedRoute>
+                                      <MyClockPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
+                                {/* Office (branch) locations used for clock-in GPS checks; editing is
+                                    limited to admins / directors on both the page and the backend. */}
+                                <Route
+                                  path="/admin/office-locations"
+                                  element={
+                                    <ProtectedRoute>
+                                      <OfficeLocationsPage />
+                                    </ProtectedRoute>
+                                  }
+                                />
                                 <Route
                                   path="/hr/clock"
                                   element={
