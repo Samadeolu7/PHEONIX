@@ -440,6 +440,10 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
     return derived === null ? '' : derived.toFixed(2);
   });
   const [rateEdited, setRateEdited] = useState(false);
+  // The current term was entered wrongly (e.g. 1 day instead of 60):
+  // rebuild from disbursement with the same total interest.
+  const [isCorrection, setIsCorrection] = useState(false);
+  const correctionDate = loan.original_disbursement_date ?? loan.disbursement_date;
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
@@ -465,20 +469,22 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
       return;
     }
     const rate = parseFloat(newRate);
-    if (newRate.trim() === '' || !Number.isFinite(rate) || rate < 0 || rate > 999.99) {
+    if (!isCorrection && (newRate.trim() === '' || !Number.isFinite(rate) || rate < 0 || rate > 999.99)) {
       setError('Enter the new interest rate (0 – 999.99%).');
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
-      const payload: ProposeRestructurePayload = {
-        new_term: parseInt(newTerm, 10),
-        new_interest_rate: rate,
-        effective_date: effectiveDate,
-        reason,
-        notes,
-      };
+      const payload: ProposeRestructurePayload = isCorrection
+        ? { new_term: parseInt(newTerm, 10), is_correction: true, reason, notes }
+        : {
+            new_term: parseInt(newTerm, 10),
+            new_interest_rate: rate,
+            effective_date: effectiveDate,
+            reason,
+            notes,
+          };
       await loanService.proposeRestructure(loan.id, payload);
       setSuccess(true);
       setTimeout(() => { onSuccess(); }, 1200);
@@ -517,6 +523,18 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
+            <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 text-sm">
+              <input type="checkbox" className="mt-0.5" checked={isCorrection}
+                onChange={e => setIsCorrection(e.target.checked)} />
+              <span>
+                <span className="font-medium text-gray-900">This corrects a wrongly entered term</span>
+                <span className="block text-xs text-gray-500">
+                  The loan is rebuilt from its disbursement date ({fmtDate(correctionDate)}) with the
+                  new term. No new interest is added, and payments already made count toward the
+                  earliest installments.
+                </span>
+              </span>
+            </label>
             <div>
               <label htmlFor="rs-term" className="mb-1 block text-sm font-medium text-gray-700">
                 New Term ({loan.term_unit ?? 'months'})
@@ -528,6 +546,7 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
               </p>
             </div>
 
+            {!isCorrection && (<>
             <div>
               <label htmlFor="rs-rate" className="mb-1 block text-sm font-medium text-gray-700">
                 New Interest Rate (% for the whole new term)
@@ -568,6 +587,13 @@ function RestructureModal({ loan, onClose, onSuccess }: RestructureModalProps) {
               <input id="rs-date" type="date" title="Restructure effective date" value={effectiveDate} onChange={e => setEffectiveDate(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none" required />
             </div>
+            </>)}
+            {isCorrection && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+                Starts {fmtDate(correctionDate)} · {newTerm || '—'} {loan.term_unit ?? 'months'} at {loan.interest_rate}% ·
+                total interest stays ₦{fmt(String(parseFloat(loan.interest_paid ?? '0') + parseFloat(loan.outstanding_interest ?? '0')))}
+              </div>
+            )}
             <div>
               <label htmlFor="rs-reason" className="mb-1 block text-sm font-medium text-gray-700">Reason</label>
               <input id="rs-reason" type="text" title="Restructure reason" value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Financial hardship, Business downturn"
@@ -2009,7 +2035,10 @@ export default function LoanAccountDetailPage() {
               </div>
               <div>
                 <p className="text-gray-500">Disbursement Date</p>
-                <p className="font-medium text-gray-900">{fmtDate(loan.disbursement_date)}</p>
+                <p className="font-medium text-gray-900">{fmtDate(loan.original_disbursement_date ?? loan.disbursement_date)}</p>
+                {loan.original_disbursement_date && loan.disbursement_date && loan.original_disbursement_date !== loan.disbursement_date && (
+                  <p className="text-xs text-gray-400">Restructured {fmtDate(loan.disbursement_date)}</p>
+                )}
               </div>
               <div>
                 <p className="text-gray-500">Maturity Date</p>

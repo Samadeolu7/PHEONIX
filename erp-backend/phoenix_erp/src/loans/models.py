@@ -2292,6 +2292,165 @@ class LoanAccount(TimeStampedModel, BranchScopedModel, SoftDeleteModel):
 
         return restructure
 
+    @transaction.atomic
+    def correct_term(self, new_term: int, corrected_by=None, reason: str = '', notes: str = ''):
+        """
+        Correct a term that was entered wrongly (e.g. 1 day instead of 60).
+
+        Unlike restructure(), this is not a new deal: the loan is rebuilt as
+        if it had been booked with the right term from the start.
+          - The schedule runs from original_disbursement_date over the full
+            disbursed_amount, at the loan's current rate.
+          - Total interest must come out exactly as it stands now
+            (interest_paid + outstanding_interest). Nothing is added, so no
+            journal entry is posted: for loans whose interest was recognized
+            into the Loan Receivable at disbursement, principal and interest
+            are one receivable, and moving amounts between them is GL-neutral.
+          - Every existing payment is replayed, oldest first, onto the new
+            installments (interest, then principal), and its
+            LoanRepaymentAllocation rows are rebuilt against them so payment
+            reversals keep working.
+          - The wrong installments are soft-deleted (not 'restructured'):
+            they never should have existed, so they don't belong in the
+            client's schedule or in contractual interest.
+
+        Refuses anything it can't redo exactly: deferred-interest loans,
+        loans with penalties or fees on them, a term in another unit, or a
+        rebuild whose total interest would differ (use restructure() then).
+        """
+        from django.db.models import Max
+        from .schedule_service import RepaymentScheduleService
+
+        if self.status not in ('active', 'disbursed', 'defaulted', 'overdue'):
+            raise ValidationError(f"Cannot correct the term of a loan with status '{self.status}'.")
+        if not new_term or int(new_term) <= 0:
+            raise ValidationError("The corrected term must be greater than zero.")
+        if self.interest_deferral_active or not self.interest_recognized_at_disbursement:
+            raise ValidationError(
+                "This loan's interest isn't booked in the loan receivable, so a term "
+                "correction would need GL adjustments. Ask accounts to correct it manually."
+            )
+        if (self.outstanding_penalties or 0) != 0 or (self.penalties_paid or 0) != 0:
+            raise ValidationError(
+                "This loan has penalties on it. Reverse those first; a term correction "
+                "can't decide which penalties the wrong term caused."
+            )
+        if (self.outstanding_fees or 0) != 0 or (self.fees_paid or 0) != 0:
+            raise ValidationError("This loan has scheduled fees; a term correction can't rebuild those.")
+        if not self.original_disbursement_date:
+            raise ValidationError("This loan has no original disbursement date to rebuild from.")
+
+        current_interest_total = (self.interest_paid or Decimal('0')) + (self.outstanding_interest or Decimal('0'))
+
+        # ── Payments to replay, oldest first, from their allocations ──────
+        payments = {}
+        for a in (LoanRepaymentAllocation.objects
+                  .filter(loan=self, journal_entry__is_reversed=False)
+                  .select_related('journal_entry')
+                  .order_by('journal_entry__date', 'journal_entry_id', 'id')):
+            if a.penalty_applied or a.fees_applied:
+                raise ValidationError("A payment on this loan went to penalties or fees; can't replay it.")
+            entry = payments.setdefault(a.journal_entry_id, {
+                'journal_entry': a.journal_entry, 'amount': Decimal('0'),
+            })
+            entry['amount'] += a.principal_applied + a.interest_applied
+        replay_total = sum((p['amount'] for p in payments.values()), Decimal('0'))
+        recorded_total = (self.principal_paid or Decimal('0')) + (self.interest_paid or Decimal('0'))
+        if replay_total != recorded_total:
+            raise ValidationError(
+                f"Payment allocations ({replay_total:,}) don't match the loan's recorded "
+                f"payments ({recorded_total:,}); can't replay them safely."
+            )
+
+        old = {
+            'term': self.term_months, 'term_unit': self.term_unit, 'rate': self.interest_rate,
+            'frequency': self.repayment_frequency, 'principal': self.outstanding_principal,
+            'installment': self.installment_amount, 'maturity': self.maturity_date,
+        }
+
+        # ── Retire the wrong schedule, build the right one ────────────────
+        all_rows = LoanRepaymentSchedule.all_objects.filter(loan=self)
+        start_number = (all_rows.aggregate(m=Max('installment_number'))['m'] or 0) + 1
+        LoanRepaymentAllocation.objects.filter(loan=self).delete()
+        all_rows.filter(is_deleted=False).update(is_deleted=True)
+
+        self.term_months = int(new_term)
+        self.disbursement_date = self.original_disbursement_date
+        RepaymentScheduleService.generate(
+            self, principal_override=self.disbursed_amount, start_number=start_number,
+        )
+        rows = list(self.repayment_schedule.order_by('due_date', 'installment_number'))
+        new_interest_total = sum((r.interest_due for r in rows), Decimal('0'))
+        if new_interest_total != current_interest_total:
+            raise ValidationError(
+                f"With {new_term} {self.term_unit} the total interest would be "
+                f"{new_interest_total:,} instead of {current_interest_total:,}. A term "
+                f"correction can't change what the client owes; use a restructure."
+            )
+
+        # ── Replay payments onto the new installments ─────────────────────
+        principal_paid = interest_paid = Decimal('0')
+        idx = 0
+        for p in payments.values():
+            remaining = p['amount']
+            while remaining > 0:
+                if idx >= len(rows):
+                    raise ValidationError("Payments exceed the corrected schedule; can't replay them.")
+                row = rows[idx]
+                i = min(remaining, row.interest_due - row.interest_paid)
+                pr = min(remaining - i, row.principal_due - row.principal_paid)
+                if i + pr == 0:
+                    idx += 1
+                    continue
+                row.interest_paid += i
+                row.principal_paid += pr
+                row.total_paid += i + pr
+                row.payment_date = p['journal_entry'].date
+                row.status = 'paid' if row.total_paid >= row.total_due else 'partial'
+                row.save(update_fields=['interest_paid', 'principal_paid', 'total_paid', 'payment_date', 'status'])
+                LoanRepaymentAllocation.objects.create(
+                    loan=self, schedule=row, journal_entry=p['journal_entry'],
+                    principal_applied=pr, interest_applied=i,
+                )
+                interest_paid += i
+                principal_paid += pr
+                remaining -= i + pr
+                if row.status == 'paid':
+                    idx += 1
+
+        self.principal_paid = principal_paid
+        self.interest_paid = interest_paid
+        self.outstanding_principal = self.disbursed_amount - principal_paid
+        self.outstanding_interest = new_interest_total - interest_paid
+        self.first_payment_date = rows[0].due_date
+        self.maturity_date = rows[-1].due_date
+        self.status = 'active'
+        self.save()
+        self._calculate_arrears()
+
+        record = LoanRestructure.objects.create(
+            loan=self,
+            effective_date=self.original_disbursement_date,
+            restructured_by=corrected_by,
+            reason=reason,
+            notes=notes,
+            is_correction=True,
+            old_term=old['term'], old_term_unit=old['term_unit'],
+            old_interest_rate=old['rate'], old_repayment_frequency=old['frequency'],
+            old_outstanding_principal=old['principal'],
+            old_installment_amount=old['installment'], old_maturity_date=old['maturity'],
+            new_term=self.term_months, new_term_unit=self.term_unit,
+            new_interest_rate=self.interest_rate,
+            new_repayment_frequency=self.repayment_frequency,
+            new_installment_amount=self.installment_amount,
+            new_maturity_date=self.maturity_date,
+        )
+        self.update_risk_classification()
+        self.save(update_fields=[
+            'risk_classification', 'provision_pct', 'provision_amount', 'updated_at'
+        ])
+        return record
+
 
 class LoanRestructure(models.Model):
     """Audit record of every loan restructure event."""
@@ -2345,6 +2504,11 @@ class LoanRestructure(models.Model):
         on_delete=models.SET_NULL,
         related_name='loan_restructure_journals',
     )
+    is_correction = models.BooleanField(
+        default=False,
+        help_text="True for a term correction (LoanAccount.correct_term): the loan "
+                  "was rebuilt from disbursement with the right term, no new interest.",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -2369,6 +2533,9 @@ class LoanRestructureRequest(TimeStampedModel, BranchScopedModel):
       2. Director approves: LoanAccount.restructure() runs, the new schedule
          is generated, and the resulting LoanRestructure audit record is
          linked here. status='approved'.
+         If is_correction is set, approval runs LoanAccount.correct_term()
+         instead: the term was simply entered wrongly, so the loan is
+         rebuilt from disbursement with no new interest.
       3. Director rejects: status='rejected', the loan is untouched and
          continues exactly as it was — rejection is a no-op on the loan.
     """
@@ -2393,6 +2560,12 @@ class LoanRestructureRequest(TimeStampedModel, BranchScopedModel):
         max_digits=5, decimal_places=2, null=True, blank=True,
         help_text="Total interest rate (%) for the new term, as set by the officer. "
                   "Blank = derive it pro rata from the loan's current rate/term at approval.",
+    )
+    is_correction = models.BooleanField(
+        default=False,
+        help_text="The current term was entered wrongly: on approval the loan is rebuilt "
+                  "from its original disbursement date with the new term and the same "
+                  "total interest (LoanAccount.correct_term), instead of restructured.",
     )
     effective_date = models.DateField(null=True, blank=True, help_text='Defaults to today at approval time if left blank.')
     reason = models.TextField(blank=True)

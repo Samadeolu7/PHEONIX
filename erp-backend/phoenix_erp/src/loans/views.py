@@ -1543,6 +1543,22 @@ class LoanAccountViewSet(ScopedModelViewSet):
         if new_term <= 0:
             return Response({'detail': 'new_term must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # A term correction ignores rate and date: the loan is rebuilt from
+        # its original disbursement with the same total interest.
+        is_correction = str(request.data.get('is_correction', '')).lower() in ('true', '1', 'yes', 'on')
+        if is_correction:
+            if loan.interest_deferral_active or not loan.interest_recognized_at_disbursement:
+                return Response(
+                    {'detail': "This loan's interest isn't booked in the loan receivable; a term "
+                               "correction would need GL adjustments. Ask accounts to correct it."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if (loan.outstanding_penalties or 0) or (loan.penalties_paid or 0):
+                return Response(
+                    {'detail': 'This loan has penalties on it. Reverse those first, then propose the correction.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Optional officer-set total rate for the new term; blank = derive it.
         new_interest_rate = None
         raw_rate = request.data.get('new_interest_rate')
@@ -1557,7 +1573,7 @@ class LoanAccountViewSet(ScopedModelViewSet):
 
         # Catch a rate the loan's rate column can't hold (usually a term in
         # the wrong unit) now, rather than when a director tries to approve it.
-        if new_interest_rate is not None or (loan.term_months and loan.term_months > 0):
+        if not is_correction and (new_interest_rate is not None or (loan.term_months and loan.term_months > 0)):
             rate_to_check = (
                 new_interest_rate if new_interest_rate is not None
                 else loan.derive_restructure_rate(new_term)
@@ -1584,8 +1600,9 @@ class LoanAccountViewSet(ScopedModelViewSet):
         req = LoanRestructureRequest.objects.create(
             loan=loan,
             new_term=new_term,
-            new_interest_rate=new_interest_rate,
-            effective_date=effective_date,
+            new_interest_rate=None if is_correction else new_interest_rate,
+            is_correction=is_correction,
+            effective_date=loan.original_disbursement_date if is_correction else effective_date,
             reason=request.data.get('reason', ''),
             notes=request.data.get('notes', ''),
             requested_by=request.user,
@@ -2928,14 +2945,22 @@ class LoanRestructureRequestViewSet(ScopedModelViewSet):
             pass  # Fail-open during rollout; HasActionPermission also covers this
 
         try:
-            restructure_record = req.loan.restructure(
-                new_term=req.new_term,
-                new_rate=req.new_interest_rate,
-                effective_date=req.effective_date,
-                restructured_by=request.user,
-                reason=req.reason,
-                notes=req.notes,
-            )
+            if req.is_correction:
+                restructure_record = req.loan.correct_term(
+                    new_term=req.new_term,
+                    corrected_by=request.user,
+                    reason=req.reason,
+                    notes=req.notes,
+                )
+            else:
+                restructure_record = req.loan.restructure(
+                    new_term=req.new_term,
+                    new_rate=req.new_interest_rate,
+                    effective_date=req.effective_date,
+                    restructured_by=request.user,
+                    reason=req.reason,
+                    notes=req.notes,
+                )
         except ValidationError as exc:
             return Response(
                 {'detail': exc.message if hasattr(exc, 'message') else str(exc)},
