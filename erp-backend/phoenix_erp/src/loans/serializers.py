@@ -372,7 +372,8 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
             # Status & dates
             'status', 'rejection_reason', 'application_date', 'application_notes',
             'approval_date', 'approved_by',
-            'disbursement_date', 'first_payment_date', 'maturity_date', 'closed_date',
+            'disbursement_date', 'original_disbursement_date',
+            'first_payment_date', 'maturity_date', 'closed_date',
             'correction_window_expires_at',
             # Balances
             'outstanding_principal', 'outstanding_interest',
@@ -415,10 +416,9 @@ class LoanAccountDetailSerializer(TenantModelSerializer):
         ]
 
     def get_contractual_interest_total(self, obj):
-        """Total future interest due from all schedule rows (paid + remaining)."""
-        from django.db.models import Sum
-        result = obj.repayment_schedule.aggregate(t=Sum('interest_due'))['t']
-        return str(result) if result is not None else '0.00'
+        """Total contractual interest (paid + remaining), not double-counting restructures."""
+        from .models import LoanRepaymentSchedule
+        return str(LoanRepaymentSchedule.contractual_interest(obj.repayment_schedule.all()))
 
     def get_unearned_interest_remaining(self, obj):
         """Sum of interest_due from schedule rows not yet recognized as earned."""
@@ -737,6 +737,14 @@ class LoanRestructureRequestSerializer(TenantModelSerializer):
         if obj.status != obj.STATUS_PENDING:
             return None
         loan = obj.loan
+        if obj.is_correction:
+            # Same total interest, just the right term: nothing new to split.
+            return {
+                'new_interest_rate': str(loan.interest_rate),
+                'total_new_interest': '0.00',
+                'normal_interest_amount': '0.00',
+                'restructure_interest_amount': '0.00',
+            }
         try:
             old_rate = loan.interest_rate
             old_term = loan.term_months
@@ -765,7 +773,7 @@ class LoanRestructureRequestSerializer(TenantModelSerializer):
         fields = [
             'id', 'loan', 'loan_number', 'client_name', 'client_image',
             'current_term', 'current_term_unit', 'current_interest_rate', 'outstanding_principal',
-            'new_term', 'new_interest_rate', 'effective_date', 'reason', 'notes', 'preview',
+            'new_term', 'new_interest_rate', 'is_correction', 'effective_date', 'reason', 'notes', 'preview',
             'requested_by', 'requested_by_name',
             'status', 'reviewed_by', 'reviewed_by_name',
             'reviewed_at', 'rejection_reason', 'restructure',

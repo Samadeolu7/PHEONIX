@@ -326,3 +326,213 @@ class RestructureGLFallbackTestCase(TestCase):
         self.assertEqual(loan.term_months, 10)
         self.assertEqual(loan.interest_rate, Decimal("15.50"))
 
+
+    def test_contractual_interest_not_double_counted_after_restructure(self):
+        """Replays LN-20261125-8F008D: N150k for 1 day at 20% (N30k interest),
+        N6k paid, restructured to 60 days at 20% (N30k new + N24k carried),
+        then N3k paid. Contractual interest is N60k (6k collected + 54k on the
+        new schedule), not N84k (the old row's 30k counted on top)."""
+        from datetime import timedelta
+        from django.utils import timezone
+        from loans.models import LoanRepaymentSchedule
+        from loans.serializers import LoanAccountDetailSerializer
+
+        product_gl = Product.objects.create(name="Daily Loan", code="LOAN-DAILY", product_type="LOAN", owner=self.owner, branch=self.branch)
+        product = LoanProduct.objects.create(
+            product=product_gl,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            interest_income_account=self.interest_income_account,
+            default_interest_rate=Decimal("20.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            term_unit="days", min_term_months=1, max_term_months=365,
+            allowed_repayment_frequencies=["daily"],
+            owner=self.owner, branch=self.branch,
+        )
+        account = Account.objects.create(
+            name="LN-DAILY-1 Loan Account", code="139901",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        loan = LoanAccount.objects.create(
+            client=self.client, product=product, account=account,
+            loan_number="LN-DAILY-1", requested_amount=Decimal("150000.00"),
+            interest_rate=Decimal("20.00"), term_months=1, term_unit="days",
+            repayment_frequency="daily", status="pending",
+            owner=self.owner, branch=self.branch,
+        )
+        loan.approve(user=self.approver)
+        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        today = timezone.now().date()
+
+        loan.record_payment(Decimal("6000.00"), payment_date=today, payment_account=self.cash_account, received_by=self.approver)
+        loan.refresh_from_db()
+        loan.restructure(new_term=60, new_rate=Decimal("20.00"), restructured_by=self.approver, effective_date=today)
+        loan.refresh_from_db()
+        loan.record_payment(Decimal("3000.00"), payment_date=today + timedelta(days=1), payment_account=self.cash_account, received_by=self.approver)
+        loan.refresh_from_db()
+
+        # The rest of the loan page's figures, as seen live.
+        self.assertEqual(loan.outstanding_principal, Decimal("147900.00"))
+        self.assertEqual(loan.outstanding_interest, Decimal("53100.00"))
+        self.assertEqual(loan.total_paid, Decimal("9000.00"))
+
+        self.assertEqual(
+            LoanRepaymentSchedule.contractual_interest(loan.repayment_schedule.all()),
+            Decimal("60000.00"),
+        )
+        self.assertEqual(
+            Decimal(LoanAccountDetailSerializer(loan).get_contractual_interest_total(loan)),
+            Decimal("60000.00"),
+        )
+
+    # ── Term corrections ──────────────────────────────────────────────────
+
+    def _make_daily_loan(self, loan_number, code):
+        product_gl = Product.objects.create(name=f"Daily {code}", code=f"LOAN-D-{code}", product_type="LOAN", owner=self.owner, branch=self.branch)
+        product = LoanProduct.objects.create(
+            product=product_gl,
+            parent_account=self.loan_parent,
+            disbursement_account=self.cash_account,
+            interest_income_account=self.interest_income_account,
+            default_interest_rate=Decimal("20.00"),
+            interest_calculation_method="flat",
+            min_loan_amount=Decimal("1000.00"),
+            max_loan_amount=Decimal("500000.00"),
+            term_unit="days", min_term_months=1, max_term_months=365,
+            allowed_repayment_frequencies=["daily"],
+            owner=self.owner, branch=self.branch,
+        )
+        account = Account.objects.create(
+            name=f"{loan_number} Loan Account", code=f"13{code}",
+            account_type=Account.LOAN, account_level=Account.LEVEL_CHILD,
+            parent=self.loan_parent, owner=self.owner, created_by=self.owner, branch=self.branch,
+        )
+        loan = LoanAccount.objects.create(
+            client=self.client, product=product, account=account,
+            loan_number=loan_number, requested_amount=Decimal("150000.00"),
+            interest_rate=Decimal("20.00"), term_months=1, term_unit="days",
+            repayment_frequency="daily", status="pending",
+            owner=self.owner, branch=self.branch,
+        )
+        loan.approve(user=self.approver)
+        loan.disburse(disbursement_account=self.cash_account, disbursed_by=self.approver)
+        loan.refresh_from_db()
+        return loan
+
+    def _loan_gl_balance(self, loan):
+        debits = sum(e.amount for e in TransactionEntry.objects.filter(account=loan.account, side=TransactionEntry.DEBIT))
+        credits = sum(e.amount for e in TransactionEntry.objects.filter(account=loan.account, side=TransactionEntry.CREDIT))
+        return debits - credits
+
+    def test_correct_term_rebuilds_from_disbursement_without_new_interest(self):
+        from django.utils import timezone
+        from loans.models import LoanRepaymentSchedule, LoanRepaymentAllocation
+
+        loan = self._make_daily_loan("LN-CORR-1", "9801")
+        today = timezone.now().date()
+        loan.record_payment(Decimal("6000.00"), payment_date=today, payment_account=self.cash_account, received_by=self.approver)
+        loan.refresh_from_db()
+        gl_before = self._loan_gl_balance(loan)
+
+        record = loan.correct_term(60, corrected_by=self.approver, reason="1 day entered instead of 60")
+        loan.refresh_from_db()
+
+        self.assertTrue(record.is_correction)
+        self.assertIsNone(record.journal_entry)
+        self.assertEqual((loan.term_months, loan.interest_rate), (60, Decimal("20.00")))
+        self.assertEqual(loan.disbursement_date, loan.original_disbursement_date)
+        rows = list(loan.repayment_schedule.order_by("due_date"))
+        self.assertEqual(len(rows), 60)
+        self.assertEqual(sum(r.interest_due for r in rows), Decimal("30000.00"))
+        # N6,000 replayed onto the first two N3,000 installments.
+        self.assertEqual([r.status for r in rows[:3]], ["paid", "paid", "pending"])
+        self.assertEqual(loan.outstanding_principal, Decimal("145000.00"))
+        self.assertEqual(loan.outstanding_interest, Decimal("29000.00"))
+        self.assertEqual(loan.total_paid, Decimal("6000.00"))
+        self.assertEqual(LoanRepaymentSchedule.contractual_interest(loan.repayment_schedule.all()), Decimal("30000.00"))
+        allocations = LoanRepaymentAllocation.objects.filter(loan=loan)
+        self.assertEqual(sum(a.principal_applied + a.interest_applied for a in allocations), Decimal("6000.00"))
+        self.assertTrue(all(a.schedule.is_deleted is False for a in allocations))
+        # GL-neutral: the loan receivable still equals principal + interest owed.
+        self.assertEqual(self._loan_gl_balance(loan), gl_before)
+        self.assertEqual(gl_before, loan.outstanding_principal + loan.outstanding_interest)
+
+    def test_correct_term_refuses_to_change_total_interest(self):
+        loan = self._make_daily_loan("LN-CORR-2", "9802")
+        loan.restructure(new_term=60, new_rate=Decimal("20.00"), restructured_by=self.approver)
+        loan.refresh_from_db()
+        # Total interest is now N60k; a correction can only produce N30k.
+        with self.assertRaisesMessage(ValidationError, "can't change what the client owes"):
+            loan.correct_term(60, corrected_by=self.approver)
+        loan.refresh_from_db()
+        self.assertEqual(loan.interest_paid + loan.outstanding_interest, Decimal("60000.00"))
+
+    def test_fix_command_undoes_extra_interest_on_ln_20261125_8f008d(self):
+        """Replays the live loan (1 day, N6k paid, restructured to 60 days at
+        20%, N3k paid) and runs the one-off fix: dry-run changes nothing,
+        --apply leaves N30k total interest and reverses the N30k journal."""
+        from datetime import timedelta
+        from io import StringIO
+        from django.core.management import call_command
+        from django.utils import timezone
+
+        loan = self._make_daily_loan("LN-20261125-8F008D", "9803")
+        today = timezone.now().date()
+        loan.record_payment(Decimal("6000.00"), payment_date=today, payment_account=self.cash_account, received_by=self.approver)
+        loan.refresh_from_db()
+        restructure = loan.restructure(new_term=60, new_rate=Decimal("20.00"), restructured_by=self.approver, effective_date=today)
+        loan.refresh_from_db()
+        loan.record_payment(Decimal("3000.00"), payment_date=today + timedelta(days=1), payment_account=self.cash_account, received_by=self.approver)
+        loan.refresh_from_db()
+        self.assertEqual(loan.interest_paid + loan.outstanding_interest, Decimal("60000.00"))
+
+        call_command("fix_ln_20261125_8f008d_term", by_username=self.owner.username, stdout=StringIO())
+        loan.refresh_from_db()
+        self.assertEqual(loan.interest_paid + loan.outstanding_interest, Decimal("60000.00"))
+
+        out = StringIO()
+        call_command("fix_ln_20261125_8f008d_term", by_username=self.owner.username, apply=True, stdout=out)
+        loan.refresh_from_db()
+        restructure.journal_entry.refresh_from_db()
+
+        self.assertIn("Applied", out.getvalue())
+        self.assertTrue(restructure.journal_entry.is_reversed)
+        self.assertEqual(loan.interest_paid + loan.outstanding_interest, Decimal("30000.00"))
+        self.assertEqual(loan.disbursement_date, loan.original_disbursement_date)
+        self.assertEqual(loan.total_paid, Decimal("9000.00"))
+        # N9,000 = three N3,000 installments (N2,500 principal + N500 interest).
+        self.assertEqual(loan.outstanding_principal, Decimal("142500.00"))
+        self.assertEqual(loan.outstanding_interest, Decimal("28500.00"))
+        self.assertEqual(self._loan_gl_balance(loan), Decimal("171000.00"))
+
+        # Running it again is refused (already corrected).
+        out = StringIO()
+        call_command("fix_ln_20261125_8f008d_term", by_username=self.owner.username, apply=True, stdout=out)
+        self.assertIn("refusing", out.getvalue())
+
+    def test_correction_through_propose_and_approve(self):
+        loan = self._make_daily_loan("LN-CORR-3", "9804")
+        api = APIClient()
+        api.force_authenticate(user=self.owner)
+        resp = api.post(
+            f"/api/loans/accounts/{loan.pk}/propose_restructure/",
+            {"new_term": 60, "is_correction": True, "new_interest_rate": "99", "effective_date": "2030-01-01"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        body = resp.json()
+        self.assertTrue(body["is_correction"])
+        self.assertIsNone(body["new_interest_rate"])  # rate and date are ignored
+        self.assertEqual(body["effective_date"], str(loan.original_disbursement_date))
+        self.assertEqual(Decimal(str(body["preview"]["total_new_interest"])), Decimal("0"))
+
+        LoanRestructureRequest.objects.filter(pk=body["id"]).update(requested_by=self.approver)
+        resp = api.post(f"/api/loans/restructure-requests/{body['id']}/approve/", format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        loan.refresh_from_db()
+        self.assertEqual(loan.term_months, 60)
+        self.assertEqual(loan.interest_rate, Decimal("20.00"))
+        self.assertEqual(loan.interest_paid + loan.outstanding_interest, Decimal("30000.00"))

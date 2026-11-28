@@ -118,8 +118,17 @@ function RequestRow({ req, onApprove, onReject, isApproving }: RequestRowProps) 
         </div>
       </td>
       <td className="px-4 py-3 text-xs text-gray-600">
+        {req.is_correction && (
+          <span className="mb-1 inline-block rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-blue-700">
+            Term correction
+          </span>
+        )}
         <p>{req.current_term} → {req.new_term} {req.current_term_unit}</p>
-        <p className="text-gray-400">at {req.current_interest_rate}%{req.preview ? ` → ${req.preview.new_interest_rate}%` : ''}</p>
+        <p className="text-gray-400">
+          {req.is_correction
+            ? `same ${req.current_interest_rate}% · no new interest`
+            : <>at {req.current_interest_rate}%{req.preview ? ` → ${req.preview.new_interest_rate}%` : ''}</>}
+        </p>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-900">
         ₦{fmt(req.outstanding_principal)}

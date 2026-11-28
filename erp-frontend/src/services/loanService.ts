@@ -98,6 +98,8 @@ export interface LoanAccountList {
   assigned_officer_name: string;
   application_date: string;
   disbursement_date: string | null;
+  /** First payout date; disbursement_date moves to the latest restructure. */
+  original_disbursement_date?: string | null;
   maturity_date: string | null;
   created_at: string;
   updated_at: string;
@@ -1034,6 +1036,8 @@ export interface ProposeRestructurePayload {
   new_term: number;
   /** Total rate (%) for the new term. Omit to derive it from the current rate/term. */
   new_interest_rate?: number;
+  /** The current term was entered wrongly: rebuild from disbursement, same total interest. */
+  is_correction?: boolean;
   effective_date?: string;
   reason?: string;
   notes?: string;
@@ -1058,6 +1062,7 @@ export interface LoanRestructureRequest {
   outstanding_principal: string;
   new_term: number;
   new_interest_rate: string | number | null;
+  is_correction: boolean;
   effective_date: string | null;
   reason: string;
   notes: string;
